@@ -65,15 +65,6 @@ interface BACnetDeviceInfo {
   port: number;
 }
 
-interface BACnetObject {
-  objectType: string;
-  objectInstance: number;
-  objectName: string;
-	presentValue?: unknown;
-  units?: string;
-  description?: string;
-}
-
 interface BACnetValidatedObject {
 	objectType: string;
 	objectInstance: number;

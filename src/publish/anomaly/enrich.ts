@@ -157,7 +157,7 @@ export class AnomalyEnricher {
 			}
 		}
 
-		if (!previous || previous.state !== state) {
+		if (previous?.state !== state) {
 			const record = { state, since: now };
 			this.stateHistory.set(deviceKey, record);
 			this.persistState(deviceKey, record);

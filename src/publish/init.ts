@@ -1,7 +1,6 @@
 import { type AgentLogger } from '../logging/agent-logger.js';
 import { LogComponents } from '../logging/types.js';
 import type { Protocol } from '../plugins/protocol.js';
-import type { PipelineService } from '../features/pipeline/index.js';
 import {
 	type DevicePublishConfig,
 	type DeviceConfig,
@@ -9,8 +8,6 @@ import {
 	type Logger,
 } from './core/types.js';
 import { PublishManager } from './core/manager.js';
-import { MessageBufferSync } from './core/buffer.js';
-import type { IPublishClient as BufferSyncPublishClient } from './core/buffer.js';
 import { CloudMqttClient } from '../mqtt/manager.js';
 import type { DictionaryManager } from '../mqtt/dictionary.js';
 import { EventEmitter } from 'events';

@@ -4,7 +4,6 @@ import * as mqttPattern from "mqtt-pattern";
 import { type DeviceDataPoint, type IDeviceStatus, type Logger } from "../types.js";
 import { type MqttAdapterConfig, type MqttDevice, type MqttMetricConfig } from "./types.js";
 import { parsePayload, coerceType } from "./payload.js";
-import { agentTopic } from "../../mqtt/topics.js";
 import { EndpointModel } from "../../db/models/endpoint.model.js";
 import { DeviceModel } from "../../db/models/device.model.js";
 import { MqttBrokerClient } from "./client.js";

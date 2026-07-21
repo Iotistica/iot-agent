@@ -18,7 +18,7 @@ import { SchemaDriftModel } from '../../db/models/schema-drift.model.js';
 import type { DictionaryManager } from '../../mqtt/dictionary.js';
 import type { PublishDestinationInfo, PublishBatchItem } from './types.js';
 import { PublishDestinationsModel, PublishSubscriptionsModel } from '../../db/models/index.js';
-import type { PublisherRecord, PublishSubscriptionRecord, PublishSubscriptionRoute, SubscriptionCompression } from '../../db/models/index.js';
+import type { PublisherRecord, PublishSubscriptionRecord, PublishSubscriptionRoute } from '../../db/models/index.js';
 
 // Adaptive batch safety limits (calculated once at module load)
 const MAX_BATCH_MESSAGES = 10000;

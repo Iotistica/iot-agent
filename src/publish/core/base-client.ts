@@ -184,7 +184,7 @@ export abstract class BaseMqttClient extends EventEmitter implements MqttConnect
 
 		const suffix = randomBytes(3).toString('hex');
 		const newClientId = `${this.baseClientId}-${suffix}`;
-		(client.options as IClientOptions).clientId = newClientId;
+		client.options.clientId = newClientId;
 		this.rapidDropCount = 0;
 
 		this.logger?.warnSync(`${this.providerName} suspected clientId collision — rotating clientId`, {

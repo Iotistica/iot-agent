@@ -91,9 +91,9 @@ export async function initAgentSync(ctx: AgentInitContext): Promise<void> {
 
 	const targetSyncEnabled = ctx.agentInfo?.targetSyncEnabled !== false;
 	if (targetSyncEnabled) {
-		await ctx.cloudSync!.startPoll();
+		await ctx.cloudSync.startPoll();
 	} else {
-		await ctx.cloudSync!.startReportOnly();
+		await ctx.cloudSync.startReportOnly();
 	}
 
 	// Root-cause fix for delayed cloud log flushes: when CloudSync confirms the cloud API
@@ -103,7 +103,7 @@ export async function initAgentSync(ctx: AgentInitContext): Promise<void> {
 	) as { triggerFlush: (reason?: string) => void } | undefined;
 
 	if (cloudLogBackend) {
-		ctx.cloudSync!.on('online', () => {
+		ctx.cloudSync.on('online', () => {
 			cloudLogBackend.triggerFlush('cloudsync-online');
 		});
 	}

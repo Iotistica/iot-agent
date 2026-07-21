@@ -22,7 +22,7 @@ import { LogComponents } from '../logging/types';
 // Heap tracking (more accurate than RSS)
 let initialHeap: number = 0;
 let baselineHeap: number = 0; // Sliding baseline (updates when stable)
-let lastBaselineUpdate: number = 0;
+let _lastBaselineUpdate: number = 0;
 let lastBaselineAttempt: number = 0; // Last time a baseline update was evaluated (success or rejection) — paces repeat rejection logs
 let baselineUpdateCount: number = 0; // Tracks how many baseline updates have occurred
 let heapSamples: Array<{ 
@@ -986,7 +986,7 @@ function updateBaselineIfStable(currentHeap: number, currentRSS: number): void {
 			externalBaselineUpdated = true;
 		}
 		
-		lastBaselineUpdate = now;
+		_lastBaselineUpdate = now;
 		
 		logger?.infoSync('Baseline updated - heap stabilized at new level', {
 			component: LogComponents.metrics,
@@ -1035,7 +1035,7 @@ export async function healthcheck(
 		_baselineMalloced = heapStats.malloced_memory;
 		initialMemory = currentRSS; // Legacy
 		baselineRSS = currentRSS; // Sliding RSS baseline
-		lastBaselineUpdate = Date.now();
+		_lastBaselineUpdate = Date.now();
 		lastBaselineAttempt = Date.now();
 		_lastMemoryCheck = currentRSS; // Legacy
 		

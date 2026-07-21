@@ -65,7 +65,7 @@ import {
 	DataType as _DataType,
 } from 'node-opcua-client';
 import { BaseProtocolAdapter, type GenericDeviceConfig } from '../base.js';
-import { type DeviceDataPoint, type Logger, type IProtocolAdapter } from '../types.js';
+import { type DeviceDataPoint, type Logger, type IProtocolAdapter as _IProtocolAdapter } from '../types.js';
 import { ConsoleLogger } from '../logger.js';
 import {
 	type OPCUADeviceConfig,
