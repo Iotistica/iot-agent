@@ -3,7 +3,7 @@ name: CI Build, Test & Push Agent
 on:
   push:
     branches:
-      - master
+      - main
       - feature/**
   workflow_dispatch:
 
@@ -208,8 +208,8 @@ jobs:
   package-agent:
     name: Package Agent (${{ matrix.arch }})
     needs: build
-    # Only package on master — feature branches get build/test/docker only
-    if: github.ref == 'refs/heads/master'
+    # Only package on main — feature branches get build/test/docker only
+    if: github.ref == 'refs/heads/main'
     runs-on: [ubuntu-24.04]
     strategy:
       fail-fast: false
@@ -302,8 +302,8 @@ jobs:
   package-cli:
     name: Package CLI (${{ matrix.arch }})
     needs: build
-    # Only package on master — feature branches are covered by the build job
-    if: github.ref == 'refs/heads/master'
+    # Only package on main — feature branches are covered by the build job
+    if: github.ref == 'refs/heads/main'
     runs-on: [ubuntu-24.04]
     strategy:
       fail-fast: false
@@ -373,7 +373,7 @@ jobs:
   upload-azure:
     name: Upload to Azure
     needs: [build, package-agent, package-cli]
-    if: github.ref == 'refs/heads/master'
+    if: github.ref == 'refs/heads/main'
     runs-on: [ubuntu-24.04]
 
     steps:
