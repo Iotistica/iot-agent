@@ -659,8 +659,8 @@ echo ""
             echo ""
             echo "For development/internal installations:"
             echo "  Run this script from within a cloned repository:"
-            echo "    git clone https://github.com/Iotistica/iotistic.git"
-            echo "    cd iotistic/agent/bin"
+            echo "    git clone https://github.com/Iotistica/iot-agent.git"
+            echo "    cd iot-agent/bin"
             echo "    sudo ./install.sh"
             exit 1
         fi
