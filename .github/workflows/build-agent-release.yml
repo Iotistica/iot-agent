@@ -1,0 +1,487 @@
+name: Agent Release
+
+# Push a version tag to build, package, and release the agent in one shot.
+# No CI pre-run required — this workflow builds everything from source.
+#
+#   git tag v1.0.531 && git push origin v1.0.531
+#
+# Manual re-run (e.g. to rebuild an existing version):
+#   GitHub Actions → Agent Release → Run workflow → enter version
+
+on:
+  push:
+    tags:
+      - 'v[0-9]*.[0-9]*.[0-9]*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to build and release (e.g. 1.0.531)'
+        required: true
+        type: string
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
+concurrency:
+  group: agent-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+
+  # ── Extract version ──────────────────────────────────────────────────────────
+  version:
+    name: Extract Version
+    runs-on: [ubuntu-24.04]
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      tag:     ${{ steps.v.outputs.tag }}
+    steps:
+      - id: v
+        run: |
+          if [ -n "${{ inputs.version }}" ]; then
+            VERSION="${{ inputs.version }}"
+          else
+            TAG="${{ github.ref_name }}"
+            VERSION="${TAG#v}"
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "tag=v${VERSION}"  >> $GITHUB_OUTPUT
+          echo "Releasing v${VERSION}"
+
+  # ── Build tarball + .deb (matrix: x86_64 / arm64) ───────────────────────────
+  package:
+    name: Build & Package (${{ matrix.arch }})
+    needs: version
+    runs-on: [ubuntu-24.04]
+    permissions:
+      contents: write
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            deb_arch: amd64
+          - arch: arm64
+            deb_arch: arm64
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+
+      - name: Cache npm download cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-npm-${{ matrix.arch }}-${{ hashFiles('agent/package-lock.json') }}
+          restore-keys: ${{ runner.os }}-npm-${{ matrix.arch }}-
+
+      - name: Install agent dependencies
+        working-directory: ./agent
+        run: npm ci --legacy-peer-deps
+
+      - name: Build agent (TypeScript)
+        working-directory: ./agent
+        run: npm run build
+
+      - name: Set up QEMU (ARM64 cross-compile)
+        if: matrix.arch == 'arm64'
+        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
+        with:
+          platforms: linux/arm64
+
+      - name: Rebuild native modules for ARM64
+        if: matrix.arch == 'arm64'
+        run: |
+          docker run --rm \
+            -v "${{ github.workspace }}/agent":/app \
+            -w /app \
+            --platform linux/arm64 \
+            node:24-slim bash -c "
+              apt-get update -qq && apt-get install -y -qq build-essential python3
+              npm rebuild node-pty @serialport/bindings-cpp
+            "
+
+      - name: Build Admin UI
+        working-directory: ./agent/admin
+        run: npm ci --legacy-peer-deps && npm run build
+
+      - name: Prune dev dependencies
+        working-directory: ./agent
+        run: npm prune --omit=dev
+
+      - name: Bundle CLI install script
+        run: cp agent-cli/bin/cli-install.sh agent/bin/cli-install.sh
+
+      - name: Build tarball
+        run: |
+          set -euo pipefail
+          VERSION="${{ needs.version.outputs.version }}"
+          ARCH="${{ matrix.arch }}"
+          mkdir -p /tmp/artifacts
+
+          tar -czf /tmp/artifacts/agent-${VERSION}-${ARCH}.tar.gz \
+            -C "${{ github.workspace }}/agent" \
+            dist/ package.json package-lock.json node_modules/ bin/ admin/dist/
+
+          cd /tmp/artifacts
+          sha256sum agent-${VERSION}-${ARCH}.tar.gz > agent-${VERSION}-${ARCH}.tar.gz.sha256
+          echo "✓ agent-${VERSION}-${ARCH}.tar.gz"
+
+      - name: Stamp install.sh (x86_64 only)
+        if: matrix.arch == 'x86_64'
+        run: |
+          VERSION="${{ needs.version.outputs.version }}"
+          sed "s/AGENT_VERSION_PLACEHOLDER/${VERSION}/g" agent/bin/install.sh > /tmp/artifacts/install.sh
+          chmod +x /tmp/artifacts/install.sh
+          cd /tmp/artifacts
+          sha256sum install.sh > install.sh.sha256
+
+      - name: Build .deb package
+        run: |
+          VERSION="${{ needs.version.outputs.version }}"
+          chmod +x scripts/build-deb.sh
+          ./scripts/build-deb.sh \
+            "/tmp/artifacts/agent-${VERSION}-${{ matrix.arch }}.tar.gz" \
+            "$VERSION" \
+            "${{ matrix.deb_arch }}"
+          echo "✓ iotistica-agent_${VERSION}_${{ matrix.deb_arch }}.deb"
+
+      - name: Azure login
+        uses: azure/login@93381592711f247e165c389ebb30b596c84cdc48 # v3.0.0
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Upload to Azure
+        run: |
+          set -euo pipefail
+          VERSION="${{ needs.version.outputs.version }}"
+          ARCH="${{ matrix.arch }}"
+          DEB_ARCH="${{ matrix.deb_arch }}"
+          ACCT=${{ secrets.AZURE_STORAGE_ACCOUNT }}
+          DEB="iotistica-agent_${VERSION}_${DEB_ARCH}.deb"
+
+          # Tarball — versioned permanent + rolling latest
+          az storage blob upload --account-name "$ACCT" --container-name scripts \
+            --name "agent/versions/agent-${VERSION}-${ARCH}.tar.gz" \
+            --file "/tmp/artifacts/agent-${VERSION}-${ARCH}.tar.gz" \
+            --overwrite true --auth-mode key --only-show-errors --output none --content-type application/gzip
+          az storage blob upload --account-name "$ACCT" --container-name scripts \
+            --name "agent/versions/agent-${VERSION}-${ARCH}.tar.gz.sha256" \
+            --file "/tmp/artifacts/agent-${VERSION}-${ARCH}.tar.gz.sha256" \
+            --overwrite true --auth-mode key --only-show-errors --output none --content-type text/plain
+          az storage blob upload --account-name "$ACCT" --container-name scripts \
+            --name "agent/agent-latest-${ARCH}.tar.gz" \
+            --file "/tmp/artifacts/agent-${VERSION}-${ARCH}.tar.gz" \
+            --overwrite true --auth-mode key --only-show-errors --output none --content-type application/gzip
+          az storage blob upload --account-name "$ACCT" --container-name scripts \
+            --name "agent/agent-latest-${ARCH}.tar.gz.sha256" \
+            --file "/tmp/artifacts/agent-${VERSION}-${ARCH}.tar.gz.sha256" \
+            --overwrite true --auth-mode key --only-show-errors --output none --content-type text/plain
+
+          # .deb — versioned + rolling latest
+          az storage blob upload --account-name "$ACCT" --container-name scripts \
+            --name "agent/versions/${DEB}" \
+            --file "/tmp/artifacts/${DEB}" \
+            --overwrite true --auth-mode key --only-show-errors --output none \
+            --content-type "application/vnd.debian.binary-package"
+          az storage blob upload --account-name "$ACCT" --container-name scripts \
+            --name "agent/versions/${DEB}.sha256" \
+            --file "/tmp/artifacts/${DEB}.sha256" \
+            --overwrite true --auth-mode key --only-show-errors --output none --content-type text/plain
+          az storage blob upload --account-name "$ACCT" --container-name scripts \
+            --name "agent/iotistica-agent-latest-${DEB_ARCH}.deb" \
+            --file "/tmp/artifacts/${DEB}" \
+            --overwrite true --auth-mode key --only-show-errors --output none \
+            --content-type "application/vnd.debian.binary-package"
+
+          # x86_64-only: generic latest tarball, install.sh, versioned install snapshot
+          if [ "$ARCH" = "x86_64" ]; then
+            az storage blob upload --account-name "$ACCT" --container-name scripts \
+              --name "agent/agent-latest.tar.gz" \
+              --file "/tmp/artifacts/agent-${VERSION}-x86_64.tar.gz" \
+              --overwrite true --auth-mode key --only-show-errors --output none --content-type application/gzip
+            az storage blob upload --account-name "$ACCT" --container-name scripts \
+              --name "agent/install.sh" \
+              --file "/tmp/artifacts/install.sh" \
+              --overwrite true --auth-mode key --only-show-errors --output none --content-type text/x-shellscript
+            az storage blob upload --account-name "$ACCT" --container-name scripts \
+              --name "agent/install.sh.sha256" \
+              --file "/tmp/artifacts/install.sh.sha256" \
+              --overwrite true --auth-mode key --only-show-errors --output none --content-type text/plain
+            az storage blob upload --account-name "$ACCT" --container-name scripts \
+              --name "agent/versions/install-${VERSION}.sh" \
+              --file "/tmp/artifacts/install.sh" \
+              --overwrite true --auth-mode key --only-show-errors --output none --content-type text/x-shellscript
+          fi
+
+      - name: Save artifacts for publish job
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-artifacts-${{ matrix.arch }}
+          path: /tmp/artifacts/
+          retention-days: 1
+
+  # ── Docker: build + push with version tag ───────────────────────────────────
+  docker:
+    name: Docker Build & Push
+    needs: version
+    runs-on: [ubuntu-24.04]
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_PASSWORD }}
+
+      - name: Build and push
+        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5
+        with:
+          context: .
+          file: ./agent/Dockerfile
+          push: true
+          provenance: false
+          platforms: linux/amd64
+          tags: |
+            iotistic/agent:${{ needs.version.outputs.version }}
+            iotistic/agent:latest
+          cache-from: type=registry,ref=iotistic/agent:buildcache
+          cache-to: type=registry,ref=iotistic/agent:buildcache,mode=min,ignore-error=true
+          build-args: BUILDKIT_INLINE_CACHE=1
+
+  # ── Deploy to Azure Container App ───────────────────────────────────────────
+  deploy-container-app:
+    name: Deploy to Azure Container App
+    needs: [version, docker]
+    runs-on: [ubuntu-24.04]
+    env:
+      RESOURCE_GROUP: iotistic
+      CONTAINER_APP: iotistica-agent
+
+    steps:
+      - name: Azure login
+        uses: azure/login@93381592711f247e165c389ebb30b596c84cdc48 # v3.0.0
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Ensure ingress config
+        run: |
+          az containerapp ingress update \
+            --name "$CONTAINER_APP" \
+            --resource-group "$RESOURCE_GROUP" \
+            --type external \
+            --transport http \
+            --target-port 48484
+
+      - name: Deploy image and env vars
+        run: |
+          az containerapp update \
+            --name "$CONTAINER_APP" \
+            --resource-group "$RESOURCE_GROUP" \
+            --image "iotistic/agent:${{ needs.version.outputs.version }}" \
+            --set-env-vars \
+              NODE_ENV=production \
+              STANDALONE=true \
+              API_SECURITY_MODE=OPEN \
+              FIREWALL_MODE=disabled \
+              PRO_FORCE=false \
+              USE_MSGPACK_POC=false \
+              USE_KEY_COMPACTION_POC=false \
+              USE_DEFLATE_COMPRESSION=false \
+              AGENT_SHELL_MAX_SESSION_MS=3600000 \
+              LOG_LEVEL=info
+
+      - name: Deploy Summary
+        run: |
+          VERSION="${{ needs.version.outputs.version }}"
+          echo "## Azure Container App Deploy" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Image:** \`iotistic/agent:${VERSION}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**App:** \`$CONTAINER_APP\` (resource group \`$RESOURCE_GROUP\`)" >> $GITHUB_STEP_SUMMARY
+
+  # ── SBOM + GitHub Release ───────────────────────────────────────────────────
+  publish:
+    name: SBOM & GitHub Release
+    needs: [version, package, docker]
+    runs-on: [ubuntu-24.04]
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Download release artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          path: /tmp/all-artifacts
+          pattern: release-artifacts-*
+
+      - name: Flatten artifacts directory
+        run: |
+          mkdir -p /tmp/artifacts
+          find /tmp/all-artifacts -type f -exec cp {} /tmp/artifacts/ \;
+          ls -lh /tmp/artifacts/
+
+      - name: Generate SBOM with Syft
+        run: |
+          set -euo pipefail
+          curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin
+          VERSION="${{ needs.version.outputs.version }}"
+          mkdir -p /tmp/sbom /tmp/extract/x86_64 /tmp/extract/arm64 /tmp/install
+
+          syft dir:./agent -o cyclonedx-json=/tmp/sbom/agent-source.cyclonedx.json
+
+          tar -xzf /tmp/artifacts/agent-${VERSION}-x86_64.tar.gz -C /tmp/extract/x86_64
+          tar -xzf /tmp/artifacts/agent-${VERSION}-arm64.tar.gz  -C /tmp/extract/arm64
+          syft dir:/tmp/extract/x86_64 -o cyclonedx-json=/tmp/sbom/agent-artifacts-x86_64.cyclonedx.json
+          syft dir:/tmp/extract/arm64  -o cyclonedx-json=/tmp/sbom/agent-artifacts-arm64.cyclonedx.json
+
+          cp /tmp/artifacts/install.sh /tmp/install/
+          syft dir:/tmp/install -o cyclonedx-json=/tmp/sbom/install-script.cyclonedx.json
+
+      - name: Azure login
+        uses: azure/login@93381592711f247e165c389ebb30b596c84cdc48 # v3.0.0
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Upload SBOMs to Azure
+        run: |
+          set -euo pipefail
+          VERSION="${{ needs.version.outputs.version }}"
+          ACCT=${{ secrets.AZURE_STORAGE_ACCOUNT }}
+          for f in agent-source agent-artifacts-x86_64 agent-artifacts-arm64 install-script; do
+            az storage blob upload --account-name "$ACCT" --container-name scripts \
+              --name "agent/versions/${VERSION}/sbom/${f}.cyclonedx.json" \
+              --file "/tmp/sbom/${f}.cyclonedx.json" \
+              --overwrite true --auth-mode key --only-show-errors --output none --content-type application/json
+            az storage blob upload --account-name "$ACCT" --container-name scripts \
+              --name "agent/sbom/${f}.cyclonedx.json" \
+              --file "/tmp/sbom/${f}.cyclonedx.json" \
+              --overwrite true --auth-mode key --only-show-errors --output none --content-type application/json
+          done
+
+          cat > /tmp/sbom/sbom-latest.json << EOF
+          {
+            "version": "${VERSION}",
+            "releasedAt": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "baseUrl": "https://get.iotistica.com/agent/sbom",
+            "files": [
+              { "id": "agent-source",           "label": "Agent — source",       "file": "agent-source.cyclonedx.json",           "description": "All npm dependencies declared in agent/package.json, generated from source." },
+              { "id": "agent-artifacts-x86_64", "label": "Agent — x86_64 build", "file": "agent-artifacts-x86_64.cyclonedx.json", "description": "Filesystem scan of the built x86_64 release tarball — includes bundled binaries." },
+              { "id": "agent-artifacts-arm64",  "label": "Agent — arm64 build",  "file": "agent-artifacts-arm64.cyclonedx.json",  "description": "Filesystem scan of the built arm64 release tarball — includes bundled binaries." },
+              { "id": "install-script",         "label": "Install script",        "file": "install-script.cyclonedx.json",         "description": "Scan of install.sh and any bundled tooling." }
+            ]
+          }
+          EOF
+          az storage blob upload --account-name "$ACCT" --container-name scripts \
+            --name "agent/sbom/sbom-latest.json" \
+            --file "/tmp/sbom/sbom-latest.json" \
+            --overwrite true --auth-mode key --only-show-errors --output none \
+            --content-type application/json \
+            --content-cache-control "no-cache"
+
+      - name: Create GitHub Release
+        run: |
+          set -euo pipefail
+          VERSION="${{ needs.version.outputs.version }}"
+          TAG="${{ needs.version.outputs.tag }}"
+
+          PREV_TAG=$(git describe --tags --abbrev=0 "${TAG}^" 2>/dev/null || echo "")
+          if [ -n "$PREV_TAG" ]; then
+            CHANGELOG=$(git log "${PREV_TAG}..${TAG}" --pretty=format:"- %s (%h)" --no-merges --max-count=30)
+          else
+            CHANGELOG=$(git log --pretty=format:"- %s (%h)" --no-merges --max-count=30)
+          fi
+
+          cat > /tmp/release-notes.md << NOTES
+          ## Changes
+
+          ${CHANGELOG}
+
+          ## Install
+
+          ### One-line installer (recommended)
+          \`\`\`sh
+          curl -sfL https://get.iotistica.com/agent | sudo sh
+          \`\`\`
+
+          ### Debian / Ubuntu (.deb)
+          \`\`\`sh
+          # amd64
+          wget https://get.iotistica.com/agent/versions/iotistica-agent_${VERSION}_amd64.deb
+          sudo dpkg -i iotistica-agent_${VERSION}_amd64.deb
+
+          # arm64 (Raspberry Pi 4/5)
+          wget https://get.iotistica.com/agent/versions/iotistica-agent_${VERSION}_arm64.deb
+          sudo dpkg -i iotistica-agent_${VERSION}_arm64.deb
+          \`\`\`
+
+          ### Docker
+          \`\`\`sh
+          docker pull iotistic/agent:${VERSION}
+          \`\`\`
+
+          ## Artifacts
+          | File | Platform |
+          |------|----------|
+          | \`iotistica-agent_${VERSION}_amd64.deb\` | Debian/Ubuntu x86_64 |
+          | \`iotistica-agent_${VERSION}_arm64.deb\` | Debian/Ubuntu arm64 (Pi 4/5) |
+          | \`agent-${VERSION}-x86_64.tar.gz\` | Tarball x86_64 |
+          | \`agent-${VERSION}-arm64.tar.gz\` | Tarball arm64 |
+          NOTES
+
+          ASSETS=(
+            /tmp/artifacts/iotistica-agent_${VERSION}_amd64.deb
+            /tmp/artifacts/iotistica-agent_${VERSION}_amd64.deb.sha256
+            /tmp/artifacts/iotistica-agent_${VERSION}_arm64.deb
+            /tmp/artifacts/iotistica-agent_${VERSION}_arm64.deb.sha256
+            /tmp/artifacts/agent-${VERSION}-x86_64.tar.gz
+            /tmp/artifacts/agent-${VERSION}-x86_64.tar.gz.sha256
+            /tmp/artifacts/agent-${VERSION}-arm64.tar.gz
+            /tmp/artifacts/agent-${VERSION}-arm64.tar.gz.sha256
+            /tmp/artifacts/install.sh
+            /tmp/artifacts/install.sh.sha256
+          )
+
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            echo "Release $TAG already exists — updating notes and re-uploading assets"
+            gh release edit "$TAG" --title "Agent v${VERSION}" --notes-file /tmp/release-notes.md
+            gh release upload "$TAG" "${ASSETS[@]}" --clobber
+          else
+            gh release create "$TAG" --title "Agent v${VERSION}" --notes-file /tmp/release-notes.md "${ASSETS[@]}"
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Release summary
+        if: always()
+        run: |
+          VERSION="${{ needs.version.outputs.version }}"
+          echo "## Release v${VERSION}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Artifact | Path |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|------|" >> $GITHUB_STEP_SUMMARY
+          echo "| x86_64 tarball | \`agent/versions/agent-${VERSION}-x86_64.tar.gz\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| arm64 tarball  | \`agent/versions/agent-${VERSION}-arm64.tar.gz\`  |" >> $GITHUB_STEP_SUMMARY
+          echo "| amd64 .deb     | \`agent/versions/iotistica-agent_${VERSION}_amd64.deb\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| arm64 .deb     | \`agent/versions/iotistica-agent_${VERSION}_arm64.deb\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| install.sh     | \`agent/install.sh\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Docker         | \`iotistic/agent:${VERSION}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| SBOM           | \`agent/versions/${VERSION}/sbom/\` |" >> $GITHUB_STEP_SUMMARY

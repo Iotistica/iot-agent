@@ -1,0 +1,493 @@
+name: CI Build, Test & Push Agent
+
+on:
+  push:
+    branches:
+      - master
+      - feature/**
+    paths:
+      - 'agent/**'
+      - 'agent-cli/**'
+      - '.github/workflows/build-agent-ci.yml'
+      - '.github/actions/**'
+  workflow_dispatch:
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
+concurrency:
+  group: agent-ci
+  cancel-in-progress: true
+
+
+jobs:
+  test:
+    name: Lint & Test
+    runs-on: [ubuntu-24.04]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+
+      - name: Cache agent node_modules
+        id: agent-cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: agent/node_modules
+          key: ${{ runner.os }}-node-modules-x86_64-${{ hashFiles('agent/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-node-modules-x86_64-
+
+      - name: Install Agent dependencies
+        if: steps.agent-cache.outputs.cache-hit != 'true'
+        working-directory: ./agent
+        run: npm ci --prefer-offline --no-audit --legacy-peer-deps
+
+      - name: Run ESLint
+        working-directory: ./agent
+        run: npm run lint
+
+      - name: Run unit tests
+        working-directory: ./agent
+        run: npm run test:unit
+        continue-on-error: true
+
+      - name: Cache CLI node_modules
+        id: cli-cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: agent-cli/node_modules
+          key: ${{ runner.os }}-cli-node-modules-x86_64-${{ hashFiles('agent-cli/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-cli-node-modules-x86_64-
+
+      - name: Install CLI dependencies
+        if: steps.cli-cache.outputs.cache-hit != 'true'
+        working-directory: ./agent-cli
+        run: npm ci --prefer-offline --no-audit
+
+      - name: Run CLI ESLint
+        working-directory: ./agent-cli
+        run: npm run lint --if-present
+
+  build:
+    name: Build
+    needs: test
+    runs-on: [ubuntu-24.04]
+    outputs:
+      sha_short: ${{ steps.meta.outputs.sha_short }}
+      agent_version: ${{ steps.meta.outputs.agent_version }}
+      cli_version: ${{ steps.meta.outputs.cli_version }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+
+      - name: Cache agent node_modules
+        id: agent-cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: agent/node_modules
+          key: ${{ runner.os }}-node-modules-x86_64-${{ hashFiles('agent/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-node-modules-x86_64-
+
+      - name: Install Agent dependencies
+        if: steps.agent-cache.outputs.cache-hit != 'true'
+        working-directory: ./agent
+        run: npm ci --prefer-offline --no-audit --legacy-peer-deps
+
+      - name: Build Agent
+        working-directory: ./agent
+        run: npm run build
+
+      - name: Cache CLI node_modules
+        id: cli-cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: agent-cli/node_modules
+          key: ${{ runner.os }}-cli-node-modules-x86_64-${{ hashFiles('agent-cli/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-cli-node-modules-x86_64-
+
+      - name: Install CLI dependencies
+        if: steps.cli-cache.outputs.cache-hit != 'true'
+        working-directory: ./agent-cli
+        run: npm ci --prefer-offline --no-audit
+
+      - name: Build CLI
+        working-directory: ./agent-cli
+        run: npm run build
+
+      - name: Calculate build metadata
+        id: meta
+        run: |
+          echo "sha_short=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+          echo "agent_version=$(jq -r '.version' agent/package.json)" >> $GITHUB_OUTPUT
+          echo "cli_version=$(jq -r '.version' agent-cli/package.json)" >> $GITHUB_OUTPUT
+
+      - name: Build Summary
+        run: |
+          echo "## Build Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Agent Version:** \`${{ steps.meta.outputs.agent_version }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**CLI Version:** \`${{ steps.meta.outputs.cli_version }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Git SHA:** \`${{ steps.meta.outputs.sha_short }}\`" >> $GITHUB_STEP_SUMMARY
+
+  docker:
+    name: Docker Build, Scan & Push
+    needs: build
+    runs-on: [ubuntu-24.04]
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Wait for Docker daemon
+        run: |
+          for i in $(seq 1 15); do
+            docker info > /dev/null 2>&1 && echo "Docker daemon ready" && break
+            echo "Waiting for Docker daemon... ($i/15)"
+            sleep 2
+          done
+          docker info
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+        with:
+          cleanup: true
+          driver-opts: |
+            image=moby/buildkit:buildx-stable-1
+            network=host
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_PASSWORD }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5
+        with:
+          context: .
+          file: ./agent/Dockerfile
+          push: true
+          provenance: false
+          platforms: linux/amd64
+          cache-from: type=registry,ref=iotistic/agent:buildcache
+          cache-to: type=registry,ref=iotistic/agent:buildcache,mode=min,ignore-error=true
+          tags: |
+            iotistic/agent:${{ needs.build.outputs.sha_short }}
+            iotistic/agent:latest
+          build-args: |
+            BUILDKIT_INLINE_CACHE=1
+
+      - name: Scan Agent image with Trivy
+        uses: ./.github/actions/trivy-scan
+        with:
+          image-ref: 'iotistic/agent:${{ needs.build.outputs.sha_short }}'
+          output-file: 'trivy-results.sarif'
+          fail-on-critical: 'true'
+          ignore-file: 'agent/.trivyignore'
+
+      - name: Docker Summary
+        if: always()
+        run: |
+          echo "## Docker Image Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Git SHA:** \`${{ needs.build.outputs.sha_short }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Images pushed:" >> $GITHUB_STEP_SUMMARY
+          echo "- \`iotistic/agent:${{ needs.build.outputs.sha_short }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- \`iotistic/agent:latest\`" >> $GITHUB_STEP_SUMMARY
+
+  package-agent:
+    name: Package Agent (${{ matrix.arch }})
+    needs: build
+    # Only package on master — feature branches get build/test/docker only
+    if: github.ref == 'refs/heads/master'
+    runs-on: [ubuntu-24.04]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+          - arch: arm64
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+
+      - name: Set up QEMU (ARM64 only)
+        if: matrix.arch == 'arm64'
+        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
+        with:
+          platforms: linux/arm64
+
+      - name: Install dependencies
+        working-directory: ./agent
+        run: npm ci --legacy-peer-deps
+
+      - name: Build
+        working-directory: ./agent
+        run: npm run build
+
+      - name: Rebuild native modules for ARM64
+        if: matrix.arch == 'arm64'
+        run: |
+          docker run --rm \
+            -v "${{ github.workspace }}/agent":/app \
+            -w /app \
+            --platform linux/arm64 \
+            node:24-slim bash -c "
+              apt-get update -qq && apt-get install -y -qq build-essential python3
+              npm rebuild node-pty @serialport/bindings-cpp
+            "
+
+      - name: Build Admin UI
+        working-directory: ./agent/admin
+        run: npm ci --legacy-peer-deps && npm run build
+
+      - name: Prune dev dependencies
+        working-directory: ./agent
+        run: npm prune --omit=dev
+
+      - name: Bundle cli-install.sh into agent bin
+        run: cp "${{ github.workspace }}/agent-cli/bin/cli-install.sh" "${{ github.workspace }}/agent/bin/cli-install.sh"
+
+      - name: Build tarball
+        run: |
+          set -euo pipefail
+          VERSION="${{ needs.build.outputs.agent_version }}"
+          ARCH="${{ matrix.arch }}"
+          mkdir -p /tmp/artifacts
+
+          tar -czf /tmp/artifacts/agent-${VERSION}-${ARCH}.tar.gz \
+            -C "${{ github.workspace }}/agent" \
+            dist/ package.json package-lock.json node_modules/ bin/ admin/dist/
+
+          cd /tmp/artifacts
+          sha256sum agent-${VERSION}-${ARCH}.tar.gz > agent-${VERSION}-${ARCH}.tar.gz.sha256
+
+      - name: Stamp install.sh (x86_64 only)
+        if: matrix.arch == 'x86_64'
+        run: |
+          VERSION="${{ needs.build.outputs.agent_version }}"
+          sed "s/AGENT_VERSION_PLACEHOLDER/${VERSION}/g" agent/bin/install.sh > /tmp/artifacts/install.sh
+          chmod +x /tmp/artifacts/install.sh
+          cd /tmp/artifacts
+          sha256sum install.sh > install.sh.sha256
+          jq -n \
+            --arg commit "${{ github.sha }}" \
+            --arg sha_short "${{ needs.build.outputs.sha_short }}" \
+            --arg version "$VERSION" \
+            --arg built_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            '{commit: $commit, sha_short: $sha_short, version: $version, built_at: $built_at}' \
+            > /tmp/artifacts/build-meta.json
+
+      - name: Upload agent package artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: agent-package-${{ matrix.arch }}
+          path: /tmp/artifacts/
+          if-no-files-found: error
+          retention-days: 7
+
+  package-cli:
+    name: Package CLI (${{ matrix.arch }})
+    needs: build
+    # Only package on master — feature branches are covered by the build job
+    if: github.ref == 'refs/heads/master'
+    runs-on: [ubuntu-24.04]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+          - arch: arm64
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+
+      - name: Cache CLI node_modules
+        id: cli-node-modules-cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: agent-cli/node_modules
+          key: ${{ runner.os }}-cli-node-modules-${{ matrix.arch }}-${{ hashFiles('agent-cli/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-cli-node-modules-${{ matrix.arch }}-
+
+      - name: Install CLI dependencies
+        if: steps.cli-node-modules-cache.outputs.cache-hit != 'true'
+        working-directory: ./agent-cli
+        run: npm ci --prefer-offline --no-audit
+
+      - name: Build CLI tarball
+        run: |
+          set -euo pipefail
+          ARCH="${{ matrix.arch }}"
+          cd agent-cli
+          npm run build
+          mkdir -p /tmp/cli-artifacts
+          tar -czf /tmp/cli-artifacts/cli-latest-${ARCH}.tar.gz \
+            dist/ package.json package-lock.json node_modules/
+          cd /tmp/cli-artifacts
+          sha256sum cli-latest-${ARCH}.tar.gz > cli-latest-${ARCH}.tar.gz.sha256
+
+      - name: Build generic latest + meta (x86_64 only)
+        if: matrix.arch == 'x86_64'
+        run: |
+          cd /tmp/cli-artifacts
+          cp cli-latest-x86_64.tar.gz cli-latest.tar.gz
+          sha256sum cli-latest.tar.gz > cli-latest.tar.gz.sha256
+          VERSION=$(jq -r '.version' "${{ github.workspace }}/agent-cli/package.json")
+          jq -n \
+            --arg commit "${{ github.sha }}" \
+            --arg sha_short "${{ needs.build.outputs.sha_short }}" \
+            --arg version "$VERSION" \
+            --arg built_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            '{commit: $commit, sha_short: $sha_short, version: $version, built_at: $built_at}' \
+            > cli-latest-build-meta.json
+
+      - name: Upload CLI package artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: cli-package-${{ matrix.arch }}
+          path: /tmp/cli-artifacts/
+          if-no-files-found: error
+          retention-days: 7
+
+  upload-azure:
+    name: Upload to Azure
+    needs: [build, package-agent, package-cli]
+    if: github.ref == 'refs/heads/master'
+    runs-on: [ubuntu-24.04]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Download all package artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          path: /tmp/all-artifacts
+
+      - name: Azure login
+        uses: azure/login@93381592711f247e165c389ebb30b596c84cdc48 # v3.0.0
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Upload agent tarballs to Azure staging
+        run: |
+          set -euo pipefail
+          VERSION="${{ needs.build.outputs.agent_version }}"
+          ACCT=${{ secrets.AZURE_STORAGE_ACCOUNT }}
+
+          for arch in x86_64 arm64; do
+            az storage blob upload --account-name "$ACCT" --container-name scripts \
+              --name "agent/builds/${VERSION}/agent-${VERSION}-${arch}.tar.gz" \
+              --file "/tmp/all-artifacts/agent-package-${arch}/agent-${VERSION}-${arch}.tar.gz" \
+              --overwrite true --auth-mode key --only-show-errors --output none --content-type application/gzip
+            az storage blob upload --account-name "$ACCT" --container-name scripts \
+              --name "agent/builds/${VERSION}/agent-${VERSION}-${arch}.tar.gz.sha256" \
+              --file "/tmp/all-artifacts/agent-package-${arch}/agent-${VERSION}-${arch}.tar.gz.sha256" \
+              --overwrite true --auth-mode key --only-show-errors --output none --content-type text/plain
+          done
+
+      - name: Upload install.sh to Azure staging
+        run: |
+          VERSION="${{ needs.build.outputs.agent_version }}"
+          ACCT=${{ secrets.AZURE_STORAGE_ACCOUNT }}
+          az storage blob upload --account-name "$ACCT" --container-name scripts \
+            --name "agent/builds/${VERSION}/install.sh" \
+            --file "/tmp/all-artifacts/agent-package-x86_64/install.sh" \
+            --overwrite true --auth-mode key --only-show-errors --output none --content-type text/x-shellscript
+          az storage blob upload --account-name "$ACCT" --container-name scripts \
+            --name "agent/builds/${VERSION}/install.sh.sha256" \
+            --file "/tmp/all-artifacts/agent-package-x86_64/install.sh.sha256" \
+            --overwrite true --auth-mode key --only-show-errors --output none --content-type text/plain
+          az storage blob upload --account-name "$ACCT" --container-name scripts \
+            --name "agent/builds/${VERSION}/build-meta.json" \
+            --file "/tmp/all-artifacts/agent-package-x86_64/build-meta.json" \
+            --overwrite true --auth-mode key --only-show-errors --output none --content-type application/json
+
+      - name: Upload CLI tarballs to Azure
+        run: |
+          set -euo pipefail
+          ACCT=${{ secrets.AZURE_STORAGE_ACCOUNT }}
+
+          for arch in x86_64 arm64; do
+            az storage blob upload --account-name "$ACCT" --container-name scripts \
+              --name "agent-cli/cli-latest-${arch}.tar.gz" \
+              --file "/tmp/all-artifacts/cli-package-${arch}/cli-latest-${arch}.tar.gz" \
+              --overwrite true --auth-mode key --only-show-errors --output none --content-type application/gzip
+            az storage blob upload --account-name "$ACCT" --container-name scripts \
+              --name "agent-cli/cli-latest-${arch}.tar.gz.sha256" \
+              --file "/tmp/all-artifacts/cli-package-${arch}/cli-latest-${arch}.tar.gz.sha256" \
+              --overwrite true --auth-mode key --only-show-errors --output none --content-type text/plain
+          done
+
+          az storage blob upload --account-name "$ACCT" --container-name scripts \
+            --name "agent-cli/cli-latest.tar.gz" \
+            --file "/tmp/all-artifacts/cli-package-x86_64/cli-latest.tar.gz" \
+            --overwrite true --auth-mode key --only-show-errors --output none --content-type application/gzip
+          az storage blob upload --account-name "$ACCT" --container-name scripts \
+            --name "agent-cli/cli-latest.tar.gz.sha256" \
+            --file "/tmp/all-artifacts/cli-package-x86_64/cli-latest.tar.gz.sha256" \
+            --overwrite true --auth-mode key --only-show-errors --output none --content-type text/plain
+          az storage blob upload --account-name "$ACCT" --container-name scripts \
+            --name "agent-cli/cli-latest-build-meta.json" \
+            --file "/tmp/all-artifacts/cli-package-x86_64/cli-latest-build-meta.json" \
+            --overwrite true --auth-mode key --only-show-errors --output none --content-type application/json
+
+      - name: Upload CLI installer to Azure
+        run: |
+          ACCT=${{ secrets.AZURE_STORAGE_ACCOUNT }}
+          az storage blob upload --account-name "$ACCT" --container-name scripts \
+            --name "agent-cli/cli-install.sh" \
+            --file "${{ github.workspace }}/agent-cli/bin/cli-install.sh" \
+            --overwrite true --auth-mode key --only-show-errors --output none --content-type text/x-shellscript
+
+      - name: Azure Upload Summary
+        if: always()
+        run: |
+          VERSION="${{ needs.build.outputs.agent_version }}"
+          echo "## Azure Upload Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Agent staging path:** \`agent/builds/${VERSION}/\`" >> $GITHUB_STEP_SUMMARY
+          echo "**CLI path:** \`agent-cli/cli-latest-*.tar.gz\`" >> $GITHUB_STEP_SUMMARY
+
+
+  # integration-tests:
+  #   name: Run Integration Tests
+  #   needs: [build, docker]
+  #   uses: ./.github/workflows/integration-tests.yml
+  #   with:
+  #     agent_version: latest
+  #   secrets: inherit

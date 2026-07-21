@@ -1,0 +1,66 @@
+/**
+ * Data Models
+ * ===========
+ * 
+ * Database models for endpoints and outputs
+ */
+
+// Device model (provisioning and registration)
+export { AgentModel as DeviceModel } from './agent.model';
+export type { Agent as Device } from './agent.model';
+
+// Endpoint device models (CRUD operations for protocol endpoints)
+export { EndpointModel } from './endpoint.model';
+export type { Endpoint } from './endpoint.model';
+
+// device output configuration (protocol adapter outputs)
+export { EndpointOutputModel } from './endpoint-outputs.model';
+export type { DeviceEndpointOutput } from './endpoint-outputs.model';
+
+// Agent metadata (discovery, etc.)
+export { MetadataModel } from './metadata.model';
+export { StateSnapshotModel } from './state-snapshot.model';
+export type { StateSnapshotRecord, StateSnapshotType } from './state-snapshot.model';
+export { RetryStateModel } from './retry-state.model';
+export type { RetryStateRecord } from './retry-state.model';
+export { DatabaseModel } from './database.model';
+export { OfflineQueueModel } from './offline-queue.model';
+export type { OfflineQueueRecord } from './offline-queue.model';
+
+// Message buffer (offline queue for MQTT)
+export { MessageBufferModel } from './buffer.model';
+export type { MessageBufferRecord, BufferStats, BufferAdmissionDecision } from './buffer.model';
+
+// Dictionary persistence (MQTT key compression)
+export { DictionaryModel } from './dictionary.model';
+export type { DictionaryEntry, DictionaryDelta, DictionaryMetadata } from './dictionary.model';
+
+// Schema drift persistence
+export { SchemaDriftModel } from './schema-drift.model';
+export type {
+	DriftSeverity,
+	DriftType,
+	PersistedBaselineState,
+	PersistedTypeFrequency,
+	SchemaDriftEvent,
+	SchemaDriftStore,
+} from './schema-drift.model';
+
+// Publish control persistence
+export { PublishDestinationsModel} from './publish-destinations.model';
+export type { PublishDestinationRecord as PublisherRecord, DestinationType as PublisherType } from './publish-destinations.model';
+export { PublishSubscriptionsModel } from './publish-subscriptions.model';
+export type {
+	PublishPayloadFormat,
+	PublishSubscriptionRecord,
+	PublishSubscriptionRoute,
+	SubscriptionCompression,
+} from './publish-subscriptions.model';
+
+// Protocol devices (physical/logical devices behind protocol endpoints)
+export { DeviceModel as ProtocolDevicesModel } from './device.model';
+export type { Device as ProtocolDevice } from './device.model';
+
+// Device operational-state transition history (predictive-maintenance enrichment)
+export { DeviceStateHistoryModel } from './device-state-history.model';
+export type { DeviceStateHistoryRecord } from './device-state-history.model';
