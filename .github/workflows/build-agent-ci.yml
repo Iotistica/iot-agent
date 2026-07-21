@@ -5,11 +5,6 @@ on:
     branches:
       - master
       - feature/**
-    paths:
-      - 'agent/**'
-      - 'agent-cli/**'
-      - '.github/workflows/build-agent-ci.yml'
-      - '.github/actions/**'
   workflow_dispatch:
 
 env:
@@ -38,22 +33,19 @@ jobs:
         id: agent-cache
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
-          path: agent/node_modules
-          key: ${{ runner.os }}-node-modules-x86_64-${{ hashFiles('agent/package-lock.json') }}
+          path: node_modules
+          key: ${{ runner.os }}-node-modules-x86_64-${{ hashFiles('package-lock.json') }}
           restore-keys: |
             ${{ runner.os }}-node-modules-x86_64-
 
       - name: Install Agent dependencies
         if: steps.agent-cache.outputs.cache-hit != 'true'
-        working-directory: ./agent
         run: npm ci --prefer-offline --no-audit --legacy-peer-deps
 
       - name: Run ESLint
-        working-directory: ./agent
         run: npm run lint
 
       - name: Run unit tests
-        working-directory: ./agent
         run: npm run test:unit
         continue-on-error: true
 
@@ -61,18 +53,18 @@ jobs:
         id: cli-cache
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
-          path: agent-cli/node_modules
-          key: ${{ runner.os }}-cli-node-modules-x86_64-${{ hashFiles('agent-cli/package-lock.json') }}
+          path: cli/node_modules
+          key: ${{ runner.os }}-cli-node-modules-x86_64-${{ hashFiles('cli/package-lock.json') }}
           restore-keys: |
             ${{ runner.os }}-cli-node-modules-x86_64-
 
       - name: Install CLI dependencies
         if: steps.cli-cache.outputs.cache-hit != 'true'
-        working-directory: ./agent-cli
+        working-directory: ./cli
         run: npm ci --prefer-offline --no-audit
 
       - name: Run CLI ESLint
-        working-directory: ./agent-cli
+        working-directory: ./cli
         run: npm run lint --if-present
 
   build:
@@ -97,44 +89,42 @@ jobs:
         id: agent-cache
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
-          path: agent/node_modules
-          key: ${{ runner.os }}-node-modules-x86_64-${{ hashFiles('agent/package-lock.json') }}
+          path: node_modules
+          key: ${{ runner.os }}-node-modules-x86_64-${{ hashFiles('package-lock.json') }}
           restore-keys: |
             ${{ runner.os }}-node-modules-x86_64-
 
       - name: Install Agent dependencies
         if: steps.agent-cache.outputs.cache-hit != 'true'
-        working-directory: ./agent
         run: npm ci --prefer-offline --no-audit --legacy-peer-deps
 
       - name: Build Agent
-        working-directory: ./agent
         run: npm run build
 
       - name: Cache CLI node_modules
         id: cli-cache
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
-          path: agent-cli/node_modules
-          key: ${{ runner.os }}-cli-node-modules-x86_64-${{ hashFiles('agent-cli/package-lock.json') }}
+          path: cli/node_modules
+          key: ${{ runner.os }}-cli-node-modules-x86_64-${{ hashFiles('cli/package-lock.json') }}
           restore-keys: |
             ${{ runner.os }}-cli-node-modules-x86_64-
 
       - name: Install CLI dependencies
         if: steps.cli-cache.outputs.cache-hit != 'true'
-        working-directory: ./agent-cli
+        working-directory: ./cli
         run: npm ci --prefer-offline --no-audit
 
       - name: Build CLI
-        working-directory: ./agent-cli
+        working-directory: ./cli
         run: npm run build
 
       - name: Calculate build metadata
         id: meta
         run: |
           echo "sha_short=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
-          echo "agent_version=$(jq -r '.version' agent/package.json)" >> $GITHUB_OUTPUT
-          echo "cli_version=$(jq -r '.version' agent-cli/package.json)" >> $GITHUB_OUTPUT
+          echo "agent_version=$(jq -r '.version' package.json)" >> $GITHUB_OUTPUT
+          echo "cli_version=$(jq -r '.version' cli/package.json)" >> $GITHUB_OUTPUT
 
       - name: Build Summary
         run: |
@@ -184,7 +174,7 @@ jobs:
         uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5
         with:
           context: .
-          file: ./agent/Dockerfile
+          file: ./Dockerfile
           push: true
           provenance: false
           platforms: linux/amd64
@@ -202,7 +192,7 @@ jobs:
           image-ref: 'iotistic/agent:${{ needs.build.outputs.sha_short }}'
           output-file: 'trivy-results.sarif'
           fail-on-critical: 'true'
-          ignore-file: 'agent/.trivyignore'
+          ignore-file: '.trivyignore'
 
       - name: Docker Summary
         if: always()
@@ -244,18 +234,16 @@ jobs:
           platforms: linux/arm64
 
       - name: Install dependencies
-        working-directory: ./agent
         run: npm ci --legacy-peer-deps
 
       - name: Build
-        working-directory: ./agent
         run: npm run build
 
       - name: Rebuild native modules for ARM64
         if: matrix.arch == 'arm64'
         run: |
           docker run --rm \
-            -v "${{ github.workspace }}/agent":/app \
+            -v "${{ github.workspace }}":/app \
             -w /app \
             --platform linux/arm64 \
             node:24-slim bash -c "
@@ -264,15 +252,14 @@ jobs:
             "
 
       - name: Build Admin UI
-        working-directory: ./agent/admin
+        working-directory: ./admin
         run: npm ci --legacy-peer-deps && npm run build
 
       - name: Prune dev dependencies
-        working-directory: ./agent
         run: npm prune --omit=dev
 
       - name: Bundle cli-install.sh into agent bin
-        run: cp "${{ github.workspace }}/agent-cli/bin/cli-install.sh" "${{ github.workspace }}/agent/bin/cli-install.sh"
+        run: cp "${{ github.workspace }}/cli/bin/cli-install.sh" "${{ github.workspace }}/bin/cli-install.sh"
 
       - name: Build tarball
         run: |
@@ -282,7 +269,7 @@ jobs:
           mkdir -p /tmp/artifacts
 
           tar -czf /tmp/artifacts/agent-${VERSION}-${ARCH}.tar.gz \
-            -C "${{ github.workspace }}/agent" \
+            -C "${{ github.workspace }}" \
             dist/ package.json package-lock.json node_modules/ bin/ admin/dist/
 
           cd /tmp/artifacts
@@ -292,7 +279,7 @@ jobs:
         if: matrix.arch == 'x86_64'
         run: |
           VERSION="${{ needs.build.outputs.agent_version }}"
-          sed "s/AGENT_VERSION_PLACEHOLDER/${VERSION}/g" agent/bin/install.sh > /tmp/artifacts/install.sh
+          sed "s/AGENT_VERSION_PLACEHOLDER/${VERSION}/g" bin/install.sh > /tmp/artifacts/install.sh
           chmod +x /tmp/artifacts/install.sh
           cd /tmp/artifacts
           sha256sum install.sh > install.sh.sha256
@@ -338,21 +325,21 @@ jobs:
         id: cli-node-modules-cache
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
-          path: agent-cli/node_modules
-          key: ${{ runner.os }}-cli-node-modules-${{ matrix.arch }}-${{ hashFiles('agent-cli/package-lock.json') }}
+          path: cli/node_modules
+          key: ${{ runner.os }}-cli-node-modules-${{ matrix.arch }}-${{ hashFiles('cli/package-lock.json') }}
           restore-keys: |
             ${{ runner.os }}-cli-node-modules-${{ matrix.arch }}-
 
       - name: Install CLI dependencies
         if: steps.cli-node-modules-cache.outputs.cache-hit != 'true'
-        working-directory: ./agent-cli
+        working-directory: ./cli
         run: npm ci --prefer-offline --no-audit
 
       - name: Build CLI tarball
         run: |
           set -euo pipefail
           ARCH="${{ matrix.arch }}"
-          cd agent-cli
+          cd cli
           npm run build
           mkdir -p /tmp/cli-artifacts
           tar -czf /tmp/cli-artifacts/cli-latest-${ARCH}.tar.gz \
@@ -366,7 +353,7 @@ jobs:
           cd /tmp/cli-artifacts
           cp cli-latest-x86_64.tar.gz cli-latest.tar.gz
           sha256sum cli-latest.tar.gz > cli-latest.tar.gz.sha256
-          VERSION=$(jq -r '.version' "${{ github.workspace }}/agent-cli/package.json")
+          VERSION=$(jq -r '.version' "${{ github.workspace }}/cli/package.json")
           jq -n \
             --arg commit "${{ github.sha }}" \
             --arg sha_short "${{ needs.build.outputs.sha_short }}" \
@@ -471,7 +458,7 @@ jobs:
           ACCT=${{ secrets.AZURE_STORAGE_ACCOUNT }}
           az storage blob upload --account-name "$ACCT" --container-name scripts \
             --name "agent-cli/cli-install.sh" \
-            --file "${{ github.workspace }}/agent-cli/bin/cli-install.sh" \
+            --file "${{ github.workspace }}/cli/bin/cli-install.sh" \
             --overwrite true --auth-mode key --only-show-errors --output none --content-type text/x-shellscript
 
       - name: Azure Upload Summary

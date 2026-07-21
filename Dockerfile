@@ -18,7 +18,7 @@ WORKDIR /app
 
 
 # Copy package files
-COPY agent/package*.json ./
+COPY package*.json ./
 
 # Install production dependencies only - using cache mount
 # Set PYTHON env var for node-gyp to find Python
@@ -51,7 +51,7 @@ WORKDIR /app
 
 
 # Copy package files
-COPY agent/package*.json agent/tsconfig.json agent/tsconfig.build.json ./
+COPY package*.json tsconfig.json tsconfig.build.json ./
 
 # Install all deps (including dev) - using cache mount for faster builds
 # Set PYTHON env var for node-gyp to find Python
@@ -63,7 +63,7 @@ RUN --mount=type=cache,target=/root/.npm \
     PYTHON=python3 npm ci --legacy-peer-deps
 
 # Copy source code and shared config
-COPY agent/src ./src
+COPY src ./src
 # Build TypeScript using build-specific config
 RUN npx tsc --project tsconfig.build.json && \
     npm run copy:db-assets && \
@@ -74,7 +74,7 @@ RUN npx tsc --project tsconfig.build.json && \
 # Must run AFTER npm prune — prune removes unlisted packages from node_modules.
 # Extract directly into node_modules so native deps (better-sqlite3, node-pty)
 # are resolved from the agent's already-compiled node_modules tree.
-COPY agent/pro/ /tmp/agent-pro/
+COPY pro/ /tmp/agent-pro/
 RUN if ls /tmp/agent-pro/*.tgz 1>/dev/null 2>&1; then \
     echo "[Pro] Extracting @iotistica/agent-pro…" && \
     mkdir -p /app/node_modules/@iotistica/agent-pro && \
@@ -87,11 +87,11 @@ FROM node:24-alpine AS admin-builder
 
 WORKDIR /app
 
-COPY agent/admin/package*.json ./
+COPY admin/package*.json ./
 RUN --mount=type=cache,target=/root/.npm \
     npm ci
 
-COPY agent/admin ./
+COPY admin ./
 RUN npx vite build
 
 # ---- Production stage ------
@@ -125,8 +125,8 @@ RUN (deluser node || true) && \
     chown agentuser:agentgroup /app/data/vpn
    
 
-# Copy package files from agent directory (contains version info)
-COPY --chown=agentuser:agentgroup agent/package*.json ./
+# Copy package files (contains version info)
+COPY --chown=agentuser:agentgroup package*.json ./
 
 # Copy production dependencies from builder stage (pruned via npm prune --omit=dev)
 COPY --from=builder --chown=agentuser:agentgroup /app/node_modules ./node_modules
@@ -138,8 +138,8 @@ COPY --from=builder --chown=agentuser:agentgroup /app/dist ./dist
 COPY --from=admin-builder --chown=agentuser:agentgroup /app/dist ./admin/dist
 
 # Copy update scripts and entrypoint
-COPY agent/bin/*.sh /app/bin/
-COPY agent/docker-entrypoint.sh /app/docker-entrypoint.sh
+COPY bin/*.sh /app/bin/
+COPY docker-entrypoint.sh /app/docker-entrypoint.sh
 
 # Set permissions on scripts and entrypoint
 RUN chmod +x /app/bin/*.sh && \

@@ -32,7 +32,7 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(dirname "$SCRIPT_DIR")"
-DEB_SRC="$REPO_ROOT/agent/bin/deb"
+DEB_SRC="$REPO_ROOT/bin/deb"
 OUT_DIR="$(dirname "$TARBALL")"
 PKG_NAME="iotistica-agent_${VERSION}_${DEB_ARCH}"
 PKG_DIR="/tmp/deb-build-${VERSION}-${DEB_ARCH}"

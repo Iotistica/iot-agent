@@ -78,15 +78,13 @@ jobs:
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ~/.npm
-          key: ${{ runner.os }}-npm-${{ matrix.arch }}-${{ hashFiles('agent/package-lock.json') }}
+          key: ${{ runner.os }}-npm-${{ matrix.arch }}-${{ hashFiles('package-lock.json') }}
           restore-keys: ${{ runner.os }}-npm-${{ matrix.arch }}-
 
       - name: Install agent dependencies
-        working-directory: ./agent
         run: npm ci --legacy-peer-deps
 
       - name: Build agent (TypeScript)
-        working-directory: ./agent
         run: npm run build
 
       - name: Set up QEMU (ARM64 cross-compile)
@@ -99,7 +97,7 @@ jobs:
         if: matrix.arch == 'arm64'
         run: |
           docker run --rm \
-            -v "${{ github.workspace }}/agent":/app \
+            -v "${{ github.workspace }}":/app \
             -w /app \
             --platform linux/arm64 \
             node:24-slim bash -c "
@@ -108,15 +106,14 @@ jobs:
             "
 
       - name: Build Admin UI
-        working-directory: ./agent/admin
+        working-directory: ./admin
         run: npm ci --legacy-peer-deps && npm run build
 
       - name: Prune dev dependencies
-        working-directory: ./agent
         run: npm prune --omit=dev
 
       - name: Bundle CLI install script
-        run: cp agent-cli/bin/cli-install.sh agent/bin/cli-install.sh
+        run: cp cli/bin/cli-install.sh bin/cli-install.sh
 
       - name: Build tarball
         run: |
@@ -126,7 +123,7 @@ jobs:
           mkdir -p /tmp/artifacts
 
           tar -czf /tmp/artifacts/agent-${VERSION}-${ARCH}.tar.gz \
-            -C "${{ github.workspace }}/agent" \
+            -C "${{ github.workspace }}" \
             dist/ package.json package-lock.json node_modules/ bin/ admin/dist/
 
           cd /tmp/artifacts
@@ -137,7 +134,7 @@ jobs:
         if: matrix.arch == 'x86_64'
         run: |
           VERSION="${{ needs.version.outputs.version }}"
-          sed "s/AGENT_VERSION_PLACEHOLDER/${VERSION}/g" agent/bin/install.sh > /tmp/artifacts/install.sh
+          sed "s/AGENT_VERSION_PLACEHOLDER/${VERSION}/g" bin/install.sh > /tmp/artifacts/install.sh
           chmod +x /tmp/artifacts/install.sh
           cd /tmp/artifacts
           sha256sum install.sh > install.sh.sha256
@@ -252,7 +249,7 @@ jobs:
         uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5
         with:
           context: .
-          file: ./agent/Dockerfile
+          file: ./Dockerfile
           push: true
           provenance: false
           platforms: linux/amd64
@@ -346,7 +343,7 @@ jobs:
           VERSION="${{ needs.version.outputs.version }}"
           mkdir -p /tmp/sbom /tmp/extract/x86_64 /tmp/extract/arm64 /tmp/install
 
-          syft dir:./agent -o cyclonedx-json=/tmp/sbom/agent-source.cyclonedx.json
+          syft dir:. -o cyclonedx-json=/tmp/sbom/agent-source.cyclonedx.json
 
           tar -xzf /tmp/artifacts/agent-${VERSION}-x86_64.tar.gz -C /tmp/extract/x86_64
           tar -xzf /tmp/artifacts/agent-${VERSION}-arm64.tar.gz  -C /tmp/extract/arm64
@@ -383,7 +380,7 @@ jobs:
             "releasedAt": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
             "baseUrl": "https://get.iotistica.com/agent/sbom",
             "files": [
-              { "id": "agent-source",           "label": "Agent — source",       "file": "agent-source.cyclonedx.json",           "description": "All npm dependencies declared in agent/package.json, generated from source." },
+              { "id": "agent-source",           "label": "Agent — source",       "file": "agent-source.cyclonedx.json",           "description": "All npm dependencies declared in package.json, generated from source." },
               { "id": "agent-artifacts-x86_64", "label": "Agent — x86_64 build", "file": "agent-artifacts-x86_64.cyclonedx.json", "description": "Filesystem scan of the built x86_64 release tarball — includes bundled binaries." },
               { "id": "agent-artifacts-arm64",  "label": "Agent — arm64 build",  "file": "agent-artifacts-arm64.cyclonedx.json",  "description": "Filesystem scan of the built arm64 release tarball — includes bundled binaries." },
               { "id": "install-script",         "label": "Install script",        "file": "install-script.cyclonedx.json",         "description": "Scan of install.sh and any bundled tooling." }

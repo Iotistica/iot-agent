@@ -6,7 +6,7 @@ echo "=================================="
 echo ""
 
 # Test database path
-DB_PATH="../agent/data/database.sqlite"
+DB_PATH="../data/database.sqlite"
 
 # Function to check provisioning status
 check_provisioning_status() {

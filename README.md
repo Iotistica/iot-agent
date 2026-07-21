@@ -30,10 +30,7 @@ See **[iotistica.com/solutions.html](https://iotistica.com/solutions.html)** for
 
 ## What's in this repo
 
-| Directory | Description |
-|-----------|-------------|
-| `agent/` | Edge runtime deployed on IoT hardware (Node.js 20 / TypeScript) |
-| `agent-cli/` | `iotctl` — CLI for provisioning and managing agents |
+The edge runtime (Node.js 20 / TypeScript) lives at the repo root — `src/`, `admin/` (Vue admin UI), `bin/`, `test/`, etc. The CLI lives in `cli/` — `iotctl`, for provisioning and managing agents.
 
 This repo is a sibling of the main [`iotistica`](https://github.com/Iotistica/iotistic) platform monorepo (cloud API, ingestion, dashboards). Clone it alongside `iotistica` if you want to build the agent from source as part of the local platform dev stack (`docker-compose.agents.yml` in `iotistica` expects `../iot-agent`).
 
@@ -86,7 +83,6 @@ The monitor connects to the local Mosquitto broker and refreshes every five seco
 Run the agent fully offline with local configuration:
 
 ```bash
-cd agent
 cp .env.example .env        # set DATA_DIR, LOG_DIR, etc.
 npm install
 npm run build
@@ -98,7 +94,7 @@ Open the admin UI at `http://localhost:48481/admin/`.
 ### Docker (recommended)
 
 ```bash
-docker build -t iotistica-agent ./agent
+docker build -t iotistica-agent .
 
 docker run -d \
   --name iotistica-agent \
@@ -243,7 +239,7 @@ Compression options: `json`, `msgpack`, `json+deflate`, `msgpack+deflate`.
 
 ```bash
 # Install dependencies
-cd agent && npm install
+npm install
 
 # Build
 npm run build               # tsc → dist/
@@ -259,20 +255,29 @@ npm run test:integration    # Integration tests (requires running SQLite)
 ### Admin UI
 
 ```bash
-cd agent/admin
+cd admin
 npm install
 npm run dev     # Vite dev server at http://localhost:5173
-npm run build   # Build into agent/admin/dist/
+npm run build   # Build into admin/dist/
 ```
 
 ### CLI (`iotctl`)
 
 ```bash
-cd agent-cli
+cd cli
 npm install
 npm run build
 npm link        # or: node dist/iotctl.js <command>
 ```
+
+---
+
+## Further Documentation
+
+- [`docs/agent-reference.md`](docs/agent-reference.md) — full CLI command reference and developer notes
+- [`docs/feature-overview.md`](docs/feature-overview.md) — detailed feature-by-feature breakdown
+- [`docs/troubleshooting.md`](docs/troubleshooting.md)
+- [`docs/transport-switch-buffering-review.md`](docs/transport-switch-buffering-review.md)
 
 ---
 
