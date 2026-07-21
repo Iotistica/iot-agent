@@ -100,8 +100,13 @@ FROM node:24-alpine AS production
 WORKDIR /app
 
 # Install runtime dependencies and tini in single layer
-# apk upgrade ensures patched versions of base packages (e.g. libcrypto3/libssl3)
-RUN apk upgrade --no-cache && \
+# apk upgrade ensures patched versions of base packages (e.g. libcrypto3/libssl3).
+# APK_CACHE_BUST forces this layer to re-run even when the registry buildcache
+# would otherwise reuse it — without this, CI can keep shipping OS packages
+# with known CVEs indefinitely even after Alpine publishes a fix upstream.
+ARG APK_CACHE_BUST=1
+RUN echo "apk cache bust: ${APK_CACHE_BUST}" && \
+    apk upgrade --no-cache && \
     apk add --no-cache \
     sqlite-libs \
     iptables \

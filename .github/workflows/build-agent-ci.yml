@@ -170,6 +170,10 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_PASSWORD }}
 
+      - name: Set cache-bust date
+        id: cachebust
+        run: echo "date=$(date -u +%Y%m%d)" >> $GITHUB_OUTPUT
+
       - name: Build and push Docker image
         uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5
         with:
@@ -185,6 +189,7 @@ jobs:
             iotistic/agent:latest
           build-args: |
             BUILDKIT_INLINE_CACHE=1
+            APK_CACHE_BUST=${{ steps.cachebust.outputs.date }}
 
       - name: Scan Agent image with Trivy
         uses: ./.github/actions/trivy-scan

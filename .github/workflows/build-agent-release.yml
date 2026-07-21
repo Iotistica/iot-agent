@@ -245,6 +245,10 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_PASSWORD }}
 
+      - name: Set cache-bust date
+        id: cachebust
+        run: echo "date=$(date -u +%Y%m%d)" >> $GITHUB_OUTPUT
+
       - name: Build and push
         uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5
         with:
@@ -258,7 +262,9 @@ jobs:
             iotistic/agent:latest
           cache-from: type=registry,ref=iotistic/agent:buildcache
           cache-to: type=registry,ref=iotistic/agent:buildcache,mode=min,ignore-error=true
-          build-args: BUILDKIT_INLINE_CACHE=1
+          build-args: |
+            BUILDKIT_INLINE_CACHE=1
+            APK_CACHE_BUST=${{ steps.cachebust.outputs.date }}
 
   # ── Deploy to Azure Container App ───────────────────────────────────────────
   deploy-container-app:
