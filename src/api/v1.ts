@@ -2044,12 +2044,20 @@ import {
 	createDbBackup,
 	listDbBackups,
 	restoreDbFromBackup,
+	saveUploadedBackup,
 	getDefaultBackupDir,
 } from '../db/backup.js';
 import { getDatabasePath } from '../db/db-path.js';
 import { BackupScheduleModel } from '../db/models/backup-schedule.model.js';
-import { join as pathJoin } from 'path';
+import { join as pathJoin, basename } from 'path';
 import { existsSync, rmSync } from 'fs';
+
+/** Strips any path segments from a backup filename param — restore/delete/
+ *  download all take a filename straight from the URL, and without this a
+ *  value like "../../etc/passwd" would resolve outside the backup dir. */
+function safeBackupFileName(fileName: string): string {
+	return basename(fileName);
+}
 
 /** GET /v1/backups — list all database backups */
 router.get('/v1/backups', async (_req: Request, res: Response, next: NextFunction) => {
@@ -2077,7 +2085,7 @@ router.post('/v1/backups', async (_req: Request, res: Response, next: NextFuncti
 /** POST /v1/backups/:fileName/restore — restore database from a named backup */
 router.post('/v1/backups/:fileName/restore', async (req: Request, res: Response, next: NextFunction) => {
 	try {
-		const { fileName } = req.params;
+		const fileName = safeBackupFileName(req.params.fileName);
 		const dbPath = getDatabasePath();
 		const backupDir = getDefaultBackupDir(dbPath);
 		const backupPath = pathJoin(backupDir, fileName);
@@ -2091,7 +2099,7 @@ router.post('/v1/backups/:fileName/restore', async (req: Request, res: Response,
 /** DELETE /v1/backups/:fileName — delete a backup file */
 router.delete('/v1/backups/:fileName', async (req: Request, res: Response, next: NextFunction) => {
 	try {
-		const { fileName } = req.params;
+		const fileName = safeBackupFileName(req.params.fileName);
 		const dbPath = getDatabasePath();
 		const backupDir = getDefaultBackupDir(dbPath);
 		const backupPath = pathJoin(backupDir, fileName);
@@ -2106,6 +2114,41 @@ router.delete('/v1/backups/:fileName', async (req: Request, res: Response, next:
 		next(error);
 	}
 });
+
+/** GET /v1/backups/:fileName/download — download a backup file to your computer */
+router.get('/v1/backups/:fileName/download', async (req: Request, res: Response, next: NextFunction) => {
+	try {
+		const fileName = safeBackupFileName(req.params.fileName);
+		const dbPath = getDatabasePath();
+		const backupDir = getDefaultBackupDir(dbPath);
+		const backupPath = pathJoin(backupDir, fileName);
+		if (!existsSync(backupPath)) {
+			return res.status(404).json({ error: 'Backup not found' });
+		}
+		return res.download(backupPath, fileName);
+	} catch (error) {
+		next(error);
+	}
+});
+
+/** POST /v1/backups/upload — upload a backup file downloaded from another device */
+router.post(
+	'/v1/backups/upload',
+	express.raw({ type: '*/*', limit: '200mb' }),
+	async (req: Request, res: Response, next: NextFunction) => {
+		try {
+			if (!Buffer.isBuffer(req.body) || req.body.length === 0) {
+				return res.status(400).json({ error: 'No file uploaded' });
+			}
+			const dbPath = getDatabasePath();
+			const backupDir = getDefaultBackupDir(dbPath);
+			const backup = await saveUploadedBackup({ buffer: req.body, backupDir });
+			return res.status(201).json({ backup });
+		} catch (error) {
+			next(error);
+		}
+	},
+);
 
 /** GET /v1/backups/schedule — get the current backup schedule config */
 router.get('/v1/backups/schedule', (_req: Request, res: Response, next: NextFunction) => {

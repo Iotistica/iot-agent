@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { message, Modal } from 'ant-design-vue'
-import { PlusOutlined, ReloadOutlined, RollbackOutlined, DeleteOutlined, ClockCircleOutlined } from '@ant-design/icons-vue'
+import { PlusOutlined, ReloadOutlined, RollbackOutlined, DeleteOutlined, ClockCircleOutlined, DownloadOutlined, UploadOutlined } from '@ant-design/icons-vue'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import { client } from '@/api/client'
 
@@ -25,6 +25,8 @@ const loading = ref(false)
 const creating = ref(false)
 const restoringFile = ref<string | null>(null)
 const deletingFile = ref<string | null>(null)
+const uploading = ref(false)
+const uploadInput = ref<HTMLInputElement | null>(null)
 
 const schedule = ref<BackupSchedule>({ enabled: false, intervalHours: 24, keepCount: 7, lastRunAt: null, nextRunAt: null })
 const scheduleLoading = ref(false)
@@ -44,7 +46,7 @@ const columns = [
   { title: 'Created', key: 'createdAt', width: 180 },
   { title: 'Size', key: 'size', width: 100 },
   { title: 'Checksum (SHA-256)', key: 'checksum', ellipsis: true },
-  { title: 'Actions', key: 'actions', width: 160, align: 'right' as const },
+  { title: 'Actions', key: 'actions', width: 220, align: 'right' as const },
 ]
 
 async function load() {
@@ -98,6 +100,42 @@ async function createBackup() {
     message.error(e?.message ?? 'Failed to create backup')
   } finally {
     creating.value = false
+  }
+}
+
+function downloadBackup(fileName: string) {
+  const base = client.defaults.baseURL || ''
+  const a = document.createElement('a')
+  a.href = `${base}/v1/backups/${encodeURIComponent(fileName)}/download`
+  a.download = fileName
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+}
+
+function triggerUpload() {
+  uploadInput.value?.click()
+}
+
+async function handleUploadChange(e: Event) {
+  const input = e.target as HTMLInputElement
+  const file = input.files?.[0]
+  if (!file) return
+
+  uploading.value = true
+  try {
+    const buffer = await file.arrayBuffer()
+    await client.post('/v1/backups/upload', buffer, {
+      headers: { 'Content-Type': 'application/octet-stream' },
+      timeout: 60_000,
+    })
+    message.success('Backup uploaded. Click Restore below to apply it.')
+    await load()
+  } catch (err: any) {
+    message.error(err?.message ?? 'Upload failed')
+  } finally {
+    uploading.value = false
+    input.value = ''
   }
 }
 
@@ -175,6 +213,17 @@ onMounted(() => { load(); loadSchedule() })
             <template #icon><ReloadOutlined /></template>
             Refresh
           </a-button>
+          <a-button :loading="uploading" @click="triggerUpload">
+            <template #icon><UploadOutlined /></template>
+            Upload Backup
+          </a-button>
+          <input
+            ref="uploadInput"
+            type="file"
+            accept=".sqlite"
+            style="display: none"
+            @change="handleUploadChange"
+          />
           <a-button type="primary" :loading="creating" @click="createBackup">
             <template #icon><PlusOutlined /></template>
             Create Backup
@@ -186,8 +235,20 @@ onMounted(() => { load(); loadSchedule() })
         type="info"
         show-icon
         message="Backups are stored on the device filesystem. Restore replaces the live database — a pre-restore snapshot is created automatically before any restore."
-        style="margin-bottom: 20px"
+        style="margin-bottom: 12px"
       />
+
+      <a-alert type="warning" show-icon style="margin-bottom: 20px">
+        <template #message>Moving from this device to a new one?</template>
+        <template #description>
+          <ol class="migrate-steps">
+            <li>Click <strong>Create Backup</strong>, then <strong>Download</strong> it.</li>
+            <li>Install the agent on the new device.</li>
+            <li>On the new device's Backups page, click <strong>Upload Backup</strong> and select the file.</li>
+            <li>Click <strong>Restore</strong> next to it, then restart the agent.</li>
+          </ol>
+        </template>
+      </a-alert>
 
       <a-card size="small" style="margin-bottom: 20px">
         <template #title>
@@ -269,6 +330,11 @@ onMounted(() => { load(); loadSchedule() })
 
           <template v-else-if="column.key === 'actions'">
             <a-space>
+              <a-tooltip title="Download to your computer">
+                <a-button size="small" @click="downloadBackup(record.fileName)">
+                  <template #icon><DownloadOutlined /></template>
+                </a-button>
+              </a-tooltip>
               <a-tooltip title="Restore this backup">
                 <a-button
                   size="small"
@@ -329,6 +395,15 @@ onMounted(() => { load(); loadSchedule() })
   margin: 0;
   color: #888;
   font-size: 13px;
+}
+
+.migrate-steps {
+  margin: 4px 0 0;
+  padding-left: 18px;
+}
+
+.migrate-steps li {
+  margin-bottom: 2px;
 }
 
 .mono {

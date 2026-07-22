@@ -53,7 +53,7 @@ async function hashFileSha256(filePath: string): Promise<string> {
 	});
 }
 
-function getIntegrityCheck(filePath: string): string {
+export function getIntegrityCheck(filePath: string): string {
 	const db = new DatabaseSync(filePath);
 	try {
 		const row = db.prepare('PRAGMA integrity_check').get() as { integrity_check?: string } | undefined;
@@ -141,6 +141,56 @@ export async function createDbBackup(params: {
 		backupPath,
 		metadataPath: metaPath,
 		fileName: path.basename(backupPath),
+		sizeBytes,
+		createdAt: metadata.createdAt,
+		checksumSha256,
+	};
+}
+
+/**
+ * Saves a backup file uploaded from another device (e.g. downloaded from a
+ * live demo, then restored on a freshly installed agent). Runs the same
+ * integrity check as a locally created backup before accepting it.
+ */
+export async function saveUploadedBackup(params: {
+	buffer: Buffer;
+	backupDir: string;
+}): Promise<DbBackupInfo> {
+	ensureDir(params.backupDir);
+
+	const fileName = `uploaded-${formatTimestampForFile()}.sqlite`;
+	const backupPath = path.join(params.backupDir, fileName);
+	const tmpPath = `${backupPath}.tmp`;
+
+	fs.writeFileSync(tmpPath, params.buffer);
+
+	const integrity = getIntegrityCheck(tmpPath);
+	if (integrity !== 'ok') {
+		fs.rmSync(tmpPath, { force: true });
+		throw new Error(`Uploaded file is not a valid backup (integrity check: ${integrity})`);
+	}
+
+	const checksumSha256 = await hashFileSha256(tmpPath);
+	const sizeBytes = fs.statSync(tmpPath).size;
+
+	const metadata: DbBackupMetadata = {
+		version: 1,
+		createdAt: new Date().toISOString(),
+		sourceDbPath: 'uploaded',
+		backupFile: fileName,
+		checksumSha256,
+		sizeBytes,
+		integrity: 'ok',
+	};
+
+	fs.renameSync(tmpPath, backupPath);
+	const metaPath = metadataPathForBackup(backupPath);
+	fs.writeFileSync(metaPath, JSON.stringify(metadata, null, 2));
+
+	return {
+		backupPath,
+		metadataPath: metaPath,
+		fileName,
 		sizeBytes,
 		createdAt: metadata.createdAt,
 		checksumSha256,
