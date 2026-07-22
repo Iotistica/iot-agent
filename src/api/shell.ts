@@ -102,6 +102,14 @@ export function attachShellHandler(server: Server, logger?: AgentLogger): void {
 					USER: process.env.USER ?? 'iotistic',
 					SHELL: shell,
 					LANG: process.env.LANG ?? 'en_US.UTF-8',
+					// Non-secret operational config, passed through so tools run in this
+					// shell (e.g. iotctl) target the right local API instead of always
+					// falling back to the default port. Deliberately NOT spreading the
+					// full process.env here — this shell is reachable from the admin UI
+					// and must not leak credentials (MQTT_PASSWORD, AGENT_SHELL_HMAC_KEY, etc).
+					...(process.env.DEVICE_API_PORT ? { DEVICE_API_PORT: process.env.DEVICE_API_PORT } : {}),
+					...(process.env.DEVICE_API_URL ? { DEVICE_API_URL: process.env.DEVICE_API_URL } : {}),
+					...(process.env.CONFIG_DIR ? { CONFIG_DIR: process.env.CONFIG_DIR } : {}),
 				},
 			});
 		} catch (err) {
