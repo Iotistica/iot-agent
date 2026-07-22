@@ -21,6 +21,7 @@ import { migration as addBackupSchedule } from './migrations/20260629000000_add_
 import { migration as addAnomalyEdgeTracking } from './migrations/20260630001000_add_anomaly_edge_tracking.js';
 import { migration as fixAnomalyBaselineNullProfile } from './migrations/20260702000000_fix_anomaly_baseline_null_profile.js';
 import { migration as addDeviceStateHistory } from './migrations/20260719000000_add_device_state_history.js';
+import { migration as addMustChangePasswordToUsers } from './migrations/20260722000000_add_must_change_password_to_users.js';
 import type { NativeSqliteMigration } from './migration-types.js';
 
 export const nativeMigrations: NativeSqliteMigration[] = [
@@ -47,4 +48,5 @@ export const nativeMigrations: NativeSqliteMigration[] = [
 	addAnomalyEdgeTracking,
 	fixAnomalyBaselineNullProfile,
 	addDeviceStateHistory,
+	addMustChangePasswordToUsers,
 ];
