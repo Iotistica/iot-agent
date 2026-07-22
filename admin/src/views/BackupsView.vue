@@ -239,11 +239,11 @@ onMounted(() => { load(); loadSchedule() })
       />
 
       <a-alert type="warning" show-icon style="margin-bottom: 20px">
-        <template #message>Moving from this device to a new one?</template>
+        <template #message>Moving from the virtual live demo to a real device?</template>
         <template #description>
           <ol class="migrate-steps">
-            <li>Click <strong>Create Backup</strong>, then <strong>Download</strong> it.</li>
-            <li>Install the agent on the new device.</li>
+            <li>On the live demo, click <strong>Create Backup</strong>, then <strong>Download</strong> it.</li>
+            <li>Install the agent on your device.</li>
             <li>On the new device's Backups page, click <strong>Upload Backup</strong> and select the file.</li>
             <li>Click <strong>Restore</strong> next to it, then restart the agent.</li>
           </ol>
