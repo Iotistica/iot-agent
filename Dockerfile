@@ -94,6 +94,19 @@ RUN --mount=type=cache,target=/root/.npm \
 COPY admin ./
 RUN npx vite build
 
+# ---- CLI (iotctl) build stage ----
+FROM node:24-alpine AS cli-builder
+
+WORKDIR /app
+
+COPY cli/package*.json ./
+RUN --mount=type=cache,target=/root/.npm \
+    npm ci --prefer-offline --no-audit
+
+COPY cli/tsconfig*.json ./
+COPY cli/src ./src
+RUN npm run build && npm prune --omit=dev
+
 # ---- Production stage ------
 FROM node:24-alpine AS production
 
@@ -149,6 +162,17 @@ COPY docker-entrypoint.sh /app/docker-entrypoint.sh
 # Set permissions on scripts and entrypoint
 RUN chmod +x /app/bin/*.sh && \
     chmod +x /app/docker-entrypoint.sh
+
+# Install iotctl (CLI) — reachable via the admin UI's remote shell (Pro) or a
+# plain `docker exec`. Same launcher pattern as cli-install.sh: a wrapper
+# script rather than a symlink, since a symlinked JS entry point breaks
+# relative requires (Node resolves them from the symlink's location).
+COPY --from=cli-builder --chown=agentuser:agentgroup /app/dist /opt/iotistic/cli/dist
+COPY --from=cli-builder --chown=agentuser:agentgroup /app/node_modules /opt/iotistic/cli/node_modules
+COPY --from=cli-builder --chown=agentuser:agentgroup /app/package.json /opt/iotistic/cli/package.json
+RUN chmod +x /opt/iotistic/cli/dist/iotctl.js && \
+    printf '#!/bin/sh\nexec node /opt/iotistic/cli/dist/iotctl.js "$@"\n' > /usr/local/bin/iotctl && \
+    chmod +x /usr/local/bin/iotctl
 
 # Remove npm/npx from runtime image to reduce attack surface and npm-bundled CVEs.
 RUN rm -rf /usr/local/lib/node_modules/npm && \
