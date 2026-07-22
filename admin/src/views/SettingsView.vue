@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
+import { useRoute } from 'vue-router'
 import { message } from 'ant-design-vue'
 import { SaveOutlined, ReloadOutlined, LinkOutlined, CheckCircleOutlined, WifiOutlined } from '@ant-design/icons-vue'
 import AppLayout from '@/components/layout/AppLayout.vue'
@@ -9,7 +10,12 @@ import { dockerConfigApi } from '@/api/containers'
 import type { DockerConfig } from '@/api/containers'
 import type { AgentSettings } from '@/types'
 
-const activeTab = ref('agent')
+const route = useRoute()
+
+const VALID_TABS = ['agent', 'features', 'logging', 'intervals', 'drift', 'docker', 'mqtt-monitor']
+const activeTab = ref(
+  typeof route.query.tab === 'string' && VALID_TABS.includes(route.query.tab) ? route.query.tab : 'agent'
+)
 
 const loading = ref(false)
 const saving = ref(false)

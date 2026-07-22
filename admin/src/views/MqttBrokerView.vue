@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { useRouter } from 'vue-router'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import TopicTree from '@/components/mqtt/TopicTree.vue'
 import MessageViewer from '@/components/mqtt/MessageViewer.vue'
@@ -8,6 +9,7 @@ import { mqttApi, type TopicNode, type BrokerMetrics } from '@/api/mqtt'
 import { WifiOutlined, GlobalOutlined } from '@ant-design/icons-vue'
 
 const { proInstalled } = useProStatus()
+const router = useRouter()
 
 const metrics    = ref<BrokerMetrics | null>(null)
 const topicTree  = ref<Record<string, TopicNode>>({})
@@ -94,7 +96,7 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
 </script>
 
 <template>
-  <AppLayout title="MQTT Broker">
+  <AppLayout title="MQTT Monitor">
 
     <!-- Pro gate -->
     <a-alert v-if="!proInstalled" type="info" show-icon style="margin-bottom: 16px">
@@ -121,10 +123,24 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
       <a-alert
         v-if="!loading && !connected"
         type="warning"
-        message="Not connected to local MQTT broker — retrying…"
         show-icon
         style="margin-bottom: 16px"
-      />
+      >
+        <template #message>Not connected to local MQTT broker</template>
+        <template #description>
+          <div style="margin-top: 4px">
+            Check that the broker URL and credentials are configured correctly.
+          </div>
+          <a-button
+            type="primary"
+            size="small"
+            style="margin-top: 12px"
+            @click="router.push('/settings?tab=mqtt-monitor')"
+          >
+            Go to Settings
+          </a-button>
+        </template>
+      </a-alert>
 
       <!-- Metric cards -->
       <a-row :gutter="16" style="margin-bottom: 16px">
