@@ -6,6 +6,10 @@ import {
   DeleteOutlined,
   PlusOutlined,
   SaveOutlined,
+  SafetyCertificateOutlined,
+  BellOutlined,
+  DatabaseOutlined,
+  InfoCircleOutlined,
 } from '@ant-design/icons-vue'
 import type { TableColumnType } from 'ant-design-vue'
 import AppLayout from '@/components/layout/AppLayout.vue'
@@ -437,6 +441,18 @@ async function loadConfig() {
   } finally {
     configLoading.value = false
   }
+}
+
+// Matches the built-in defaults in the anomaly detection engine
+// (loadConfigFromTargetState in iot-agent-pro's anomaly/utils.ts) — only the
+// detection-tuning fields, not alert routing or retention.
+function resetDetectionDefaults() {
+  if (!config.value) return
+  config.value.sensitivity = 5
+  config.value.warmupPeriodMs = 900_000
+  config.value.alerts.minConfidence = 0.7
+  config.value.alerts.cooldownMs = 300_000
+  config.value.alerts.maxQueueSize = 1000
 }
 
 async function saveConfig() {
@@ -877,66 +893,134 @@ onUnmounted(stopBaselinesAutoRefresh)
       <a-tab-pane key="config" tab="Configuration">
         <a-spin :spinning="configLoading">
           <template v-if="config">
-            <!-- Global settings -->
-            <a-card title="Global settings" size="small" style="margin-bottom: 16px">
-              <a-alert
-                type="info"
-                show-icon
-                message="Anomaly detection is enabled or disabled in Settings → Features."
-                style="margin-bottom: 16px"
-              />
-              <a-row :gutter="[16, 16]">
+            <a-alert
+              type="info"
+              show-icon
+              message="Anomaly detection is enabled or disabled in Settings → Features."
+              style="margin-bottom: 16px"
+            />
+
+            <!-- Detection settings -->
+            <a-card :bordered="true" size="small" class="config-section-card">
+              <div class="config-section-header">
+                <div class="config-section-icon"><SafetyCertificateOutlined /></div>
+                <div>
+                  <div class="config-section-title">Detection settings</div>
+                  <div class="config-section-subtitle">Configure how anomalies are detected and scored.</div>
+                </div>
+              </div>
+
+              <a-row :gutter="[24, 16]">
                 <a-col :span="8">
-                  <a-form-item label="Sensitivity (1–10)" style="margin-bottom: 0">
-                    <a-slider
-                      v-model:value="config.sensitivity"
-                      :min="1"
-                      :max="10"
-                      :marks="{ 1: '1', 5: '5', 10: '10' }"
-                    />
+                  <a-form-item style="margin-bottom: 0">
+                    <template #label>
+                      <span class="field-label">
+                        Sensitivity (1–10)
+                        <a-tooltip title="Higher sensitivity flags smaller deviations as anomalies.">
+                          <InfoCircleOutlined class="field-info-icon" />
+                        </a-tooltip>
+                      </span>
+                    </template>
+                    <div style="display: flex; align-items: center; gap: 12px">
+                      <a-slider
+                        v-model:value="config.sensitivity"
+                        :min="1"
+                        :max="10"
+                        style="flex: 1"
+                      />
+                      <a-input-number v-model:value="config.sensitivity" :min="1" :max="10" style="width: 60px" />
+                    </div>
+                    <div class="field-caption" style="display: flex; justify-content: space-between">
+                      <span>1 · Low</span>
+                      <span>10 · High</span>
+                    </div>
                   </a-form-item>
                 </a-col>
                 <a-col :span="5">
-                  <a-form-item label="Warm-up period (ms)" style="margin-bottom: 0">
+                  <a-form-item style="margin-bottom: 0">
+                    <template #label>
+                      <span class="field-label">
+                        Warm-up period (ms)
+                        <a-tooltip title="Time to collect baseline data before detection starts.">
+                          <InfoCircleOutlined class="field-info-icon" />
+                        </a-tooltip>
+                      </span>
+                    </template>
                     <a-input-number v-model:value="config.warmupPeriodMs" :min="0" :step="60000" style="width: 100%" placeholder="900000" />
-                  </a-form-item>
-                </a-col>
-                <a-col :span="4">
-                  <a-form-item label="Min confidence" style="margin-bottom: 0">
-                    <a-input-number v-model:value="config.alerts.minConfidence" :min="0" :max="1" :step="0.05" style="width: 100%" />
+                    <div class="field-caption">Time to collect baseline data before detection starts.</div>
                   </a-form-item>
                 </a-col>
                 <a-col :span="5">
-                  <a-form-item label="Cooldown (ms)" style="margin-bottom: 0">
-                    <a-input-number v-model:value="config.alerts.cooldownMs" :min="0" :step="60000" style="width: 100%" />
+                  <a-form-item style="margin-bottom: 0">
+                    <template #label>
+                      <span class="field-label">
+                        Min confidence
+                        <a-tooltip title="Minimum confidence score to consider an anomaly.">
+                          <InfoCircleOutlined class="field-info-icon" />
+                        </a-tooltip>
+                      </span>
+                    </template>
+                    <a-input-number v-model:value="config.alerts.minConfidence" :min="0" :max="1" :step="0.05" style="width: 100%" />
+                    <div class="field-caption">Minimum confidence score to consider an anomaly.</div>
                   </a-form-item>
                 </a-col>
-                <a-col :span="4">
-                  <a-form-item label="Max queue size" style="margin-bottom: 0">
+                <a-col :span="6">
+                  <a-form-item style="margin-bottom: 0">
+                    <template #label>
+                      <span class="field-label">
+                        Cooldown (ms)
+                        <a-tooltip title="Minimum time between anomaly detections.">
+                          <InfoCircleOutlined class="field-info-icon" />
+                        </a-tooltip>
+                      </span>
+                    </template>
+                    <a-input-number v-model:value="config.alerts.cooldownMs" :min="0" :step="60000" style="width: 100%" />
+                    <div class="field-caption">Minimum time between anomaly detections.</div>
+                  </a-form-item>
+                </a-col>
+                <a-col :span="8">
+                  <a-form-item style="margin-bottom: 0">
+                    <template #label>
+                      <span class="field-label">
+                        Max queue size
+                        <a-tooltip title="Maximum number of items in the anomaly queue.">
+                          <InfoCircleOutlined class="field-info-icon" />
+                        </a-tooltip>
+                      </span>
+                    </template>
                     <a-input-number v-model:value="config.alerts.maxQueueSize" :min="1" style="width: 100%" />
+                    <div class="field-caption">Maximum number of items in the anomaly queue.</div>
                   </a-form-item>
                 </a-col>
               </a-row>
             </a-card>
 
             <!-- Alert routing -->
-            <a-card title="Alert routing" size="small" style="margin-bottom: 16px">
-              <a-row :gutter="16" align="bottom">
-                <a-col :flex="'80px'">
-                  <a-form-item label="MQTT alerts">
+            <a-card :bordered="true" size="small" class="config-section-card">
+              <div class="config-section-header">
+                <div class="config-section-icon"><BellOutlined /></div>
+                <div>
+                  <div class="config-section-title">Alert routing</div>
+                  <div class="config-section-subtitle">Configure how and where alerts are delivered.</div>
+                </div>
+              </div>
+
+              <a-row :gutter="[24, 16]">
+                <a-col :flex="'160px'">
+                  <a-form-item label="Enable MQTT alerts" style="margin-bottom: 0">
                     <a-switch v-model:checked="config.alerts.mqtt" />
                   </a-form-item>
                 </a-col>
-              </a-row>
-
-              <!-- MQTT destination (standalone / local broker) -->
-              <a-divider style="margin: 4px 0 16px" />
-              <a-row :gutter="16">
                 <a-col :flex="'280px'">
-                  <a-form-item
-                    label="MQTT destination"
-                    extra="Local broker from the Destinations page (standalone mode)."
-                  >
+                  <a-form-item style="margin-bottom: 0">
+                    <template #label>
+                      <span class="field-label">
+                        MQTT destination
+                        <a-tooltip title="Local broker from the Destinations page (standalone mode).">
+                          <InfoCircleOutlined class="field-info-icon" />
+                        </a-tooltip>
+                      </span>
+                    </template>
                     <a-select
                       :value="config.alerts.alertDestinationId"
                       allow-clear
@@ -948,100 +1032,127 @@ onUnmounted(stopBaselinesAutoRefresh)
                         {{ d.name }}
                       </a-select-option>
                     </a-select>
+                    <div class="field-caption">Local broker from the Destinations page (standalone mode).</div>
                   </a-form-item>
                 </a-col>
                 <a-col :flex="'280px'">
-                  <a-form-item
-                    label="Alert topic"
-                    extra="Topic to publish to when a destination is selected."
-                  >
+                  <a-form-item style="margin-bottom: 0">
+                    <template #label>
+                      <span class="field-label">
+                        Alert topic
+                        <a-tooltip title="Topic to publish to when a destination is selected.">
+                          <InfoCircleOutlined class="field-info-icon" />
+                        </a-tooltip>
+                      </span>
+                    </template>
                     <a-input
                       :value="config.alerts.alertTopic ?? ''"
                       placeholder="iotistica/alerts/anomaly"
                       @change="(e: Event) => { config!.alerts.alertTopic = (e.target as HTMLInputElement).value || undefined }"
                     />
+                    <div class="field-caption">Topic to publish to when a destination is selected.</div>
                   </a-form-item>
                 </a-col>
               </a-row>
             </a-card>
 
-            <!-- Storage -->
-            <a-card title="Storage" size="small" style="margin-bottom: 16px">
-              <a-row :gutter="16" align="bottom">
-                <a-col :flex="'none'">
-                  <a-form-item label="Baseline retention (days)">
+            <!-- Storage & retention -->
+            <a-card :bordered="true" size="small" class="config-section-card">
+              <div class="config-section-header">
+                <div class="config-section-icon"><DatabaseOutlined /></div>
+                <div>
+                  <div class="config-section-title">Storage &amp; retention</div>
+                  <div class="config-section-subtitle">Configure how long data is kept.</div>
+                </div>
+              </div>
+
+              <a-row :gutter="[24, 16]">
+                <a-col :span="8">
+                  <a-form-item label="Baseline retention (days)" style="margin-bottom: 0">
                     <a-input-number
                       :value="config.storage?.retention"
                       :min="1"
-                      style="width: 160px"
+                      style="width: 100%"
                       @change="(v: number) => { if (!config!.storage) config!.storage = { retention: v }; else config!.storage.retention = v }"
                     />
+                    <div class="field-caption">How long baselines are kept.</div>
                   </a-form-item>
                 </a-col>
-                <a-col :flex="'none'">
-                  <a-form-item label="Baseline max age (days)">
+                <a-col :span="8">
+                  <a-form-item label="Baseline max age (days)" style="margin-bottom: 0">
                     <a-input-number
                       :value="config.storage?.baselineMaxAgeDays"
                       :min="1"
-                      style="width: 160px"
+                      style="width: 100%"
                       placeholder="7"
                       @change="(v: number) => { if (!config!.storage) config!.storage = { retention: 30, baselineMaxAgeDays: v }; else config!.storage.baselineMaxAgeDays = v }"
                     />
+                    <div class="field-caption">Maximum age of baselines used for detection.</div>
                   </a-form-item>
                 </a-col>
-                <a-col :flex="'none'">
-                  <a-form-item label="Min samples for baseline">
+                <a-col :span="8">
+                  <a-form-item label="Min samples for baseline" style="margin-bottom: 0">
                     <a-input-number
                       :value="config.storage?.minSamples"
                       :min="1"
-                      style="width: 160px"
+                      style="width: 100%"
                       placeholder="5"
                       @change="(v: number) => { if (!config!.storage) config!.storage = { retention: 30, minSamples: v }; else config!.storage.minSamples = v }"
                     />
+                    <div class="field-caption">Minimum samples required to create a baseline.</div>
                   </a-form-item>
                 </a-col>
-              </a-row>
-              <a-row :gutter="16" align="bottom">
-                <a-col :flex="'none'">
-                  <a-form-item label="Event retention (days)">
+                <a-col :span="8">
+                  <a-form-item label="Event retention (days)" style="margin-bottom: 0">
                     <a-input-number
                       :value="config.storage?.eventRetentionDays"
                       :min="1"
-                      style="width: 160px"
+                      style="width: 100%"
                       :placeholder="String(config.storage?.retention ?? 30)"
                       @change="(v: number) => { if (!config!.storage) config!.storage = { retention: 30, eventRetentionDays: v }; else config!.storage.eventRetentionDays = v }"
                     />
+                    <div class="field-caption">How long events are kept.</div>
                   </a-form-item>
                 </a-col>
-                <a-col :flex="'none'">
-                  <a-form-item label="Incident retention (days)">
+                <a-col :span="8">
+                  <a-form-item label="Incident retention (days)" style="margin-bottom: 0">
                     <a-input-number
                       :value="config.storage?.incidentRetentionDays"
                       :min="1"
-                      style="width: 160px"
+                      style="width: 100%"
                       :placeholder="String(config.storage?.retention ?? 30)"
                       @change="(v: number) => { if (!config!.storage) config!.storage = { retention: 30, incidentRetentionDays: v }; else config!.storage.incidentRetentionDays = v }"
                     />
+                    <div class="field-caption">How long incidents are kept.</div>
                   </a-form-item>
                 </a-col>
-                <a-col :flex="'none'">
-                  <a-form-item label="Alert retention (days)">
+                <a-col :span="8">
+                  <a-form-item label="Alert retention (days)" style="margin-bottom: 0">
                     <a-input-number
                       :value="config.storage?.alertRetentionDays"
                       :min="1"
-                      style="width: 160px"
+                      style="width: 100%"
                       :placeholder="String(config.storage?.retention ?? 30)"
                       @change="(v: number) => { if (!config!.storage) config!.storage = { retention: 30, alertRetentionDays: v }; else config!.storage.alertRetentionDays = v }"
                     />
+                    <div class="field-caption">How long alerts are kept.</div>
                   </a-form-item>
                 </a-col>
               </a-row>
-              <div style="font-size: 12px; color: #888; margin-top: -4px">
-                Event / incident / alert retention default to the baseline retention value above when left blank. Resolved incidents are pruned by age; open/active incidents are kept regardless of age.
-              </div>
+
+              <a-alert
+                type="info"
+                show-icon
+                message="Retention settings control how long data is kept. Items are automatically pruned based on age, regardless of whether they are open/active."
+                style="margin-top: 20px"
+              />
             </a-card>
 
-            <div style="text-align: right">
+            <div style="text-align: right; display: flex; justify-content: flex-end; gap: 12px">
+              <a-button @click="resetDetectionDefaults">
+                <template #icon><ReloadOutlined /></template>
+                Reset to default
+              </a-button>
               <a-button type="primary" :loading="configSaving" @click="saveConfig">
                 <template #icon><SaveOutlined /></template>
                 Save configuration
@@ -1222,5 +1333,57 @@ onUnmounted(stopBaselinesAutoRefresh)
 
 .severity-critical {
   animation: severity-pulse 0.75s ease-in-out infinite;
+}
+
+.config-section-card {
+  margin-bottom: 16px;
+}
+
+.config-section-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.config-section-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  background: #e6f4ff;
+  color: #1677ff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  flex-shrink: 0;
+}
+
+.config-section-title {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.config-section-subtitle {
+  font-size: 12px;
+  color: #888;
+  margin-top: 2px;
+}
+
+.field-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.field-info-icon {
+  color: #aaa;
+  font-size: 12px;
+}
+
+.field-caption {
+  font-size: 12px;
+  color: #888;
+  margin-top: 4px;
 }
 </style>
