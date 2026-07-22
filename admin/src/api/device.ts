@@ -6,6 +6,7 @@ export interface DeviceInfo {
   provisioned?: boolean
   is_online?: boolean
   pro_installed?: boolean
+  docker_available?: boolean
   [key: string]: unknown
 }
 

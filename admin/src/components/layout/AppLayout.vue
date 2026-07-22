@@ -5,19 +5,24 @@ import { LogoutOutlined, UserOutlined } from '@ant-design/icons-vue'
 import AppSidebar from './AppSidebar.vue'
 import { useAuth } from '@/composables/useAuth'
 import { useProStatus } from '@/composables/useProStatus'
+import { useDockerStatus } from '@/composables/useDockerStatus'
 
 defineProps<{ title?: string; flex?: boolean }>()
 
 const router = useRouter()
 const { currentUser, logout } = useAuth()
 const { fetchProStatus } = useProStatus()
+const { fetchDockerStatus } = useDockerStatus()
 
 async function handleLogout() {
   await logout()
   router.push('/login')
 }
 
-onMounted(fetchProStatus)
+onMounted(() => {
+  fetchProStatus()
+  fetchDockerStatus()
+})
 </script>
 
 <template>

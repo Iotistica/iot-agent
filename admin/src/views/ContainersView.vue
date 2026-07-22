@@ -17,6 +17,9 @@ import {
 import AppLayout from '@/components/layout/AppLayout.vue'
 import { containersApi, templatesApi } from '@/api/containers'
 import type { ContainerApp, ContainerService, AppTemplate } from '@/api/containers'
+import { useDockerStatus } from '@/composables/useDockerStatus'
+
+const { dockerAvailable } = useDockerStatus()
 
 // ── State ─────────────────────────────────────────────────────────────────────
 
@@ -521,15 +524,25 @@ async function deploy() {
         <template #icon><ReloadOutlined /></template>
         Refresh
       </a-button>
-      <a-button @click="openMarketplace">
+      <a-button :disabled="!dockerAvailable" @click="openMarketplace">
         <template #icon><ShopOutlined /></template>
         Marketplace
       </a-button>
-      <a-button type="primary" @click="openDeploy">
+      <a-button type="primary" :disabled="!dockerAvailable" @click="openDeploy">
         <template #icon><PlusOutlined /></template>
         Add Application
       </a-button>
     </div>
+
+    <!-- Docker unavailable -->
+    <a-alert
+      v-if="!dockerAvailable"
+      type="warning"
+      message="Docker is not available on this agent"
+      description="This agent can't reach a Docker daemon, so applications can't be deployed or managed here. This is expected if the agent itself is running in a container without the host's Docker socket mounted — see the install docs for enabling it."
+      show-icon
+      style="margin-bottom: 16px"
+    />
 
     <!-- Error -->
     <a-alert v-if="error" type="error" :message="error" show-icon style="margin-bottom: 16px" />
@@ -540,7 +553,7 @@ async function deploy() {
       style="margin: 60px 0"
       description="No applications deployed"
     >
-      <a-button type="primary" @click="openDeploy">
+      <a-button v-if="dockerAvailable" type="primary" @click="openDeploy">
         <template #icon><PlusOutlined /></template>
         Add your first application
       </a-button>

@@ -1175,6 +1175,15 @@ export class ContainerManager extends EventEmitter {
 	}
 
 	/**
+	* Whether the Docker daemon is actually reachable (e.g. false when the
+	* agent itself runs in a container without the host's docker.sock mounted).
+	*/
+	public async isDockerAvailable(): Promise<boolean> {
+		if (!this.useRealDocker || !this.dockerManager) return false;
+		return this.dockerManager.ping();
+	}
+
+	/**
 	* Set the log monitor (called by API server after initialization)
 	*/
 	public setLogMonitor(monitor: ContainerLogMonitor): void {

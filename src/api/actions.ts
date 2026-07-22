@@ -638,13 +638,15 @@ export const getDeviceState = async () => {
 	const agentInfo = agentManager.getAgentInfo();
 	const currentState = await containerManager.getCurrentState();
 	const isOnline = cloudSync?.isOnline?.() ?? false;
-	
+	const dockerAvailable = await containerManager.isDockerAvailable();
+
 	return {
 		...agentInfo,
 		apps: Object.keys(currentState.apps).length,
 		is_online: isOnline,
 		status: 'Idle',
 		pro_installed: isProInstalled(),
+		docker_available: dockerAvailable,
 	};
 };
 
