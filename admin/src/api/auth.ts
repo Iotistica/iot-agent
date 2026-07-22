@@ -3,6 +3,7 @@ import { client } from './client'
 export interface AuthUser {
   username: string
   is_superuser: boolean
+  must_change_password: boolean
 }
 
 export const authApi = {

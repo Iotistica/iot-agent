@@ -5,6 +5,7 @@ export interface User {
 	username: string;
 	is_superuser: boolean;
 	is_active: boolean;
+	must_change_password: boolean;
 	created_at: string;
 	updated_at: string;
 }
@@ -14,6 +15,7 @@ interface UserRow {
 	username: string;
 	is_superuser: number;
 	is_active: number;
+	must_change_password: number;
 	created_at: string;
 	updated_at: string;
 }
@@ -24,6 +26,7 @@ function parseRow(row: UserRow): User {
 		username: row.username,
 		is_superuser: row.is_superuser === 1,
 		is_active: row.is_active === 1,
+		must_change_password: row.must_change_password === 1,
 		created_at: row.created_at,
 		updated_at: row.updated_at,
 	};
@@ -39,13 +42,13 @@ export class UserModel {
 
 	static getAll(): User[] {
 		return (this.db()
-			.prepare('SELECT id, username, is_superuser, is_active, created_at, updated_at FROM users ORDER BY created_at ASC')
+			.prepare('SELECT id, username, is_superuser, is_active, must_change_password, created_at, updated_at FROM users ORDER BY created_at ASC')
 			.all() as unknown as UserRow[]).map(parseRow);
 	}
 
 	static getByUsername(username: string): User | null {
 		const row = this.db()
-			.prepare('SELECT id, username, is_superuser, is_active, created_at, updated_at FROM users WHERE username = ?')
+			.prepare('SELECT id, username, is_superuser, is_active, must_change_password, created_at, updated_at FROM users WHERE username = ?')
 			.get(username) as unknown as UserRow | undefined;
 		return row ? parseRow(row) : null;
 	}
@@ -65,13 +68,24 @@ export class UserModel {
 		return this.getByUsername(username)!;
 	}
 
-	static update(username: string, fields: { is_active?: boolean; is_superuser?: boolean; password_hash?: string }): User | null {
+	static update(username: string, fields: { is_active?: boolean; is_superuser?: boolean; password_hash?: string; must_change_password?: boolean }): User | null {
 		const sets: string[] = [];
 		const values: (string | number | null)[] = [];
 
 		if (fields.is_active !== undefined)     { sets.push('is_active = ?');     values.push(fields.is_active ? 1 : 0); }
 		if (fields.is_superuser !== undefined)  { sets.push('is_superuser = ?');  values.push(fields.is_superuser ? 1 : 0); }
 		if (fields.password_hash !== undefined) { sets.push('password_hash = ?'); values.push(fields.password_hash); }
+
+		if (fields.must_change_password !== undefined) {
+			sets.push('must_change_password = ?');
+			values.push(fields.must_change_password ? 1 : 0);
+		} else if (fields.password_hash !== undefined) {
+			// Changing the password always clears the forced-reset flag, unless the
+			// caller explicitly requests a specific value above.
+			sets.push('must_change_password = ?');
+			values.push(0);
+		}
+
 		if (sets.length === 0) return this.getByUsername(username);
 
 		sets.push('updated_at = ?');

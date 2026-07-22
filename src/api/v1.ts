@@ -1779,7 +1779,7 @@ router.post('/v1/auth/login', async (req: Request, res: Response, next: NextFunc
 		if (!ok) return res.status(401).json({ error: 'Invalid credentials' });
 		const token = AdminSessionModel.create(username);
 		res.setHeader('Set-Cookie', `${SESSION_COOKIE}=${token}; ${COOKIE_OPTS}`);
-		return res.status(200).json({ username, is_superuser: user.is_superuser });
+		return res.status(200).json({ username, is_superuser: user.is_superuser, must_change_password: user.must_change_password });
 	} catch (error) {
 		next(error);
 	}
@@ -1799,7 +1799,7 @@ router.get('/v1/auth/me', (req: Request, res: Response) => {
 	if (!session) return res.status(401).json({ error: 'Session expired' });
 	const user = UserModel.getByUsername(session.username);
 	if (!user) return res.status(401).json({ error: 'User not found' });
-	return res.status(200).json({ username: user.username, is_superuser: user.is_superuser });
+	return res.status(200).json({ username: user.username, is_superuser: user.is_superuser, must_change_password: user.must_change_password });
 });
 
 // ── Session guard for all /v1/admin/* routes ─────────────────────────────────

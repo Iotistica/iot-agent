@@ -110,6 +110,9 @@ router.beforeEach(async (to) => {
   }
   const { currentUser } = useAuth()
   if (!currentUser.value) return { path: '/login' }
+  if (currentUser.value.must_change_password && to.path !== '/user/profile') {
+    return { path: '/user/profile' }
+  }
   return true
 })
 

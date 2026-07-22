@@ -1,14 +1,18 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
+import { useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
 import { UserOutlined, LockOutlined, SaveOutlined } from '@ant-design/icons-vue'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import { useAuth } from '@/composables/useAuth'
 import { usersApi } from '@/api/users'
 
-const { currentUser } = useAuth()
+const { currentUser, checkAuth } = useAuth()
+const router = useRouter()
 
-const changingPassword = ref(false)
+const mustChangePassword = computed(() => currentUser.value?.must_change_password ?? false)
+
+const changingPassword = ref(mustChangePassword.value)
 const currentPassword = ref('')
 const newPassword = ref('')
 const confirmPassword = ref('')
@@ -29,6 +33,9 @@ async function savePassword() {
     currentPassword.value = ''
     newPassword.value = ''
     confirmPassword.value = ''
+    const wasForced = mustChangePassword.value
+    await checkAuth()
+    if (wasForced) router.push('/dashboard')
   } catch (e: any) {
     message.error(e?.message ?? 'Failed to update password')
   } finally {
@@ -47,6 +54,14 @@ function cancelPasswordChange() {
 <template>
   <AppLayout title="Profile">
     <div class="profile-page">
+
+      <a-alert
+        v-if="mustChangePassword"
+        type="warning"
+        message="You're using a temporary password"
+        description="For security, please set your own password before continuing."
+        show-icon
+      />
 
       <!-- Account info -->
       <a-card class="profile-card" title="Account">
@@ -119,7 +134,7 @@ function cancelPasswordChange() {
                 <template #icon><SaveOutlined /></template>
                 Save Password
               </a-button>
-              <a-button @click="cancelPasswordChange">Cancel</a-button>
+              <a-button v-if="!mustChangePassword" @click="cancelPasswordChange">Cancel</a-button>
             </a-space>
           </a-form>
         </template>
