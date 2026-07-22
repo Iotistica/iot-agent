@@ -91,11 +91,6 @@ function onMenuClick({ key }: { key: string }) {
           Sources
         </a-menu-item>
 
-        <a-menu-item key="/devices">
-          <template #icon><ClusterOutlined /></template>
-          Devices
-        </a-menu-item>
-
         <a-menu-item key="/destinations">
           <template #icon><CloudUploadOutlined /></template>
           Destinations
@@ -104,6 +99,11 @@ function onMenuClick({ key }: { key: string }) {
         <a-menu-item key="/subscriptions">
           <template #icon><PartitionOutlined /></template>
           Subscriptions
+        </a-menu-item>
+
+        <a-menu-item key="/devices">
+          <template #icon><ClusterOutlined /></template>
+          Devices
         </a-menu-item>
 
         <a-menu-item key="/discovery-rules">
