@@ -69,6 +69,7 @@ function onMenuClick({ key }: { key: string }) {
     <div class="logo">
       <IotisticaLogo :size="24" />
       <span>Iotistica</span>
+      <a-tag v-if="proInstalled" class="pro-badge">PRO</a-tag>
       <a-tag v-if="agentVersion" class="version-badge">v{{ agentVersion }}</a-tag>
     </div>
 
