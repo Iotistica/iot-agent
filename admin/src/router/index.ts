@@ -22,6 +22,11 @@ const router = createRouter({
       meta: { title: 'Subscriptions' },
     },
     {
+      path: '/data-flow',
+      component: () => import('@/views/DataFlowView.vue'),
+      meta: { title: 'Data Flow' },
+    },
+    {
       path: '/sources',
       component: () => import('@/views/SourcesView.vue'),
       meta: { title: 'Sources' },

@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { LogoutOutlined, UserOutlined } from '@ant-design/icons-vue'
+import { LogoutOutlined, UserOutlined, MenuFoldOutlined, MenuUnfoldOutlined } from '@ant-design/icons-vue'
 import AppSidebar from './AppSidebar.vue'
 import { useAuth } from '@/composables/useAuth'
 import { useProStatus } from '@/composables/useProStatus'
 import { useDockerStatus } from '@/composables/useDockerStatus'
+import { useSidebar } from '@/composables/useSidebar'
 
 defineProps<{ title?: string; flex?: boolean }>()
 
@@ -13,6 +14,7 @@ const router = useRouter()
 const { currentUser, logout } = useAuth()
 const { fetchProStatus } = useProStatus()
 const { fetchDockerStatus } = useDockerStatus()
+const { collapsed, toggle } = useSidebar()
 
 async function handleLogout() {
   await logout()
@@ -30,7 +32,15 @@ onMounted(() => {
     <AppSidebar />
     <a-layout style="overflow: hidden">
       <a-layout-header class="page-header">
-        <h2>{{ title }}</h2>
+        <div class="header-left">
+          <a-button type="text" size="small" class="collapse-btn" @click="toggle">
+            <template #icon>
+              <MenuUnfoldOutlined v-if="collapsed" />
+              <MenuFoldOutlined v-else />
+            </template>
+          </a-button>
+          <h2>{{ title }}</h2>
+        </div>
         <div class="header-right">
           <span class="header-user">
             <UserOutlined style="margin-right: 6px; font-size: 13px" />
@@ -65,6 +75,21 @@ onMounted(() => {
   margin: 0;
   font-size: 18px;
   font-weight: 600;
+}
+
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.collapse-btn {
+  color: #888;
+  font-size: 16px;
+}
+
+.collapse-btn:hover {
+  color: #1677ff !important;
 }
 
 .header-right {

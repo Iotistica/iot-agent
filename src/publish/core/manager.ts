@@ -19,6 +19,7 @@ import type { DictionaryManager } from '../../mqtt/dictionary.js';
 import type { PublishDestinationInfo, PublishBatchItem } from './types.js';
 import { PublishDestinationsModel, PublishSubscriptionsModel } from '../../db/models/index.js';
 import type { PublisherRecord, PublishSubscriptionRecord, PublishSubscriptionRoute } from '../../db/models/index.js';
+import { activityMonitor } from './activity-monitor.js';
 
 // Adaptive batch safety limits (calculated once at module load)
 const MAX_BATCH_MESSAGES = 10000;
@@ -1162,6 +1163,25 @@ export class PublishManager extends EventEmitter {
 				subscriptionId: binding.subscription.id ?? null,
 				messageCount: messages.length,
 			});
+
+			if (binding.publisher.id !== undefined) {
+				const records = this.collectTagRecords(messages);
+				const sample = records[0];
+				activityMonitor.record({
+					subscriptionId: binding.subscription.id ?? null,
+					destinationId: binding.publisher.id,
+					destinationName: binding.publisher.name,
+					destinationType: binding.publisher.type,
+					protocol: this.protocol,
+					endpointName,
+					metric: String(
+						sample?.metric ?? sample?.metric_name ?? sample?.nodeName ?? sample?.name ?? sample?.tag ?? sample?.id ?? '—',
+					),
+					value: sample?.value ?? sample?.rawValue ?? null,
+					quality: typeof sample?.quality === 'string' ? sample.quality : undefined,
+					pointCount: records.length,
+				});
+			}
 
 			const items = batchesByPlugin.get(binding.plugin) || [];
 			items.push({

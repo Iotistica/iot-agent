@@ -2038,6 +2038,23 @@ router.patch('/v1/mqtt/broker/config', async (req: Request, res: Response, next:
 	}
 });
 
+// ── Pipeline Activity Monitor (/v1/pipeline/*) ────────────────────────────────
+// Live view of data flowing Sources → Subscriptions → Destinations. Same
+// in-memory-observer + REST-polling shape as the MQTT Broker Monitor above —
+// aggregate "last value per subscription" plus a bounded recent-events feed,
+// not a raw per-message firehose (endpoints can poll as fast as every second).
+
+import { activityMonitor } from '../publish/core/activity-monitor.js';
+
+router.get('/v1/pipeline/subscriptions', (_req: Request, res: Response) => {
+	res.json({ subscriptions: activityMonitor.getSubscriptions() });
+});
+
+router.get('/v1/pipeline/events', (req: Request, res: Response) => {
+	const limit = Math.min(Math.max(parseInt(String(req.query.limit ?? '100'), 10) || 100, 1), 300);
+	res.json({ events: activityMonitor.getRecentEvents(limit) });
+});
+
 // ─── Database Backups ─────────────────────────────────────────────────────────
 
 import {

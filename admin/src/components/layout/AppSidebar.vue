@@ -22,15 +22,18 @@ import {
   ClusterOutlined,
   DatabaseOutlined,
   CodeOutlined,
+  NodeIndexOutlined,
 } from '@ant-design/icons-vue'
 import IotisticaLogo from '@/components/IotisticaLogo.vue'
 import { settingsApi } from '@/api/settings'
 import { useProStatus } from '@/composables/useProStatus'
+import { useSidebar } from '@/composables/useSidebar'
 
 const route = useRoute()
 const router = useRouter()
 
 const { proInstalled } = useProStatus()
+const { collapsed } = useSidebar()
 
 const agentVersion = ref<string | null>(null)
 onMounted(async () => {
@@ -63,20 +66,29 @@ function onMenuClick({ key }: { key: string }) {
 <template>
   <a-layout-sider
     :width="220"
+    :collapsed="collapsed"
+    :collapsed-width="64"
+    collapsible
+    :trigger="null"
     theme="dark"
     style="height: 100vh; background: #0a0a0a; display: flex; flex-direction: column; flex-shrink: 0;"
   >
-    <div class="logo">
-      <IotisticaLogo :size="24" />
-      <span>Iotistica</span>
-      <a-tag v-if="proInstalled" class="pro-badge">PRO</a-tag>
-      <a-tag v-if="agentVersion" class="version-badge">v{{ agentVersion }}</a-tag>
+    <div class="logo" :class="{ 'logo--collapsed': collapsed }">
+      <div class="logo-row">
+        <IotisticaLogo :size="24" />
+        <template v-if="!collapsed">
+          <span>Iotistica</span>
+          <a-tag v-if="proInstalled" class="pro-badge">PRO</a-tag>
+        </template>
+      </div>
+      <a-tag v-if="agentVersion && !collapsed" class="version-badge">v{{ agentVersion }}</a-tag>
     </div>
 
     <div class="nav-main">
       <a-menu
         theme="dark"
         mode="inline"
+        :inline-collapsed="collapsed"
         :selected-keys="[selectedKey]"
         :open-keys="openKeys"
         @click="onMenuClick"
@@ -99,6 +111,11 @@ function onMenuClick({ key }: { key: string }) {
         <a-menu-item key="/subscriptions">
           <template #icon><PartitionOutlined /></template>
           Subscriptions
+        </a-menu-item>
+
+        <a-menu-item key="/data-flow">
+          <template #icon><NodeIndexOutlined /></template>
+          Data Flow
         </a-menu-item>
 
         <a-menu-item key="/devices">
@@ -170,6 +187,7 @@ function onMenuClick({ key }: { key: string }) {
       <a-menu
         theme="dark"
         mode="inline"
+        :inline-collapsed="collapsed"
         :selected-keys="[selectedKey]"
         :open-keys="openKeys"
         @click="onMenuClick"
@@ -207,17 +225,41 @@ function onMenuClick({ key }: { key: string }) {
 
 <style scoped>
 .logo {
-  height: 48px;
+  min-height: 48px;
   display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 0 16px 0 24px;
+  flex-direction: column;
+  justify-content: center;
+  gap: 4px;
+  padding: 8px 16px 8px 24px;
   color: rgba(255, 255, 255, 0.85);
   font-size: 16px;
   font-weight: 600;
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
   margin-bottom: 8px;
   flex-shrink: 0;
+  overflow: hidden;
+}
+
+.logo--collapsed {
+  padding: 8px 0;
+  align-items: center;
+}
+
+.logo--collapsed .logo-row {
+  justify-content: center;
+}
+
+.logo-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.logo-row span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .version-badge {
@@ -225,13 +267,14 @@ function onMenuClick({ key }: { key: string }) {
   line-height: 16px;
   padding: 0 5px;
   height: 16px;
-  margin-left: auto;
+  align-self: flex-start;
   background: rgba(255, 255, 255, 0.08);
   border-color: rgba(255, 255, 255, 0.15);
   color: rgba(255, 255, 255, 0.45);
   border-radius: 3px;
   font-weight: 400;
   flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .nav-main {
