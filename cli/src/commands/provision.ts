@@ -90,8 +90,12 @@ export async function provisionStatus(): Promise<void> {
         hint: 'Use "iotctl provision <key> --api <endpoint>" to provision this device',
       });
     }
-  } catch {
-    throw new CLIError('Failed to get provisioning status', 1);
+  } catch (error: any) {
+    throw new CLIError('Failed to get provisioning status', 1, {
+      endpoint: DEVICE_API_BASE,
+      reason: error?.message,
+      hint: `Verify DEVICE_API_PORT/DEVICE_API_URL and confirm the device API is listening (current target: ${DEVICE_API_BASE})`,
+    });
   }
 }
 

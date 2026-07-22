@@ -400,7 +400,10 @@ export async function runDiagnostics(): Promise<void> {
       results['Device API'] = {
         status: '✗ FAIL',
         message: error.message,
-        details: { endpoint: DEVICE_API_BASE },
+        details: {
+          endpoint: DEVICE_API_BASE,
+          hint: `Verify DEVICE_API_PORT/DEVICE_API_URL and confirm the device API is listening (current target: ${DEVICE_API_BASE})`,
+        },
       };
     }
   };
@@ -456,6 +459,10 @@ export async function runDiagnostics(): Promise<void> {
       results['Provisioning'] = {
         status: '✗ FAIL',
         message: error.message,
+        details: {
+          endpoint: DEVICE_API_BASE,
+          hint: `Verify DEVICE_API_PORT/DEVICE_API_URL and confirm the device API is listening (current target: ${DEVICE_API_BASE})`,
+        },
       };
     }
   };

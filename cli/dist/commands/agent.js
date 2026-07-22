@@ -368,7 +368,10 @@ async function runDiagnostics() {
             results['Device API'] = {
                 status: '✗ FAIL',
                 message: error.message,
-                details: { endpoint: core_1.DEVICE_API_BASE },
+                details: {
+                    endpoint: core_1.DEVICE_API_BASE,
+                    hint: `Verify DEVICE_API_PORT/DEVICE_API_URL and confirm the device API is listening (current target: ${core_1.DEVICE_API_BASE})`,
+                },
             };
         }
     };
@@ -426,6 +429,10 @@ async function runDiagnostics() {
             results['Provisioning'] = {
                 status: '✗ FAIL',
                 message: error.message,
+                details: {
+                    endpoint: core_1.DEVICE_API_BASE,
+                    hint: `Verify DEVICE_API_PORT/DEVICE_API_URL and confirm the device API is listening (current target: ${core_1.DEVICE_API_BASE})`,
+                },
             };
         }
     };
