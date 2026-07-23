@@ -116,7 +116,7 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
         :data-source="events"
         :loading="loading"
         :pagination="{ pageSize: 20, size: 'small' }"
-        row-key="timestamp"
+        row-key="id"
         size="small"
       >
         <template #bodyCell="{ column, record }">

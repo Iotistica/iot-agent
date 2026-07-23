@@ -17,6 +17,7 @@ export interface SubscriptionActivity {
 }
 
 export interface ActivityEvent {
+  id: number
   timestamp: string
   endpointName: string
   protocol: string

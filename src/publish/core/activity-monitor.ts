@@ -25,6 +25,7 @@ export interface SubscriptionActivity {
 }
 
 export interface ActivityEvent {
+	id: number;
 	timestamp: string;
 	endpointName: string;
 	protocol: string;
@@ -42,6 +43,7 @@ const MAX_EVENTS = 300;
 class ActivityMonitor {
 	private bySubscription = new Map<string, SubscriptionActivity>();
 	private recentEvents: ActivityEvent[] = [];
+	private nextEventId = 1;
 
 	record(params: {
 		subscriptionId: number | null;
@@ -76,6 +78,7 @@ class ActivityMonitor {
 		});
 
 		this.recentEvents.push({
+			id: this.nextEventId++,
 			timestamp: now,
 			endpointName: params.endpointName,
 			protocol: params.protocol,
