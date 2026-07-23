@@ -32,6 +32,14 @@ function fmtValue(v: unknown): string {
   return String(v)
 }
 
+// A BAD-quality read with no value at all (the read failed outright — timeout,
+// unreachable, etc.) is a different, more common case than a real value that's
+// merely flagged bad — collapse the former into one plain "No Value" tag
+// instead of a redundant "— BAD" pair.
+function isMissingValue(v: unknown): boolean {
+  return v === null || v === undefined
+}
+
 function fmtTime(iso: string): string {
   const d = new Date(iso)
   const diffSec = Math.max(0, Math.round((Date.now() - d.getTime()) / 1000))
@@ -95,8 +103,11 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
             <a-tag style="margin-left: 4px">{{ record.destinationType }}</a-tag>
           </template>
           <template v-else-if="column.key === 'lastValue'">
-            <span style="font-family: monospace">{{ fmtValue(record.lastValue) }}</span>
-            <a-tag v-if="record.lastQuality === 'BAD'" color="red" style="margin-left: 4px">BAD</a-tag>
+            <a-tag v-if="record.lastQuality === 'BAD' && isMissingValue(record.lastValue)" color="red">No Value</a-tag>
+            <template v-else>
+              <span style="font-family: monospace">{{ fmtValue(record.lastValue) }}</span>
+              <a-tag v-if="record.lastQuality === 'BAD'" color="red" style="margin-left: 4px">BAD</a-tag>
+            </template>
           </template>
           <template v-else-if="column.key === 'lastPublishTime'">
             {{ fmtTime(record.lastPublishTime) }}
@@ -128,8 +139,11 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
             {{ record.endpointName }}
           </template>
           <template v-else-if="column.key === 'value'">
-            <span style="font-family: monospace">{{ fmtValue(record.value) }}</span>
-            <a-tag v-if="record.quality === 'BAD'" color="red" style="margin-left: 4px">BAD</a-tag>
+            <a-tag v-if="record.quality === 'BAD' && isMissingValue(record.value)" color="red">No Value</a-tag>
+            <template v-else>
+              <span style="font-family: monospace">{{ fmtValue(record.value) }}</span>
+              <a-tag v-if="record.quality === 'BAD'" color="red" style="margin-left: 4px">BAD</a-tag>
+            </template>
           </template>
         </template>
         <template #emptyText>
