@@ -11,6 +11,19 @@ import type {
 
 const BASE = '/v1/anomaly'
 
+export interface BadActor {
+  metric: string
+  device_name: string
+  incident_count: number
+  total_events: number
+  critical_count: number
+  warning_count: number
+  info_count: number
+  open_count: number
+  resolved_count: number
+  last_seen: number
+}
+
 export const anomalyApi = {
   getConfig(): Promise<AnomalyConfig> {
     return client.get<{ config: AnomalyConfig }>(`${BASE}/config`).then((r) => r.data.config)
@@ -78,6 +91,10 @@ export const anomalyApi = {
 
   resolveIncident(incidentId: string, notes?: string): Promise<void> {
     return client.patch(`/v1/anomaly-incidents/${incidentId}/resolve`, { notes }).then(() => undefined)
+  },
+
+  getBadActors(params?: { windowDays?: number; limit?: number }): Promise<{ badActors: BadActor[]; windowDays: number }> {
+    return client.get<{ badActors: BadActor[]; windowDays: number }>('/v1/anomaly-incidents/bad-actors', { params }).then((r) => r.data)
   },
 
   getEdgeAlerts(params?: { limit?: number; offset?: number }): Promise<{ alerts: EdgeAnomalyAlert[]; total: number }> {

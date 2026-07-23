@@ -36,6 +36,17 @@ anomalyRouter.get('/v1/anomaly-incidents/stats', (req: Request, res: Response, n
 	}
 });
 
+anomalyRouter.get('/v1/anomaly-incidents/bad-actors', (req: Request, res: Response, next: NextFunction) => {
+	try {
+		const windowDays = req.query.windowDays ? Number(req.query.windowDays) : 30;
+		const limit = req.query.limit ? Number(req.query.limit) : 20;
+		const badActors = AnomalyIncidentModel.badActors(windowDays * 24 * 60 * 60 * 1000, limit);
+		res.json({ badActors, windowDays });
+	} catch (err) {
+		next(err);
+	}
+});
+
 anomalyRouter.get('/v1/anomaly-incidents', (req: Request, res: Response, next: NextFunction) => {
 	try {
 		const result = AnomalyIncidentModel.list({

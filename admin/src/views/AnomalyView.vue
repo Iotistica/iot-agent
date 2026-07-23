@@ -17,7 +17,7 @@ import { useProStatus } from '@/composables/useProStatus'
 
 const { proInstalled } = useProStatus()
 import { methodColor } from '@/utils/protocol'
-import { anomalyApi } from '@/api/anomaly'
+import { anomalyApi, type BadActor } from '@/api/anomaly'
 import { destinationsApi } from '@/api/destinations'
 import { sourcesApi } from '@/api/sources'
 import type {
@@ -523,6 +523,23 @@ async function toggleMetricEnabled(idx: number) {
   await saveConfig()
 }
 
+// ── Bad actors (ISA-18.2-style ranking of noisiest metrics by incident frequency) ──
+const badActors = ref<BadActor[]>([])
+const badActorsLoading = ref(false)
+const badActorsWindowDays = ref(30)
+
+async function loadBadActors() {
+  badActorsLoading.value = true
+  try {
+    const result = await anomalyApi.getBadActors({ windowDays: badActorsWindowDays.value, limit: 20 })
+    badActors.value = result.badActors
+  } catch {
+    // non-fatal
+  } finally {
+    badActorsLoading.value = false
+  }
+}
+
 // ── Tab switching ──────────────────────────────────────────────────────────────
 function onTabChange(tab: string) {
   activeTab.value = tab
@@ -532,7 +549,7 @@ function onTabChange(tab: string) {
   else if (tab === 'alerts') loadEdgeAlerts()
   else if (tab === 'baselines') { loadBaselines(); startBaselinesAutoRefresh() }
   else if (tab === 'config') loadConfig()
-  else if (tab === 'rules') { loadConfig(); loadMetricSuggestions() }
+  else if (tab === 'rules') { loadConfig(); loadMetricSuggestions(); loadBadActors() }
 }
 
 onMounted(loadEdgeIncidents)
@@ -822,6 +839,52 @@ onUnmounted(stopBaselinesAutoRefresh)
 
       <!-- ══ RULES ══════════════════════════════════════════════════════════ -->
       <a-tab-pane key="rules" tab="Rules">
+        <a-card size="small" style="margin-bottom: 16px">
+          <div class="toolbar">
+            <span style="color: #888; font-size: 13px">
+              <strong>Bad actors</strong> — metrics ranked by incident frequency, not by whether each incident was correct.
+              A metric firing constantly is worth tuning regardless of outcome (ISA-18.2 style rationalization).
+            </span>
+            <a-select v-model:value="badActorsWindowDays" size="small" style="width: 110px" @change="loadBadActors">
+              <a-select-option :value="7">Last 7 days</a-select-option>
+              <a-select-option :value="30">Last 30 days</a-select-option>
+              <a-select-option :value="90">Last 90 days</a-select-option>
+            </a-select>
+          </div>
+          <a-table
+            :data-source="badActors"
+            :loading="badActorsLoading"
+            :pagination="false"
+            row-key="metric"
+            size="small"
+          >
+            <a-table-column key="metric" title="Metric" data-index="metric">
+              <template #default="{ record }">{{ friendlyLabel(record.metric) }}</template>
+            </a-table-column>
+            <a-table-column key="device_name" title="Device" data-index="device_name" />
+            <a-table-column key="incident_count" title="Incidents" data-index="incident_count" :width="90" />
+            <a-table-column key="total_events" title="Total Events" data-index="total_events" :width="110" />
+            <a-table-column key="severity" title="Severity">
+              <template #default="{ record }">
+                <a-tag v-if="record.critical_count" color="red">{{ record.critical_count }} critical</a-tag>
+                <a-tag v-if="record.warning_count" color="orange">{{ record.warning_count }} warning</a-tag>
+                <a-tag v-if="record.info_count" color="blue">{{ record.info_count }} info</a-tag>
+              </template>
+            </a-table-column>
+            <a-table-column key="status" title="Open / Resolved">
+              <template #default="{ record }">{{ record.open_count }} open · {{ record.resolved_count }} resolved</template>
+            </a-table-column>
+            <a-table-column key="last_seen" title="Last Seen">
+              <template #default="{ record }">{{ fmtTs(record.last_seen) }}</template>
+            </a-table-column>
+            <template #emptyText>
+              <div style="padding: 24px 0; text-align: center; color: #aaa; font-size: 13px">
+                No incidents in this window — nothing to rank yet.
+              </div>
+            </template>
+          </a-table>
+        </a-card>
+
         <a-spin :spinning="configLoading">
           <template v-if="config">
             <div class="toolbar">

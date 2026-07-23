@@ -140,6 +140,51 @@ export class AnomalyIncidentModel {
 		return { incidents, total };
 	}
 
+	/**
+	 * "Bad actor" analysis (ISA-18.2 style): ranks metrics by how often they've
+	 * fired, not by any judgment call about whether each firing was correct —
+	 * a metric that fires constantly is a tuning candidate regardless of
+	 * outcome. total_events (sum of event_count across incidents) captures
+	 * chattering within a single incident, not just incident count.
+	 */
+	static badActors(windowMs: number, limit = 20): Array<{
+		metric: string;
+		device_name: string;
+		incident_count: number;
+		total_events: number;
+		critical_count: number;
+		warning_count: number;
+		info_count: number;
+		open_count: number;
+		resolved_count: number;
+		last_seen: number;
+	}> {
+		const db = getDatabase();
+		const cutoff = Date.now() - windowMs;
+		return db.prepare(`
+			SELECT
+				metric,
+				device_name,
+				COUNT(*) as incident_count,
+				SUM(event_count) as total_events,
+				SUM(CASE WHEN severity = 'critical' THEN 1 ELSE 0 END) as critical_count,
+				SUM(CASE WHEN severity = 'warning' THEN 1 ELSE 0 END) as warning_count,
+				SUM(CASE WHEN severity = 'info' THEN 1 ELSE 0 END) as info_count,
+				SUM(CASE WHEN status != 'resolved' THEN 1 ELSE 0 END) as open_count,
+				SUM(CASE WHEN status = 'resolved' THEN 1 ELSE 0 END) as resolved_count,
+				MAX(last_seen) as last_seen
+			FROM anomaly_incidents
+			WHERE first_seen >= ?
+			GROUP BY metric, device_name
+			ORDER BY incident_count DESC
+			LIMIT ?
+		`).all(cutoff, limit) as unknown as Array<{
+			metric: string; device_name: string; incident_count: number; total_events: number;
+			critical_count: number; warning_count: number; info_count: number;
+			open_count: number; resolved_count: number; last_seen: number;
+		}>;
+	}
+
 	static stats(windowMs: number): {
 		open: number; active: number; resolved: number; total: number;
 		critical: number; warning: number; info: number;
