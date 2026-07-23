@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
-import { message, Modal } from 'ant-design-vue'
+import { message } from 'ant-design-vue'
 import {
   ReloadOutlined,
   DeleteOutlined,
@@ -17,7 +17,7 @@ import { useProStatus } from '@/composables/useProStatus'
 
 const { proInstalled } = useProStatus()
 import { methodColor } from '@/utils/protocol'
-import { anomalyApi, type BadActor } from '@/api/anomaly'
+import { anomalyApi, RESOLUTION_REASON_LABELS, type BadActor, type ResolutionReason } from '@/api/anomaly'
 import { destinationsApi } from '@/api/destinations'
 import { sourcesApi } from '@/api/sources'
 import type {
@@ -129,24 +129,36 @@ async function loadEdgeIncidents() {
   }
 }
 
-async function resolveIncident(incident: EdgeAnomalyIncident) {
-  Modal.confirm({
-    title: `Resolve incident?`,
-    content: `Mark "${friendlyLabel(incident.metric)}" on ${deviceNameFromMetric(incident.metric, incident.device_name)} as resolved.`,
-    okText: 'Resolve',
-    async onOk() {
-      resolvingId.value = incident.incident_id
-      try {
-        await anomalyApi.resolveIncident(incident.incident_id)
-        message.success('Incident resolved')
-        loadEdgeIncidents()
-      } catch (err: unknown) {
-        message.error((err as { message?: string })?.message ?? 'Failed to resolve')
-      } finally {
-        resolvingId.value = null
-      }
-    },
-  })
+// Reason is captured (not just a bare confirm) so noisy rules can eventually
+// be found by false-positive rate, not just raw incident count — see the
+// Bad Actors panel on the Rules tab. Kept to a single required dropdown plus
+// optional free-text notes, not a full form, so resolving stays low-friction.
+const resolveModalOpen = ref(false)
+const resolveModalIncident = ref<EdgeAnomalyIncident | null>(null)
+const resolveModalReason = ref<ResolutionReason | undefined>(undefined)
+const resolveModalNotes = ref('')
+
+function openResolveModal(incident: EdgeAnomalyIncident) {
+  resolveModalIncident.value = incident
+  resolveModalReason.value = undefined
+  resolveModalNotes.value = ''
+  resolveModalOpen.value = true
+}
+
+async function confirmResolve() {
+  const incident = resolveModalIncident.value
+  if (!incident || !resolveModalReason.value) return
+  resolvingId.value = incident.incident_id
+  try {
+    await anomalyApi.resolveIncident(incident.incident_id, resolveModalReason.value, resolveModalNotes.value.trim() || undefined)
+    message.success('Incident resolved')
+    resolveModalOpen.value = false
+    loadEdgeIncidents()
+  } catch (err: unknown) {
+    message.error((err as { message?: string })?.message ?? 'Failed to resolve')
+  } finally {
+    resolvingId.value = null
+  }
 }
 
 // ── Edge: Alerts ──────────────────────────────────────────────────────────────
@@ -528,6 +540,13 @@ const badActors = ref<BadActor[]>([])
 const badActorsLoading = ref(false)
 const badActorsWindowDays = ref(30)
 
+// null = no classified resolutions yet to compute a rate from (distinct from a genuine 0%)
+function fpRate(record: BadActor): number | null {
+  const classified = record.false_positive_count + record.true_positive_count + record.expected_count + record.accepted_count
+  if (classified === 0) return null
+  return Math.round((record.false_positive_count / classified) * 100)
+}
+
 async function loadBadActors() {
   badActorsLoading.value = true
   try {
@@ -706,7 +725,7 @@ onUnmounted(stopBaselinesAutoRefresh)
                 v-if="record.status !== 'resolved'"
                 size="small"
                 :loading="resolvingId === record.incident_id"
-                @click="resolveIncident(record)"
+                @click="openResolveModal(record)"
               >Resolve</a-button>
               <span v-else style="color: #888; font-size: 12px">—</span>
             </template>
@@ -873,6 +892,14 @@ onUnmounted(stopBaselinesAutoRefresh)
             </a-table-column>
             <a-table-column key="status" title="Open / Resolved">
               <template #default="{ record }">{{ record.open_count }} open · {{ record.resolved_count }} resolved</template>
+            </a-table-column>
+            <a-table-column key="fpRate" title="False Positive Rate">
+              <template #default="{ record }">
+                <span v-if="fpRate(record) === null" style="color: #ccc">— no reasons recorded yet</span>
+                <a-tag v-else :color="fpRate(record)! >= 50 ? 'red' : fpRate(record)! >= 20 ? 'orange' : 'green'">
+                  {{ fpRate(record) }}%
+                </a-tag>
+              </template>
             </a-table-column>
             <a-table-column key="last_seen" title="Last Seen">
               <template #default="{ record }">{{ fmtTs(record.last_seen) }}</template>
@@ -1230,6 +1257,37 @@ onUnmounted(stopBaselinesAutoRefresh)
       </a-tab-pane>
 
     </a-tabs>
+
+    <!-- ── Resolve incident modal ───────────────────────────────────────────── -->
+    <a-modal
+      :open="resolveModalOpen"
+      title="Resolve incident"
+      ok-text="Resolve"
+      :confirm-loading="!!resolvingId"
+      :ok-button-props="{ disabled: !resolveModalReason }"
+      @ok="confirmResolve"
+      @cancel="resolveModalOpen = false"
+    >
+      <p v-if="resolveModalIncident" style="margin-bottom: 16px">
+        Mark "{{ friendlyLabel(resolveModalIncident.metric) }}" on
+        {{ deviceNameFromMetric(resolveModalIncident.metric, resolveModalIncident.device_name) }} as resolved.
+      </p>
+      <a-form layout="vertical">
+        <a-form-item label="Reason" required>
+          <a-select v-model:value="resolveModalReason" placeholder="Why is this being resolved?" style="width: 100%">
+            <a-select-option v-for="(label, value) in RESOLUTION_REASON_LABELS" :key="value" :value="value">
+              {{ label }}
+            </a-select-option>
+          </a-select>
+          <div style="font-size: 12px; color: #888; margin-top: 4px">
+            Used to spot noisy rules later (see Bad Actors on the Rules tab) — not shown anywhere else right now.
+          </div>
+        </a-form-item>
+        <a-form-item label="Notes" style="margin-bottom: 0">
+          <a-textarea v-model:value="resolveModalNotes" placeholder="Optional" :rows="2" />
+        </a-form-item>
+      </a-form>
+    </a-modal>
 
     <!-- ── Metric config drawer ─────────────────────────────────────────────── -->
     <a-drawer

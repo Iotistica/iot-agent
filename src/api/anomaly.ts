@@ -2,9 +2,12 @@ import express from 'express';
 import type { Request, Response, NextFunction } from 'express';
 import { AnomalyEventModel } from '../db/models/anomaly-event.model.js';
 import { AnomalyIncidentModel } from '../db/models/anomaly-incident.model.js';
+import type { ResolutionReason } from '../db/models/anomaly-incident.model.js';
 import { AnomalyAlertModel } from '../db/models/anomaly-alert.model.js';
 
 export const anomalyRouter = express.Router();
+
+const VALID_RESOLUTION_REASONS: ResolutionReason[] = ['false_positive', 'true_positive', 'expected', 'accepted'];
 
 // ── Events ────────────────────────────────────────────────────────────────────
 
@@ -78,8 +81,11 @@ anomalyRouter.get('/v1/anomaly-incidents/:incidentId', (req: Request, res: Respo
 
 anomalyRouter.patch('/v1/anomaly-incidents/:incidentId/resolve', (req: Request, res: Response, next: NextFunction) => {
 	try {
-		const { resolvedBy = 'local-user', notes } = req.body ?? {};
-		const ok = AnomalyIncidentModel.resolve(req.params.incidentId, resolvedBy, notes);
+		const { resolvedBy = 'local-user', notes, reason } = req.body ?? {};
+		if (reason !== undefined && !VALID_RESOLUTION_REASONS.includes(reason)) {
+			return res.status(400).json({ error: `reason must be one of: ${VALID_RESOLUTION_REASONS.join(', ')}` });
+		}
+		const ok = AnomalyIncidentModel.resolve(req.params.incidentId, resolvedBy, notes, reason);
 		if (!ok) return res.status(404).json({ error: 'Incident not found or already resolved' });
 		const updated = AnomalyIncidentModel.getById(req.params.incidentId);
 		res.json(updated);

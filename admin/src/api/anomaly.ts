@@ -11,6 +11,15 @@ import type {
 
 const BASE = '/v1/anomaly'
 
+export type ResolutionReason = 'false_positive' | 'true_positive' | 'expected' | 'accepted'
+
+export const RESOLUTION_REASON_LABELS: Record<ResolutionReason, string> = {
+  false_positive: 'False Positive',
+  true_positive: 'True Positive — Fixed',
+  expected: 'Expected / Maintenance',
+  accepted: 'Known / Accepted',
+}
+
 export interface BadActor {
   metric: string
   device_name: string
@@ -21,6 +30,11 @@ export interface BadActor {
   info_count: number
   open_count: number
   resolved_count: number
+  false_positive_count: number
+  true_positive_count: number
+  expected_count: number
+  accepted_count: number
+  unclassified_resolved_count: number
   last_seen: number
 }
 
@@ -89,8 +103,8 @@ export const anomalyApi = {
     return client.get<{ open: number; active: number; resolved: number; total: number }>('/v1/anomaly-incidents/stats').then((r) => r.data)
   },
 
-  resolveIncident(incidentId: string, notes?: string): Promise<void> {
-    return client.patch(`/v1/anomaly-incidents/${incidentId}/resolve`, { notes }).then(() => undefined)
+  resolveIncident(incidentId: string, reason?: ResolutionReason, notes?: string): Promise<void> {
+    return client.patch(`/v1/anomaly-incidents/${incidentId}/resolve`, { reason, notes }).then(() => undefined)
   },
 
   getBadActors(params?: { windowDays?: number; limit?: number }): Promise<{ badActors: BadActor[]; windowDays: number }> {

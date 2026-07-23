@@ -1,5 +1,7 @@
 import { getDatabase } from '../sqlite.js';
 
+export type ResolutionReason = 'false_positive' | 'true_positive' | 'expected' | 'accepted';
+
 export interface AnomalyIncidentRow {
 	id?: number;
 	incident_id: string;
@@ -18,6 +20,7 @@ export interface AnomalyIncidentRow {
 	acknowledged_at?: number | null;
 	acknowledged_by?: string | null;
 	resolution_notes?: string | null;
+	resolution_reason?: ResolutionReason | null;
 	created_at?: number;
 	updated_at?: number;
 }
@@ -86,13 +89,13 @@ export class AnomalyIncidentModel {
 		`).run(ts, Date.now(), incidentId);
 	}
 
-	static resolve(incidentId: string, resolvedBy: string, notes?: string): boolean {
+	static resolve(incidentId: string, resolvedBy: string, notes?: string, reason?: ResolutionReason): boolean {
 		const info = getDatabase().prepare(`
 			UPDATE anomaly_incidents
 			SET status = 'resolved', acknowledged_at = ?, acknowledged_by = ?,
-			    resolution_notes = ?, updated_at = ?
+			    resolution_notes = ?, resolution_reason = ?, updated_at = ?
 			WHERE incident_id = ? AND status != 'resolved'
-		`).run(Date.now(), resolvedBy, notes ?? null, Date.now(), incidentId);
+		`).run(Date.now(), resolvedBy, notes ?? null, reason ?? null, Date.now(), incidentId);
 		return Number(info.changes) > 0;
 	}
 
@@ -157,6 +160,11 @@ export class AnomalyIncidentModel {
 		info_count: number;
 		open_count: number;
 		resolved_count: number;
+		false_positive_count: number;
+		true_positive_count: number;
+		expected_count: number;
+		accepted_count: number;
+		unclassified_resolved_count: number;
 		last_seen: number;
 	}> {
 		const db = getDatabase();
@@ -172,6 +180,11 @@ export class AnomalyIncidentModel {
 				SUM(CASE WHEN severity = 'info' THEN 1 ELSE 0 END) as info_count,
 				SUM(CASE WHEN status != 'resolved' THEN 1 ELSE 0 END) as open_count,
 				SUM(CASE WHEN status = 'resolved' THEN 1 ELSE 0 END) as resolved_count,
+				SUM(CASE WHEN resolution_reason = 'false_positive' THEN 1 ELSE 0 END) as false_positive_count,
+				SUM(CASE WHEN resolution_reason = 'true_positive' THEN 1 ELSE 0 END) as true_positive_count,
+				SUM(CASE WHEN resolution_reason = 'expected' THEN 1 ELSE 0 END) as expected_count,
+				SUM(CASE WHEN resolution_reason = 'accepted' THEN 1 ELSE 0 END) as accepted_count,
+				SUM(CASE WHEN status = 'resolved' AND resolution_reason IS NULL THEN 1 ELSE 0 END) as unclassified_resolved_count,
 				MAX(last_seen) as last_seen
 			FROM anomaly_incidents
 			WHERE first_seen >= ?
@@ -181,7 +194,9 @@ export class AnomalyIncidentModel {
 		`).all(cutoff, limit) as unknown as Array<{
 			metric: string; device_name: string; incident_count: number; total_events: number;
 			critical_count: number; warning_count: number; info_count: number;
-			open_count: number; resolved_count: number; last_seen: number;
+			open_count: number; resolved_count: number;
+			false_positive_count: number; true_positive_count: number; expected_count: number;
+			accepted_count: number; unclassified_resolved_count: number; last_seen: number;
 		}>;
 	}
 
