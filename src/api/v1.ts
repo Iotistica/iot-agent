@@ -741,6 +741,29 @@ router.get('/v1/anomaly/baselines', (req: Request, res: Response, next: NextFunc
 });
 
 /**
+ * GET /v1/anomaly/baseline-progress
+ * Per-metric baseline collection progress (samples buffered vs. the metric's
+ * configured windowSize) — for metrics that haven't accumulated enough data
+ * to persist a real baseline yet, so the admin UI can show "N of M samples"
+ * instead of the metric simply not appearing anywhere.
+ */
+router.get('/v1/anomaly/baseline-progress', (req: Request, res: Response, next: NextFunction) => {
+	try {
+		const anomalyService = actions.getAnomalyService();
+		if (!anomalyService) {
+			return res.status(503).json({ error: 'Anomaly detection service not available' });
+		}
+		if (typeof anomalyService.getBaselineProgress !== 'function') {
+			return res.status(200).json({ progress: [] });
+		}
+		const progress = anomalyService.getBaselineProgress();
+		return res.status(200).json({ progress });
+	} catch (error) {
+		next(error);
+	}
+});
+
+/**
  * DELETE /v1/anomaly/baselines
  * Clear all persisted baseline statistics from SQLite and reset in-memory buffers.
  */

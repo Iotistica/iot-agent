@@ -189,7 +189,11 @@ async function loadEdgeAlerts() {
 }
 
 // ── Baselines tab ──────────────────────────────────────────────────────────────
-const baselines = ref<AnomalyBaseline[]>([])
+// pendingWindowSize is set only on synthesized in-progress rows (see loadBaselines) —
+// a metric that's buffering samples but hasn't collected enough to persist a real
+// baseline yet. Keeps that row visible immediately instead of it appearing nowhere.
+type BaselineRow = AnomalyBaseline & { pendingWindowSize?: number }
+const baselines = ref<BaselineRow[]>([])
 const baselinesTotal = ref(0)
 const baselinesLoading = ref(false)
 const baselinesMetric = ref('')
@@ -284,12 +288,38 @@ async function loadBaselines() {
   baselinesLoading.value = true
   try {
     await ensureEndpointMaps()
-    const r = await anomalyApi.getBaselines({
-      metric: baselinesMetric.value.trim() || undefined,
-      limit: PAGE_SIZE,
-    })
-    baselines.value = r.baselines
-    baselinesTotal.value = r.total
+    const filterText = baselinesMetric.value.trim().toLowerCase()
+    const [r, progress] = await Promise.all([
+      anomalyApi.getBaselines({ metric: baselinesMetric.value.trim() || undefined, limit: PAGE_SIZE }),
+      // Only meaningful on page 1 — prepending in-progress rows to an arbitrary
+      // later page would be confusing, so skip fetching/merging past page 1.
+      baselinesPage.value === 1 ? anomalyApi.getBaselineProgress() : Promise.resolve([]),
+    ])
+
+    const existingKeys = new Set(r.baselines.map((b) => `${b.metric}::${b.device_id}::${b.device_state}`))
+    const pendingRows: BaselineRow[] = progress
+      // <= not < : once the buffer fills, it stays visible ("ready, waiting to
+      // save") until a real baseline row appears and dedupes it away, rather
+      // than vanishing for the gap between filling up and the next periodic save.
+      .filter((p) => p.bufferSize <= p.windowSize)
+      .filter((p) => !existingKeys.has(`${p.metricName}::${p.deviceId}::${p.deviceState}`))
+      .filter((p) => !filterText || p.metricName.toLowerCase().includes(filterText))
+      .map((p) => ({
+        metric: p.metricName,
+        device_id: p.deviceId,
+        device_state: p.deviceState,
+        time_slot: -1,
+        mean: null,
+        std_dev: null,
+        median: null,
+        mad: null,
+        sample_count: p.bufferSize,
+        calculated_at: 0,
+        pendingWindowSize: p.windowSize,
+      }))
+
+    baselines.value = [...pendingRows, ...r.baselines]
+    baselinesTotal.value = r.total + pendingRows.length
   } catch { /* non-fatal */ } finally {
     baselinesLoading.value = false
   }
@@ -821,16 +851,29 @@ onUnmounted(stopBaselinesAutoRefresh)
           :data-source="baselines"
           :loading="baselinesLoading"
           :pagination="{ current: baselinesPage, pageSize: PAGE_SIZE, total: baselinesTotal, showSizeChanger: false, onChange: (p: number) => { baselinesPage = p; loadBaselines() } }"
-          row-key="metric"
+          :row-key="(record: BaselineRow) => `${record.pendingWindowSize ? 'pending' : 'done'}::${record.metric}::${record.device_id}::${record.device_state}`"
           size="small"
           :scroll="{ x: true }"
         >
           <template #bodyCell="{ column, record }">
             <template v-if="column.key === 'metric'">
               <span :title="record.metric" style="font-size: 12px">{{ friendlyLabel(record.metric) }}</span>
+              <a-tag
+                v-if="record.pendingWindowSize"
+                :color="record.sample_count >= record.pendingWindowSize ? 'green' : 'blue'"
+                style="margin-left: 4px; font-size: 10px"
+              >{{ record.sample_count >= record.pendingWindowSize ? 'Ready — saving soon' : 'Collecting' }}</a-tag>
             </template>
             <template v-else-if="column.key === 'device_id'">
               <span :title="record.device_id" style="font-size: 12px">{{ deviceLabel(record.device_id) }}</span>
+            </template>
+            <template v-else-if="column.key === 'time_slot'">
+              <span style="font-size: 12px">{{ record.pendingWindowSize ? '—' : record.time_slot }}</span>
+            </template>
+            <template v-else-if="column.key === 'sample_count'">
+              <span style="font-variant-numeric: tabular-nums; font-size: 12px">
+                {{ record.pendingWindowSize ? `${record.sample_count} / ${record.pendingWindowSize}` : record.sample_count }}
+              </span>
             </template>
             <template v-else-if="column.key === 'mean'">
               <span style="font-variant-numeric: tabular-nums; font-size: 12px">{{ fmtNum(record.mean, 3) }}</span>
@@ -845,7 +888,8 @@ onUnmounted(stopBaselinesAutoRefresh)
               <span style="font-variant-numeric: tabular-nums; font-size: 12px">{{ fmtNum(record.mad, 3) }}</span>
             </template>
             <template v-else-if="column.key === 'calculated_at'">
-              <span style="color: #888; font-size: 12px">{{ fmtTs(record.calculated_at) }}</span>
+              <span v-if="record.pendingWindowSize" style="color: #888; font-size: 12px">In progress</span>
+              <span v-else style="color: #888; font-size: 12px">{{ fmtTs(record.calculated_at) }}</span>
             </template>
           </template>
           <template #emptyText>

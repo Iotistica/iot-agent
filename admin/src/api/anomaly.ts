@@ -20,6 +20,14 @@ export const RESOLUTION_REASON_LABELS: Record<ResolutionReason, string> = {
   accepted: 'Known / Accepted',
 }
 
+export interface BaselineProgress {
+  metricName: string
+  deviceState: string
+  deviceId: string
+  bufferSize: number
+  windowSize: number
+}
+
 export interface BadActor {
   metric: string
   device_name: string
@@ -83,6 +91,10 @@ export const anomalyApi = {
 
   saveBaselines(): Promise<void> {
     return client.post(`${BASE}/save-baselines`).then(() => undefined)
+  },
+
+  getBaselineProgress(): Promise<BaselineProgress[]> {
+    return client.get<{ progress: BaselineProgress[] }>(`${BASE}/baseline-progress`).then((r) => r.data.progress)
   },
 
   clearBaselines(): Promise<{ deleted: number }> {
