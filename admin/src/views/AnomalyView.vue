@@ -861,8 +861,8 @@ onUnmounted(stopBaselinesAutoRefresh)
         <a-card size="small" style="margin-bottom: 16px">
           <div class="toolbar">
             <span style="color: #888; font-size: 13px">
-              <strong>Bad actors</strong> — metrics ranked by incident frequency, not by whether each incident was correct.
-              A metric firing constantly is worth tuning regardless of outcome (ISA-18.2 style rationalization).
+              <strong>Noisy Metrics (Bad Actors)</strong> — Metrics ranked by incident frequency, regardless of incident validity.
+              Frequently firing metrics are candidates for tuning under ISA-18.2 alarm rationalization principles.
             </span>
             <a-select v-model:value="badActorsWindowDays" size="small" style="width: 110px" @change="loadBadActors">
               <a-select-option :value="7">Last 7 days</a-select-option>
