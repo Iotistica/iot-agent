@@ -38,7 +38,20 @@ export interface ActivityEvent {
 	pointCount: number;
 }
 
-const MAX_EVENTS = 300;
+// One event is now recorded per distinct metric per batch (not one per batch),
+// so a single BACnet endpoint with dozens of points fills this far faster than
+// when it was tuned for one row per publish tick.
+const MAX_EVENTS = 2000;
+
+// Endpoint names are generated internally as "{protocol}-pipe" (see
+// init/features.ts) — "pipe" reflects internal plumbing (the endpoint's
+// buffered read pipeline), not something an operator recognizes. Same
+// stripping PublishManager.normalizeExternalGroupName() already does for
+// outbound MQTT group naming; applied here too since this is the other place
+// the raw internal name reaches something operator-facing (the Data Flow UI).
+function displayEndpointName(endpointName: string): string {
+	return endpointName.replace(/(?:^|[-_\s])pipe$/i, '').replace(/[-_\s]+$/g, '') || endpointName;
+}
 
 class ActivityMonitor {
 	private bySubscription = new Map<string, SubscriptionActivity>();
@@ -96,11 +109,14 @@ class ActivityMonitor {
 	}
 
 	getSubscriptions(): SubscriptionActivity[] {
-		return Array.from(this.bySubscription.values()).sort((a, b) => b.lastPublishTime.localeCompare(a.lastPublishTime));
+		return Array.from(this.bySubscription.values())
+			.sort((a, b) => b.lastPublishTime.localeCompare(a.lastPublishTime))
+			.map((s) => ({ ...s, endpointName: displayEndpointName(s.endpointName) }));
 	}
 
 	getRecentEvents(limit = 100): ActivityEvent[] {
-		return this.recentEvents.slice(-limit).reverse();
+		return this.recentEvents.slice(-limit).reverse()
+			.map((e) => ({ ...e, endpointName: displayEndpointName(e.endpointName) }));
 	}
 }
 

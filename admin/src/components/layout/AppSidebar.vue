@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, onMounted } from 'vue'
+import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   DashboardOutlined,
@@ -23,9 +23,10 @@ import {
   DatabaseOutlined,
   CodeOutlined,
   NodeIndexOutlined,
+  MenuFoldOutlined,
+  MenuUnfoldOutlined,
 } from '@ant-design/icons-vue'
 import IotisticaLogo from '@/components/IotisticaLogo.vue'
-import { settingsApi } from '@/api/settings'
 import { useProStatus } from '@/composables/useProStatus'
 import { useSidebar } from '@/composables/useSidebar'
 
@@ -33,17 +34,7 @@ const route = useRoute()
 const router = useRouter()
 
 const { proInstalled } = useProStatus()
-const { collapsed } = useSidebar()
-
-const agentVersion = ref<string | null>(null)
-onMounted(async () => {
-  try {
-    const s = await settingsApi.get()
-    agentVersion.value = s.agent?.version ?? null
-  } catch {
-    // non-fatal
-  }
-})
+const { collapsed, toggle } = useSidebar()
 
 const selectedKey = computed(() => route.path)
 
@@ -77,11 +68,10 @@ function onMenuClick({ key }: { key: string }) {
       <div class="logo-row">
         <IotisticaLogo :size="24" />
         <template v-if="!collapsed">
-          <span>Iotistica</span>
+          <span class="logo-title">Iotistica</span>
           <a-tag v-if="proInstalled" class="pro-badge">PRO</a-tag>
         </template>
       </div>
-      <a-tag v-if="agentVersion && !collapsed" class="version-badge">v{{ agentVersion }}</a-tag>
     </div>
 
     <div class="nav-main">
@@ -220,6 +210,15 @@ function onMenuClick({ key }: { key: string }) {
       </a-menu>
     </div>
 
+    <div class="sidebar-footer">
+      <a-button type="text" size="small" class="collapse-btn" @click="toggle">
+        <template #icon>
+          <MenuUnfoldOutlined v-if="collapsed" />
+          <MenuFoldOutlined v-else />
+        </template>
+      </a-button>
+    </div>
+
   </a-layout-sider>
 </template>
 
@@ -252,35 +251,39 @@ function onMenuClick({ key }: { key: string }) {
 .logo-row {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   min-width: 0;
 }
 
-.logo-row span {
+.logo-title {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.version-badge {
-  font-size: 10px;
-  line-height: 16px;
-  padding: 0 5px;
-  height: 16px;
-  align-self: flex-start;
-  background: rgba(255, 255, 255, 0.08);
-  border-color: rgba(255, 255, 255, 0.15);
-  color: rgba(255, 255, 255, 0.45);
-  border-radius: 3px;
-  font-weight: 400;
-  flex-shrink: 0;
-  white-space: nowrap;
+  min-width: 0;
 }
 
 .nav-main {
   flex: 1;
   overflow-y: auto;
   background: #141414;
+}
+
+.sidebar-footer {
+  flex-shrink: 0;
+  padding: 8px;
+  display: flex;
+  justify-content: flex-end;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  background: #141414;
+}
+
+.collapse-btn {
+  color: rgba(255, 255, 255, 0.45);
+  font-size: 16px;
+}
+
+.collapse-btn:hover {
+  color: #fff !important;
 }
 
 :deep(.ant-menu-dark),
@@ -320,6 +323,8 @@ function onMenuClick({ key }: { key: string }) {
   padding: 0 5px !important;
   height: 14px !important;
   margin-left: 6px !important;
+  flex-shrink: 0 !important;
+  white-space: nowrap !important;
   vertical-align: middle !important;
   border-radius: 3px !important;
 }

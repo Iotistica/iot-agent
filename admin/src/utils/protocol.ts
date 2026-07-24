@@ -28,6 +28,7 @@ export const METHOD_COLORS: Record<string, string> = {
   expected_range: 'volcano',
   rate_change:    'gold',
   ewma:           'cyan',
+  cusum:          'lime',
   fusion:         'magenta',
 }
 

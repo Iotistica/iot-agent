@@ -409,7 +409,7 @@ export class OPCUADiscovery extends BaseDiscovery {
 				
 				// Create session to browse the node tree
 				const session = await client.createSession();
-				const dataPoints: Array<{ nodeId: string; name: string; device_uuid?: string }> = [];
+				const dataPoints: Array<{ nodeId: string; name: string; browseName?: string; device_uuid?: string }> = [];
 				
 				try {
 					// Recursive tree browsing function
@@ -487,6 +487,10 @@ export class OPCUADiscovery extends BaseDiscovery {
 										dataPoints.push({
 											nodeId: childNodeId,
 											name: metricName,
+											// Raw OPC-UA browseName as reported by the server (e.g. "SpaceTemp_device1").
+											// `name` above is lowercased and truncated to the pre-underscore prefix for
+											// use as the metric tag — preserved separately here for accurate display.
+											browseName: nodeName,
 											...(folderDeviceUuid && { device_uuid: folderDeviceUuid }),
 										});
 										

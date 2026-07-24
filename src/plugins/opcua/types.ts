@@ -91,7 +91,12 @@ export type OPCUAConnection = z.infer<typeof OPCUAConnectionSchema>;
 export const OPCUADataPointSchema = z.object({
 	/** Data point name (e.g., temperature, pressure) */
 	name: z.string(),
-  
+
+	/** Raw OPC-UA browseName as reported by the server (e.g. "SpaceTemp_device1"),
+	 *  preserved for accurate display since `name` above is lowercased and
+	 *  truncated to the pre-underscore prefix for use as the metric tag. */
+	browseName: z.string().optional(),
+
 	/** OPC-UA Node ID (e.g., ns=2;s=Temperature or ns=3;i=1001) */
 	nodeId: z.string(),
   

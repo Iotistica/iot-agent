@@ -546,31 +546,6 @@ router.post('/v1/test/anomaly', async (req: Request, res: Response, next: NextFu
 });
 
 /**
- * POST /v1/anomaly/save-baselines
- * Manually trigger baseline save (for testing)
- */
-router.post('/v1/anomaly/save-baselines', async (req: Request, res: Response, next: NextFunction) => {
-	try {
-		const anomalyService = (actions as any).getAnomalyService?.();
-		if (!anomalyService) {
-			return res.status(503).json({ error: 'Anomaly detection service not available' });
-		}
-		
-		// Trigger baseline save
-		anomalyService.saveBaselines();
-		
-		const stats = anomalyService.getStats();
-		
-		return res.status(200).json({
-			message: 'Baseline save triggered',
-			stats
-		});
-	} catch (error) {
-		next(error);
-	}
-});
-
-/**
  * GET /v1/anomaly/metrics
  * Return all metric names available for anomaly rule configuration.
  * Merges live tracked metrics, always-on system metrics, and endpoint data-point names.
@@ -771,6 +746,58 @@ router.delete('/v1/anomaly/baselines', (req: Request, res: Response, next: NextF
 	try {
 		const deleted = actions.clearAnomalyBaselines();
 		return res.status(200).json({ deleted });
+	} catch (error) {
+		next(error);
+	}
+});
+
+/**
+ * GET /v1/anomaly/templates
+ * List saved (custom) anomaly rule templates
+ */
+router.get('/v1/anomaly/templates', async (req: Request, res: Response, next: NextFunction) => {
+	try {
+		const templates = await actions.listAnomalyTemplates();
+		return res.status(200).json({ templates });
+	} catch (error) {
+		next(error);
+	}
+});
+
+/**
+ * POST /v1/anomaly/templates
+ * Save the current rule form as a new template
+ */
+router.post('/v1/anomaly/templates', async (req: Request, res: Response, next: NextFunction) => {
+	try {
+		const template = await actions.createAnomalyTemplate(req.body);
+		return res.status(201).json({ template });
+	} catch (error) {
+		next(error);
+	}
+});
+
+/**
+ * PATCH /v1/anomaly/templates/:uuid
+ * Update a saved template
+ */
+router.patch('/v1/anomaly/templates/:uuid', async (req: Request, res: Response, next: NextFunction) => {
+	try {
+		const template = await actions.updateAnomalyTemplate(req.params.uuid, req.body);
+		return res.status(200).json({ template });
+	} catch (error) {
+		next(error);
+	}
+});
+
+/**
+ * DELETE /v1/anomaly/templates/:uuid
+ * Delete a saved template
+ */
+router.delete('/v1/anomaly/templates/:uuid', async (req: Request, res: Response, next: NextFunction) => {
+	try {
+		await actions.deleteAnomalyTemplate(req.params.uuid);
+		return res.status(204).send();
 	} catch (error) {
 		next(error);
 	}

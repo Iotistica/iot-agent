@@ -4,6 +4,7 @@ import type {
   AnomalyConfig,
   AnomalyStats,
   AnomalyBaseline,
+  AnomalyRuleTemplate,
   EdgeAnomalyEvent,
   EdgeAnomalyIncident,
   EdgeAnomalyAlert,
@@ -89,10 +90,6 @@ export const anomalyApi = {
       .then((r) => r.data)
   },
 
-  saveBaselines(): Promise<void> {
-    return client.post(`${BASE}/save-baselines`).then(() => undefined)
-  },
-
   getBaselineProgress(): Promise<BaselineProgress[]> {
     return client.get<{ progress: BaselineProgress[] }>(`${BASE}/baseline-progress`).then((r) => r.data.progress)
   },
@@ -149,5 +146,27 @@ export const anomalyApi = {
         }>
       }>(`${BASE}/metrics`)
       .then((r) => r.data.metrics)
+  },
+
+  // ── Rule templates (custom, saved) ─────────────────────────────────────────────
+
+  getTemplates(): Promise<AnomalyRuleTemplate[]> {
+    return client.get<{ templates: AnomalyRuleTemplate[] }>(`${BASE}/templates`).then((r) => r.data.templates)
+  },
+
+  createTemplate(data: Omit<AnomalyRuleTemplate, 'uuid'>): Promise<AnomalyRuleTemplate> {
+    return client
+      .post<{ template: AnomalyRuleTemplate }>(`${BASE}/templates`, data)
+      .then((r) => r.data.template)
+  },
+
+  updateTemplate(uuid: string, patch: Partial<Omit<AnomalyRuleTemplate, 'uuid'>>): Promise<AnomalyRuleTemplate> {
+    return client
+      .patch<{ template: AnomalyRuleTemplate }>(`${BASE}/templates/${uuid}`, patch)
+      .then((r) => r.data.template)
+  },
+
+  deleteTemplate(uuid: string): Promise<void> {
+    return client.delete(`${BASE}/templates/${uuid}`).then(() => undefined)
   },
 }

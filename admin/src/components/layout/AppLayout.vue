@@ -1,12 +1,12 @@
 <script setup lang="ts">
-import { onMounted } from 'vue'
+import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { LogoutOutlined, UserOutlined, MenuFoldOutlined, MenuUnfoldOutlined } from '@ant-design/icons-vue'
+import { LogoutOutlined, UserOutlined } from '@ant-design/icons-vue'
 import AppSidebar from './AppSidebar.vue'
 import { useAuth } from '@/composables/useAuth'
 import { useProStatus } from '@/composables/useProStatus'
 import { useDockerStatus } from '@/composables/useDockerStatus'
-import { useSidebar } from '@/composables/useSidebar'
+import { settingsApi } from '@/api/settings'
 
 defineProps<{ title?: string; flex?: boolean }>()
 
@@ -14,16 +14,23 @@ const router = useRouter()
 const { currentUser, logout } = useAuth()
 const { fetchProStatus } = useProStatus()
 const { fetchDockerStatus } = useDockerStatus()
-const { collapsed, toggle } = useSidebar()
+
+const agentVersion = ref<string | null>(null)
 
 async function handleLogout() {
   await logout()
   router.push('/login')
 }
 
-onMounted(() => {
+onMounted(async () => {
   fetchProStatus()
   fetchDockerStatus()
+  try {
+    const s = await settingsApi.get()
+    agentVersion.value = s.agent?.version ?? null
+  } catch {
+    // non-fatal
+  }
 })
 </script>
 
@@ -33,15 +40,10 @@ onMounted(() => {
     <a-layout style="overflow: hidden">
       <a-layout-header class="page-header">
         <div class="header-left">
-          <a-button type="text" size="small" class="collapse-btn" @click="toggle">
-            <template #icon>
-              <MenuUnfoldOutlined v-if="collapsed" />
-              <MenuFoldOutlined v-else />
-            </template>
-          </a-button>
           <h2>{{ title }}</h2>
         </div>
         <div class="header-right">
+          <a-tag v-if="agentVersion" class="version-badge">v{{ agentVersion }}</a-tag>
           <span class="header-user">
             <UserOutlined style="margin-right: 6px; font-size: 13px" />
             {{ currentUser?.username }}
@@ -83,15 +85,6 @@ onMounted(() => {
   gap: 12px;
 }
 
-.collapse-btn {
-  color: #888;
-  font-size: 16px;
-}
-
-.collapse-btn:hover {
-  color: #1677ff !important;
-}
-
 .header-right {
   display: flex;
   align-items: center;
@@ -101,6 +94,17 @@ onMounted(() => {
 .header-user {
   font-size: 13px;
   color: #666;
+}
+
+.version-badge {
+  font-size: 11px;
+  line-height: 18px;
+  padding: 0 7px;
+  height: 20px;
+  background: #f5f5f5;
+  border-color: #e8e8e8;
+  color: #888;
+  font-weight: 500;
 }
 
 .logout-btn {

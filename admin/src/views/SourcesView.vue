@@ -286,7 +286,11 @@ onUnmounted(() => {
       size="middle"
     >
       <template #bodyCell="{ column, record }">
-        <template v-if="column.key === 'protocol'">
+        <template v-if="column.key === 'name'">
+          <span :title="record.name">{{ (record.metadata?.objectName as string | undefined) || record.name }}</span>
+        </template>
+
+        <template v-else-if="column.key === 'protocol'">
           <a-tag :color="protocolColor(record.protocol)">
             {{ record.protocol === 'opcua' ? 'OPC-UA' : record.protocol }}
           </a-tag>

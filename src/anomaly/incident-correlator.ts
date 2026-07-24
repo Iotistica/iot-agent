@@ -124,13 +124,38 @@ export class IncidentCorrelator {
 		incident: NonNullable<ReturnType<typeof AnomalyIncidentModel.findActiveByFingerprint>>,
 		payload: AnomalyEventPayload,
 	): string {
-		return (
-			`${incident.severity.toUpperCase()}: Anomaly in "${incident.metric}"` +
-			` on ${incident.device_name}.` +
-			` Score: ${incident.max_anomaly_score.toFixed(2)},` +
-			` observed: ${payload.observed_value},` +
-			` events: ${incident.event_count}.`
-		);
+		const parts = [
+			`${incident.severity.toUpperCase()}: Anomaly in "${incident.metric}"`,
+			`on ${incident.device_name}.`,
+		];
+
+		const triggeredBy = Array.isArray(payload.triggered_by)
+			? (payload.triggered_by as unknown[]).filter((m): m is string => typeof m === 'string')
+			: undefined;
+		if (triggeredBy?.length) {
+			parts.push(`Triggered by: ${triggeredBy.join(', ')}.`);
+		}
+
+		const range = Array.isArray(payload.expected_range) && payload.expected_range.length === 2
+			? payload.expected_range as [number, number]
+			: undefined;
+		if (range) {
+			parts.push(`Expected range: [${range[0].toFixed(2)}, ${range[1].toFixed(2)}].`);
+		}
+
+		parts.push(`Observed: ${payload.observed_value}.`);
+
+		if (typeof payload.deviation === 'number' && payload.deviation > 0) {
+			parts.push(`Deviation: ${payload.deviation.toFixed(2)}.`);
+		}
+
+		if (payload.severity_reason) {
+			parts.push(`Reason: ${payload.severity_reason}.`);
+		}
+
+		parts.push(`Score: ${incident.max_anomaly_score.toFixed(2)}, events: ${incident.event_count}.`);
+
+		return parts.join(' ');
 	}
 
 	private checkSilentResolutions(): void {

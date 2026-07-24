@@ -136,6 +136,7 @@ export type DetectionMethod =
   | 'expected_range'
   | 'rate_change'
   | 'ewma'
+  | 'cusum'
   | 'fusion'
   | 'simulation'
 export type SeasonalityPattern = 'none' | 'day-night' | 'hourly' | 'weekly'
@@ -172,6 +173,20 @@ export interface AnomalyMetricConfig {
   seasonality?: SeasonalityPattern
 }
 
+export interface AnomalyRuleTemplate {
+  uuid: string
+  name: string
+  category?: string | null
+  purpose?: string | null
+  methods: DetectionMethod[]
+  threshold: number
+  window_size: number
+  min_confidence?: number | null
+  cooldown_ms?: number | null
+  seasonality?: SeasonalityPattern | null
+  expected_range?: [number, number] | null
+}
+
 export interface AnomalyConfig {
   enabled?: boolean
   sensitivity: number
@@ -204,6 +219,8 @@ export interface AnomalyStats {
   criticalAlerts: number
   warningAlerts: number
   infoAlerts: number
+  inWarmup?: boolean
+  warmupRemainingMs?: number
 }
 
 export interface AnomalyBaseline {

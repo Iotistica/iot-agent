@@ -33,6 +33,9 @@ export enum BACnetProperty {
  */
 export const BACnetObjectSchema = z.object({
 	name: z.string().min(1),
+	/** Raw BACnet object-name property as reported by the device (e.g. "Space-Temp"),
+	 *  preserved for accurate display since `name` above is a sanitized identifier. */
+	objectName: z.string().optional(),
 	objectType: z.nativeEnum(BACnetObjectType),
 	objectInstance: z.number().min(0).max(4194303),
 	propertyId: z.nativeEnum(BACnetProperty).optional().default(BACnetProperty.PRESENT_VALUE),

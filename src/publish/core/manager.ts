@@ -1166,21 +1166,31 @@ export class PublishManager extends EventEmitter {
 
 			if (binding.publisher.id !== undefined) {
 				const records = this.collectTagRecords(messages);
-				const sample = records[0];
-				activityMonitor.record({
-					subscriptionId: binding.subscription.id ?? null,
-					destinationId: binding.publisher.id,
-					destinationName: binding.publisher.name,
-					destinationType: binding.publisher.type,
-					protocol: this.protocol,
-					endpointName,
-					metric: String(
-						sample?.metric ?? sample?.metric_name ?? sample?.nodeName ?? sample?.name ?? sample?.tag ?? sample?.id ?? '—',
-					),
-					value: sample?.value ?? sample?.rawValue ?? null,
-					quality: typeof sample?.quality === 'string' ? sample.quality : undefined,
-					pointCount: records.length,
-				});
+				// A batch carries every metric the endpoint polled this tick, not just one —
+				// dedupe by metric name (keeping the last reading, same convention as the ECP
+				// payload format) so Recent Activity shows the full spread instead of only
+				// whichever tag happened to be first in the batch.
+				const byMetric = new Map<string, ProtocolMessage>();
+				for (const record of records) {
+					const metric = String(
+						record?.metric ?? record?.metric_name ?? record?.nodeName ?? record?.name ?? record?.tag ?? record?.id ?? '—',
+					);
+					byMetric.set(metric, record);
+				}
+				for (const [metric, record] of byMetric) {
+					activityMonitor.record({
+						subscriptionId: binding.subscription.id ?? null,
+						destinationId: binding.publisher.id,
+						destinationName: binding.publisher.name,
+						destinationType: binding.publisher.type,
+						protocol: this.protocol,
+						endpointName,
+						metric,
+						value: record?.value ?? record?.rawValue ?? null,
+						quality: typeof record?.quality === 'string' ? record.quality : undefined,
+						pointCount: records.length,
+					});
+				}
 			}
 
 			const items = batchesByPlugin.get(binding.plugin) || [];

@@ -151,13 +151,10 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <AppLayout>
+  <AppLayout title="Devices">
     <div class="devices-page">
       <div class="page-header">
-        <div>
-          <h2>Devices</h2>
-          <p class="subtitle">Physical and logical devices discovered through protocol endpoints</p>
-        </div>
+        <p class="subtitle">Physical and logical devices discovered through protocol endpoints</p>
         <a-space>
           <template v-if="selectedUuids.length > 0">
             <span style="font-size: 13px; color: #666">{{ selectedUuids.length }} selected</span>
@@ -208,7 +205,7 @@ onUnmounted(() => {
         <template #bodyCell="{ column, record }">
 
           <template v-if="column.key === 'name'">
-            <span class="device-name">{{ record.name }}</span>
+            <span class="device-name" :title="record.name">{{ record.metadata?.objectName || record.name }}</span>
           </template>
 
           <template v-else-if="column.key === 'protocol'">
@@ -266,12 +263,6 @@ onUnmounted(() => {
   align-items: flex-start;
   justify-content: space-between;
   margin-bottom: 20px;
-}
-
-.page-header h2 {
-  margin: 0 0 4px;
-  font-size: 20px;
-  font-weight: 600;
 }
 
 .subtitle {

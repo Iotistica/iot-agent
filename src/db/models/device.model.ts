@@ -271,7 +271,14 @@ export class DeviceModel {
 			}
 
 		} else {
-			// BACnet, SNMP, MQTT, CAN — 1:1 with the endpoint
+			// BACnet, SNMP, MQTT, CAN — 1:1 with the endpoint.
+			// endpoint.name is a sanitized identifier (lowercased, no punctuation) used
+			// internally; objectName (captured at discovery time from the device itself,
+			// e.g. BACnet's Device object-name property) is the human-readable name the
+			// physical device actually reports — carry it through so the admin UI can
+			// display "RTU-1" instead of "rtu_1_2001".
+			const objectName = typeof endpoint.metadata?.objectName === 'string' ? endpoint.metadata.objectName : undefined;
+
 			await this.upsertDevice({
 				uuid: endpoint.uuid || randomUUID(),
 				endpoint_id: endpointId,
@@ -279,6 +286,7 @@ export class DeviceModel {
 				protocol,
 				enabled: endpoint.enabled,
 				identifier: null,
+				metadata: objectName ? { objectName } : undefined,
 				lastSeenAt,
 			});
 		}

@@ -29,7 +29,7 @@ function showVersion() {
         try {
             if ((0, fs_1.existsSync)(packagePath)) {
                 const packageJson = JSON.parse((0, fs_1.readFileSync)(packagePath, 'utf-8'));
-                core_1.logger.info('iotctl - IoT Control CLI', { version: packageJson.version });
+                core_1.logger.info('Iotistica Agent', { version: packageJson.version });
                 return;
             }
         }
@@ -37,6 +37,6 @@ function showVersion() {
             continue;
         }
     }
-    core_1.logger.info('iotctl - IoT Control CLI', { version: '1.0.0' });
+    core_1.logger.info('Iotistica Agent', { version: '1.0.0' });
 }
 //# sourceMappingURL=system.js.map

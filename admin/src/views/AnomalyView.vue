@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { message } from 'ant-design-vue'
 import {
   ReloadOutlined,
@@ -10,6 +10,7 @@ import {
   BellOutlined,
   DatabaseOutlined,
   InfoCircleOutlined,
+  SearchOutlined,
 } from '@ant-design/icons-vue'
 import type { TableColumnType } from 'ant-design-vue'
 import AppLayout from '@/components/layout/AppLayout.vue'
@@ -20,10 +21,12 @@ import { methodColor } from '@/utils/protocol'
 import { anomalyApi, RESOLUTION_REASON_LABELS, type BadActor, type ResolutionReason } from '@/api/anomaly'
 import { destinationsApi } from '@/api/destinations'
 import { sourcesApi } from '@/api/sources'
+import { BUILTIN_ANOMALY_TEMPLATES, type BuiltinAnomalyTemplate } from '@/data/anomalyTemplates'
 import type {
   AnomalyBaseline,
   AnomalyConfig,
   AnomalyMetricConfig,
+  AnomalyRuleTemplate,
   DetectionMethod,
   Destination,
   EdgeAnomalyEvent,
@@ -54,6 +57,78 @@ function fmtTs(ms: number): string {
 function fmtNum(n: number | null | undefined, decimals = 3): string {
   if (n == null || isNaN(n)) return '—'
   return n.toFixed(decimals)
+}
+
+// Generic debounce keyed by name, so independent debounced actions (one per
+// tab's live-filter) don't clobber each other's pending timers.
+const debounceTimers = new Map<string, ReturnType<typeof setTimeout>>()
+function debounce(key: string, fn: () => void, delayMs = 300) {
+  const existing = debounceTimers.get(key)
+  if (existing) clearTimeout(existing)
+  debounceTimers.set(key, setTimeout(fn, delayMs))
+}
+
+// Only one tab is visible at a time, so a single shared interval covers
+// "auto-refresh whichever tab is active" — this replaces manual reload buttons.
+let tabRefreshTimer: ReturnType<typeof setInterval> | null = null
+function startTabAutoRefresh(loadFn: () => void, loadingRef: { value: boolean }, intervalMs = 5000) {
+  stopTabAutoRefresh()
+  tabRefreshTimer = setInterval(() => {
+    if (!loadingRef.value) loadFn()
+  }, intervalMs)
+}
+function stopTabAutoRefresh() {
+  if (tabRefreshTimer) {
+    clearInterval(tabRefreshTimer)
+    tabRefreshTimer = null
+  }
+}
+
+// ── Warm-up countdown ────────────────────────────────────────────────────────
+// Global, agent-uptime-relative alert suppression (default 15 min after agent
+// start) — independent of any single metric's baseline/buffer state, so it
+// needs its own indicator rather than piggybacking on the Baselines tab.
+// Fetched once (absolute end time), then ticks locally every second so the
+// countdown is smooth without re-polling the server every second.
+const warmupRemainingMs = ref<number | null>(null)
+let warmupEndsAt: number | null = null
+let warmupTimer: ReturnType<typeof setInterval> | null = null
+
+const warmupCountdownLabel = computed(() => {
+  if (!warmupRemainingMs.value) return ''
+  const totalSeconds = Math.ceil(warmupRemainingMs.value / 1000)
+  const m = Math.floor(totalSeconds / 60)
+  const s = totalSeconds % 60
+  return `${m}:${String(s).padStart(2, '0')}`
+})
+
+function stopWarmupCountdown() {
+  if (warmupTimer) {
+    clearInterval(warmupTimer)
+    warmupTimer = null
+  }
+}
+
+async function loadWarmupStatus() {
+  try {
+    const { stats } = await anomalyApi.getStats()
+    const remaining = stats.warmupRemainingMs ?? 0
+    if (remaining <= 0) {
+      warmupRemainingMs.value = null
+      stopWarmupCountdown()
+      return
+    }
+    warmupEndsAt = Date.now() + remaining
+    warmupRemainingMs.value = remaining
+    stopWarmupCountdown()
+    warmupTimer = setInterval(() => {
+      const left = Math.max(0, (warmupEndsAt ?? 0) - Date.now())
+      warmupRemainingMs.value = left > 0 ? left : null
+      if (left <= 0) stopWarmupCountdown()
+    }, 1000)
+  } catch {
+    // non-fatal — banner just won't show
+  }
 }
 
 // ── Edge: Events ──────────────────────────────────────────────────────────────
@@ -189,32 +264,27 @@ async function loadEdgeAlerts() {
 }
 
 // ── Baselines tab ──────────────────────────────────────────────────────────────
-// pendingWindowSize is set only on synthesized in-progress rows (see loadBaselines) —
-// a metric that's buffering samples but hasn't collected enough to persist a real
-// baseline yet. Keeps that row visible immediately instead of it appearing nowhere.
-type BaselineRow = AnomalyBaseline & { pendingWindowSize?: number }
+// pendingWindowSize is set whenever a metric's buffer hasn't yet filled to its
+// configured windowSize — on synthesized placeholder rows (no real baseline saved
+// yet) AND on real baseline rows (saveBaselines() persists as soon as
+// buffer.size >= minSamples, which is far below windowSize, so a "real" row can
+// still be actively collecting). isSynthetic distinguishes the two: only true for
+// placeholder rows with no calculated_at/time_slot of their own.
+type BaselineRow = AnomalyBaseline & { pendingWindowSize?: number; isSynthetic?: boolean }
 const baselines = ref<BaselineRow[]>([])
 const baselinesTotal = ref(0)
 const baselinesLoading = ref(false)
 const baselinesMetric = ref('')
 const baselinesPage = ref(1)
-const savingBaselines = ref(false)
-const baselinesRefreshTimer = ref<ReturnType<typeof setInterval> | null>(null)
-const BASELINES_REFRESH_INTERVAL_MS = 5000
 
-function startBaselinesAutoRefresh() {
-  if (baselinesRefreshTimer.value) return
-  baselinesRefreshTimer.value = setInterval(() => {
-    if (!baselinesLoading.value) loadBaselines()
-  }, BASELINES_REFRESH_INTERVAL_MS)
-}
-
-function stopBaselinesAutoRefresh() {
-  if (baselinesRefreshTimer.value) {
-    clearInterval(baselinesRefreshTimer.value)
-    baselinesRefreshTimer.value = null
-  }
-}
+// Live-filter as you type instead of requiring Enter/a manual reload button —
+// debounced so every keystroke doesn't fire its own request.
+watch(baselinesMetric, () => {
+  debounce('baselines-filter', () => {
+    baselinesPage.value = 1
+    loadBaselines()
+  })
+})
 
 const baselineColumns = [
   { title: 'Metric', key: 'metric', ellipsis: true },
@@ -229,25 +299,44 @@ const baselineColumns = [
   { title: 'Calculated', key: 'calculated_at', width: 160 },
 ]
 
-// Maps "endpoint:bacnet-pipe" → display name (for baselines device_id)
-const endpointFriendlyNames = ref<Map<string, string>>(new Map())
-// Maps endpoint UUID → display name (for events/incidents/alerts metric prefix lookup)
+// Maps endpoint UUID → display name (for events/incidents/alerts/baselines metric prefix lookup)
 const endpointsByUuid = ref<Map<string, string>>(new Map())
+// Maps "endpointUuid::sanitizedPointName" → the raw protocol-native point name
+// (BACnet objectName / OPC-UA browseName, e.g. "Space-Temp") as reported by the
+// device, for tables that show the point name and would otherwise only have the
+// sanitized identifier (lowercased, punctuation stripped) to display.
+const pointRawNameByKey = ref<Map<string, string>>(new Map())
 
 async function ensureEndpointMaps() {
   if (endpointsByUuid.value.size > 0) return
   try {
     const eps = await sourcesApi.getAll()
     const byUuid = new Map<string, string>()
-    const byPipe = new Map<string, string>()
+    const rawNameByKey = new Map<string, string>()
     for (const ep of eps) {
       const displayName = (ep.metadata?.objectName as string | undefined) || ep.name
       byUuid.set(ep.uuid, displayName)
-      byPipe.set(`endpoint:${ep.protocol}-pipe`, displayName)
+
+      for (const dp of (ep.data_points ?? []) as Array<Record<string, unknown>>) {
+        const sanitizedName = dp?.name
+        const rawName = (dp?.objectName ?? dp?.browseName) as string | undefined
+        if (typeof sanitizedName === 'string' && typeof rawName === 'string' && rawName) {
+          rawNameByKey.set(`${ep.uuid}::${sanitizedName}`, rawName)
+        }
+      }
     }
     endpointsByUuid.value = byUuid
-    endpointFriendlyNames.value = byPipe
+    pointRawNameByKey.value = rawNameByKey
   } catch { /* non-fatal */ }
+}
+
+// The metric's own device UUID segment: metrics are named
+// "{agentUuid}_{deviceUuid}_{bare_metric}" — the LAST UUID segment is the
+// device's own endpoint UUID (the first is the agent-wide UUID, constant
+// across every metric and never a useful lookup key on its own).
+function extractDeviceUuid(metric: string): string | undefined {
+  const uuidMatches = [...metric.matchAll(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})_/gi)]
+  return uuidMatches.at(-1)?.[1]
 }
 
 // Resolve device display name from metric name.
@@ -261,21 +350,26 @@ function deviceNameFromMetric(metric: string, fallback: string): string {
   // Strip UUID prefix to get bare metric name
   const bare = metric.replace(UUID_PREFIX_RE, '')
 
-  // If the bare name changed (i.e., there was a UUID prefix), it's an endpoint metric.
-  // Extract the device portion: everything except the last two underscore-separated tokens
-  // (which form the metric leaf, e.g. "coil_temp", "supply_temp", "present_value").
+  // If the bare name changed (i.e., there was a UUID prefix), it's an endpoint metric,
+  // named "{agentUuid}_{deviceUuid}_{bare_metric}". Prefer the real device name
+  // captured at discovery time (exact casing/format, e.g. "RTU-1") over a guessed
+  // reconstruction — the LAST UUID segment is the device's own endpoint UUID, which
+  // is what endpointsByUuid is keyed by (the first is the agent-wide UUID, constant
+  // across every metric and never a useful lookup key on its own).
   if (bare !== metric) {
+    const deviceUuid = extractDeviceUuid(metric)
+    const sourceName = deviceUuid ? endpointsByUuid.value.get(deviceUuid) : undefined
+    if (sourceName) return sourceName
+
+    // Fallback: reconstruct a best-guess label from the metric's own segments
+    // (e.g. "pioneer_gold_1_coil_temp" → "Pioneer Gold 1") when there's no real
+    // device metadata to fall back on — everything except the last two
+    // underscore-separated tokens (the metric leaf, e.g. "coil_temp").
     const parts = bare.split('_')
     if (parts.length > 2) {
       const deviceParts = parts.slice(0, parts.length - 2)
       const label = deviceParts.map(p => p.charAt(0).toUpperCase() + p.slice(1)).join(' ')
       if (label) return label
-    }
-    // Fallback: source name from UUID lookup
-    const uuidMatch = metric.match(/^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})_/i)
-    if (uuidMatch) {
-      const sourceName = endpointsByUuid.value.get(uuidMatch[1])
-      if (sourceName) return sourceName
     }
   }
 
@@ -284,17 +378,56 @@ function deviceNameFromMetric(metric: string, fallback: string): string {
   return fallback
 }
 
+// Complement of deviceNameFromMetric(): the metric's own leaf (last two
+// underscore-separated segments, e.g. "space_temp") with the embedded device
+// prefix stripped — for tables that already show a separate Device column, so
+// the metric name doesn't redundantly repeat "rtu_1" that's shown right next to it.
+function metricLeaf(metric: string): string {
+  const bare = friendlyLabel(metric)
+  if (bare === metric) return bare // no UUID prefix — not a device-scoped metric, nothing to trim
+
+  const parts = bare.split('_')
+  const leaf = parts.length > 2 ? parts.slice(-2).join('_') : bare
+
+  // Prefer the true protocol-native point name (e.g. "Space-Temp") over the
+  // sanitized leaf, when we have it on file for this exact device+point.
+  const deviceUuid = extractDeviceUuid(metric)
+  const rawName = deviceUuid ? pointRawNameByKey.value.get(`${deviceUuid}::${leaf}`) : undefined
+  return rawName || leaf
+}
+
 async function loadBaselines() {
   baselinesLoading.value = true
   try {
     await ensureEndpointMaps()
     const filterText = baselinesMetric.value.trim().toLowerCase()
-    const [r, progress] = await Promise.all([
+    const [r, progress, cfg] = await Promise.all([
       anomalyApi.getBaselines({ metric: baselinesMetric.value.trim() || undefined, limit: PAGE_SIZE }),
       // Only meaningful on page 1 — prepending in-progress rows to an arbitrary
       // later page would be confusing, so skip fetching/merging past page 1.
       baselinesPage.value === 1 ? anomalyApi.getBaselineProgress() : Promise.resolve([]),
+      // Needed to list rules that haven't produced a single sample yet (see
+      // notStartedRows below) — reuse the cached config if the Rules/Config tab
+      // already loaded it, otherwise fetch it just for this.
+      baselinesPage.value === 1 && !config.value ? anomalyApi.getConfig() : Promise.resolve(config.value),
     ])
+    if (cfg) config.value = cfg
+
+    const progressByKey = new Map(
+      progress.map((p) => [`${p.metricName}::${p.deviceId}::${p.deviceState}`, p]),
+    )
+
+    // saveBaselines() persists a real row once buffer.size >= minSamples (default 5),
+    // well before the buffer reaches windowSize — so a metric can already have a real
+    // baseline row and still be actively collecting toward its full window. Annotate
+    // those rows in place instead of treating "a row exists" as "done collecting",
+    // otherwise the progress indicator disappears after the very first periodic save.
+    const annotatedBaselines: BaselineRow[] = r.baselines.map((b) => {
+      const key = `${b.metric}::${b.device_id}::${b.device_state}`
+      const p = progressByKey.get(key)
+      if (!p || p.bufferSize >= p.windowSize) return b
+      return { ...b, sample_count: p.bufferSize, pendingWindowSize: p.windowSize }
+    })
 
     const existingKeys = new Set(r.baselines.map((b) => `${b.metric}::${b.device_id}::${b.device_state}`))
     const pendingRows: BaselineRow[] = progress
@@ -316,34 +449,46 @@ async function loadBaselines() {
         sample_count: p.bufferSize,
         calculated_at: 0,
         pendingWindowSize: p.windowSize,
+        isSynthetic: true,
       }))
 
-    baselines.value = [...pendingRows, ...r.baselines]
-    baselinesTotal.value = r.total + pendingRows.length
+    // A rule that hasn't received a single data point yet has no buffer at all, so
+    // it's absent from both `r.baselines` and `progress` — nothing distinguishes
+    // "just added, waiting for first reading" from "not configured". Synthesize a
+    // 0-sample "Collecting" row straight from the rule config so a brand-new rule
+    // shows up immediately instead of appearing to do nothing until data arrives.
+    const metricNamesWithData = new Set([
+      ...r.baselines.map((b) => b.metric),
+      ...progress.map((p) => p.metricName),
+    ])
+    const notStartedRows: BaselineRow[] = (config.value?.metrics ?? [])
+      .filter((m) => m.enabled)
+      .filter((m) => !metricNamesWithData.has(m.name))
+      .filter((m) => !filterText || m.name.toLowerCase().includes(filterText))
+      .map((m) => ({
+        metric: m.name,
+        device_id: m.deviceName ?? '',
+        device_state: 'unknown',
+        time_slot: -1,
+        mean: null,
+        std_dev: null,
+        median: null,
+        mad: null,
+        sample_count: 0,
+        calculated_at: 0,
+        pendingWindowSize: m.windowSize,
+        isSynthetic: true,
+      }))
+
+    baselines.value = [...notStartedRows, ...pendingRows, ...annotatedBaselines]
+    baselinesTotal.value = r.total + pendingRows.length + notStartedRows.length
   } catch { /* non-fatal */ } finally {
     baselinesLoading.value = false
   }
 }
 
-function deviceLabel(deviceId: string): string {
-  if (!deviceId || deviceId === 'unknown-device') return '—'
-  if (deviceId === 'system-endpoint') return 'System'
-  return endpointFriendlyNames.value.get(deviceId) ?? deviceId
-}
-
-async function saveBaselines() {
-  savingBaselines.value = true
-  try {
-    await anomalyApi.saveBaselines()
-    message.success('Baselines saved')
-  } catch (err: unknown) {
-    message.error((err as { message?: string })?.message ?? 'Save failed')
-  } finally {
-    savingBaselines.value = false
-  }
-}
-
 const clearingBaselines = ref(false)
+const resetBaselinesModalOpen = ref(false)
 
 async function clearAllBaselines() {
   clearingBaselines.value = true
@@ -352,6 +497,7 @@ async function clearAllBaselines() {
     message.success(`Cleared ${deleted} baseline${deleted !== 1 ? 's' : ''}`)
     baselines.value = []
     baselinesTotal.value = 0
+    resetBaselinesModalOpen.value = false
   } catch (err: unknown) {
     message.error((err as { message?: string })?.message ?? 'Clear failed')
   } finally {
@@ -368,12 +514,148 @@ const mqttDestinations = ref<Destination[]>([])
 const metricDrawerOpen = ref(false)
 const editingMetricIdx = ref<number | null>(null)
 const metricForm = ref<AnomalyMetricConfig>(blankMetric())
-const hasExpectedRange = ref(false)
 const expectedMin = ref<number | null>(null)
 const expectedMax = ref<number | null>(null)
 
+// expected_range is a no-op detector without bounds — surface that before save, not just on submit.
+const expectedRangeMissingBounds = computed(() =>
+  metricForm.value.methods.includes('expected_range')
+  && (expectedMin.value == null || expectedMax.value == null),
+)
+
+// ── Rule templates (built-in presets + custom saved templates) ─────────────────
+const templateLibraryOpen = ref(false)
+const customTemplates = ref<AnomalyRuleTemplate[]>([])
+const customTemplatesLoaded = ref(false)
+const templatesLoading = ref(false)
+const templateSearch = ref('')
+const saveTemplateModalOpen = ref(false)
+const saveTemplateName = ref('')
+const saveTemplateSaving = ref(false)
+
+type TemplateListItem =
+  | (BuiltinAnomalyTemplate & { builtin: true })
+  | (AnomalyRuleTemplate & { builtin: false; category: 'My templates' })
+
+async function loadTemplates() {
+  templatesLoading.value = true
+  try {
+    customTemplates.value = await anomalyApi.getTemplates()
+    customTemplatesLoaded.value = true
+  } catch {
+    // non-fatal
+  } finally {
+    templatesLoading.value = false
+  }
+}
+
+const templateLibrary = computed<TemplateListItem[]>(() => {
+  const builtins: TemplateListItem[] = BUILTIN_ANOMALY_TEMPLATES.map((t) => ({ ...t, builtin: true }))
+  const custom: TemplateListItem[] = customTemplates.value.map((t) => ({
+    ...t,
+    builtin: false,
+    category: 'My templates',
+  }))
+  return [...custom, ...builtins]
+})
+
+const templatesByCategory = computed(() => {
+  const q = templateSearch.value.trim().toLowerCase()
+  const filtered = q
+    ? templateLibrary.value.filter((t) =>
+        t.name.toLowerCase().includes(q) || (t.purpose ?? '').toLowerCase().includes(q),
+      )
+    : templateLibrary.value
+
+  const groups = new Map<string, TemplateListItem[]>()
+  for (const t of filtered) {
+    const key = t.category ?? 'Other'
+    if (!groups.has(key)) groups.set(key, [])
+    groups.get(key)!.push(t)
+  }
+  return groups
+})
+
+function openTemplateLibrary() {
+  templateSearch.value = ''
+  templateLibraryOpen.value = true
+  if (!customTemplatesLoaded.value) loadTemplates()
+}
+
+function applyTemplate(template: TemplateListItem) {
+  metricForm.value.methods = [...template.methods]
+  metricForm.value.threshold = template.threshold
+
+  if (template.builtin) {
+    metricForm.value.windowSize = template.windowSize
+    metricForm.value.minConfidence = template.minConfidence
+    metricForm.value.cooldownMs = template.cooldownMs
+    metricForm.value.seasonality = template.seasonality
+    expectedMin.value = null
+    expectedMax.value = null
+  } else {
+    metricForm.value.windowSize = template.window_size
+    metricForm.value.minConfidence = template.min_confidence ?? 0.7
+    metricForm.value.cooldownMs = template.cooldown_ms ?? 300_000
+    metricForm.value.seasonality = template.seasonality ?? 'none'
+    expectedMin.value = template.expected_range?.[0] ?? null
+    expectedMax.value = template.expected_range?.[1] ?? null
+  }
+
+  templateLibraryOpen.value = false
+  message.success(`Applied template "${template.name}"`)
+}
+
+function openSaveTemplateModal() {
+  saveTemplateName.value = ''
+  saveTemplateModalOpen.value = true
+}
+
+async function saveAsTemplate() {
+  if (!saveTemplateName.value.trim()) {
+    message.error('Template name is required')
+    return
+  }
+  saveTemplateSaving.value = true
+  try {
+    await anomalyApi.createTemplate({
+      name: saveTemplateName.value.trim(),
+      category: null,
+      purpose: null,
+      methods: metricForm.value.methods,
+      threshold: metricForm.value.threshold,
+      window_size: metricForm.value.windowSize,
+      min_confidence: metricForm.value.minConfidence ?? null,
+      cooldown_ms: metricForm.value.cooldownMs ?? null,
+      seasonality: metricForm.value.seasonality ?? null,
+      expected_range: expectedMin.value != null && expectedMax.value != null
+        ? [expectedMin.value, expectedMax.value]
+        : null,
+    })
+    message.success('Template saved')
+    saveTemplateModalOpen.value = false
+    customTemplatesLoaded.value = false
+    await loadTemplates()
+  } catch (err: unknown) {
+    message.error((err as { message?: string })?.message ?? 'Failed to save template')
+  } finally {
+    saveTemplateSaving.value = false
+  }
+}
+
+async function deleteTemplate(uuid: string) {
+  try {
+    await anomalyApi.deleteTemplate(uuid)
+    message.success('Template deleted')
+    customTemplatesLoaded.value = false
+    await loadTemplates()
+  } catch (err: unknown) {
+    message.error((err as { message?: string })?.message ?? 'Failed to delete template')
+  }
+}
+
 const DETECTION_METHODS: DetectionMethod[] = [
-  'zscore', 'mad', 'iqr', 'expected_range', 'rate_change', 'ewma', 'fusion',
+  'zscore', 'mad', 'iqr', 'expected_range', 'rate_change', 'ewma', 'cusum', 'fusion',
 ]
 const SEASONALITY_OPTIONS = ['none', 'day-night', 'hourly', 'weekly']
 
@@ -514,7 +796,6 @@ async function saveConfig() {
 function openAddMetric() {
   editingMetricIdx.value = null
   metricForm.value = blankMetric()
-  hasExpectedRange.value = false
   expectedMin.value = null
   expectedMax.value = null
   metricDrawerOpen.value = true
@@ -524,7 +805,6 @@ function openAddMetric() {
 function openEditMetric(metric: AnomalyMetricConfig, idx: number) {
   editingMetricIdx.value = idx
   metricForm.value = { ...metric, name: friendlyLabel(metric.name), methods: [...metric.methods] }
-  hasExpectedRange.value = Array.isArray(metric.expectedRange)
   expectedMin.value = metric.expectedRange?.[0] ?? null
   expectedMax.value = metric.expectedRange?.[1] ?? null
   metricDrawerOpen.value = true
@@ -537,10 +817,20 @@ async function saveMetric() {
     message.error('Metric name is required')
     return
   }
+  if (metricForm.value.methods.includes('expected_range')) {
+    if (expectedMin.value == null || expectedMax.value == null) {
+      message.error('Expected range method requires min/max bounds to be set')
+      return
+    }
+    if (expectedMin.value >= expectedMax.value) {
+      message.error('Expected range min must be less than max')
+      return
+    }
+  }
   const entry: AnomalyMetricConfig = {
     ...metricForm.value,
     expectedRange:
-      hasExpectedRange.value && expectedMin.value != null && expectedMax.value != null
+      expectedMin.value != null && expectedMax.value != null
         ? [expectedMin.value, expectedMax.value]
         : undefined,
   }
@@ -592,17 +882,24 @@ async function loadBadActors() {
 // ── Tab switching ──────────────────────────────────────────────────────────────
 function onTabChange(tab: string) {
   activeTab.value = tab
-  stopBaselinesAutoRefresh()
-  if (tab === 'events') loadEdgeEvents()
-  else if (tab === 'incidents') loadEdgeIncidents()
-  else if (tab === 'alerts') loadEdgeAlerts()
-  else if (tab === 'baselines') { loadBaselines(); startBaselinesAutoRefresh() }
+  stopTabAutoRefresh()
+  if (tab === 'events') { loadEdgeEvents(); startTabAutoRefresh(loadEdgeEvents, edgeEventsLoading) }
+  else if (tab === 'incidents') { loadEdgeIncidents(); startTabAutoRefresh(loadEdgeIncidents, edgeIncidentsLoading) }
+  else if (tab === 'alerts') { loadEdgeAlerts(); startTabAutoRefresh(loadEdgeAlerts, edgeAlertsLoading) }
+  else if (tab === 'baselines') { loadBaselines(); startTabAutoRefresh(loadBaselines, baselinesLoading) }
   else if (tab === 'config') loadConfig()
   else if (tab === 'rules') { loadConfig(); loadMetricSuggestions(); loadBadActors() }
 }
 
-onMounted(loadEdgeIncidents)
-onUnmounted(stopBaselinesAutoRefresh)
+onMounted(() => {
+  loadEdgeIncidents()
+  startTabAutoRefresh(loadEdgeIncidents, edgeIncidentsLoading)
+  if (proInstalled.value) loadWarmupStatus()
+})
+onUnmounted(() => {
+  stopTabAutoRefresh()
+  stopWarmupCountdown()
+})
 </script>
 
 <template>
@@ -632,28 +929,38 @@ onUnmounted(stopBaselinesAutoRefresh)
         </div>
       </template>
     </a-alert>
+    <a-alert
+      v-if="warmupRemainingMs"
+      type="info"
+      show-icon
+      closable
+      style="margin-bottom: 16px"
+    >
+      <template #message>
+        Warming up — alerts suppressed for {{ warmupCountdownLabel }} more
+      </template>
+      <template #description>
+        Baseline collection is unaffected and continues normally; this only delays alerting
+        for the first 15 minutes after the agent starts, to avoid false positives from startup noise.
+      </template>
+    </a-alert>
     <a-tabs :active-key="activeTab" @change="onTabChange">
 
       <!-- ══ EVENTS ═════════════════════════════════════════════════════════ -->
       <a-tab-pane key="events" tab="Events">
         <div class="toolbar">
-          <a-space>
-            <a-select
-              v-model:value="edgeEventsSeverity"
-              placeholder="All severities"
-              allow-clear
-              style="width: 150px"
-              @change="() => { edgeEventsPage = 1; loadEdgeEvents() }"
-            >
-              <a-select-option value="critical">Critical</a-select-option>
-              <a-select-option value="warning">Warning</a-select-option>
-              <a-select-option value="info">Info</a-select-option>
-            </a-select>
-            <a-button :loading="edgeEventsLoading" @click="loadEdgeEvents">
-              <template #icon><ReloadOutlined /></template>
-            </a-button>
-          </a-space>
-          <span style="color: #888; font-size: 12px">{{ edgeEventsTotal }} total</span>
+          <a-select
+            v-model:value="edgeEventsSeverity"
+            placeholder="All severities"
+            allow-clear
+            style="width: 150px"
+            @change="() => { edgeEventsPage = 1; loadEdgeEvents() }"
+          >
+            <a-select-option value="critical">Critical</a-select-option>
+            <a-select-option value="warning">Warning</a-select-option>
+            <a-select-option value="info">Info</a-select-option>
+          </a-select>
+          <span style="color: #888; font-size: 12px">{{ edgeEventsTotal }} total · auto-refresh 5s</span>
         </div>
         <a-table
           :columns="edgeEventColumns"
@@ -669,7 +976,7 @@ onUnmounted(stopBaselinesAutoRefresh)
               <a-tag :color="SEVERITY_TAG_COLOR[record.severity]" :class="record.severity === 'critical' ? 'severity-critical' : ''" style="font-size: 11px; margin: 0">{{ record.severity }}</a-tag>
             </template>
             <template v-else-if="column.key === 'metric'">
-              <span :title="record.metric">{{ friendlyLabel(record.metric) }}</span>
+              <span :title="record.metric">{{ metricLeaf(record.metric) }}</span>
             </template>
             <template v-else-if="column.key === 'device_name'">
               <span style="font-size: 12px">{{ deviceNameFromMetric(record.metric, record.device_name) }}</span>
@@ -701,23 +1008,18 @@ onUnmounted(stopBaselinesAutoRefresh)
       <!-- ══ INCIDENTS ══════════════════════════════════════════════════════ -->
       <a-tab-pane key="incidents" tab="Incidents">
         <div class="toolbar">
-          <a-space>
-            <a-select
-              v-model:value="edgeIncidentsStatus"
-              placeholder="All statuses"
-              allow-clear
-              style="width: 150px"
-              @change="() => { edgeIncidentsPage = 1; loadEdgeIncidents() }"
-            >
-              <a-select-option value="open">Open</a-select-option>
-              <a-select-option value="active">Active</a-select-option>
-              <a-select-option value="resolved">Resolved</a-select-option>
-            </a-select>
-            <a-button :loading="edgeIncidentsLoading" @click="loadEdgeIncidents">
-              <template #icon><ReloadOutlined /></template>
-            </a-button>
-          </a-space>
-          <span style="color: #888; font-size: 12px">{{ edgeIncidentsTotal }} total</span>
+          <a-select
+            v-model:value="edgeIncidentsStatus"
+            placeholder="All statuses"
+            allow-clear
+            style="width: 150px"
+            @change="() => { edgeIncidentsPage = 1; loadEdgeIncidents() }"
+          >
+            <a-select-option value="open">Open</a-select-option>
+            <a-select-option value="active">Active</a-select-option>
+            <a-select-option value="resolved">Resolved</a-select-option>
+          </a-select>
+          <span style="color: #888; font-size: 12px">{{ edgeIncidentsTotal }} total · auto-refresh 5s</span>
         </div>
         <a-table
           :columns="edgeIncidentColumns"
@@ -733,7 +1035,7 @@ onUnmounted(stopBaselinesAutoRefresh)
               <a-tag :color="SEVERITY_TAG_COLOR[record.severity]" :class="record.severity === 'critical' ? 'severity-critical' : ''" style="font-size: 11px; margin: 0">{{ record.severity }}</a-tag>
             </template>
             <template v-else-if="column.key === 'metric'">
-              <span :title="record.metric">{{ friendlyLabel(record.metric) }}</span>
+              <span :title="record.metric">{{ metricLeaf(record.metric) }}</span>
             </template>
             <template v-else-if="column.key === 'device_name'">
               <span style="font-size: 12px">{{ deviceNameFromMetric(record.metric, record.device_name) }}</span>
@@ -770,12 +1072,8 @@ onUnmounted(stopBaselinesAutoRefresh)
 
       <!-- ══ ALERTS (edge) ══════════════════════════════════════════════════ -->
       <a-tab-pane key="alerts" tab="Alerts">
-        <div class="toolbar">
-          <a-button :loading="edgeAlertsLoading" @click="loadEdgeAlerts">
-            <template #icon><ReloadOutlined /></template>
-            Refresh
-          </a-button>
-          <span style="color: #888; font-size: 12px">{{ edgeAlertsTotal }} total</span>
+        <div class="toolbar" style="justify-content: flex-end">
+          <span style="color: #888; font-size: 12px">{{ edgeAlertsTotal }} total · auto-refresh 5s</span>
         </div>
         <a-table
           :columns="edgeAlertColumns"
@@ -791,7 +1089,7 @@ onUnmounted(stopBaselinesAutoRefresh)
               <a-tag :color="SEVERITY_TAG_COLOR[record.severity]" :class="record.severity === 'critical' ? 'severity-critical' : ''" style="font-size: 11px; margin: 0">{{ record.severity }}</a-tag>
             </template>
             <template v-else-if="column.key === 'metric'">
-              <span :title="record.metric">{{ friendlyLabel(record.metric) }}</span>
+              <span :title="record.metric">{{ metricLeaf(record.metric) }}</span>
             </template>
             <template v-else-if="column.key === 'device_name'">
               <span style="font-size: 12px">{{ deviceNameFromMetric(record.metric, record.device_name) }}</span>
@@ -817,33 +1115,17 @@ onUnmounted(stopBaselinesAutoRefresh)
       <!-- ══ BASELINES ══════════════════════════════════════════════════════ -->
       <a-tab-pane key="baselines" tab="Baselines">
         <div class="toolbar">
-          <a-space>
-            <a-input
-              v-model:value="baselinesMetric"
-              placeholder="Filter by metric…"
-              allow-clear
-              style="width: 220px"
-              @pressEnter="() => { baselinesPage = 1; loadBaselines() }"
-              @change="(e: Event) => { if (!(e.target as HTMLInputElement).value) { baselinesPage = 1; loadBaselines() } }"
-            />
-            <a-button :loading="baselinesLoading" @click="() => { baselinesPage = 1; loadBaselines() }">
-              <template #icon><ReloadOutlined /></template>
-            </a-button>
-          </a-space>
+          <a-input
+            v-model:value="baselinesMetric"
+            placeholder="Search by metric…"
+            allow-clear
+            style="width: 260px"
+          >
+            <template #prefix><SearchOutlined style="color: #bbb" /></template>
+          </a-input>
           <a-space>
             <span style="color: #888; font-size: 12px">{{ baselinesTotal }} total · auto-refresh 5s</span>
-            <a-button :loading="savingBaselines" @click="saveBaselines">
-              <template #icon><SaveOutlined /></template>
-              Save to disk
-            </a-button>
-            <a-popconfirm
-              title="Delete all baselines? The detection engine will rebuild them from new data."
-              ok-text="Clear all"
-              ok-type="danger"
-              @confirm="clearAllBaselines"
-            >
-              <a-button danger :loading="clearingBaselines">Clear all</a-button>
-            </a-popconfirm>
+            <a-button danger :loading="clearingBaselines" @click="resetBaselinesModalOpen = true">Reset</a-button>
           </a-space>
         </div>
         <a-table
@@ -851,24 +1133,23 @@ onUnmounted(stopBaselinesAutoRefresh)
           :data-source="baselines"
           :loading="baselinesLoading"
           :pagination="{ current: baselinesPage, pageSize: PAGE_SIZE, total: baselinesTotal, showSizeChanger: false, onChange: (p: number) => { baselinesPage = p; loadBaselines() } }"
-          :row-key="(record: BaselineRow) => `${record.pendingWindowSize ? 'pending' : 'done'}::${record.metric}::${record.device_id}::${record.device_state}`"
+          :row-key="(record: BaselineRow) => `${record.isSynthetic ? 'pending' : 'done'}::${record.metric}::${record.device_id}::${record.device_state}`"
           size="small"
           :scroll="{ x: true }"
         >
           <template #bodyCell="{ column, record }">
             <template v-if="column.key === 'metric'">
-              <span :title="record.metric" style="font-size: 12px">{{ friendlyLabel(record.metric) }}</span>
-              <a-tag
-                v-if="record.pendingWindowSize"
-                :color="record.sample_count >= record.pendingWindowSize ? 'green' : 'blue'"
-                style="margin-left: 4px; font-size: 10px"
-              >{{ record.sample_count >= record.pendingWindowSize ? 'Ready — saving soon' : 'Collecting' }}</a-tag>
+              <span :title="record.metric" style="font-size: 12px">{{ metricLeaf(record.metric) }}</span>
             </template>
             <template v-else-if="column.key === 'device_id'">
-              <span :title="record.device_id" style="font-size: 12px">{{ deviceLabel(record.device_id) }}</span>
+              <span :title="record.device_id" style="font-size: 12px">{{ deviceNameFromMetric(record.metric, record.device_id) }}</span>
+            </template>
+            <template v-else-if="column.key === 'device_state'">
+              <a-tag v-if="record.pendingWindowSize" color="blue" style="font-size: 10px">Collecting</a-tag>
+              <span v-else style="font-size: 12px">{{ record.device_state }}</span>
             </template>
             <template v-else-if="column.key === 'time_slot'">
-              <span style="font-size: 12px">{{ record.pendingWindowSize ? '—' : record.time_slot }}</span>
+              <span style="font-size: 12px">{{ record.isSynthetic ? '—' : record.time_slot }}</span>
             </template>
             <template v-else-if="column.key === 'sample_count'">
               <span style="font-variant-numeric: tabular-nums; font-size: 12px">
@@ -888,7 +1169,7 @@ onUnmounted(stopBaselinesAutoRefresh)
               <span style="font-variant-numeric: tabular-nums; font-size: 12px">{{ fmtNum(record.mad, 3) }}</span>
             </template>
             <template v-else-if="column.key === 'calculated_at'">
-              <span v-if="record.pendingWindowSize" style="color: #888; font-size: 12px">In progress</span>
+              <span v-if="record.isSynthetic" style="color: #888; font-size: 12px">In progress</span>
               <span v-else style="color: #888; font-size: 12px">{{ fmtTs(record.calculated_at) }}</span>
             </template>
           </template>
@@ -922,7 +1203,7 @@ onUnmounted(stopBaselinesAutoRefresh)
             size="small"
           >
             <a-table-column key="metric" title="Metric" data-index="metric">
-              <template #default="{ record }">{{ friendlyLabel(record.metric) }}</template>
+              <template #default="{ record }">{{ metricLeaf(record.metric) }}</template>
             </a-table-column>
             <a-table-column key="device_name" title="Device" data-index="device_name" />
             <a-table-column key="incident_count" title="Incidents" data-index="incident_count" :width="90" />
@@ -964,7 +1245,7 @@ onUnmounted(stopBaselinesAutoRefresh)
               </span>
               <a-button type="primary" @click="openAddMetric">
                 <template #icon><PlusOutlined /></template>
-                Add metric
+                Add rule
               </a-button>
             </div>
 
@@ -1011,7 +1292,7 @@ onUnmounted(stopBaselinesAutoRefresh)
               </template>
               <template #emptyText>
                 <div style="padding: 24px 0; text-align: center; color: #aaa; font-size: 13px">
-                  No metric rules yet — click "Add metric" to define anomaly detection for a metric.
+                  No metric rules yet — click "Add rule" to define anomaly detection for a metric.
                 </div>
               </template>
             </a-table>
@@ -1333,13 +1614,30 @@ onUnmounted(stopBaselinesAutoRefresh)
       </a-form>
     </a-modal>
 
+    <!-- ── Reset baselines modal ────────────────────────────────────────────── -->
+    <a-modal
+      :open="resetBaselinesModalOpen"
+      title="Reset all baselines?"
+      ok-text="Reset"
+      ok-type="danger"
+      :confirm-loading="clearingBaselines"
+      @ok="clearAllBaselines"
+      @cancel="resetBaselinesModalOpen = false"
+    >
+      <p>Deletes saved baselines and clears live buffers — the detection engine relearns from scratch.</p>
+    </a-modal>
+
     <!-- ── Metric config drawer ─────────────────────────────────────────────── -->
     <a-drawer
       :open="metricDrawerOpen"
-      :title="editingMetricIdx !== null ? 'Edit metric rule' : 'Add metric rule'"
+      :title="editingMetricIdx !== null ? 'Edit rule' : 'Add rule'"
       width="480"
       @close="metricDrawerOpen = false"
     >
+      <template #extra>
+        <a-button @click="openTemplateLibrary">Use a template</a-button>
+      </template>
+
       <a-form layout="vertical">
         <a-form-item label="Metric name" required>
           <a-auto-complete
@@ -1442,11 +1740,14 @@ onUnmounted(stopBaselinesAutoRefresh)
           </a-col>
         </a-row>
 
-        <a-form-item label="Expected range">
-          <a-checkbox v-model:checked="hasExpectedRange" style="margin-bottom: 8px">
-            Set hard min/max bounds
-          </a-checkbox>
-          <a-row v-if="hasExpectedRange" :gutter="8">
+        <a-form-item
+          label="Expected range (optional hard min/max bounds)"
+          :validate-status="expectedRangeMissingBounds ? 'error' : ''"
+          :help="expectedRangeMissingBounds
+            ? 'expected_range is selected as a detection method — fill in both bounds or it will never alert'
+            : 'Leave both blank to skip hard bounds. Also used by zscore/mad to suppress false positives within these bounds.'"
+        >
+          <a-row :gutter="8">
             <a-col :span="12">
               <a-input-number
                 v-model:value="expectedMin"
@@ -1470,14 +1771,87 @@ onUnmounted(stopBaselinesAutoRefresh)
       </a-form>
 
       <template #footer>
-        <a-space>
-          <a-button @click="metricDrawerOpen = false">Cancel</a-button>
-          <a-button type="primary" @click="saveMetric">
-            {{ editingMetricIdx !== null ? 'Update' : 'Add' }}
-          </a-button>
+        <a-space style="display: flex; justify-content: space-between; width: 100%">
+          <a-button @click="openSaveTemplateModal">Save as template</a-button>
+          <a-space>
+            <a-button @click="metricDrawerOpen = false">Cancel</a-button>
+            <a-button type="primary" @click="saveMetric">
+              {{ editingMetricIdx !== null ? 'Update' : 'Add' }}
+            </a-button>
+          </a-space>
         </a-space>
       </template>
     </a-drawer>
+
+    <!-- ── Template library picker ──────────────────────────────────────────── -->
+    <a-drawer
+      :open="templateLibraryOpen"
+      title="Choose a template"
+      width="480"
+      @close="templateLibraryOpen = false"
+    >
+      <a-input
+        v-model:value="templateSearch"
+        placeholder="Search templates…"
+        allow-clear
+        style="margin-bottom: 16px"
+      >
+        <template #prefix><SearchOutlined /></template>
+      </a-input>
+
+      <a-spin v-if="templatesLoading" />
+      <template v-else>
+        <div v-for="[category, templates] in templatesByCategory" :key="category" style="margin-bottom: 20px">
+          <div style="font-weight: 600; font-size: 12px; color: #888; text-transform: uppercase; margin-bottom: 8px">
+            {{ category }}
+          </div>
+          <div
+            v-for="t in templates"
+            :key="t.builtin ? t.id : t.uuid"
+            style="border: 1px solid #eee; border-radius: 6px; padding: 10px 12px; margin-bottom: 8px; cursor: pointer"
+            @click="applyTemplate(t)"
+          >
+            <div style="display: flex; align-items: center; justify-content: space-between">
+              <span style="font-weight: 500">{{ t.name }}</span>
+              <DeleteOutlined
+                v-if="!t.builtin"
+                style="color: #999"
+                @click.stop="deleteTemplate(t.uuid)"
+              />
+            </div>
+            <div v-if="t.purpose" style="font-size: 12px; color: #888; margin: 4px 0">{{ t.purpose }}</div>
+            <div style="display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px">
+              <a-tag v-for="m in t.methods" :key="m" :color="methodColor(m)" style="font-size: 10px">{{ m }}</a-tag>
+            </div>
+          </div>
+        </div>
+        <a-empty v-if="templatesByCategory.size === 0" description="No templates found" />
+      </template>
+    </a-drawer>
+
+    <!-- ── Save current rule as template ────────────────────────────────────── -->
+    <a-modal
+      :open="saveTemplateModalOpen"
+      title="Save as template"
+      ok-text="Save"
+      :confirm-loading="saveTemplateSaving"
+      @ok="saveAsTemplate"
+      @cancel="saveTemplateModalOpen = false"
+    >
+      <a-form layout="vertical">
+        <a-form-item label="Template name" required>
+          <a-input
+            v-model:value="saveTemplateName"
+            placeholder="e.g. My zone temperature preset"
+            @press-enter="saveAsTemplate"
+          />
+        </a-form-item>
+      </a-form>
+      <p style="font-size: 12px; color: #888">
+        Saves the current methods, threshold, window size, min confidence, cooldown, seasonality,
+        and expected range as a reusable template under "My templates".
+      </p>
+    </a-modal>
   </AppLayout>
 </template>
 

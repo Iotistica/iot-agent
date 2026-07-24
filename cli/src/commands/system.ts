@@ -29,7 +29,7 @@ export function showVersion(): void {
     try {
       if (existsSync(packagePath)) {
         const packageJson = JSON.parse(readFileSync(packagePath, 'utf-8'));
-        logger.info('iotctl - IoT Control CLI', { version: packageJson.version });
+        logger.info('Iotistica Agent', { version: packageJson.version });
         return;
       }
     } catch {
@@ -37,5 +37,5 @@ export function showVersion(): void {
     }
   }
 
-  logger.info('iotctl - IoT Control CLI', { version: '1.0.0' });
+  logger.info('Iotistica Agent', { version: '1.0.0' });
 }

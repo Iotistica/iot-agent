@@ -1350,10 +1350,33 @@ export const reconcileMqttAuth = async (): Promise<void> => {
 /**
  * Get all protocol devices from the devices table
  * Used by: GET /v1/devices
+ *
+ * Backfills device.metadata.objectName from the live endpoint record for any
+ * device row that predates this field (device.metadata is only written by
+ * syncFromEndpoint() on endpoint create/update, so a device provisioned before
+ * that field existed won't have it until its endpoint happens to change again).
  */
 export const getDevices = async (protocol?: string) => {
 	const { DeviceModel } = await import('../db/models/device.model.js');
-	return await DeviceModel.getAll(protocol);
+	const { EndpointModel } = await import('../db/models/endpoint.model.js');
+
+	const devices = await DeviceModel.getAll(protocol);
+	if (devices.length === 0) return devices;
+
+	const endpoints = await EndpointModel.getAll(protocol);
+	const objectNameByEndpointId = new Map<number, string>();
+	for (const endpoint of endpoints) {
+		const objectName = endpoint.metadata?.objectName;
+		if (typeof objectName === 'string' && endpoint.id !== undefined) {
+			objectNameByEndpointId.set(endpoint.id, objectName);
+		}
+	}
+
+	return devices.map((device) => {
+		if (device.metadata?.objectName) return device;
+		const objectName = objectNameByEndpointId.get(device.endpoint_id);
+		return objectName ? { ...device, metadata: { ...device.metadata, objectName } } : device;
+	});
 };
 
 /**
@@ -1775,14 +1798,21 @@ export const getAnomalyBaselines = (metric?: string, limit: number = 100): any[]
 		const db = getDatabase();
 		const cap = Math.min(limit, 500);
 		if (metric) {
+			// Substring match: the admin UI's "Filter by metric..." box is a friendly
+			// partial-text search (e.g. "rtu"), but the stored metric column is the full
+			// UUID-prefixed name (e.g. "{agentUuid}_{deviceUuid}_rtu_1_space_temp"), so an
+			// exact match here would never hit — always returning zero rows for any
+			// realistic search term. Escape SQL LIKE wildcards in the user's input so a
+			// literal "%" or "_" in a metric name doesn't get treated as a pattern.
+			const escaped = metric.replace(/[%_]/g, (ch) => `\\${ch}`);
 			return db.prepare(
 				`SELECT metric, device_id, device_state, time_slot, mean, std_dev, median, mad,
 				        sample_count, calculated_at
 				   FROM anomaly_baselines
-				  WHERE metric = ?
+				  WHERE metric LIKE ? ESCAPE '\\'
 				  ORDER BY calculated_at DESC
 				  LIMIT ?`,
-			).all(metric, cap) as any[];
+			).all(`%${escaped}%`, cap) as any[];
 		}
 		return db.prepare(
 			`SELECT metric, device_id, device_state, time_slot, mean, std_dev, median, mad,
@@ -1922,6 +1952,104 @@ export const deleteDiscoveryRule = async (uuid: string) => {
 	logger?.infoSync('Discovery rule deleted', {
 		component: LogComponents.deviceApi,
 		ruleUuid: uuid,
+	});
+
+	return { deleted: true };
+};
+
+/**
+ * Anomaly rule templates: list all saved (custom) templates
+ */
+export const listAnomalyTemplates = async () => {
+	const { AnomalyRuleTemplateModel } = await import('../db/models/anomaly-rule-template.model.js');
+	return AnomalyRuleTemplateModel.getAll();
+};
+
+/**
+ * Anomaly rule templates: save the current rule form as a new template
+ */
+export const createAnomalyTemplate = async (body: {
+	name: string;
+	category?: string | null;
+	purpose?: string | null;
+	methods: string[];
+	threshold: number;
+	window_size: number;
+	min_confidence?: number | null;
+	cooldown_ms?: number | null;
+	seasonality?: string | null;
+	expected_range?: [number, number] | null;
+}) => {
+	if (!body.name?.trim()) throw new Error('name is required');
+	if (!Array.isArray(body.methods) || body.methods.length === 0) throw new Error('methods must be a non-empty array');
+
+	const { AnomalyRuleTemplateModel } = await import('../db/models/anomaly-rule-template.model.js');
+	const template = AnomalyRuleTemplateModel.create({
+		name: body.name.trim(),
+		category: body.category ?? null,
+		purpose: body.purpose ?? null,
+		methods: body.methods,
+		threshold: body.threshold,
+		window_size: body.window_size,
+		min_confidence: body.min_confidence ?? null,
+		cooldown_ms: body.cooldown_ms ?? null,
+		seasonality: body.seasonality ?? null,
+		expected_range: body.expected_range ?? null,
+	});
+
+	logger?.infoSync('Anomaly rule template created', {
+		component: LogComponents.deviceApi,
+		templateUuid: template.uuid,
+		name: template.name,
+	});
+
+	return template;
+};
+
+/**
+ * Anomaly rule templates: update a saved template
+ */
+export const updateAnomalyTemplate = async (uuid: string, body: Partial<{
+	name: string;
+	category: string | null;
+	purpose: string | null;
+	methods: string[];
+	threshold: number;
+	window_size: number;
+	min_confidence: number | null;
+	cooldown_ms: number | null;
+	seasonality: string | null;
+	expected_range: [number, number] | null;
+}>) => {
+	const { AnomalyRuleTemplateModel } = await import('../db/models/anomaly-rule-template.model.js');
+	const existing = AnomalyRuleTemplateModel.getByUuid(uuid);
+	if (!existing) {
+		throw Object.assign(new Error(`Anomaly rule template not found: ${uuid}`), { statusCode: 404 });
+	}
+
+	const template = AnomalyRuleTemplateModel.update(uuid, body);
+
+	logger?.infoSync('Anomaly rule template updated', {
+		component: LogComponents.deviceApi,
+		templateUuid: uuid,
+	});
+
+	return template;
+};
+
+/**
+ * Anomaly rule templates: delete a saved template
+ */
+export const deleteAnomalyTemplate = async (uuid: string) => {
+	const { AnomalyRuleTemplateModel } = await import('../db/models/anomaly-rule-template.model.js');
+	const deleted = AnomalyRuleTemplateModel.delete(uuid);
+	if (!deleted) {
+		throw Object.assign(new Error(`Anomaly rule template not found: ${uuid}`), { statusCode: 404 });
+	}
+
+	logger?.infoSync('Anomaly rule template deleted', {
+		component: LogComponents.deviceApi,
+		templateUuid: uuid,
 	});
 
 	return { deleted: true };

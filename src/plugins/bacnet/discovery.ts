@@ -636,15 +636,14 @@ export class BACnetDiscovery extends BaseDiscovery {
 				const normalized = deviceName
 					.toLowerCase()
 					.replace(/[^a-z0-9_]/g, '_')
-					.replace(/^iotistica_+/, '')  // Remove all leading iotistica_ prefixes
+					.replace(/^iotistica_+/, '')  // Strip a legacy iotistica_ prefix carried over from a previously-discovered name
 					.replace(/^_+/, '');            // Remove any leading underscores
 				const baseName = normalized || 'unknown';
-				const nameWithPrefix = baseName.startsWith('iotistica_') ? baseName : `iotistica_${baseName}`;
 
 				const instanceSuffix = `_${deviceInstance}`;
-				const uniqueEndpointName = nameWithPrefix.endsWith(instanceSuffix)
-					? nameWithPrefix
-					: `${nameWithPrefix}${instanceSuffix}`;
+				const uniqueEndpointName = baseName.endsWith(instanceSuffix)
+					? baseName
+					: `${baseName}${instanceSuffix}`;
 				discovered.push({
 					name: uniqueEndpointName,
 					protocol: 'bacnet',
@@ -821,6 +820,12 @@ export class BACnetDiscovery extends BaseDiscovery {
 				.filter((obj: BACnetValidatedObject) => obj.presentValue !== undefined)
 				.map((obj: BACnetValidatedObject) => ({
 					name: obj.objectName.toLowerCase().replace(/[^a-z0-9_]/g, '_'),
+					// Raw BACnet object-name property as reported by the device (e.g. "Space-Temp").
+					// `name` above is a sanitized identifier used as the metric tag everywhere
+					// downstream (MQTT payloads, baseline keys, configs) — preserved separately
+					// here purely for accurate display, so it isn't lost to lowercasing/punctuation
+					// stripping.
+					objectName: obj.objectName,
 					objectType: obj.objectType,
 					objectInstance: obj.objectInstance,
 					presentValue: obj.presentValue,
