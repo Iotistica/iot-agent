@@ -48,6 +48,13 @@ const addingAll = ref(false)
 const addedThisSession = ref<Set<string>>(new Set())
 let abortController: AbortController | null = null
 
+// ── Prune (disable endpoints of this protocol not found in the scan) ──────────
+const pruneEnabled = ref(false)
+const pruneConfirmVisible = ref(false)
+const prunePreview = ref<Array<{ name: string; protocol: string }>>([])
+const pruneCommitting = ref(false)
+const lastPrunedCount = ref<number | null>(null)
+
 function stopScan() {
   abortController?.abort()
   abortController = null
@@ -95,13 +102,28 @@ async function runRuleScan() {
   running.value = true
   results.value = []
   hasRun.value = false
+  pruneConfirmVisible.value = false
+  prunePreview.value = []
+  lastPrunedCount.value = null
   addedThisSession.value = new Set()
   try {
-    const { devices } = await discoveryRulesApi.run(rule.uuid, abortController.signal)
+    // Prune dry-run: same scan, nothing gets disabled yet — just previews what
+    // would be, so the confirmation modal can show exactly what's about to change.
+    const { devices, prunedCount, prunedDevices } = await discoveryRulesApi.run(
+      rule.uuid,
+      abortController.signal,
+      pruneEnabled.value ? { prune: true, pruneDryRun: true } : undefined,
+    )
     results.value = devices
     existingEndpoints.value = await sourcesApi.getAll().catch(() => existingEndpoints.value)
     hasRun.value = true
-    emit('saved')
+
+    if (pruneEnabled.value && prunedCount > 0) {
+      prunePreview.value = prunedDevices ?? []
+      pruneConfirmVisible.value = true
+    } else {
+      emit('saved')
+    }
   } catch (err: unknown) {
     if ((err as any)?.code === 'ERR_CANCELED' || (err as any)?.name === 'AbortError') {
       emit('saved')
@@ -116,21 +138,64 @@ async function runRuleScan() {
   }
 }
 
+async function confirmPrune() {
+  if (!selectedRule.value) return
+  pruneCommitting.value = true
+  try {
+    const { prunedCount } = await discoveryRulesApi.run(selectedRule.value.uuid, undefined, {
+      prune: true,
+      pruneDryRun: false,
+    })
+    lastPrunedCount.value = prunedCount
+    message.success(`Disabled ${prunedCount} endpoint${prunedCount !== 1 ? 's' : ''} not seen in this scan`)
+    pruneConfirmVisible.value = false
+    existingEndpoints.value = await sourcesApi.getAll().catch(() => existingEndpoints.value)
+    emit('saved')
+  } catch (err: unknown) {
+    const e = err as { message?: string }
+    message.error(e?.message ?? 'Failed to prune endpoints')
+  } finally {
+    pruneCommitting.value = false
+  }
+}
+
+function cancelPrune() {
+  pruneConfirmVisible.value = false
+  message.info('Prune skipped — nothing was disabled')
+  emit('saved')
+}
+
 const connParams = computed((): Record<string, any> | null =>
   selectedRule.value?.params_json ?? null,
 )
 
 const pendingDevices = computed(() => results.value.filter((d) => !isAlreadyAdded(d)))
 
+const ADD_ALL_BATCH_SIZE = 20
+
 async function addAll() {
   addingAll.value = true
   const toAdd = pendingDevices.value
-  await Promise.allSettled(toAdd.map((d) => addDevice(d)))
+  let failed = 0
+  // Batched, not one giant Promise.allSettled fan-out — at 500 devices that's
+  // 500 simultaneous POSTs. silent=true skips the per-device toast/refresh;
+  // one summary message and one list refresh cover the whole batch instead.
+  for (let i = 0; i < toAdd.length; i += ADD_ALL_BATCH_SIZE) {
+    const batch = toAdd.slice(i, i + ADD_ALL_BATCH_SIZE)
+    const results = await Promise.allSettled(batch.map((d) => addDevice(d, { silent: true })))
+    failed += results.filter((r) => r.status === 'rejected').length
+  }
   addingAll.value = false
-  if (toAdd.length) message.success(`Added ${toAdd.length} source${toAdd.length !== 1 ? 's' : ''}`)
+  const succeeded = toAdd.length - failed
+  if (succeeded) message.success(`Added ${succeeded} source${succeeded !== 1 ? 's' : ''}`)
+  if (failed) message.error(`Failed to add ${failed} source${failed !== 1 ? 's' : ''}`)
+  if (toAdd.length) {
+    existingEndpoints.value = await sourcesApi.getAll().catch(() => existingEndpoints.value)
+    emit('saved')
+  }
 }
 
-async function addDevice(device: DiscoveredDevice) {
+async function addDevice(device: DiscoveredDevice, opts: { silent?: boolean } = {}) {
   const key = device.fingerprint
   adding.value = new Set([...adding.value, key])
   try {
@@ -145,9 +210,16 @@ async function addDevice(device: DiscoveredDevice) {
       enabled: true,
     })
     addedThisSession.value = new Set([...addedThisSession.value, key])
-    message.success(`Added "${device.name}"`)
-    emit('saved')
+    if (!opts.silent) {
+      message.success(`Added "${device.name}"`)
+      emit('saved')
+    }
   } catch (err: unknown) {
+    if (opts.silent) {
+      // Rethrow so addAll()'s Promise.allSettled can count it as a failure —
+      // a single "Add" button click, by contrast, should always resolve.
+      throw err
+    }
     const e = err as { message?: string }
     message.error(e?.message ?? 'Failed to add endpoint')
   } finally {
@@ -178,9 +250,21 @@ watch(
       results.value = []
       hasRun.value = false
       addedThisSession.value = new Set()
+      pruneEnabled.value = false
+      pruneConfirmVisible.value = false
+      prunePreview.value = []
+      lastPrunedCount.value = null
     }
   },
 )
+
+// Switching rules mid-drawer invalidates any pending prune preview — it was
+// computed against the previous rule's protocol.
+watch(selectedRuleUuid, () => {
+  pruneConfirmVisible.value = false
+  prunePreview.value = []
+  lastPrunedCount.value = null
+})
 </script>
 
 <template>
@@ -336,7 +420,7 @@ watch(
         </template>
       </div>
 
-      <div style="display: flex; gap: 8px; align-items: center">
+      <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap">
         <a-button
           type="primary"
           :loading="running"
@@ -353,6 +437,17 @@ watch(
         <span style="color: #aaa; font-size: 12px; margin-left: 4px">
           Results are shown below — endpoints are not added automatically.
         </span>
+      </div>
+      <div style="margin-top: 10px">
+        <a-checkbox v-model:checked="pruneEnabled" :disabled="running">
+          Disable endpoints not found in this scan
+        </a-checkbox>
+        <a-tooltip title="After the scan, previously-added endpoints for this protocol that no longer show up (renamed, removed, or reassigned) get disabled — not deleted. You'll see exactly what would be disabled and confirm before anything changes.">
+          <span style="color: #aaa; font-size: 12px; margin-left: 6px; cursor: help">(?)</span>
+        </a-tooltip>
+        <div v-if="lastPrunedCount !== null" style="color: #888; font-size: 12px; margin-top: 4px">
+          Last run disabled {{ lastPrunedCount }} endpoint{{ lastPrunedCount !== 1 ? 's' : '' }}.
+        </div>
       </div>
     </template>
 
@@ -429,6 +524,31 @@ watch(
     <template #footer>
       <a-button @click="close">Close</a-button>
     </template>
+
+    <a-modal
+      :open="pruneConfirmVisible"
+      title="Disable endpoints not seen in this scan?"
+      ok-text="Disable them"
+      ok-type="danger"
+      :confirm-loading="pruneCommitting"
+      :cancel-button-props="{ disabled: pruneCommitting }"
+      :closable="!pruneCommitting"
+      :mask-closable="false"
+      @ok="confirmPrune"
+      @cancel="cancelPrune"
+    >
+      <p>
+        This scan didn't find {{ prunePreview.length }} previously-added
+        {{ selectedRule?.protocol }} endpoint{{ prunePreview.length !== 1 ? 's' : '' }}. They'll be
+        <strong>disabled</strong> (not deleted) — re-run discovery later and they'll come back
+        automatically if they reappear.
+      </p>
+      <ul style="max-height: 200px; overflow-y: auto; margin: 0; padding-left: 20px">
+        <li v-for="d in prunePreview" :key="d.name" style="font-family: monospace; font-size: 12px">
+          {{ d.name }}
+        </li>
+      </ul>
+    </a-modal>
   </a-drawer>
 </template>
 

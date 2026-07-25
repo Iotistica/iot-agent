@@ -28,6 +28,15 @@ const MAX_BATCH_BYTES = (() => {
 	return Math.min(10 * 1024 * 1024, Math.floor(heapLimit * 0.05));
 })();
 
+// A single publish batch (one MessageBatcher flush) only carries whichever
+// readings happened to arrive before the flush fired — for a multi-device
+// pipe (e.g. one BACnet endpoint fanning in dozens of devices) that's a
+// rotating slice of the fleet, not a full schema snapshot. Accumulate across
+// this window before feeding SchemaDriftDetector so each check sees close to
+// the full field set instead of flagging most of every batch as "new".
+const DRIFT_OBSERVE_WINDOW_MS = 15000;
+const DRIFT_ACCUMULATOR_MAX_MESSAGES = 5000;
+
 type PayloadFormat = 'custom' | 'tags' | 'ecp' | 'ml';
 
 type PublishPayload = Record<string, unknown>;
@@ -98,6 +107,8 @@ export class PublishManager extends EventEmitter {
 	private readonly feed: AnomalyFeed;
 	private readonly enricher: AnomalyEnricher;
 	private readonly schemaDriftDetector: SchemaDriftDetector;
+	private driftAccumulator: ProtocolMessage[] = [];
+	private driftWindowStartedAt = Date.now();
 	private heartbeat?: HeartbeatManager;
 	private bufferTimer: NodeJS.Timeout | null = null;
 	private needStop = false;
@@ -105,7 +116,12 @@ export class PublishManager extends EventEmitter {
 	private connectionHandlersAttached = false;
 	private liveDataInterceptor?: (messages: ProtocolMessage[], endpointName: string) => Promise<ProtocolMessage[]> | ProtocolMessage[];
 	private bindings: HostBinding[] = [];
-	private pluginByDestinationId: Map<number, IPublishPlugin> = new Map();
+	// Keyed by destination id; each entry also carries a snapshot of the destination
+	// fields the plugin was built from, so loadBindings() (called on every reload,
+	// including ones triggered by unrelated endpoint churn) can tell "this destination
+	// is unchanged, reuse its plugin" apart from "this destination's config actually
+	// changed, rebuild it" — see loadBindings() for why this distinction matters.
+	private pluginByDestinationId: Map<number, { plugin: IPublishPlugin; snapshot: string }> = new Map();
 	// Serializes concurrent reloadBindings() calls so only one runs at a time.
 	// Without this, two rapid admin-UI actions can create zombie plugins that escape
 	// the stop-before-start guard and produce a duplicate-clientId kick cycle.
@@ -433,10 +449,19 @@ export class PublishManager extends EventEmitter {
 				}
 			}
 
-			try {
-				this.schemaDriftDetector.observe(messages);
-			} catch (err) {
-				this.logger?.warn(`Schema drift detector failed for endpoint '${name}', continuing with original payload`, err);
+			this.driftAccumulator.push(...messages);
+			if (this.driftAccumulator.length > DRIFT_ACCUMULATOR_MAX_MESSAGES) {
+				this.driftAccumulator = this.driftAccumulator.slice(-DRIFT_ACCUMULATOR_MAX_MESSAGES);
+			}
+			const nowMs = Date.now();
+			if (nowMs - this.driftWindowStartedAt >= DRIFT_OBSERVE_WINDOW_MS) {
+				try {
+					this.schemaDriftDetector.observe(this.driftAccumulator);
+				} catch (err) {
+					this.logger?.warn(`Schema drift detector failed for endpoint '${name}', continuing with original payload`, err);
+				}
+				this.driftAccumulator = [];
+				this.driftWindowStartedAt = nowMs;
 			}
 
 			const enriched = this.processAnomaly(messages, name);
@@ -842,11 +867,21 @@ export class PublishManager extends EventEmitter {
 			await this.routePublishBatch(topic, compressedPayloadCache, endpointName, enriched);
 			publishConfirmed = true;
 
-			const buffered = this.mqttConnection.getPublishMode?.() !== 'direct';
+			// This point is only reached after routePublishBatch() has already delivered
+			// the batch to the destination plugin without throwing — always "Published",
+			// never "Buffered". mqttConnection here is the agent's own shared default
+			// connection (unrelated to the destination plugin's own client), so its
+			// publish mode describes a different link entirely and must not be used to
+			// relabel this destination's delivery outcome. Surface it as separate
+			// diagnostic context instead, only when actually degraded.
+			const cloudLinkMode = this.mqttConnection.getPublishMode?.();
 			const MessageBufferModel = await this.getMessageBufferModel();
 			MessageBufferModel.deleteByIds([claimed.id]);
 			this.stats.recordPublish(messageCount, batchBytes);
-			this.stats.logPublishSuccess(messageCount, batchBytes, info, endpointName, this.logger, buffered, destinationContext);
+			this.stats.logPublishSuccess(messageCount, batchBytes, info, endpointName, this.logger, {
+				...destinationContext,
+				...(cloudLinkMode && cloudLinkMode !== 'direct' ? { cloudLinkMode } : {}),
+			});
 			this.batcher.reset();
 		} catch (err) {
 			this.logger?.error(`Failed to publish batch from endpoint '${endpointName}'`, err, destinationContext);
@@ -1178,13 +1213,20 @@ export class PublishManager extends EventEmitter {
 					byMetric.set(metric, record);
 				}
 				for (const [metric, record] of byMetric) {
+					// Prefer the reading's own device identity (the same field the actual
+					// outbound MQTT "node" name is resolved from, see resolveExternalNodeName)
+					// over the coarse protocol-group endpointName — a single protocol group
+					// batches readings from multiple devices, so "opcua"/"bacnet" alone tells
+					// an operator nothing about which device a row in the Data Flow page came
+					// from. Falls back to the group name when a reading has no device field.
+					const sourceName = this.readExternalNodeCandidate(record) ?? endpointName;
 					activityMonitor.record({
 						subscriptionId: binding.subscription.id ?? null,
 						destinationId: binding.publisher.id,
 						destinationName: binding.publisher.name,
 						destinationType: binding.publisher.type,
 						protocol: this.protocol,
-						endpointName,
+						endpointName: sourceName,
 						metric,
 						value: record?.value ?? record?.rawValue ?? null,
 						quality: typeof record?.quality === 'string' ? record.quality : undefined,
@@ -1208,12 +1250,22 @@ export class PublishManager extends EventEmitter {
 		return Array.from(batchesByPlugin.entries());
 	}
 
+	private destinationSnapshot(destination: PublisherRecord): string {
+		return JSON.stringify({
+			type: destination.type,
+			name: destination.name,
+			enabled: destination.enabled,
+			config_json: destination.config_json ?? null,
+		});
+	}
+
 	private loadBindings(): HostBinding[] {
 		const destinations = PublishDestinationsModel.getAll(false);
 		const subscriptions = PublishSubscriptionsModel.getAll(false);
 		const cloudConnected = this.defaultClient.isConnected();
 
 		if (subscriptions.length === 0 || destinations.length === 0) {
+			// No destinations left at all — every cached plugin is genuinely stale.
 			this.pluginByDestinationId.clear();
 			return cloudConnected ? this.createDefaultIotisticaBinding() : [];
 		}
@@ -1225,7 +1277,15 @@ export class PublishManager extends EventEmitter {
 			}
 		}
 
-		this.pluginByDestinationId.clear();
+		// Drop cache entries for destinations that were deleted since the last reload —
+		// this is the only case that legitimately invalidates without a config-change
+		// check below, since there's no destination record left to compare against.
+		for (const id of this.pluginByDestinationId.keys()) {
+			if (!destinationsById.has(id)) {
+				this.pluginByDestinationId.delete(id);
+			}
+		}
+
 		const bindings: HostBinding[] = [];
 
 		for (const subscription of subscriptions) {
@@ -1238,10 +1298,21 @@ export class PublishManager extends EventEmitter {
 				continue;
 			}
 
-			let plugin = this.pluginByDestinationId.get(subscription.publish_destination_id);
-			if (!plugin) {
+			// Reuse the cached plugin (and its live MQTT connection) unless this specific
+			// destination's config actually changed since it was built. Rebuilding
+			// unconditionally on every reload — which happens far more often than actual
+			// config edits, e.g. once per endpoint during a bulk device import — used to
+			// tear down and recreate every external MQTT client on every reload, which the
+			// broker sees as the same clientId reconnecting in a tight loop ("already
+			// connected, closing old connection") instead of one stable connection.
+			const snapshot = this.destinationSnapshot(destination);
+			const cached = this.pluginByDestinationId.get(subscription.publish_destination_id);
+			let plugin: IPublishPlugin;
+			if (cached && cached.snapshot === snapshot) {
+				plugin = cached.plugin;
+			} else {
 				plugin = this.buildPlugin(destination, this.defaultClient, this.logger, this.endpointName);
-				this.pluginByDestinationId.set(subscription.publish_destination_id, plugin);
+				this.pluginByDestinationId.set(subscription.publish_destination_id, { plugin, snapshot });
 			}
 
 			bindings.push({ subscription, publisher: destination, plugin });

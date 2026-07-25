@@ -40,13 +40,45 @@ export class DiscoveryRulesScheduler {
 		}
 	}
 
-	async runNow(uuid: string): Promise<{ rule: DiscoveryRule; devices: DiscoveredDevice[] }> {
+	async runNow(
+		uuid: string,
+		pruneOptions?: { prune?: boolean; pruneDryRun?: boolean }
+	): Promise<{
+		rule: DiscoveryRule;
+		devices: DiscoveredDevice[];
+		prunedCount: number;
+		prunedDevices?: Array<{ name: string; protocol: string }>;
+		pruneDryRun?: boolean;
+	}> {
 		const rule = DiscoveryRuleModel.getByUuid(uuid);
 		if (!rule) {
 			throw Object.assign(new Error(`Discovery rule not found: ${uuid}`), { statusCode: 404 });
 		}
-		const devices = await this.executeRule(rule, 'manual');
-		return { rule: DiscoveryRuleModel.getByUuid(uuid)!, devices };
+
+		// Prune is opt-in per manual run only — never applied on a scheduled tick,
+		// where nobody is present to confirm what's about to be disabled.
+		let pruneResult: { prunedCount: number; prunedDevices?: Array<{ name: string; protocol: string }>; pruneDryRun?: boolean } = {
+			prunedCount: 0,
+		};
+		const onComplete = (payload: any) => {
+			pruneResult = {
+				prunedCount: payload.prunedCount ?? 0,
+				prunedDevices: payload.prunedDevices,
+				pruneDryRun: payload.pruneDryRun,
+			};
+		};
+		if (pruneOptions?.prune) {
+			this.discoveryService.once('discovery-complete', onComplete);
+		}
+
+		let devices: DiscoveredDevice[];
+		try {
+			devices = await this.executeRule(rule, 'manual', pruneOptions);
+		} finally {
+			this.discoveryService.off('discovery-complete', onComplete);
+		}
+
+		return { rule: DiscoveryRuleModel.getByUuid(uuid)!, devices, ...pruneResult };
 	}
 
 	private async tick(): Promise<void> {
@@ -56,7 +88,11 @@ export class DiscoveryRulesScheduler {
 		}
 	}
 
-	private async executeRule(rule: DiscoveryRule, trigger: 'scheduled' | 'manual'): Promise<DiscoveredDevice[]> {
+	private async executeRule(
+		rule: DiscoveryRule,
+		trigger: 'scheduled' | 'manual',
+		pruneOptions?: { prune?: boolean; pruneDryRun?: boolean }
+	): Promise<DiscoveredDevice[]> {
 		const startedAt = new Date().toISOString();
 		DiscoveryRuleModel.update(rule.uuid, { status: 'running', last_run_at: startedAt });
 
@@ -90,6 +126,7 @@ export class DiscoveryRulesScheduler {
 				validate: true,
 				skipDbWrites: !rule.auto_enable,
 				...(rule.params_json ? { optionOverrides: { [rule.protocol]: rule.params_json } } : {}),
+				...(pruneOptions?.prune ? { prune: true, pruneDryRun: pruneOptions.pruneDryRun ?? false } : {}),
 			});
 
 			const found = devices.length;

@@ -457,9 +457,13 @@ async function loadBaselines() {
     // "just added, waiting for first reading" from "not configured". Synthesize a
     // 0-sample "Collecting" row straight from the rule config so a brand-new rule
     // shows up immediately instead of appearing to do nothing until data arrives.
+    // Real rows are keyed by their canonical name ("{agentUuid}_{endpointUuid}_ahu_1_rf_speed")
+    // while a legacy pre-qualified rule's config name is the bare form ("ahu_1_rf_speed") —
+    // strip the UUID prefixes the same way the backend's getMetricConfig() does, or a rule
+    // that already has real data keeps showing a duplicate "Collecting" ghost row forever.
     const metricNamesWithData = new Set([
-      ...r.baselines.map((b) => b.metric),
-      ...progress.map((p) => p.metricName),
+      ...r.baselines.map((b) => friendlyLabel(b.metric)),
+      ...progress.map((p) => friendlyLabel(p.metricName)),
     ])
     const notStartedRows: BaselineRow[] = (config.value?.metrics ?? [])
       .filter((m) => m.enabled)
@@ -894,8 +898,15 @@ function onTabChange(tab: string) {
 onMounted(() => {
   loadEdgeIncidents()
   startTabAutoRefresh(loadEdgeIncidents, edgeIncidentsLoading)
-  if (proInstalled.value) loadWarmupStatus()
 })
+// proInstalled is fetched asynchronously by AppLayout and may not have resolved
+// yet when this view mounts (e.g. a direct page load on the Anomalies tab) — a
+// one-shot `if (proInstalled.value)` check here can run before that fetch lands
+// and never fire again. Watch instead so warmup status loads as soon as the
+// pro-installed flag actually becomes true, whenever that happens.
+watch(proInstalled, (installed) => {
+  if (installed) loadWarmupStatus()
+}, { immediate: true })
 onUnmounted(() => {
   stopTabAutoRefresh()
   stopWarmupCountdown()
@@ -927,21 +938,6 @@ onUnmounted(() => {
             style="margin-left: 16px; font-size: 12px"
           >Compare plans</a>
         </div>
-      </template>
-    </a-alert>
-    <a-alert
-      v-if="warmupRemainingMs"
-      type="info"
-      show-icon
-      closable
-      style="margin-bottom: 16px"
-    >
-      <template #message>
-        Warming up — alerts suppressed for {{ warmupCountdownLabel }} more
-      </template>
-      <template #description>
-        Baseline collection is unaffected and continues normally; this only delays alerting
-        for the first 15 minutes after the agent starts, to avoid false positives from startup noise.
       </template>
     </a-alert>
     <a-tabs :active-key="activeTab" @change="onTabChange">
@@ -1145,7 +1141,13 @@ onUnmounted(() => {
               <span :title="record.device_id" style="font-size: 12px">{{ deviceNameFromMetric(record.metric, record.device_id) }}</span>
             </template>
             <template v-else-if="column.key === 'device_state'">
-              <a-tag v-if="record.pendingWindowSize" color="blue" style="font-size: 10px">Collecting</a-tag>
+              <a-tooltip
+                v-if="warmupRemainingMs"
+                :title="`Agent-wide warmup, ${warmupCountdownLabel} left — not specific to this rule. Alerts pause for every metric for 15 minutes after the agent starts, to avoid false positives from startup noise. Baseline collection isn't affected.`"
+              >
+                <a-tag color="orange" style="font-size: 10px">Warming up</a-tag>
+              </a-tooltip>
+              <a-tag v-else-if="record.pendingWindowSize" color="blue" style="font-size: 10px">Collecting</a-tag>
               <span v-else style="font-size: 12px">{{ record.device_state }}</span>
             </template>
             <template v-else-if="column.key === 'time_slot'">
@@ -1169,8 +1171,7 @@ onUnmounted(() => {
               <span style="font-variant-numeric: tabular-nums; font-size: 12px">{{ fmtNum(record.mad, 3) }}</span>
             </template>
             <template v-else-if="column.key === 'calculated_at'">
-              <span v-if="record.isSynthetic" style="color: #888; font-size: 12px">In progress</span>
-              <span v-else style="color: #888; font-size: 12px">{{ fmtTs(record.calculated_at) }}</span>
+              <span style="color: #888; font-size: 12px">{{ record.isSynthetic ? '—' : fmtTs(record.calculated_at) }}</span>
             </template>
           </template>
           <template #emptyText>

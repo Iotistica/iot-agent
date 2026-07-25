@@ -765,6 +765,25 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 			readRetryDelayMs: this.READ_RETRY_DELAY,
 		});
 
+		// NOTE: this.clients/this.sessions are intentionally NOT populated, and
+		// setupConnectionHandlers/setupSessionHandlers are intentionally NOT called,
+		// until this method is about to return successfully (see the two `commitSession()`
+		// call sites below). Registering those event handlers early used to mean a session
+		// that later failed NodeID validation (thrown a few lines down) was abandoned by
+		// this method but left with live 'close'/'session_closed' listeners still attached —
+		// those listeners would independently call scheduleReconnect() on the orphaned
+		// sessionWrapper, which is untracked anywhere else, so it could never be cancelled.
+		// Every failed reconnect attempt leaked one more of these zombie reconnect loops,
+		// which is why devices with stale NodeIDs were observed retrying every few
+		// milliseconds instead of respecting MIN_RETRY_DELAY: dozens of independent orphaned
+		// loops running concurrently, each individually backing off correctly.
+		const commitSession = (sessionWrapper: OPCUASession) => {
+			this.clients.set(device.name, runtimeClient);
+			this.sessions.set(device.name, sessionWrapper);
+			this.setupConnectionHandlers(device, sessionWrapper);
+			this.setupSessionHandlers(device, sessionWrapper);
+		};
+
 		try {
 			await runtimeClient.connect();
 			const sessionWrapper = runtimeClient.getSessionWrapper();
@@ -773,7 +792,6 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 			}
 
 			const session = sessionWrapper.session;
-			this.clients.set(device.name, runtimeClient);
 
 			// Resolve human-readable display name for this device.
 			// Only set when explicitly configured via metadata.displayName — do NOT read ns=0;i=2253
@@ -783,15 +801,6 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 			if (configDisplayName?.trim()) {
 				this.resolvedDeviceNames.set(device.name, configDisplayName.trim());
 			}
-      
-			// Store session for reconnection access
-			this.sessions.set(device.name, sessionWrapper);
-      
-			// Setup connection event handlers for automatic reconnection
-			this.setupConnectionHandlers(device, sessionWrapper);
-      
-			// Setup session event handlers for keep-alive monitoring
-			this.setupSessionHandlers(device, sessionWrapper);
 
 			// No data points configured — trigger auto-browse via rediscovery rather than failing.
 			// This self-heals endpoints that were added via discovery without validate:true.
@@ -806,9 +815,12 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 					});
 					this.emit('rediscovery-needed', {
 						deviceName: device.name,
+						protocol: 'opcua',
 						endpointUrl: device.connection.endpointUrl,
 					});
 				}
+				// Session is genuinely usable (connected, just nothing to poll yet) — commit it.
+				commitSession(sessionWrapper);
 				return sessionWrapper;
 			}
 
@@ -854,6 +866,7 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 					);
 					this.emit('rediscovery-needed', {
 						deviceName: device.name,
+						protocol: 'opcua',
 						endpointUrl: device.connection.endpointUrl
 					});
 				}
@@ -873,7 +886,7 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 
 			// If all metric nodes are invalid but we have metadata, that's ok (metadata-only device)
 			if (validDataPoints.length === 0 && metadataCount === 0) {
-				throw new Error(`All NodeIDs failed validation for device ${device.name}. Possibly no data points discovered for thsi device.`);
+				throw new Error(`All NodeIDs failed validation for device ${device.name}. Possibly no data points discovered for this device.`);
 			}
 
 			// Read metadata nodes once on connect (separate from time-series)
@@ -926,8 +939,14 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 				}
 			}
 
+			// Everything up to here can still throw (metadata reads, etc.) without leaking a
+			// listener-carrying session — commit only now that initialization has fully succeeded.
+			commitSession(sessionWrapper);
 			return sessionWrapper;
 		} catch (error) {
+			// Safe unconditionally: commitSession() above is the only place that attaches
+			// 'close'/'session_closed' listeners, and it never ran on this path, so this
+			// disconnect cannot trigger an independent, untracked reconnect loop.
 			await runtimeClient.disconnect().catch(() => {});
 			throw error;
 		}

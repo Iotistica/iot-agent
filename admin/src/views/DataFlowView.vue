@@ -95,7 +95,6 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
       >
         <template #bodyCell="{ column, record }">
           <template v-if="column.key === 'source'">
-            <a-tag color="blue">{{ record.protocol }}</a-tag>
             {{ record.endpointName }}
           </template>
           <template v-else-if="column.key === 'destination'">
@@ -135,7 +134,6 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
             {{ fmtTime(record.timestamp) }}
           </template>
           <template v-else-if="column.key === 'source'">
-            <a-tag color="blue">{{ record.protocol }}</a-tag>
             {{ record.endpointName }}
           </template>
           <template v-else-if="column.key === 'value'">

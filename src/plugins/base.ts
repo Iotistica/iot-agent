@@ -36,10 +36,22 @@ export abstract class BaseProtocolAdapter extends EventEmitter implements IProto
 	
 	protected pollHistory: Map<string, boolean[]> = new Map();
 	protected readonly pollHistorySize = 100;
-	
+
 	protected readonly maxBackoffDelay = 60000;
 	protected readonly initialBackoffDelay = 1000;
 	protected readonly backoffMultiplier = 2;
+
+	// Sustained-failure -> rediscovery trigger, shared by every protocol built on this
+	// base class (previously OPC-UA-only, hand-rolled in its own adapter around NodeID
+	// validation). A device that keeps failing every poll — most commonly because the
+	// underlying server's address space changed (a simulator reloaded a different
+	// profile, a real device was reconfigured) — should trigger the same self-heal
+	// re-browse OPC-UA already gets, not poll forever against objects/nodes that no
+	// longer exist.
+	private pollBasedRediscoveryCooldown: Map<string, number> = new Map();
+	private readonly POLL_REDISCOVERY_COOLDOWN_MS = 30000;
+	protected readonly minPollsBeforeRediscoveryCheck = 10;
+	protected readonly rediscoverySuccessRateThreshold = 0.2;
 
 	constructor(
 		devices: GenericDeviceConfig[] = [],
@@ -323,9 +335,38 @@ export abstract class BaseProtocolAdapter extends EventEmitter implements IProto
 			});
 		} else {
 			status.errorCount++;
+			this.maybeRequestRediscovery(deviceName, history);
 		}
 
 		status.communicationQuality = this.calculateCommunicationQuality(status);
+	}
+
+	/**
+   * Emits 'rediscovery-needed' once a device's rolling poll success rate drops to
+   * (or stays at) a level that means "this isn't noise, the device's data points no
+   * longer match reality" — e.g. a simulator swapped profiles, a real device's config
+   * changed. Requires a minimum history length so a device still warming up isn't
+   * mistaken for one that's actually broken, and is cooldown-throttled per device so
+   * a persistently-dead device doesn't spam rediscovery on every failed poll.
+   */
+	protected maybeRequestRediscovery(deviceName: string, history: boolean[]): void {
+		if (history.length < this.minPollsBeforeRediscoveryCheck) return;
+
+		const successCount = history.filter((r) => r).length;
+		const successRate = successCount / history.length;
+		if (successRate > this.rediscoverySuccessRateThreshold) return;
+
+		const now = Date.now();
+		const lastEmitted = this.pollBasedRediscoveryCooldown.get(deviceName) ?? 0;
+		if (now - lastEmitted < this.POLL_REDISCOVERY_COOLDOWN_MS) return;
+		this.pollBasedRediscoveryCooldown.set(deviceName, now);
+
+		const device = this.devices.get(deviceName);
+		this.emit('rediscovery-needed', {
+			deviceName,
+			protocol: device?.protocol,
+			endpointUrl: (device?.connection as { endpointUrl?: string } | undefined)?.endpointUrl,
+		});
 	}
 
 	protected calculateCommunicationQuality(status: IDeviceStatus): 'good' | 'degraded' | 'poor' | 'offline' {

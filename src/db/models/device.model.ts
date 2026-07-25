@@ -16,10 +16,35 @@
  * (deviceDataPoint.device_uuid).
  */
 
-import { randomUUID } from 'crypto';
+import { randomUUID, createHash } from 'crypto';
 import type { DatabaseSync } from 'node:sqlite';
 import { getDatabase } from '../sqlite';
 import type { Endpoint } from './endpoint.model';
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// Some OPC-UA servers tag device groups with a human-readable identifier
+// (e.g. "pump-1") rather than an actual UUID, despite the "DeviceUUID" node
+// name. The devices table's uuid column must always be a real UUID (it's
+// reported to the cloud, which stores it in a uuid-typed column) — derive a
+// stable one from the raw tag instead of trusting it verbatim.
+// (RFC4122 v5: SHA-1 of namespace+name, with version/variant bits set —
+// implemented inline since the `uuid` package is ESM-only and this file
+// compiles as CommonJS.)
+const DEVICE_UUID_NAMESPACE = '6f1f9b1e-2b0a-4c9a-9e2a-5f6a7c8d9e0f';
+
+function uuidv5(name: string, namespace: string): string {
+	const nsBytes = Buffer.from(namespace.replace(/-/g, ''), 'hex');
+	const hash = createHash('sha1').update(nsBytes).update(name, 'utf8').digest();
+	hash[6] = (hash[6] & 0x0f) | 0x50; // version 5
+	hash[8] = (hash[8] & 0x3f) | 0x80; // variant RFC4122
+	const hex = hash.subarray(0, 16).toString('hex');
+	return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
+}
+
+function toDeviceUuid(rawDeviceUuid: string): string {
+	return UUID_RE.test(rawDeviceUuid) ? rawDeviceUuid : uuidv5(rawDeviceUuid, DEVICE_UUID_NAMESPACE);
+}
 
 export interface Device {
   id?: number;
@@ -259,7 +284,7 @@ export class DeviceModel {
 				const devName = isDefault ? endpoint.name : `${endpoint.name}-${uuidSuffix}`;
 
 				await this.upsertDevice({
-					uuid: isDefault ? (endpoint.uuid || randomUUID()) : deviceUuid,
+					uuid: isDefault ? (endpoint.uuid || randomUUID()) : toDeviceUuid(deviceUuid),
 					endpoint_id: endpointId,
 					name: devName,
 					protocol,

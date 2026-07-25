@@ -25,4 +25,8 @@ export const sourcesApi = {
   remove(uuid: string): Promise<void> {
     return client.delete(`${BASE}/${uuid}`).then(() => undefined)
   },
+
+  removeAll(): Promise<{ removed: number }> {
+    return client.delete<{ removed: number }>(BASE).then((r) => r.data)
+  },
 }

@@ -144,8 +144,8 @@ param(
 
     
     # Container Resources
-    [string]$MemLimit = "512m",
-    [string]$MemReservation = "256m",
+    [string]$MemLimit = "2048m",
+    [string]$MemReservation = "512m",
 
 
     #VPN

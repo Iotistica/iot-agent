@@ -1838,6 +1838,8 @@ export async function runDiscovery(options: {
 	forceRun?: boolean;
 	skipDbWrites?: boolean;
 	optionOverrides?: Record<string, Record<string, any>>;
+	prune?: boolean;
+	pruneDryRun?: boolean;
 }): Promise<any[]> {
 	if (!discoveryService) {
 		throw new Error('DiscoveryService not initialized');
@@ -1846,6 +1848,54 @@ export async function runDiscovery(options: {
 		...options,
 		protocols: options.protocols as any,
 	});
+}
+
+/**
+ * Run discovery and resolve with prune results alongside the discovered devices —
+ * runDiscovery() only returns the device array (several other callers depend on
+ * that exact shape), so prune counts ride along on the discovery-complete event
+ * that runDiscovery() already emits for savedCount/skippedCount.
+ */
+export async function runDiscoveryWithPruneResult(options: {
+	trigger: 'manual' | 'first_boot' | 'scheduled' | 'config-change';
+	protocols?: string[];
+	validate?: boolean;
+	forceRun?: boolean;
+	skipDbWrites?: boolean;
+	optionOverrides?: Record<string, Record<string, any>>;
+	prune?: boolean;
+	pruneDryRun?: boolean;
+}): Promise<{
+	devices: any[];
+	prunedCount: number;
+	prunedDevices?: Array<{ name: string; protocol: string }>;
+	pruneDryRun?: boolean;
+}> {
+	if (!discoveryService) {
+		throw new Error('DiscoveryService not initialized');
+	}
+
+	let pruneResult: { prunedCount: number; prunedDevices?: Array<{ name: string; protocol: string }>; pruneDryRun?: boolean } = {
+		prunedCount: 0,
+	};
+	const onComplete = (payload: any) => {
+		pruneResult = {
+			prunedCount: payload.prunedCount ?? 0,
+			prunedDevices: payload.prunedDevices,
+			pruneDryRun: payload.pruneDryRun,
+		};
+	};
+	discoveryService.once('discovery-complete', onComplete);
+
+	try {
+		const devices = await discoveryService.runDiscovery({
+			...options,
+			protocols: options.protocols as any,
+		});
+		return { devices, ...pruneResult };
+	} finally {
+		discoveryService.off('discovery-complete', onComplete);
+	}
 }
 
 /**
@@ -2191,11 +2241,14 @@ export const testDockerConnection = async (cfg: DockerConnectionConfig): Promise
 /**
  * Discovery rules: trigger a rule immediately
  */
-export const runDiscoveryRule = async (uuid: string) => {
+export const runDiscoveryRule = async (
+	uuid: string,
+	pruneOptions?: { prune?: boolean; pruneDryRun?: boolean }
+) => {
 	if (!discoveryRulesScheduler) {
 		throw new Error('Discovery rules scheduler not initialized');
 	}
-	return discoveryRulesScheduler.runNow(uuid);
+	return discoveryRulesScheduler.runNow(uuid, pruneOptions);
 };
 
 /**

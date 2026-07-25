@@ -164,6 +164,20 @@ export class AdapterManager extends EventEmitter {
 				`${label} device error [${name}]: ${err instanceof Error ? err.message : err}`,
 			),
 		);
+		// Generic for every protocol built on BaseProtocolAdapter — each adapter's own
+		// emit always carries its own canonical `protocol` field (never the group-name
+		// `protocol` param this function was called with, which can differ from the real
+		// protocol string when grouped), so this needs no per-protocol special-casing.
+		adapter.on(
+			"rediscovery-needed",
+			(data: { deviceName: string; protocol?: string; endpointUrl?: string }) => {
+				this.logger.warn(
+					`${label} adapter requesting rediscovery for ${data.deviceName}` +
+						(data.endpointUrl ? ` (endpointUrl: ${data.endpointUrl})` : ""),
+				);
+				this.emit("rediscovery-needed", data);
+			},
+		);
 	}
 
 	constructor(
@@ -529,15 +543,6 @@ export class AdapterManager extends EventEmitter {
 			const adapter = new OPCUAAdapter(opcuaDevices, this.logger);
 			this.adapters.set("opcua", adapter);
 			this.wireAdapterEvents("opcua", adapter, socket, uuidMap);
-			adapter.on(
-				"rediscovery-needed",
-				(data: { deviceName: string; endpointUrl: string }) => {
-					this.logger.warn(
-						`OPC-UA adapter requesting rediscovery for ${data.deviceName} (high NodeID failure rate, endpointUrl: ${data.endpointUrl})`,
-					);
-					this.emit("rediscovery-needed", data);
-				},
-			);
 			await adapter.start();
 		} catch (error) {
 			const errorMessage =
@@ -571,15 +576,6 @@ export class AdapterManager extends EventEmitter {
 			const adapter = new OPCUAAdapter(opcuaDevices, this.logger);
 			this.adapters.set(groupName, adapter);
 			this.wireAdapterEvents(groupName, adapter, socket, uuidMap);
-			adapter.on(
-				"rediscovery-needed",
-				(data: { deviceName: string; endpointUrl: string }) => {
-					this.logger.warn(
-						`OPC-UA adapter group ${groupName} requesting rediscovery for ${data.deviceName} (high NodeID failure rate, endpointUrl: ${data.endpointUrl})`,
-					);
-					this.emit("rediscovery-needed", data);
-				},
-			);
 			await adapter.start();
 		} catch (error) {
 			const errorMessage = error instanceof Error ? error.message : String(error);

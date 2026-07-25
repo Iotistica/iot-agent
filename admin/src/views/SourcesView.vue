@@ -20,6 +20,7 @@ const editing = ref<Endpoint | null>(null)
 const prefill = ref<EndpointCreateData | null>(null)
 const selectedUuids = ref<string[]>([])
 const deleting = ref(false)
+const deletingAll = ref(false)
 const bulkEnabling = ref(false)
 const bulkDisabling = ref(false)
 
@@ -35,6 +36,14 @@ const filteredRows = computed(() =>
     ? rows.value
     : rows.value.filter((r) => r.protocol === activeProtocol.value),
 )
+
+const protocolCounts = computed(() => {
+  const counts: Record<string, number> = {}
+  for (const r of rows.value) {
+    counts[r.protocol] = (counts[r.protocol] ?? 0) + 1
+  }
+  return counts
+})
 
 const columns: TableColumnType<Endpoint>[] = [
   { title: 'Name', dataIndex: 'name', key: 'name', ellipsis: true },
@@ -167,6 +176,26 @@ function confirmDelete(row: Endpoint) {
   })
 }
 
+function confirmDeleteAll() {
+  Modal.confirm({
+    title: `Delete all ${rows.value.length} sources?`,
+    content: 'This removes every source across all protocols — not just the ones currently filtered/shown — and stops data collection from all of them. This cannot be undone from here.',
+    okType: 'danger',
+    okText: 'Delete all',
+    async onOk() {
+      deletingAll.value = true
+      try {
+        const { removed } = await sourcesApi.removeAll()
+        selectedUuids.value = []
+        message.success(`Deleted ${removed} source${removed !== 1 ? 's' : ''}`)
+        await load()
+      } finally {
+        deletingAll.value = false
+      }
+    },
+  })
+}
+
 function confirmDeleteSelected() {
   const count = selectedUuids.value.length
   Modal.confirm({
@@ -234,11 +263,11 @@ onUnmounted(() => {
         button-style="solid"
         size="small"
       >
-        <a-radio-button value="all">All</a-radio-button>
-        <a-radio-button value="modbus">Modbus</a-radio-button>
-        <a-radio-button value="opcua">OPC-UA</a-radio-button>
-        <a-radio-button value="mqtt">MQTT</a-radio-button>
-        <a-radio-button value="bacnet">BACnet</a-radio-button>
+        <a-radio-button value="all">All ({{ rows.length }})</a-radio-button>
+        <a-radio-button value="modbus">Modbus ({{ protocolCounts.modbus ?? 0 }})</a-radio-button>
+        <a-radio-button value="opcua">OPC-UA ({{ protocolCounts.opcua ?? 0 }})</a-radio-button>
+        <a-radio-button value="mqtt">MQTT ({{ protocolCounts.mqtt ?? 0 }})</a-radio-button>
+        <a-radio-button value="bacnet">BACnet ({{ protocolCounts.bacnet ?? 0 }})</a-radio-button>
       </a-radio-group>
 
       <a-space>
@@ -265,6 +294,16 @@ onUnmounted(() => {
           <template #icon><PlusOutlined /></template>
           Add Source
         </a-button>
+        <a-button
+          v-if="rows.length > 0"
+          danger
+          :loading="deletingAll"
+          :disabled="selectedUuids.length > 0"
+          @click="confirmDeleteAll"
+        >
+          <template #icon><DeleteOutlined /></template>
+          Delete All
+        </a-button>
       </a-space>
     </div>
 
@@ -280,7 +319,12 @@ onUnmounted(() => {
       :columns="columns"
       :data-source="filteredRows"
       :loading="loading"
-      :pagination="false"
+      :pagination="{
+        pageSize: 20,
+        showSizeChanger: true,
+        pageSizeOptions: ['20', '50', '100', '200'],
+        showTotal: (total: number) => `${total} source${total !== 1 ? 's' : ''}`,
+      }"
       :row-selection="rowSelection"
       row-key="uuid"
       size="middle"

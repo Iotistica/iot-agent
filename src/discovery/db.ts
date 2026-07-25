@@ -16,14 +16,19 @@ export class DiscoveryStore {
 	async save(
 		discovered: DiscoveredDevice[],
 		traceId: string,
-		updateOnly: boolean = false
-	): Promise<{ saved: number; skipped: number }> {
-		if (discovered.length === 0) {
+		updateOnly: boolean = false,
+		// When set, endpoints of these protocols that existed before this run but
+		// weren't matched by any discovered device get disabled (soft — mirrors the
+		// cloud API's deleteEndpoint, not hardDeleteEndpoint). dryRun reports what
+		// would be pruned without writing, so a caller can preview before committing.
+		prune?: { protocols: string[]; dryRun?: boolean }
+	): Promise<{ saved: number; skipped: number; pruned: number; prunedDevices?: Array<{ name: string; protocol: string }> }> {
+		if (discovered.length === 0 && !prune) {
 			this.logger?.debugSync('No discovered endpoints to save', {
 				component: LogComponents.discovery,
 				traceId
 			});
-			return { saved: 0, skipped: 0 };
+			return { saved: 0, skipped: 0, pruned: 0 };
 		}
 
 		if (updateOnly) {
@@ -53,6 +58,9 @@ export class DiscoveryStore {
 		let skipped = 0;
 		const savedDevices: Array<{ name: string; protocol: string; confidence: string }> = [];
 		const skippedDevices: Array<{ name: string; protocol: string; reason: string }> = [];
+		// Every existing endpoint matched to a discovered device this run — the
+		// complement of this set (within the pruned protocols) is what gets disabled.
+		const matchedEndpointIds = new Set<number>();
 
 		for (const device of discovered) {
 			try {
@@ -71,6 +79,9 @@ export class DiscoveryStore {
 					: undefined;
 
 				const existing = existingByFingerprint || existingByName || existingByEndpointUrl;
+				if (existing?.id !== undefined) {
+					matchedEndpointIds.add(existing.id);
+				}
 
 				if (existing) {
 					const matchType = existingByFingerprint ? 'fingerprint' :
@@ -348,9 +359,52 @@ export class DiscoveryStore {
 			}
 		);
 
+		let pruned = 0;
+		let prunedDevices: Array<{ name: string; protocol: string }> | undefined;
+
+		if (prune && prune.protocols.length > 0) {
+			const staleEndpoints = existingEndpoints.filter((e) =>
+				e.id !== undefined &&
+        e.enabled &&
+        prune.protocols.includes(e.protocol) &&
+        !matchedEndpointIds.has(e.id)
+			);
+
+			if (staleEndpoints.length > 0) {
+				prunedDevices = staleEndpoints.map((e) => ({ name: e.name, protocol: e.protocol }));
+
+				if (prune.dryRun) {
+					this.logger?.infoSync(
+						`Prune dry run: ${staleEndpoints.length} endpoint(s) would be disabled (not seen in this scan)`,
+						{ component: LogComponents.discovery, traceId, protocols: prune.protocols, devices: prunedDevices }
+					);
+				} else {
+					for (const endpoint of staleEndpoints) {
+						try {
+							await EndpointModel.update(endpoint.name, { enabled: false });
+							this.emit('endpoint-disabled', { protocol: endpoint.protocol, endpoint, reason: 'prune' });
+						} catch (error) {
+							this.logger?.errorSync(
+								`Failed to prune endpoint "${endpoint.name}"`,
+								error as Error,
+								{ component: LogComponents.discovery, traceId }
+							);
+							continue;
+						}
+					}
+					this.logger?.warnSync(
+						`Pruned ${staleEndpoints.length} endpoint(s) not seen in this scan`,
+						{ component: LogComponents.discovery, traceId, protocols: prune.protocols, devices: prunedDevices }
+					);
+				}
+			}
+
+			pruned = staleEndpoints.length;
+		}
+
 		await this.checkStale(traceId);
 
-		return { saved, skipped };
+		return { saved, skipped, pruned, prunedDevices };
 	}
 
 	async checkStale(traceId: string, daysThreshold = 7): Promise<void> {

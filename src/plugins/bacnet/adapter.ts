@@ -444,6 +444,12 @@ export class BACnetAdapter extends BaseProtocolAdapter {
 			EndpointModel.updateLastSeenByName(deviceName).catch((err: Error) => {
 				this.logger.warn(`Failed to update endpoint lastSeenAt for ${deviceName}: ${err.message}`);
 			});
+		} else {
+			// A device that's failed most of its recent polls most likely no longer
+			// matches what's actually on the network (e.g. a simulator reloaded a
+			// different profile) — trigger the same self-heal rediscovery OPC-UA
+			// already gets instead of polling dead object instances forever.
+			this.maybeRequestRediscovery(deviceName, history);
 		}
 	}
 

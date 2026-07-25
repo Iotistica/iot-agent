@@ -188,9 +188,11 @@ VOLUME ["/app/data"]
 # Expose device API port
 EXPOSE 48484
 
-# Health check for device API
+# Health check for device API — respects DEVICE_API_PORT so deployments that
+# override the default (e.g. docker-compose.agents.yml sets 48481) don't get
+# marked unhealthy while actually running fine on their configured port.
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
-  CMD curl -f http://localhost:48484/health || exit 1
+  CMD curl -f http://localhost:${DEVICE_API_PORT:-48484}/health || exit 1
 
 # Use tini as init process for proper signal handling
 ENTRYPOINT ["/sbin/tini", "--", "/app/docker-entrypoint.sh"]

@@ -1476,7 +1476,7 @@ export class ConfigManager extends EventEmitter {
 			);
 		}
 
-		this.logger?.infoSync("Updating protocol adapter device", {
+		this.logger?.debugSync("Updating protocol adapter device", {
 			component: LogComponents.configManager,
 			operation: "updateDevice",
 			deviceId: device.id,

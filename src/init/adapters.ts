@@ -330,23 +330,45 @@ export class AdapterInitializer {
 		const { logger } = this.context;
 		if (!this.context.discoveryService || !this.features.devices) return;
 
-		this.features.devices.on('rediscovery-needed', async (data: { deviceName: string; endpointUrl: string }) => {
-			logger.warnSync('OPC-UA adapter detected stale NodeIDs - triggering targeted rediscovery', {
+		this.features.devices.on('rediscovery-needed', async (data: { deviceName: string; protocol?: string; endpointUrl?: string }) => {
+			const protocol = data.protocol;
+			if (!protocol) {
+				logger.warnSync('rediscovery-needed event missing protocol, ignoring', {
+					component: LogComponents.agent,
+					deviceName: data.deviceName,
+				});
+				return;
+			}
+
+			logger.warnSync(`${protocol.toUpperCase()} adapter detected a device that no longer matches reality - triggering rediscovery`, {
 				component: LogComponents.agent,
 				deviceName: data.deviceName,
+				protocol,
 				endpointUrl: data.endpointUrl,
-				note: 'Server may have switched profiles; will re-browse after brief stabilization delay'
+				note: 'Server/device config may have changed; will re-browse after brief stabilization delay'
 			});
 			try {
 				await new Promise<void>(resolve => setTimeout(resolve, 3000));
 				await this.context.discoveryService!.runDiscovery({
 					trigger: 'manual',
-					protocols: ['opcua'],
+					protocols: [protocol],
 					validate: true,
-					forceRun: true
+					forceRun: true,
+					// OPC-UA specifically needs to be pointed at the real device's endpoint:
+					// getDiscoveryTargets('opcua') only returns endpoints with ZERO data points
+					// (config.ts's hasNoDataPoints check), so a device with stale/invalid data
+					// points — the one that just triggered this listener — is invisible to it.
+					// Without this override, discover() falls through to its hardcoded
+					// 'opc.tcp://localhost:4840' default instead of re-browsing the actual
+					// device. Other protocols (BACnet's WhoIs broadcast, etc.) scan the whole
+					// network from global config regardless of which device triggered this, so
+					// they need no per-device targeting here.
+					...(protocol === 'opcua' && data.endpointUrl
+						? { optionOverrides: { opcua: { discoveryUrls: [data.endpointUrl] } } }
+						: {}),
 				});
 			} catch (error) {
-				logger.errorSync('Rediscovery triggered by OPC-UA adapter failed', error as Error, {
+				logger.errorSync(`Rediscovery triggered by ${protocol.toUpperCase()} adapter failed`, error as Error, {
 					component: LogComponents.agent,
 					deviceName: data.deviceName
 				});

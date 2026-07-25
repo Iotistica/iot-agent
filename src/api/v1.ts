@@ -342,17 +342,25 @@ router.post('/v1/discover', async (req: Request, res: Response, next: NextFuncti
 		const validate = req.body.validate === true || req.body.validate === 'true';
 		const forceRun = req.body.forceRun === true || req.body.forceRun === 'true';
 		const optionOverrides = req.body.overrides as Record<string, Record<string, any>> | undefined;
+		const prune = req.body.prune === true || req.body.prune === 'true';
+		const pruneDryRun = req.body.pruneDryRun === true || req.body.pruneDryRun === 'true';
 
-		const devices = await actions.runDiscovery({
+		const result = await actions.runDiscoveryWithPruneResult({
 			trigger: 'manual',
 			protocols,
 			validate,
 			forceRun,
 			skipDbWrites: true,
 			...(optionOverrides ? { optionOverrides } : {}),
+			...(prune ? { prune, pruneDryRun } : {}),
 		});
 
-		return res.status(200).json({ devices });
+		return res.status(200).json({
+			devices: result.devices,
+			prunedCount: result.prunedCount,
+			...(result.prunedDevices ? { prunedDevices: result.prunedDevices } : {}),
+			...(result.pruneDryRun !== undefined ? { pruneDryRun: result.pruneDryRun } : {}),
+		});
 	} catch (error) {
 		next(error);
 	}
@@ -1649,7 +1657,9 @@ router.delete('/v1/discovery-rules/:uuid', async (req: Request, res: Response, n
  */
 router.post('/v1/discovery-rules/:uuid/run', async (req: Request, res: Response, next: NextFunction) => {
 	try {
-		const result = await actions.runDiscoveryRule(req.params.uuid);
+		const prune = req.body?.prune === true || req.body?.prune === 'true';
+		const pruneDryRun = req.body?.pruneDryRun === true || req.body?.pruneDryRun === 'true';
+		const result = await actions.runDiscoveryRule(req.params.uuid, prune ? { prune, pruneDryRun } : undefined);
 		return res.status(200).json(result);
 	} catch (error) {
 		next(error);

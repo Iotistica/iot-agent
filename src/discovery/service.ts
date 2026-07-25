@@ -27,6 +27,14 @@ export interface DiscoveryOptions {
 	// Key is protocol name, value is the plugin-specific options object.
 	// When present for a protocol, the scan runs even if that protocol is globally disabled.
 	optionOverrides?: Record<string, Record<string, any>>;
+	// When true, endpoints of the scanned protocol(s) that existed before this run
+	// but weren't matched by any discovered device get disabled (soft, reversible —
+	// re-running discovery re-enables them if they reappear). Opt-in and explicit:
+	// discovery never prunes on its own.
+	prune?: boolean;
+	// Preview what `prune` would disable without writing anything — independent of
+	// skipDbWrites, which has an unrelated meaning (skip creating new endpoints).
+	pruneDryRun?: boolean;
 }
 
 export type { DiscoveredDevice } from '../plugins/types';
@@ -170,6 +178,10 @@ export class DiscoveryService extends EventEmitter {
 		const startTime = Date.now();
 
 		const allDiscovered: DiscoveredDevice[] = [];
+		// Protocols that actually reached plugin.discover() this run (as opposed to
+		// being requested but skipped — unavailable, unconfigured, or errored out).
+		// Pruning must only ever touch these — never a protocol that wasn't truly scanned.
+		const actuallyScannedProtocols = new Set<string>();
 
 		for (const protocol of selectedProtocols) {
 			const plugin = this.plugins.get(protocol);
@@ -208,7 +220,8 @@ export class DiscoveryService extends EventEmitter {
 				}
 
 				const discovered = await plugin.discover(pluginOptions);
-     
+				actuallyScannedProtocols.add(protocol);
+
 				allDiscovered.push(...discovered);
 
 				if (discovered.length > 0) {
@@ -312,7 +325,14 @@ export class DiscoveryService extends EventEmitter {
 			protocols: selectedProtocols
 		});
 
-		const saveResults = await this.store.save(allDiscovered, traceId, options.skipDbWrites || false);
+		const saveResults = await this.store.save(
+			allDiscovered,
+			traceId,
+			options.skipDbWrites || false,
+			options.prune
+				? { protocols: Array.from(actuallyScannedProtocols), dryRun: options.pruneDryRun ?? false }
+				: undefined
+		);
 
 		for (const device of allDiscovered) {
 			const endpointUrl = device.connection?.endpointUrl || device.metadata?.endpointUrl;
@@ -341,6 +361,9 @@ export class DiscoveryService extends EventEmitter {
 			deviceCount: allDiscovered.length,
 			savedCount: saveResults.saved,
 			skippedCount: saveResults.skipped,
+			prunedCount: saveResults.pruned,
+			prunedDevices: saveResults.prunedDevices,
+			pruneDryRun: options.prune ? (options.pruneDryRun ?? false) : undefined,
 			traceId
 		});
 

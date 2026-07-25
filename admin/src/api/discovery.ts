@@ -35,8 +35,20 @@ export const discoveryRulesApi = {
     return client.delete(`${RULES_BASE}/${uuid}`).then(() => undefined)
   },
 
-  run(uuid: string, signal?: AbortSignal): Promise<{ rule: DiscoveryRule; devices: DiscoveredDevice[] }> {
-    return client.post<{ rule: DiscoveryRule; devices: DiscoveredDevice[] }>(`${RULES_BASE}/${uuid}/run`, {}, { timeout: 120_000, signal }).then((r) => r.data)
+  run(
+    uuid: string,
+    signal?: AbortSignal,
+    pruneOptions?: { prune?: boolean; pruneDryRun?: boolean },
+  ): Promise<{
+    rule: DiscoveryRule
+    devices: DiscoveredDevice[]
+    prunedCount: number
+    prunedDevices?: Array<{ name: string; protocol: string }>
+    pruneDryRun?: boolean
+  }> {
+    return client
+      .post(`${RULES_BASE}/${uuid}/run`, pruneOptions ?? {}, { timeout: 120_000, signal })
+      .then((r) => r.data)
   },
 
   getRuns(uuid: string, limit = 50): Promise<DiscoveryRun[]> {
