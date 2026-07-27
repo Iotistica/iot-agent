@@ -9,16 +9,22 @@ import {
   SafetyCertificateOutlined,
   BellOutlined,
   DatabaseOutlined,
-  InfoCircleOutlined,
   SearchOutlined,
+  QuestionCircleOutlined,
+  BranchesOutlined,
 } from '@ant-design/icons-vue'
 import type { TableColumnType } from 'ant-design-vue'
 import AppLayout from '@/components/layout/AppLayout.vue'
+import SettingsSection from '@/components/settings/SettingsSection.vue'
+import SettingsField from '@/components/settings/SettingsField.vue'
 import { useProStatus } from '@/composables/useProStatus'
+import { useAuth } from '@/composables/useAuth'
 
 const { proInstalled } = useProStatus()
+const { hasRole } = useAuth()
 import { methodColor } from '@/utils/protocol'
-import { anomalyApi, RESOLUTION_REASON_LABELS, type BadActor, type ResolutionReason } from '@/api/anomaly'
+import { anomalyApi, RESOLUTION_REASON_LABELS, type BadActor, type ResolutionReason, type SchemaDriftBaselineRow } from '@/api/anomaly'
+import { client as apiClient } from '@/api/client'
 import { destinationsApi } from '@/api/destinations'
 import { sourcesApi } from '@/api/sources'
 import { BUILTIN_ANOMALY_TEMPLATES, type BuiltinAnomalyTemplate } from '@/data/anomalyTemplates'
@@ -49,7 +55,7 @@ function stripGuids(text: string): string {
   return text ? text.replace(GUID_ANYWHERE, '') : text
 }
 
-function fmtTs(ms: number): string {
+function fmtTs(ms: number | string): string {
   if (!ms) return '—'
   return new Date(ms).toLocaleString()
 }
@@ -247,7 +253,7 @@ const edgeAlertColumns = [
   { title: 'Metric', key: 'metric', ellipsis: true },
   { title: 'Device', key: 'device_name', width: 160, ellipsis: true },
   { title: 'Score', key: 'score', width: 80 },
-  { title: 'Message', dataIndex: 'message', key: 'message', ellipsis: true },
+  { title: 'Message', dataIndex: 'message', key: 'message', width: 500 },
   { title: 'Time', key: 'time', width: 160 },
 ]
 
@@ -306,6 +312,12 @@ const endpointsByUuid = ref<Map<string, string>>(new Map())
 // device, for tables that show the point name and would otherwise only have the
 // sanitized identifier (lowercased, punctuation stripped) to display.
 const pointRawNameByKey = ref<Map<string, string>>(new Map())
+// Maps a bare sanitized point name (e.g. "ahu_1_rf_speed") → its owning
+// device's display name. Anomaly rules are often saved using this bare,
+// already-device-prefixed point name with no separate deviceName recorded on
+// the rule itself, so this is how the Rules table recovers "which device is
+// this rule actually for" without guessing from the name's word count.
+const pointNameToDevice = ref<Map<string, string>>(new Map())
 
 async function ensureEndpointMaps() {
   if (endpointsByUuid.value.size > 0) return
@@ -313,6 +325,7 @@ async function ensureEndpointMaps() {
     const eps = await sourcesApi.getAll()
     const byUuid = new Map<string, string>()
     const rawNameByKey = new Map<string, string>()
+    const deviceByPointName = new Map<string, string>()
     for (const ep of eps) {
       const displayName = (ep.metadata?.objectName as string | undefined) || ep.name
       byUuid.set(ep.uuid, displayName)
@@ -323,11 +336,34 @@ async function ensureEndpointMaps() {
         if (typeof sanitizedName === 'string' && typeof rawName === 'string' && rawName) {
           rawNameByKey.set(`${ep.uuid}::${sanitizedName}`, rawName)
         }
+        if (typeof sanitizedName === 'string') {
+          deviceByPointName.set(sanitizedName, displayName)
+        }
       }
     }
     endpointsByUuid.value = byUuid
     pointRawNameByKey.value = rawNameByKey
+    pointNameToDevice.value = deviceByPointName
   } catch { /* non-fatal */ }
+}
+
+// The rule's device, either explicitly recorded (record.deviceName) or
+// recovered via the bare-point-name lookup above.
+function ruleDeviceName(record: AnomalyMetricConfig): string | undefined {
+  return record.deviceName || pointNameToDevice.value.get(record.name)
+}
+
+// Strips the resolved device's own name from the front of the rule name, the
+// same "field carries the device prefix baked in" pattern schema drift has
+// (see stripFieldDevicePrefix on the backend) — so Metric name doesn't repeat
+// what the new Device column already shows. Falls back to the full name
+// unchanged when no device could be resolved, rather than guessing.
+function ruleMetricLeaf(record: AnomalyMetricConfig): string {
+  const device = ruleDeviceName(record)
+  if (!device) return record.name
+
+  const prefix = `${device.toLowerCase().replace(/[\s-]+/g, '_')}_`
+  return record.name.toLowerCase().startsWith(prefix) ? record.name.slice(prefix.length) : record.name
 }
 
 // The metric's own device UUID segment: metrics are named
@@ -344,6 +380,25 @@ function extractDeviceUuid(metric: string): string | undefined {
 // bare metric after stripping the UUID: "pioneer_gold_1_coil_temp" → "Pioneer Gold 1".
 // We identify the device segment by finding where the last known single-word metric
 // suffix starts, using the heuristic that device names come before the last two segments.
+// Schema-drift device identifiers (e.g. "bms_gateway_5000_bc814573") are
+// resolveDeviceId()'s normalized form of the raw BACnet device name, with
+// "_{instance}_{8-hex-id}" appended for fleet-wide uniqueness across devices
+// that share a display name (see the Pro schema-drift detector). Strip that
+// suffix and title-case what's left so these read the same as other device
+// labels instead of showing the raw internal identity.
+const DRIFT_DEVICE_SUFFIX_RE = /_\d+_[0-9a-f]{8}$/i
+const KNOWN_DEVICE_ACRONYMS = new Set(['ahu', 'vav', 'fcu', 'bms', 'hvac', 'rtu'])
+function prettifyDriftDeviceId(id: string): string | undefined {
+  const stripped = id.replace(DRIFT_DEVICE_SUFFIX_RE, '')
+  if (stripped === id) return undefined // no match — not a schema-drift-style device id
+
+  return stripped
+    .split('_')
+    .filter(Boolean)
+    .map((p) => (KNOWN_DEVICE_ACRONYMS.has(p.toLowerCase()) ? p.toUpperCase() : p.charAt(0).toUpperCase() + p.slice(1)))
+    .join(' ')
+}
+
 function deviceNameFromMetric(metric: string, fallback: string): string {
   if (!metric) return fallback || '—'
 
@@ -375,14 +430,33 @@ function deviceNameFromMetric(metric: string, fallback: string): string {
 
   if (!fallback || fallback === 'unknown') return '—'
   if (fallback === 'system' || fallback === 'Agent System') return 'System'
-  return fallback
+  return prettifyDriftDeviceId(fallback) ?? fallback
 }
 
 // Complement of deviceNameFromMetric(): the metric's own leaf (last two
 // underscore-separated segments, e.g. "space_temp") with the embedded device
 // prefix stripped — for tables that already show a separate Device column, so
 // the metric name doesn't redundantly repeat "rtu_1" that's shown right next to it.
-function metricLeaf(metric: string): string {
+// Schema-drift-originated metrics carry the detector's internal "reading:"/"key:"
+// namespace tag (see SchemaDriftDetector.extractSchema) instead of a UUID prefix —
+// strip that too so these rows read the same as the Schema Drift grid's Field column.
+const DRIFT_FIELD_PREFIX_RE = /^(reading|key):/
+
+function metricLeaf(metric: string, deviceName?: string): string {
+  const driftStripped = metric.replace(DRIFT_FIELD_PREFIX_RE, '')
+  if (driftStripped !== metric) {
+    // BACnet (and possibly other protocols) build each reading's field name as
+    // "{device}_{object}" before schema drift ever sees it — the device is
+    // baked into the field, not tracked separately the way anomaly metrics
+    // track it via a UUID key. Since Device already shows in its own column,
+    // strip that same device base name from the front of the field here too.
+    const deviceBase = deviceName?.replace(DRIFT_DEVICE_SUFFIX_RE, '').toLowerCase()
+    if (deviceBase && deviceBase !== deviceName?.toLowerCase() && driftStripped.toLowerCase().startsWith(`${deviceBase}_`)) {
+      return driftStripped.slice(deviceBase.length + 1)
+    }
+    return driftStripped
+  }
+
   const bare = friendlyLabel(metric)
   if (bare === metric) return bare // no UUID prefix — not a device-scoped metric, nothing to trim
 
@@ -462,8 +536,8 @@ async function loadBaselines() {
     // strip the UUID prefixes the same way the backend's getMetricConfig() does, or a rule
     // that already has real data keeps showing a duplicate "Collecting" ghost row forever.
     const metricNamesWithData = new Set([
-      ...r.baselines.map((b) => friendlyLabel(b.metric)),
-      ...progress.map((p) => friendlyLabel(p.metricName)),
+      ...r.baselines.map((b) => canonicalBareMetricName(b.metric)),
+      ...progress.map((p) => canonicalBareMetricName(p.metricName)),
     ])
     const notStartedRows: BaselineRow[] = (config.value?.metrics ?? [])
       .filter((m) => m.enabled)
@@ -506,6 +580,46 @@ async function clearAllBaselines() {
     message.error((err as { message?: string })?.message ?? 'Clear failed')
   } finally {
     clearingBaselines.value = false
+  }
+}
+
+// ── Schema Drift tab ─────────────────────────────────────────────────────────
+// Flattened per-field view of the Pro schema drift detector's persisted state:
+// established baseline fields alongside fields still accumulating toward
+// promotion (see SchemaDriftDetector.handleNewField in iot-agent-pro).
+const schemaDriftRows = ref<SchemaDriftBaselineRow[]>([])
+const schemaDriftTotal = ref(0)
+const schemaDriftLoading = ref(false)
+const schemaDriftQuery = ref('')
+
+watch(schemaDriftQuery, () => {
+  debounce('schema-drift-filter', () => loadSchemaDriftBaselines())
+})
+
+// Matches SchemaDriftDetector's DEFAULT_OPTIONS.adaptivePromotionBatches — not
+// currently exposed as a per-protocol setting, so this is the real threshold
+// for every source today.
+const SCHEMA_DRIFT_PROMOTION_BATCHES = 50
+
+const schemaDriftColumns = [
+  { title: 'Protocol', dataIndex: 'protocol', key: 'protocol', width: 120, ellipsis: true },
+  { title: 'Device', key: 'device', width: 200, ellipsis: true },
+  { title: 'Field', key: 'field', ellipsis: true },
+  { title: 'Status', key: 'status', width: 130 },
+  { title: 'Type', key: 'dominantType', width: 90 },
+  { title: 'Updated', key: 'updatedAt', width: 160 },
+]
+
+async function loadSchemaDriftBaselines() {
+  schemaDriftLoading.value = true
+  try {
+    const r = await anomalyApi.getSchemaDriftBaselines({ q: schemaDriftQuery.value.trim() || undefined })
+    schemaDriftRows.value = r.baselines
+    schemaDriftTotal.value = r.total
+  } catch (err: unknown) {
+    message.error((err as { message?: string })?.message ?? 'Failed to load schema drift baselines')
+  } finally {
+    schemaDriftLoading.value = false
   }
 }
 
@@ -694,6 +808,20 @@ function friendlyLabel(name: string | undefined | null): string {
   return name.replace(UUID_PREFIX_RE, '')
 }
 
+// Mirrors selectMetricConfig()'s fallback matching in the backend's metric-router.ts:
+// a system metric's canonical key is "{agentUuid}_system_{name}" (e.g.
+// "UUID_system_memory_percent"), a distinct pattern from the plain
+// "{agentUuid}_{endpointUuid}_{name}" case friendlyLabel() already handles — it has an
+// extra "system_" segment friendlyLabel leaves behind. Used only for matching a rule's
+// bare config name against real baseline/progress keys (not for display — friendlyLabel
+// stays the display-facing one), or a system-scoped rule's placeholder never dedupes
+// away once real data exists, the same way ahu_1_rf_speed's rule name once didn't.
+function canonicalBareMetricName(name: string): string {
+  const systemMatch = name.match(/^[0-9a-f-]{36}_system_(.+)$/i)
+  if (systemMatch) return systemMatch[1]
+  return friendlyLabel(name)
+}
+
 // Build flat sorted list of metric suggestions for the autocomplete dropdown.
 // Deduplicate by (endpointName, friendlyLabel) so the same metric from two
 // different devices shows as two separate entries.
@@ -747,11 +875,12 @@ function blankMetric(): AnomalyMetricConfig {
 
 const metricColumns: TableColumnType<AnomalyMetricConfig>[] = [
   { title: 'Metric name', key: 'name', ellipsis: true },
-  { title: 'Enabled', key: 'enabled', width: 80 },
+  { title: 'Device', key: 'device', width: 160, ellipsis: true },
   { title: 'Methods', key: 'methods', ellipsis: true },
   { title: 'Threshold', dataIndex: 'threshold', key: 'threshold', width: 100 },
   { title: 'Window', dataIndex: 'windowSize', key: 'windowSize', width: 90 },
   { title: 'Seasonality', key: 'seasonality', width: 110 },
+  { title: 'Enabled', key: 'enabled', width: 80 },
   { title: '', key: 'actions', width: 100, fixed: 'right' },
 ]
 
@@ -788,6 +917,82 @@ async function saveConfig() {
   configSaving.value = true
   try {
     config.value = await anomalyApi.updateConfig(config.value)
+    message.success('Configuration saved')
+  } catch (err: unknown) {
+    const e = err as { message?: string }
+    message.error(e?.message ?? 'Save failed')
+  } finally {
+    configSaving.value = false
+  }
+}
+
+// ── Schema Drift settings ────────────────────────────────────────────────────
+
+type DriftAlertType = 'new-field' | 'missing-field' | 'type-drift' | 'rename-candidate'
+
+interface DriftOptions {
+  enabled?: boolean
+  warmupBatches?: number
+  consecutiveMissingThreshold?: number
+  alertCooldownMs?: number
+  minFieldPresenceRatio?: number
+  adaptiveRetireBatches?: number
+  alertOnDriftTypes?: DriftAlertType[]
+}
+
+const DRIFT_ALERT_TYPE_OPTIONS: { value: DriftAlertType; label: string; hint: string }[] = [
+  { value: 'missing-field', label: 'Missing field', hint: 'A field stopped appearing — usually real breakage.' },
+  { value: 'type-drift', label: 'Type drift', hint: "A field's value type changed unexpectedly — usually real breakage." },
+  { value: 'new-field', label: 'New field', hint: 'A field appeared that wasn’t in the learned baseline — often just normal growth.' },
+  { value: 'rename-candidate', label: 'Rename candidate', hint: 'A missing field and a new field look like they might be the same field renamed.' },
+]
+const DEFAULT_ALERT_DRIFT_TYPES: DriftAlertType[] = ['missing-field', 'type-drift']
+
+interface ProtocolOutput {
+  protocol: string
+  drift_options?: DriftOptions | null
+}
+
+// Drift tuning isn't actually protocol-specific (warmup length, missing-field
+// tolerance, cooldown, presence ratio are all general schema-stability
+// concepts) — it's stored per-protocol-row alongside genuinely
+// protocol-specific fields (socket_path, buffer_capacity) as a storage
+// convenience. One control here applies the same values to every pipe.
+const globalDrift = ref<DriftOptions>({})
+const driftLoading = ref(false)
+
+async function loadDrift() {
+  driftLoading.value = true
+  try {
+    const { data } = await apiClient.get('/v1/protocol-outputs')
+    const outputs: ProtocolOutput[] = data.outputs ?? []
+    const withDrift = outputs.find((o) => o.drift_options)
+    globalDrift.value = withDrift?.drift_options ?? {}
+  } catch {
+    // non-fatal
+  } finally {
+    driftLoading.value = false
+  }
+}
+
+function setDrift<K extends keyof DriftOptions>(key: K, val: DriftOptions[K]) {
+  globalDrift.value[key] = val
+}
+
+// Single Save for the whole Configuration tab — detection/alert/storage
+// settings and schema drift settings are two different API calls under the
+// hood (drift tuning lives on endpoint_outputs, not the anomaly config), but
+// operators shouldn't have to know that or click two separate Save buttons.
+async function saveAllConfig() {
+  configSaving.value = true
+  try {
+    const tasks: Promise<unknown>[] = [
+      apiClient.patch('/v1/protocol-outputs/drift', { drift_options: globalDrift.value }),
+    ]
+    if (config.value) {
+      tasks.push(anomalyApi.updateConfig(config.value).then((c) => { config.value = c }))
+    }
+    await Promise.all(tasks)
     message.success('Configuration saved')
   } catch (err: unknown) {
     const e = err as { message?: string }
@@ -891,8 +1096,9 @@ function onTabChange(tab: string) {
   else if (tab === 'incidents') { loadEdgeIncidents(); startTabAutoRefresh(loadEdgeIncidents, edgeIncidentsLoading) }
   else if (tab === 'alerts') { loadEdgeAlerts(); startTabAutoRefresh(loadEdgeAlerts, edgeAlertsLoading) }
   else if (tab === 'baselines') { loadBaselines(); startTabAutoRefresh(loadBaselines, baselinesLoading) }
-  else if (tab === 'config') loadConfig()
-  else if (tab === 'rules') { loadConfig(); loadMetricSuggestions(); loadBadActors() }
+  else if (tab === 'schema-drift') { loadSchemaDriftBaselines(); startTabAutoRefresh(loadSchemaDriftBaselines, schemaDriftLoading) }
+  else if (tab === 'config') { loadConfig(); loadDrift() }
+  else if (tab === 'rules') { loadConfig(); loadMetricSuggestions(); loadBadActors(); ensureEndpointMaps() }
 }
 
 onMounted(() => {
@@ -914,7 +1120,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <AppLayout title="Anomalies">
+  <AppLayout title="Analytics">
     <a-alert v-if="!proInstalled" type="info" show-icon style="margin-bottom: 16px">
       <template #message>Catch anomalies before they become failures</template>
       <template #description>
@@ -972,7 +1178,7 @@ onUnmounted(() => {
               <a-tag :color="SEVERITY_TAG_COLOR[record.severity]" :class="record.severity === 'critical' ? 'severity-critical' : ''" style="font-size: 11px; margin: 0">{{ record.severity }}</a-tag>
             </template>
             <template v-else-if="column.key === 'metric'">
-              <span :title="record.metric">{{ metricLeaf(record.metric) }}</span>
+              <span :title="record.metric">{{ metricLeaf(record.metric, record.device_name) }}</span>
             </template>
             <template v-else-if="column.key === 'device_name'">
               <span style="font-size: 12px">{{ deviceNameFromMetric(record.metric, record.device_name) }}</span>
@@ -1031,7 +1237,7 @@ onUnmounted(() => {
               <a-tag :color="SEVERITY_TAG_COLOR[record.severity]" :class="record.severity === 'critical' ? 'severity-critical' : ''" style="font-size: 11px; margin: 0">{{ record.severity }}</a-tag>
             </template>
             <template v-else-if="column.key === 'metric'">
-              <span :title="record.metric">{{ metricLeaf(record.metric) }}</span>
+              <span :title="record.metric">{{ metricLeaf(record.metric, record.device_name) }}</span>
             </template>
             <template v-else-if="column.key === 'device_name'">
               <span style="font-size: 12px">{{ deviceNameFromMetric(record.metric, record.device_name) }}</span>
@@ -1085,7 +1291,7 @@ onUnmounted(() => {
               <a-tag :color="SEVERITY_TAG_COLOR[record.severity]" :class="record.severity === 'critical' ? 'severity-critical' : ''" style="font-size: 11px; margin: 0">{{ record.severity }}</a-tag>
             </template>
             <template v-else-if="column.key === 'metric'">
-              <span :title="record.metric">{{ metricLeaf(record.metric) }}</span>
+              <span :title="record.metric">{{ metricLeaf(record.metric, record.device_name) }}</span>
             </template>
             <template v-else-if="column.key === 'device_name'">
               <span style="font-size: 12px">{{ deviceNameFromMetric(record.metric, record.device_name) }}</span>
@@ -1094,7 +1300,7 @@ onUnmounted(() => {
               <span style="font-variant-numeric: tabular-nums; font-size: 12px">{{ fmtNum(record.max_anomaly_score, 3) }}</span>
             </template>
             <template v-else-if="column.key === 'message'">
-              <span :title="record.message">{{ stripGuids(record.message) }}</span>
+              <span :title="record.message" style="white-space: normal; word-break: break-word">{{ stripGuids(record.message) }}</span>
             </template>
             <template v-else-if="column.key === 'time'">
               <span style="color: #888; font-size: 12px">{{ fmtTs(record.created_at) }}</span>
@@ -1182,6 +1388,63 @@ onUnmounted(() => {
         </a-table>
       </a-tab-pane>
 
+      <!-- ══ SCHEMA DRIFT ═══════════════════════════════════════════════════ -->
+      <a-tab-pane key="schema-drift" tab="Schema Drift">
+        <a-alert
+          v-if="!proInstalled"
+          type="info"
+          show-icon
+          message="Schema drift detection requires Iotistica Agent Pro"
+          style="margin-bottom: 12px"
+        />
+        <div class="toolbar">
+          <a-input
+            v-model:value="schemaDriftQuery"
+            placeholder="Search by protocol, device, or field…"
+            allow-clear
+            style="width: 300px"
+          >
+            <template #prefix><SearchOutlined style="color: #bbb" /></template>
+          </a-input>
+          <span style="color: #888; font-size: 12px">{{ schemaDriftTotal }} total · auto-refresh 5s</span>
+        </div>
+        <a-table
+          :columns="schemaDriftColumns"
+          :data-source="schemaDriftRows"
+          :loading="schemaDriftLoading"
+          :pagination="{ pageSize: PAGE_SIZE, showSizeChanger: false }"
+          :row-key="(record: SchemaDriftBaselineRow) => `${record.protocol}::${record.device ?? ''}::${record.field}`"
+          size="small"
+          :scroll="{ x: true }"
+        >
+          <template #bodyCell="{ column, record }">
+            <template v-if="column.key === 'device'">
+              <span style="font-size: 12px">{{ record.device ?? '—' }}</span>
+            </template>
+            <template v-else-if="column.key === 'field'">
+              <span :title="record.field" style="font-size: 12px">{{ record.field }}</span>
+            </template>
+            <template v-else-if="column.key === 'status'">
+              <a-tag v-if="record.status === 'baseline'" color="green" style="font-size: 10px">Baseline</a-tag>
+              <a-tooltip v-else :title="`Seen ${record.stableBatches} times since first appearing — promotes to baseline at ~${SCHEMA_DRIFT_PROMOTION_BATCHES} consistent occurrences`">
+                <a-tag color="blue" style="font-size: 10px">Pending {{ record.stableBatches }}/{{ SCHEMA_DRIFT_PROMOTION_BATCHES }}</a-tag>
+              </a-tooltip>
+            </template>
+            <template v-else-if="column.key === 'dominantType'">
+              <span style="font-size: 12px; color: #888">{{ record.dominantType ?? '—' }}</span>
+            </template>
+            <template v-else-if="column.key === 'updatedAt'">
+              <span style="color: #888; font-size: 12px">{{ record.updatedAt ? fmtTs(record.updatedAt) : '—' }}</span>
+            </template>
+          </template>
+          <template #emptyText>
+            <div style="padding: 24px 0; text-align: center; color: #aaa; font-size: 13px">
+              No schema drift baselines yet — agent is still learning.
+            </div>
+          </template>
+        </a-table>
+      </a-tab-pane>
+
       <!-- ══ RULES ══════════════════════════════════════════════════════════ -->
       <a-tab-pane key="rules" tab="Rules">
         <a-card size="small" style="margin-bottom: 16px">
@@ -1204,9 +1467,11 @@ onUnmounted(() => {
             size="small"
           >
             <a-table-column key="metric" title="Metric" data-index="metric">
-              <template #default="{ record }">{{ metricLeaf(record.metric) }}</template>
+              <template #default="{ record }">{{ metricLeaf(record.metric, record.device_name) }}</template>
             </a-table-column>
-            <a-table-column key="device_name" title="Device" data-index="device_name" />
+            <a-table-column key="device_name" title="Device" data-index="device_name">
+              <template #default="{ record }">{{ deviceNameFromMetric(record.metric, record.device_name) }}</template>
+            </a-table-column>
             <a-table-column key="incident_count" title="Incidents" data-index="incident_count" :width="90" />
             <a-table-column key="total_events" title="Total Events" data-index="total_events" :width="110" />
             <a-table-column key="severity" title="Severity">
@@ -1259,7 +1524,10 @@ onUnmounted(() => {
             >
               <template #bodyCell="{ column, record, index }">
                 <template v-if="column.key === 'name'">
-                  <span :title="record.name" style="font-size: 12px">{{ friendlyLabel(record.name) }}</span>
+                  <span :title="record.name" style="font-size: 12px">{{ ruleMetricLeaf(record) }}</span>
+                </template>
+                <template v-else-if="column.key === 'device'">
+                  <span style="font-size: 12px">{{ ruleDeviceName(record) || '—' }}</span>
                 </template>
                 <template v-else-if="column.key === 'enabled'">
                   <a-switch
@@ -1309,270 +1577,320 @@ onUnmounted(() => {
       <a-tab-pane key="config" tab="Configuration">
         <a-spin :spinning="configLoading">
           <template v-if="config">
-            <a-alert
-              type="info"
-              show-icon
-              message="Anomaly detection is enabled or disabled in Settings → Features."
-              style="margin-bottom: 16px"
-            />
-
-            <!-- Detection settings -->
-            <a-card :bordered="true" size="small" class="config-section-card">
-              <div class="config-section-header">
-                <div class="config-section-icon"><SafetyCertificateOutlined /></div>
-                <div>
-                  <div class="config-section-title">Detection settings</div>
-                  <div class="config-section-subtitle">Configure how anomalies are detected and scored.</div>
-                </div>
-              </div>
-
-              <a-row :gutter="[24, 16]">
-                <a-col :span="8">
-                  <a-form-item style="margin-bottom: 0">
-                    <template #label>
-                      <span class="field-label">
-                        Sensitivity (1–10)
-                        <a-tooltip title="Higher sensitivity flags smaller deviations as anomalies.">
-                          <InfoCircleOutlined class="field-info-icon" />
-                        </a-tooltip>
-                      </span>
-                    </template>
-                    <div style="display: flex; align-items: center; gap: 12px">
-                      <a-slider
-                        v-model:value="config.sensitivity"
-                        :min="1"
-                        :max="10"
-                        style="flex: 1"
-                      />
-                      <a-input-number v-model:value="config.sensitivity" :min="1" :max="10" style="width: 60px" />
-                    </div>
-                    <div class="field-caption" style="display: flex; justify-content: space-between">
-                      <span>1 · Low</span>
-                      <span>10 · High</span>
-                    </div>
-                  </a-form-item>
-                </a-col>
-                <a-col :span="5">
-                  <a-form-item style="margin-bottom: 0">
-                    <template #label>
-                      <span class="field-label">
-                        Warm-up period (ms)
-                        <a-tooltip title="Time to collect baseline data before detection starts.">
-                          <InfoCircleOutlined class="field-info-icon" />
-                        </a-tooltip>
-                      </span>
-                    </template>
-                    <a-input-number v-model:value="config.warmupPeriodMs" :min="0" :step="60000" style="width: 100%" placeholder="900000" />
-                    <div class="field-caption">Time to collect baseline data before detection starts.</div>
-                  </a-form-item>
-                </a-col>
-                <a-col :span="5">
-                  <a-form-item style="margin-bottom: 0">
-                    <template #label>
-                      <span class="field-label">
-                        Min confidence
-                        <a-tooltip title="Minimum confidence score to consider an anomaly.">
-                          <InfoCircleOutlined class="field-info-icon" />
-                        </a-tooltip>
-                      </span>
-                    </template>
-                    <a-input-number v-model:value="config.alerts.minConfidence" :min="0" :max="1" :step="0.05" style="width: 100%" />
-                    <div class="field-caption">Minimum confidence score to consider an anomaly.</div>
-                  </a-form-item>
-                </a-col>
-                <a-col :span="6">
-                  <a-form-item style="margin-bottom: 0">
-                    <template #label>
-                      <span class="field-label">
-                        Cooldown (ms)
-                        <a-tooltip title="Minimum time between anomaly detections.">
-                          <InfoCircleOutlined class="field-info-icon" />
-                        </a-tooltip>
-                      </span>
-                    </template>
-                    <a-input-number v-model:value="config.alerts.cooldownMs" :min="0" :step="60000" style="width: 100%" />
-                    <div class="field-caption">Minimum time between anomaly detections.</div>
-                  </a-form-item>
-                </a-col>
-                <a-col :span="8">
-                  <a-form-item style="margin-bottom: 0">
-                    <template #label>
-                      <span class="field-label">
-                        Max queue size
-                        <a-tooltip title="Maximum number of items in the anomaly queue.">
-                          <InfoCircleOutlined class="field-info-icon" />
-                        </a-tooltip>
-                      </span>
-                    </template>
-                    <a-input-number v-model:value="config.alerts.maxQueueSize" :min="1" style="width: 100%" />
-                    <div class="field-caption">Maximum number of items in the anomaly queue.</div>
-                  </a-form-item>
-                </a-col>
-              </a-row>
-            </a-card>
-
-            <!-- Alert routing -->
-            <a-card :bordered="true" size="small" class="config-section-card">
-              <div class="config-section-header">
-                <div class="config-section-icon"><BellOutlined /></div>
-                <div>
-                  <div class="config-section-title">Alert routing</div>
-                  <div class="config-section-subtitle">Configure how and where alerts are delivered.</div>
-                </div>
-              </div>
-
-              <a-row :gutter="[24, 16]">
-                <a-col :flex="'160px'">
-                  <a-form-item label="Enable MQTT alerts" style="margin-bottom: 0">
-                    <a-switch v-model:checked="config.alerts.mqtt" />
-                  </a-form-item>
-                </a-col>
-                <a-col :flex="'280px'">
-                  <a-form-item style="margin-bottom: 0">
-                    <template #label>
-                      <span class="field-label">
-                        MQTT destination
-                        <a-tooltip title="Local broker from the Destinations page (standalone mode).">
-                          <InfoCircleOutlined class="field-info-icon" />
-                        </a-tooltip>
-                      </span>
-                    </template>
-                    <a-select
-                      :value="config.alerts.alertDestinationId"
-                      allow-clear
-                      placeholder="None (use cloud MQTT)"
-                      style="width: 100%"
-                      @change="(v: number | null) => { config!.alerts.alertDestinationId = v ?? undefined }"
-                    >
-                      <a-select-option v-for="d in mqttDestinations" :key="d.id" :value="d.id">
-                        {{ d.name }}
-                      </a-select-option>
-                    </a-select>
-                    <div class="field-caption">Local broker from the Destinations page (standalone mode).</div>
-                  </a-form-item>
-                </a-col>
-                <a-col :flex="'280px'">
-                  <a-form-item style="margin-bottom: 0">
-                    <template #label>
-                      <span class="field-label">
-                        Alert topic
-                        <a-tooltip title="Topic to publish to when a destination is selected.">
-                          <InfoCircleOutlined class="field-info-icon" />
-                        </a-tooltip>
-                      </span>
-                    </template>
-                    <a-input
-                      :value="config.alerts.alertTopic ?? ''"
-                      placeholder="iotistica/alerts/anomaly"
-                      @change="(e: Event) => { config!.alerts.alertTopic = (e.target as HTMLInputElement).value || undefined }"
-                    />
-                    <div class="field-caption">Topic to publish to when a destination is selected.</div>
-                  </a-form-item>
-                </a-col>
-              </a-row>
-            </a-card>
-
-            <!-- Storage & retention -->
-            <a-card :bordered="true" size="small" class="config-section-card">
-              <div class="config-section-header">
-                <div class="config-section-icon"><DatabaseOutlined /></div>
-                <div>
-                  <div class="config-section-title">Storage &amp; retention</div>
-                  <div class="config-section-subtitle">Configure how long data is kept.</div>
-                </div>
-              </div>
-
-              <a-row :gutter="[24, 16]">
-                <a-col :span="8">
-                  <a-form-item label="Baseline retention (days)" style="margin-bottom: 0">
-                    <a-input-number
-                      :value="config.storage?.retention"
-                      :min="1"
-                      style="width: 100%"
-                      @change="(v: number) => { if (!config!.storage) config!.storage = { retention: v }; else config!.storage.retention = v }"
-                    />
-                    <div class="field-caption">How long baselines are kept.</div>
-                  </a-form-item>
-                </a-col>
-                <a-col :span="8">
-                  <a-form-item label="Baseline max age (days)" style="margin-bottom: 0">
-                    <a-input-number
-                      :value="config.storage?.baselineMaxAgeDays"
-                      :min="1"
-                      style="width: 100%"
-                      placeholder="7"
-                      @change="(v: number) => { if (!config!.storage) config!.storage = { retention: 30, baselineMaxAgeDays: v }; else config!.storage.baselineMaxAgeDays = v }"
-                    />
-                    <div class="field-caption">Maximum age of baselines used for detection.</div>
-                  </a-form-item>
-                </a-col>
-                <a-col :span="8">
-                  <a-form-item label="Min samples for baseline" style="margin-bottom: 0">
-                    <a-input-number
-                      :value="config.storage?.minSamples"
-                      :min="1"
-                      style="width: 100%"
-                      placeholder="5"
-                      @change="(v: number) => { if (!config!.storage) config!.storage = { retention: 30, minSamples: v }; else config!.storage.minSamples = v }"
-                    />
-                    <div class="field-caption">Minimum samples required to create a baseline.</div>
-                  </a-form-item>
-                </a-col>
-                <a-col :span="8">
-                  <a-form-item label="Event retention (days)" style="margin-bottom: 0">
-                    <a-input-number
-                      :value="config.storage?.eventRetentionDays"
-                      :min="1"
-                      style="width: 100%"
-                      :placeholder="String(config.storage?.retention ?? 30)"
-                      @change="(v: number) => { if (!config!.storage) config!.storage = { retention: 30, eventRetentionDays: v }; else config!.storage.eventRetentionDays = v }"
-                    />
-                    <div class="field-caption">How long events are kept.</div>
-                  </a-form-item>
-                </a-col>
-                <a-col :span="8">
-                  <a-form-item label="Incident retention (days)" style="margin-bottom: 0">
-                    <a-input-number
-                      :value="config.storage?.incidentRetentionDays"
-                      :min="1"
-                      style="width: 100%"
-                      :placeholder="String(config.storage?.retention ?? 30)"
-                      @change="(v: number) => { if (!config!.storage) config!.storage = { retention: 30, incidentRetentionDays: v }; else config!.storage.incidentRetentionDays = v }"
-                    />
-                    <div class="field-caption">How long incidents are kept.</div>
-                  </a-form-item>
-                </a-col>
-                <a-col :span="8">
-                  <a-form-item label="Alert retention (days)" style="margin-bottom: 0">
-                    <a-input-number
-                      :value="config.storage?.alertRetentionDays"
-                      :min="1"
-                      style="width: 100%"
-                      :placeholder="String(config.storage?.retention ?? 30)"
-                      @change="(v: number) => { if (!config!.storage) config!.storage = { retention: 30, alertRetentionDays: v }; else config!.storage.alertRetentionDays = v }"
-                    />
-                    <div class="field-caption">How long alerts are kept.</div>
-                  </a-form-item>
-                </a-col>
-              </a-row>
-
+            <div class="settings-page">
               <a-alert
                 type="info"
                 show-icon
-                message="Retention settings control how long data is kept. Items are automatically pruned based on age, regardless of whether they are open/active."
-                style="margin-top: 20px"
+                message="Anomaly detection is enabled or disabled in Settings → Features."
+                style="margin-bottom: 20px"
               />
-            </a-card>
 
-            <div style="text-align: right; display: flex; justify-content: flex-end; gap: 12px">
-              <a-button @click="resetDetectionDefaults">
-                <template #icon><ReloadOutlined /></template>
-                Reset to default
-              </a-button>
-              <a-button type="primary" :loading="configSaving" @click="saveConfig">
-                <template #icon><SaveOutlined /></template>
-                Save configuration
-              </a-button>
+              <!-- Detection settings -->
+              <SettingsSection
+                title="Anomaly detection settings"
+                subtitle="Configure how anomalies are detected and scored."
+              >
+                <template #icon><SafetyCertificateOutlined /></template>
+
+                <a-row :gutter="[20, 20]">
+                  <a-col :xs="24" :sm="12" :lg="8">
+                    <SettingsField label="Sensitivity (1–10)" tooltip="Higher sensitivity flags smaller deviations as anomalies.">
+                      <div class="sensitivity-control">
+                        <div class="sensitivity-control__row">
+                          <a-slider
+                            v-model:value="config.sensitivity"
+                            :min="1"
+                            :max="10"
+                            style="flex: 1"
+                          />
+                          <a-input-number v-model:value="config.sensitivity" :min="1" :max="10" style="width: 64px" />
+                        </div>
+                        <div class="sensitivity-control__scale">
+                          <span>1 · Low</span>
+                          <span>10 · High</span>
+                        </div>
+                      </div>
+                    </SettingsField>
+                  </a-col>
+                  <a-col :xs="24" :sm="12" :lg="8">
+                    <SettingsField
+                      label="Warm-up period (ms)"
+                      tooltip="Time to collect baseline data before detection starts."
+                      helper="Time to collect baseline data before detection starts."
+                    >
+                      <a-input-number v-model:value="config.warmupPeriodMs" :min="0" :step="60000" placeholder="900000" />
+                    </SettingsField>
+                  </a-col>
+                  <a-col :xs="24" :sm="12" :lg="8">
+                    <SettingsField
+                      label="Min confidence"
+                      tooltip="Minimum confidence score to consider an anomaly."
+                      helper="Minimum confidence score to consider an anomaly."
+                    >
+                      <a-input-number v-model:value="config.alerts.minConfidence" :min="0" :max="1" :step="0.05" />
+                    </SettingsField>
+                  </a-col>
+                  <a-col :xs="24" :sm="12" :lg="8">
+                    <SettingsField
+                      label="Cooldown (ms)"
+                      tooltip="Minimum time between anomaly detections."
+                      helper="Minimum time between anomaly detections."
+                    >
+                      <a-input-number v-model:value="config.alerts.cooldownMs" :min="0" :step="60000" />
+                    </SettingsField>
+                  </a-col>
+                  <a-col :xs="24" :sm="12" :lg="8">
+                    <SettingsField
+                      label="Max queue size"
+                      tooltip="Maximum number of items in the anomaly queue."
+                      helper="Maximum number of items in the anomaly queue."
+                    >
+                      <a-input-number v-model:value="config.alerts.maxQueueSize" :min="1" />
+                    </SettingsField>
+                  </a-col>
+                </a-row>
+              </SettingsSection>
+
+              <!-- Alert routing -->
+              <SettingsSection
+                title="Alert routing"
+                subtitle="Configure how and where alerts are delivered."
+              >
+                <template #icon><BellOutlined /></template>
+
+                <a-row :gutter="[20, 20]">
+                  <a-col :xs="24" :sm="12" :lg="8">
+                    <SettingsField label="Enable MQTT alerts">
+                      <a-switch v-model:checked="config.alerts.mqtt" />
+                    </SettingsField>
+                  </a-col>
+                  <a-col :xs="24" :sm="12" :lg="8">
+                    <SettingsField
+                      label="MQTT destination"
+                      tooltip="Local broker from the Destinations page (standalone mode)."
+                      helper="Local broker from the Destinations page (standalone mode)."
+                    >
+                      <a-select
+                        :value="config.alerts.alertDestinationId"
+                        allow-clear
+                        :disabled="!config.alerts.mqtt"
+                        placeholder="None (use cloud MQTT)"
+                        @change="(v: number | null) => { config!.alerts.alertDestinationId = v ?? undefined }"
+                      >
+                        <a-select-option v-for="d in mqttDestinations" :key="d.id" :value="d.id">
+                          {{ d.name }}
+                        </a-select-option>
+                      </a-select>
+                    </SettingsField>
+                  </a-col>
+                  <a-col :xs="24" :sm="12" :lg="8">
+                    <SettingsField
+                      label="Alert topic"
+                      tooltip="Topic to publish to when a destination is selected."
+                      helper="Topic to publish to when a destination is selected."
+                    >
+                      <a-input
+                        :value="config.alerts.alertTopic ?? ''"
+                        :disabled="!config.alerts.mqtt"
+                        placeholder="iotistica/alerts/anomaly"
+                        @change="(e: Event) => { config!.alerts.alertTopic = (e.target as HTMLInputElement).value || undefined }"
+                      />
+                    </SettingsField>
+                  </a-col>
+                </a-row>
+              </SettingsSection>
+
+              <!-- Storage & retention -->
+              <SettingsSection
+                title="Storage & retention"
+                subtitle="Configure how long data is kept."
+              >
+                <template #icon><DatabaseOutlined /></template>
+
+                <a-row :gutter="[20, 20]">
+                  <a-col :xs="24" :sm="12" :lg="8">
+                    <SettingsField label="Baseline retention (days)" helper="How long baselines are kept.">
+                      <a-input-number
+                        :value="config.storage?.retention"
+                        :min="1"
+                        @change="(v: number) => { if (!config!.storage) config!.storage = { retention: v }; else config!.storage.retention = v }"
+                      />
+                    </SettingsField>
+                  </a-col>
+                  <a-col :xs="24" :sm="12" :lg="8">
+                    <SettingsField label="Baseline max age (days)" helper="Maximum age of baselines used for detection.">
+                      <a-input-number
+                        :value="config.storage?.baselineMaxAgeDays"
+                        :min="1"
+                        placeholder="7"
+                        @change="(v: number) => { if (!config!.storage) config!.storage = { retention: 30, baselineMaxAgeDays: v }; else config!.storage.baselineMaxAgeDays = v }"
+                      />
+                    </SettingsField>
+                  </a-col>
+                  <a-col :xs="24" :sm="12" :lg="8">
+                    <SettingsField label="Min samples for baseline" helper="Minimum samples required to create a baseline.">
+                      <a-input-number
+                        :value="config.storage?.minSamples"
+                        :min="1"
+                        placeholder="5"
+                        @change="(v: number) => { if (!config!.storage) config!.storage = { retention: 30, minSamples: v }; else config!.storage.minSamples = v }"
+                      />
+                    </SettingsField>
+                  </a-col>
+                  <a-col :xs="24" :sm="12" :lg="8">
+                    <SettingsField label="Event retention (days)" helper="How long events are kept.">
+                      <a-input-number
+                        :value="config.storage?.eventRetentionDays"
+                        :min="1"
+                        :placeholder="String(config.storage?.retention ?? 30)"
+                        @change="(v: number) => { if (!config!.storage) config!.storage = { retention: 30, eventRetentionDays: v }; else config!.storage.eventRetentionDays = v }"
+                      />
+                    </SettingsField>
+                  </a-col>
+                  <a-col :xs="24" :sm="12" :lg="8">
+                    <SettingsField label="Incident retention (days)" helper="How long incidents are kept.">
+                      <a-input-number
+                        :value="config.storage?.incidentRetentionDays"
+                        :min="1"
+                        :placeholder="String(config.storage?.retention ?? 30)"
+                        @change="(v: number) => { if (!config!.storage) config!.storage = { retention: 30, incidentRetentionDays: v }; else config!.storage.incidentRetentionDays = v }"
+                      />
+                    </SettingsField>
+                  </a-col>
+                  <a-col :xs="24" :sm="12" :lg="8">
+                    <SettingsField label="Alert retention (days)" helper="How long alerts are kept.">
+                      <a-input-number
+                        :value="config.storage?.alertRetentionDays"
+                        :min="1"
+                        :placeholder="String(config.storage?.retention ?? 30)"
+                        @change="(v: number) => { if (!config!.storage) config!.storage = { retention: 30, alertRetentionDays: v }; else config!.storage.alertRetentionDays = v }"
+                      />
+                    </SettingsField>
+                  </a-col>
+                </a-row>
+
+                <a-alert
+                  type="info"
+                  show-icon
+                  message="Retention settings control how long data is kept. Items are automatically pruned based on age, regardless of whether they are open/active."
+                  class="settings-page__notice"
+                />
+              </SettingsSection>
+
+              <!-- Schema drift settings -->
+              <SettingsSection
+                title="Schema drift"
+                subtitle="Controls how the agent detects unexpected changes in the fields it publishes. Settings take effect after the agent restarts."
+              >
+                <template #icon><BranchesOutlined /></template>
+                <template #extra>
+                  <div class="drift-enabled-toggle">
+                    <span class="drift-enabled-toggle__label">Enabled</span>
+                    <a-switch
+                      :checked="globalDrift.enabled !== false"
+                      size="small"
+                      @change="(v: boolean) => setDrift('enabled', v)"
+                    />
+                  </div>
+                </template>
+
+                <a-spin :spinning="driftLoading">
+                  <a-row :gutter="[20, 20]">
+                    <a-col :xs="24" :sm="12" :lg="8">
+                      <SettingsField
+                        label="Warmup batches"
+                        tooltip="How many times a device must be observed before its baseline is learned. Counted per device — a device that reports rarely just takes longer in wall-clock time to finish warmup, not more attempts."
+                      >
+                        <a-input-number
+                          :value="globalDrift.warmupBatches ?? 20"
+                          :min="1" :max="500"
+                          @change="(v: number) => setDrift('warmupBatches', v)"
+                        />
+                      </SettingsField>
+                    </a-col>
+                    <a-col :xs="24" :sm="12" :lg="8">
+                      <SettingsField
+                        label="Missing threshold"
+                        tooltip="How many consecutive times a device must be observed without a previously-known field before it's flagged as removed (critical severity). Higher values tolerate more occasional gaps before alerting."
+                      >
+                        <a-input-number
+                          :value="globalDrift.consecutiveMissingThreshold ?? 10"
+                          :min="1" :max="1000"
+                          @change="(v: number) => setDrift('consecutiveMissingThreshold', v)"
+                        />
+                      </SettingsField>
+                    </a-col>
+                    <a-col :xs="24" :sm="12" :lg="8">
+                      <SettingsField
+                        label="Alert cooldown (ms)"
+                        tooltip="Minimum time between repeat alerts for the same field on the same device. Prevents a single ongoing drift from spamming repeated alerts. In milliseconds — 1800000 = 30 minutes."
+                      >
+                        <a-input-number
+                          :value="globalDrift.alertCooldownMs ?? 1800000"
+                          :min="0" :step="60000"
+                          @change="(v: number) => setDrift('alertCooldownMs', v)"
+                        />
+                      </SettingsField>
+                    </a-col>
+                    <a-col :xs="24" :sm="12" :lg="8">
+                      <SettingsField
+                        label="Min presence ratio"
+                        tooltip="During warmup, the fraction of a device's observations a field must appear in to be included in its baseline. 0.5 means a field must be present at least half the time to count — filters out fields that only show up sporadically."
+                      >
+                        <a-input-number
+                          :value="globalDrift.minFieldPresenceRatio ?? 0.5"
+                          :min="0" :max="1" :step="0.05" :precision="2"
+                          @change="(v: number) => setDrift('minFieldPresenceRatio', v)"
+                        />
+                      </SettingsField>
+                    </a-col>
+                    <a-col :xs="24" :sm="12" :lg="8">
+                      <SettingsField
+                        label="Retire threshold"
+                        tooltip="The number of consecutive times a baseline field can be missing before it's removed from the learned schema. This value is intentionally set much higher than the missing-field alert threshold, so a temporary issue—such as a bad reload or a short data gap—won't cause the system to forget a field it has already learned is normally present."
+                      >
+                        <a-input-number
+                          :value="globalDrift.adaptiveRetireBatches ?? 250"
+                          :min="1" :max="10000"
+                          @change="(v: number) => setDrift('adaptiveRetireBatches', v)"
+                        />
+                      </SettingsField>
+                    </a-col>
+                  </a-row>
+
+                  <div class="drift-alert-on">
+                    <div class="drift-alert-on__label">
+                      Alert on
+                      <a-tooltip title="Every drift type is always logged and shows up in the Schema Drift baseline history regardless of this setting — this only controls which ones also raise an alert (Events/Incidents/Alerts, same pipeline anomalies use).">
+                        <QuestionCircleOutlined class="drift-alert-on__info" />
+                      </a-tooltip>
+                    </div>
+                    <a-checkbox-group
+                      :value="globalDrift.alertOnDriftTypes ?? DEFAULT_ALERT_DRIFT_TYPES"
+                      class="drift-alert-on__group"
+                      @change="(v: DriftAlertType[]) => setDrift('alertOnDriftTypes', v)"
+                    >
+                      <a-checkbox v-for="opt in DRIFT_ALERT_TYPE_OPTIONS" :key="opt.value" :value="opt.value">
+                        {{ opt.label }}
+                        <a-tooltip :title="opt.hint">
+                          <QuestionCircleOutlined class="drift-alert-on__info drift-alert-on__info--sm" />
+                        </a-tooltip>
+                      </a-checkbox>
+                    </a-checkbox-group>
+                  </div>
+                </a-spin>
+              </SettingsSection>
+
+              <div v-if="hasRole('operator')" class="settings-page__actions">
+                <a-button @click="resetDetectionDefaults">
+                  <template #icon><ReloadOutlined /></template>
+                  Reset to default
+                </a-button>
+                <a-button type="primary" :loading="configSaving" @click="saveAllConfig">
+                  <template #icon><SaveOutlined /></template>
+                  Save configuration
+                </a-button>
+              </div>
             </div>
           </template>
 
@@ -1875,55 +2193,84 @@ onUnmounted(() => {
   animation: severity-pulse 0.75s ease-in-out infinite;
 }
 
-.config-section-card {
-  margin-bottom: 16px;
+.settings-page {
+  max-width: 1440px;
+  margin: 0;
 }
 
-.config-section-header {
+.settings-page__notice {
+  margin-top: 20px;
+}
+
+.settings-page__actions {
   display: flex;
-  align-items: flex-start;
+  justify-content: flex-end;
   gap: 12px;
-  margin-bottom: 20px;
+  margin-top: 4px;
+  padding-top: 16px;
+  border-top: 1px solid rgba(5, 5, 5, 0.06);
 }
 
-.config-section-icon {
-  width: 36px;
-  height: 36px;
-  border-radius: 8px;
-  background: #e6f4ff;
-  color: #1677ff;
+.sensitivity-control {
+  width: 100%;
+  max-width: 320px;
+}
+
+.sensitivity-control__row {
   display: flex;
   align-items: center;
-  justify-content: center;
-  font-size: 16px;
-  flex-shrink: 0;
+  gap: 12px;
+  width: 100%;
 }
 
-.config-section-title {
-  font-size: 14px;
-  font-weight: 600;
+.sensitivity-control__scale {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12.5px;
+  color: #767676;
+  margin-top: 5px;
+  line-height: 1.5;
 }
 
-.config-section-subtitle {
-  font-size: 12px;
-  color: #888;
-  margin-top: 2px;
-}
-
-.field-label {
-  display: inline-flex;
+.drift-enabled-toggle {
+  display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 8px;
 }
 
-.field-info-icon {
-  color: #aaa;
-  font-size: 12px;
+.drift-enabled-toggle__label {
+  font-size: 12.5px;
+  color: #767676;
 }
 
-.field-caption {
+.drift-alert-on {
+  margin-top: 20px;
+}
+
+.drift-alert-on__label {
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+.drift-alert-on__info {
+  color: #999;
   font-size: 12px;
-  color: #888;
-  margin-top: 4px;
+  margin-left: 4px;
+  cursor: help;
+}
+
+.drift-alert-on__info--sm {
+  font-size: 11px;
+}
+
+.drift-alert-on__group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 24px;
+}
+
+.drift-alert-on__group :deep(.ant-checkbox-wrapper) {
+  margin-inline-start: 0;
 }
 </style>

@@ -41,8 +41,13 @@ export interface PersistedTypeFrequency {
 	total: number;
 }
 
-export interface PersistedBaselineState {
-	endpointName: string;
+/**
+ * One device's learned schema-drift state. An endpoint that multiplexes many
+ * devices (e.g. a shared BACnet pipe) persists one of these per device,
+ * keyed by device identity, instead of a single flat baseline for the whole
+ * endpoint — see SchemaDriftDetector's per-device model.
+ */
+export interface PersistedDeviceDriftState {
 	baselineFields: string[];
 	baselineTypeFreq: Record<string, PersistedTypeFrequency>;
 	missingStreakByField: Record<string, number>;
@@ -52,6 +57,12 @@ export interface PersistedBaselineState {
 	newFieldCounts?: Record<string, number>;
 	newFieldFirstSeen?: Record<string, number>;
 	newFieldTypeFreq?: Record<string, PersistedTypeFrequency>;
+	newFieldLastSeen?: Record<string, number>;
+}
+
+export interface PersistedBaselineState {
+	endpointName: string;
+	devices: Record<string, PersistedDeviceDriftState>;
 }
 
 export interface SchemaDriftStore {
@@ -131,6 +142,25 @@ export class SchemaDriftModel {
 				JSON.stringify(state),
 				new Date().toISOString(),
 			);
+	}
+
+	/** All persisted per-endpoint baselines — powers the admin UI's schema drift grid. */
+	static getAllBaselines(): Array<PersistedBaselineState & { updatedAt: string }> {
+		const rows = this.getDb()
+			.prepare(`SELECT baseline_json, updated_at FROM ${this.baselineTable}`)
+			.all() as unknown as Array<{ baseline_json: string; updated_at: string }>;
+
+		const states: Array<PersistedBaselineState & { updatedAt: string }> = [];
+		for (const row of rows) {
+			try {
+				const parsed = JSON.parse(row.baseline_json) as PersistedBaselineState;
+				states.push({ ...parsed, updatedAt: row.updated_at });
+			} catch {
+				// skip malformed rows rather than failing the whole listing
+			}
+		}
+
+		return states;
 	}
 
 	static loadBaseline(endpointName: string): PersistedBaselineState | undefined {

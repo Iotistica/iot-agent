@@ -202,11 +202,26 @@ implements IProtocolClient<ReadValueIdOptions[], DataValue[]>
 			}
 
 			if (sessionWrapper.session) {
-				await sessionWrapper.session.close();
+				try {
+					await sessionWrapper.session.close();
+				} catch (error) {
+					// Closing a session over an already-broken channel (e.g. right after
+					// connection_lost/keepalive_failure) throws — that must NOT skip
+					// client.disconnect() below. Leaving that unreached was the bug: the
+					// underlying TCP connection stayed open, the server never saw a
+					// disconnect, and the orphaned session (and its socket) leaked
+					// forever instead of the server's own transport-loss cleanup
+					// catching it.
+					this.logger.debug(`Error closing OPC-UA session during cleanup: ${error}`);
+				}
 				sessionWrapper.session = null;
 			}
 
-			await sessionWrapper.client.disconnect();
+			try {
+				await sessionWrapper.client.disconnect();
+			} catch (error) {
+				this.logger.debug(`Error disconnecting OPC-UA client during cleanup: ${error}`);
+			}
 		} catch (error) {
 			this.logger.debug(`Error during OPC-UA client cleanup: ${error}`);
 		}

@@ -1,4 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router'
+import { message } from 'ant-design-vue'
 import { useAuth } from '@/composables/useAuth'
 
 const router = createRouter({
@@ -74,17 +75,17 @@ const router = createRouter({
     {
       path: '/admin/users',
       component: () => import('@/views/UsersView.vue'),
-      meta: { title: 'Users' },
+      meta: { title: 'Users', minRole: 'admin' },
     },
     {
       path: '/admin/mqtt-users',
       component: () => import('@/views/MqttUsersView.vue'),
-      meta: { title: 'MQTT Users' },
+      meta: { title: 'MQTT Users', minRole: 'admin' },
     },
     {
       path: '/admin/backups',
       component: () => import('@/views/BackupsView.vue'),
-      meta: { title: 'Backups' },
+      meta: { title: 'Backups', minRole: 'admin' },
     },
     {
       path: '/user/profile',
@@ -113,10 +114,15 @@ router.beforeEach(async (to) => {
     await checkAuth()
     authChecked = true
   }
-  const { currentUser } = useAuth()
+  const { currentUser, hasRole } = useAuth()
   if (!currentUser.value) return { path: '/login' }
   if (currentUser.value.must_change_password && to.path !== '/user/profile') {
     return { path: '/user/profile' }
+  }
+  const minRole = to.meta.minRole as 'viewer' | 'operator' | 'admin' | undefined
+  if (minRole && !hasRole(minRole)) {
+    message.warning(`You need the "${minRole}" role or higher to access ${(to.meta.title as string | undefined) ?? 'this page'}.`)
+    return { path: '/dashboard' }
   }
   return true
 })

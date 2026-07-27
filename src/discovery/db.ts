@@ -6,6 +6,12 @@ import { ProtocolDevicesModel } from '../db/models/index.js';
 import type { DiscoveredDevice } from '../plugins/types.js';
 import type { ConfigManager } from '../core/config.js';
 
+// A device must be absent from this many *consecutive* prune-eligible scans before
+// its endpoint is disabled. Protects against a single corrupted/dropped discovery
+// response (e.g. a misattributed BACnet I-Am under heavy broadcast load) evicting a
+// still-valid endpoint out from under a device that's actually still there.
+const PRUNE_MISS_THRESHOLD = 2;
+
 export class DiscoveryStore {
 	constructor(
     private logger?: AgentLogger,
@@ -47,12 +53,6 @@ export class DiscoveryStore {
 			targetEndpoints.map((endpoint: any) => [endpoint.name, endpoint])
 		);
 
-		this.logger?.infoSync('Checking for existing endpoints in database', {
-			component: LogComponents.discovery,
-			existingCount: existingEndpoints.length,
-			discoveredCount: discovered.length,
-			existingNames: existingEndpoints.map(s => s.name)
-		});
 
 		let saved = 0;
 		let skipped = 0;
@@ -123,18 +123,6 @@ export class DiscoveryStore {
 
 					if (profileChanged || dataPointsChanged || validationChanged) {
 						const reason = profileChanged ? 'Profile changed' : 'Data points changed (same profile)';
-						this.logger?.warnSync(`${reason} for "${existing.name}" - updating configuration`, {
-							component: LogComponents.discovery,
-							traceId,
-							existingName: existing.name,
-							discoveredName: device.name,
-							oldProfile: existingProfile,
-							newProfile,
-							oldDataPoints: existing.data_points?.length || 0,
-							newDataPoints: device.dataPoints?.length || 0,
-							profileChanged,
-							dataPointsChanged
-						});
 
 						this.logger?.infoSync('Updating device with discovered nodes', {
 							component: LogComponents.discovery,
@@ -363,12 +351,43 @@ export class DiscoveryStore {
 		let prunedDevices: Array<{ name: string; protocol: string }> | undefined;
 
 		if (prune && prune.protocols.length > 0) {
-			const staleEndpoints = existingEndpoints.filter((e) =>
+			const candidateEndpoints = existingEndpoints.filter((e) =>
 				e.id !== undefined &&
         e.enabled &&
-        prune.protocols.includes(e.protocol) &&
-        !matchedEndpointIds.has(e.id)
+        prune.protocols.includes(e.protocol)
 			);
+
+			const staleEndpoints: Endpoint[] = [];
+
+			for (const endpoint of candidateEndpoints) {
+				const matched = endpoint.id !== undefined && matchedEndpointIds.has(endpoint.id);
+				const missCount = endpoint.metadata?.pruneMissCount ?? 0;
+
+				if (matched) {
+					if (missCount > 0 && !prune.dryRun) {
+						await EndpointModel.update(endpoint.name, {
+							metadata: { ...endpoint.metadata, pruneMissCount: 0 }
+						});
+					}
+					continue;
+				}
+
+				const nextMissCount = missCount + 1;
+				if (nextMissCount < PRUNE_MISS_THRESHOLD) {
+					if (!prune.dryRun) {
+						await EndpointModel.update(endpoint.name, {
+							metadata: { ...endpoint.metadata, pruneMissCount: nextMissCount }
+						});
+					}
+					this.logger?.debugSync(
+						`Endpoint "${endpoint.name}" not seen this scan (${nextMissCount}/${PRUNE_MISS_THRESHOLD}) - deferring prune`,
+						{ component: LogComponents.discovery, traceId, protocol: endpoint.protocol }
+					);
+					continue;
+				}
+
+				staleEndpoints.push(endpoint);
+			}
 
 			if (staleEndpoints.length > 0) {
 				prunedDevices = staleEndpoints.map((e) => ({ name: e.name, protocol: e.protocol }));
@@ -381,7 +400,10 @@ export class DiscoveryStore {
 				} else {
 					for (const endpoint of staleEndpoints) {
 						try {
-							await EndpointModel.update(endpoint.name, { enabled: false });
+							await EndpointModel.update(endpoint.name, {
+								enabled: false,
+								metadata: { ...endpoint.metadata, pruneMissCount: 0 }
+							});
 							this.emit('endpoint-disabled', { protocol: endpoint.protocol, endpoint, reason: 'prune' });
 						} catch (error) {
 							this.logger?.errorSync(

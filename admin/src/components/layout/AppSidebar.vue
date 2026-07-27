@@ -29,12 +29,14 @@ import {
 import IotisticaLogo from '@/components/IotisticaLogo.vue'
 import { useProStatus } from '@/composables/useProStatus'
 import { useSidebar } from '@/composables/useSidebar'
+import { useAuth } from '@/composables/useAuth'
 
 const route = useRoute()
 const router = useRouter()
 
 const { proInstalled } = useProStatus()
 const { collapsed, toggle } = useSidebar()
+const { hasRole } = useAuth()
 
 const selectedKey = computed(() => route.path)
 
@@ -126,7 +128,7 @@ function onMenuClick({ key }: { key: string }) {
 
         <a-menu-item key="/anomaly">
           <template #icon><FundOutlined /></template>
-          Anomalies
+          Analytics
           <a-tag v-if="!proInstalled" class="pro-badge">PRO</a-tag>
         </a-menu-item>
 
@@ -151,7 +153,7 @@ function onMenuClick({ key }: { key: string }) {
           Settings
         </a-menu-item>
 
-        <a-sub-menu key="administration">
+        <a-sub-menu v-if="hasRole('admin')" key="administration">
           <template #icon><SafetyOutlined /></template>
           <template #title>Administration</template>
 

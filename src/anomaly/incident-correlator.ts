@@ -124,6 +124,10 @@ export class IncidentCorrelator {
 		incident: NonNullable<ReturnType<typeof AnomalyIncidentModel.findActiveByFingerprint>>,
 		payload: AnomalyEventPayload,
 	): string {
+		if (payload.kind === 'schema-drift') {
+			return this.buildDriftMessage(incident, payload);
+		}
+
 		const parts = [
 			`${incident.severity.toUpperCase()}: Anomaly in "${incident.metric}"`,
 			`on ${incident.device_name}.`,
@@ -154,6 +158,33 @@ export class IncidentCorrelator {
 		}
 
 		parts.push(`Score: ${incident.max_anomaly_score.toFixed(2)}, events: ${incident.event_count}.`);
+
+		return parts.join(' ');
+	}
+
+	private buildDriftMessage(
+		incident: NonNullable<ReturnType<typeof AnomalyIncidentModel.findActiveByFingerprint>>,
+		payload: AnomalyEventPayload,
+	): string {
+		const parts = [`${incident.severity.toUpperCase()}: Schema drift on ${incident.device_name}`];
+
+		if (payload.drift_endpoint) {
+			parts.push(`(endpoint '${payload.drift_endpoint}').`);
+		} else {
+			parts[0] += '.';
+		}
+
+		if (payload.drift_type === 'missing-field') {
+			parts.push(`Field "${payload.drift_field}" stopped appearing in published readings.`);
+		} else if (payload.drift_type === 'type-drift') {
+			parts.push(`Field "${payload.drift_field}" is returning an unexpected value type.`);
+		} else if (payload.drift_type === 'new-field') {
+			parts.push(`New field "${payload.drift_field}" appeared that wasn't in the learned baseline.`);
+		} else if (payload.drift_type === 'rename-candidate') {
+			parts.push(`Possible field rename detected — "${payload.drift_field}" may be a renamed field.`);
+		}
+
+		parts.push(`Occurrences: ${incident.event_count}.`);
 
 		return parts.join(' ');
 	}

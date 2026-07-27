@@ -12,6 +12,21 @@ export interface DriftOptions {
   consecutiveMissingThreshold?: number;
   alertCooldownMs?: number;
   minFieldPresenceRatio?: number;
+  /**
+   * Consecutive misses before a baseline field is retired (removed from the
+   * learned schema) and its slot freed up for new fields to be tracked.
+   * Defaults to 250 when unset — deliberately much higher than
+   * consecutiveMissingThreshold (the alert threshold), so one bad
+   * reload/gap doesn't erase a field the system has already learned is
+   * normally there.
+   */
+  adaptiveRetireBatches?: number;
+  /**
+   * Which drift types raise an alert through the Events/Incidents/Alerts
+   * pipeline, in addition to always being logged and persisted regardless.
+   * Defaults to ['missing-field', 'type-drift'] when unset.
+   */
+  alertOnDriftTypes?: ('new-field' | 'missing-field' | 'type-drift' | 'rename-candidate')[];
 }
 
 export interface DeviceEndpointOutput {

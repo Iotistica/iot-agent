@@ -24,6 +24,7 @@ import { migration as addDeviceStateHistory } from './migrations/20260719000000_
 import { migration as addMustChangePasswordToUsers } from './migrations/20260722000000_add_must_change_password_to_users.js';
 import { migration as addAnomalyIncidentResolutionReason } from './migrations/20260723000000_add_anomaly_incident_resolution_reason.js';
 import { migration as addAnomalyRuleTemplates } from './migrations/20260723010000_add_anomaly_rule_templates.js';
+import { migration as addRoleToUsers } from './migrations/20260726000000_add_role_to_users.js';
 import type { NativeSqliteMigration } from './migration-types.js';
 
 export const nativeMigrations: NativeSqliteMigration[] = [
@@ -53,4 +54,5 @@ export const nativeMigrations: NativeSqliteMigration[] = [
 	addMustChangePasswordToUsers,
 	addAnomalyIncidentResolutionReason,
 	addAnomalyRuleTemplates,
+	addRoleToUsers,
 ];

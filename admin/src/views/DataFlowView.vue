@@ -1,12 +1,60 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import type { TableColumnType } from 'ant-design-vue'
+import { SearchOutlined } from '@ant-design/icons-vue'
 import AppLayout from '@/components/layout/AppLayout.vue'
+import { client } from '@/api/client'
 import { pipelineApi, type SubscriptionActivity, type ActivityEvent } from '@/api/pipeline'
+import { protocolColor, protocolLabel } from '@/utils/protocol'
 
 const subscriptions = ref<SubscriptionActivity[]>([])
 const events = ref<ActivityEvent[]>([])
 const loading = ref(true)
+
+// The pipeline's per-reading source identity is built as "<sanitized-name>-<uuid8>"
+// for uniqueness (see readExternalNodeCandidate/deviceConfig.name server-side) —
+// not the human-friendly name the Sources page shows (metadata.objectName, e.g.
+// "AHU-11" vs "ahu_11_5018"). Fetch the device list once and map that exact
+// compound string back to the friendly name so both pages agree on what a
+// source is called. Falls back to the raw string when nothing matches (e.g. a
+// source whose identity isn't device-scoped).
+interface DeviceRecord {
+  uuid: string
+  name: string
+  metadata?: Record<string, unknown>
+}
+const deviceDisplayNameByKey = ref<Map<string, string>>(new Map())
+async function ensureDeviceMap() {
+  if (deviceDisplayNameByKey.value.size > 0) return
+  try {
+    const { data } = await client.get<{ devices: DeviceRecord[] }>('/v1/devices')
+    const map = new Map<string, string>()
+    for (const d of data.devices) {
+      const friendly = (d.metadata?.objectName as string | undefined) || d.name
+      map.set(`${d.name}-${d.uuid.slice(0, 8)}`, friendly)
+    }
+    deviceDisplayNameByKey.value = map
+  } catch { /* non-fatal — falls back to raw source strings */ }
+}
+function friendlySource(endpointName: string): string {
+  return deviceDisplayNameByKey.value.get(endpointName) || endpointName
+}
+
+// Client-side — events is already just the last 100 rows from a 5s poll, so
+// there's no round trip to debounce against.
+const eventSourceFilter = ref('')
+const eventMetricFilter = ref('')
+const eventProtocolFilter = ref('')
+const filteredEvents = computed(() => {
+  const sourceQ = eventSourceFilter.value.trim().toLowerCase()
+  const metricQ = eventMetricFilter.value.trim().toLowerCase()
+  const protocolQ = eventProtocolFilter.value.trim().toLowerCase()
+  return events.value.filter((e) =>
+    (!sourceQ || friendlySource(e.endpointName).toLowerCase().includes(sourceQ)) &&
+    (!metricQ || e.metric.toLowerCase().includes(metricQ)) &&
+    (!protocolQ || protocolLabel(e.protocol).toLowerCase().includes(protocolQ) || e.protocol.toLowerCase().includes(protocolQ))
+  )
+})
 
 const POLL_MS = 5000
 let timer: ReturnType<typeof setInterval> | null = null
@@ -24,6 +72,19 @@ async function poll() {
   } finally {
     loading.value = false
   }
+}
+
+// Metric names embed the device's own name for global uniqueness (e.g. BACnet
+// object names are "<device>.<point>", sanitized to "<device>_<point>") — the
+// Source column already shows the device, so strip whatever prefix the two
+// share instead of repeating it in the Metric column. Falls back to the full
+// metric name when there's no shared prefix (e.g. system metrics, or a
+// fallback source that's just the coarse protocol group name).
+function metricLeaf(metric: string, source: string): string {
+  let i = 0
+  while (i < metric.length && i < source.length && metric[i] === source[i]) i++
+  while (i > 0 && metric[i - 1] !== '_') i--
+  return i > 0 && i < metric.length ? metric.slice(i) : metric
 }
 
 function fmtValue(v: unknown): string {
@@ -49,24 +110,32 @@ function fmtTime(iso: string): string {
   return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 }
 
+// Every column gets an explicit width so the table renders with a fixed
+// layout — otherwise ant-design-vue sizes columns from content, and since
+// this view refreshes every 5s with metric names/values of varying length,
+// columns visibly shift width on each poll. ellipsis truncates long text
+// instead of letting it stretch the column back out.
 const subscriptionColumns: TableColumnType<SubscriptionActivity>[] = [
-  { title: 'Source', key: 'source' },
-  { title: 'Destination', key: 'destination' },
-  { title: 'Last Metric', dataIndex: 'lastMetric', key: 'lastMetric' },
-  { title: 'Last Value', key: 'lastValue' },
+  { title: 'Protocol', key: 'protocol', width: 100 },
+  { title: 'Source', key: 'source', width: 220, ellipsis: true },
+  { title: 'Destination', key: 'destination', width: 180, ellipsis: true },
+  { title: 'Last Metric', dataIndex: 'lastMetric', key: 'lastMetric', width: 220, ellipsis: true },
+  { title: 'Last Value', key: 'lastValue', width: 140, ellipsis: true },
   { title: 'Points', dataIndex: 'pointCount', key: 'pointCount', width: 80 },
   { title: 'Last Publish', key: 'lastPublishTime', width: 110 },
 ]
 
 const eventColumns: TableColumnType<ActivityEvent>[] = [
   { title: 'Time', key: 'time', width: 90 },
-  { title: 'Source', key: 'source' },
-  { title: 'Metric', dataIndex: 'metric', key: 'metric' },
-  { title: 'Value', key: 'value' },
-  { title: 'Destination', dataIndex: 'destinationName', key: 'destinationName' },
+  { title: 'Protocol', key: 'protocol', width: 100 },
+  { title: 'Source', key: 'source', width: 220, ellipsis: true },
+  { title: 'Metric', dataIndex: 'metric', key: 'metric', width: 220, ellipsis: true },
+  { title: 'Value', key: 'value', width: 140, ellipsis: true },
+  { title: 'Destination', dataIndex: 'destinationName', key: 'destinationName', width: 160, ellipsis: true },
 ]
 
 onMounted(() => {
+  ensureDeviceMap()
   poll()
   timer = setInterval(poll, POLL_MS)
 })
@@ -90,16 +159,23 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
         :data-source="subscriptions"
         :loading="loading"
         :pagination="false"
+        :scroll="{ x: true }"
         row-key="key"
         size="small"
       >
         <template #bodyCell="{ column, record }">
-          <template v-if="column.key === 'source'">
-            {{ record.endpointName }}
+          <template v-if="column.key === 'protocol'">
+            <a-tag :color="protocolColor(record.protocol)">{{ protocolLabel(record.protocol) }}</a-tag>
+          </template>
+          <template v-else-if="column.key === 'source'">
+            {{ friendlySource(record.endpointName) }}
           </template>
           <template v-else-if="column.key === 'destination'">
             {{ record.destinationName }}
             <a-tag style="margin-left: 4px">{{ record.destinationType }}</a-tag>
+          </template>
+          <template v-else-if="column.key === 'lastMetric'">
+            {{ metricLeaf(record.lastMetric, record.endpointName) }}
           </template>
           <template v-else-if="column.key === 'lastValue'">
             <a-tag v-if="record.lastQuality === 'BAD' && isMissingValue(record.lastValue)" color="red">No Value</a-tag>
@@ -121,11 +197,38 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
     </a-card>
 
     <a-card title="Recent Activity" size="small">
+      <div style="display: flex; gap: 12px; margin-bottom: 12px">
+        <a-input
+          v-model:value="eventSourceFilter"
+          placeholder="Search by source…"
+          allow-clear
+          style="width: 260px"
+        >
+          <template #prefix><SearchOutlined style="color: #bbb" /></template>
+        </a-input>
+        <a-input
+          v-model:value="eventMetricFilter"
+          placeholder="Search by metric…"
+          allow-clear
+          style="width: 260px"
+        >
+          <template #prefix><SearchOutlined style="color: #bbb" /></template>
+        </a-input>
+        <a-input
+          v-model:value="eventProtocolFilter"
+          placeholder="Search by protocol…"
+          allow-clear
+          style="width: 260px"
+        >
+          <template #prefix><SearchOutlined style="color: #bbb" /></template>
+        </a-input>
+      </div>
       <a-table
         :columns="eventColumns"
-        :data-source="events"
+        :data-source="filteredEvents"
         :loading="loading"
         :pagination="{ pageSize: 20, size: 'small' }"
+        :scroll="{ x: true }"
         row-key="id"
         size="small"
       >
@@ -133,8 +236,14 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
           <template v-if="column.key === 'time'">
             {{ fmtTime(record.timestamp) }}
           </template>
+          <template v-else-if="column.key === 'protocol'">
+            <a-tag :color="protocolColor(record.protocol)">{{ protocolLabel(record.protocol) }}</a-tag>
+          </template>
           <template v-else-if="column.key === 'source'">
-            {{ record.endpointName }}
+            {{ friendlySource(record.endpointName) }}
+          </template>
+          <template v-else-if="column.key === 'metric'">
+            {{ metricLeaf(record.metric, record.endpointName) }}
           </template>
           <template v-else-if="column.key === 'value'">
             <a-tag v-if="record.quality === 'BAD' && isMissingValue(record.value)" color="red">No Value</a-tag>

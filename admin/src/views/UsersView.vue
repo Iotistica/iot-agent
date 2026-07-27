@@ -5,6 +5,7 @@ import { PlusOutlined, DeleteOutlined, KeyOutlined, StopOutlined, ReloadOutlined
 import type { TableColumnType } from 'ant-design-vue'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import { usersApi, sessionsApi, type User, type Session } from '@/api/users'
+import type { UserRole } from '@/api/auth'
 
 // ── Users ─────────────────────────────────────────────────────────────────────
 
@@ -20,8 +21,15 @@ const userRowSelection = computed(() => ({
   onChange: (keys: (string | number)[]) => { selectedUsernames.value = keys as string[] },
 }))
 
+const ROLE_OPTIONS: { value: UserRole; label: string; hint: string }[] = [
+  { value: 'viewer', label: 'Viewer', hint: 'Read-only — dashboards, live values, alarms. No changes.' },
+  { value: 'operator', label: 'Operator', hint: 'Day-to-day control — devices, discovery, destinations, config. Not user/security management.' },
+  { value: 'admin', label: 'Admin', hint: 'Full access, including users, sessions, backups, and security settings.' },
+]
+const ROLE_TAG_COLOR: Record<UserRole, string> = { viewer: 'default', operator: 'blue', admin: 'gold' }
+
 const createOpen = ref(false)
-const createForm = ref({ username: '', password: '', is_superuser: false })
+const createForm = ref<{ username: string; password: string; role: UserRole }>({ username: '', password: '', role: 'operator' })
 const creating = ref(false)
 
 const resetTarget = ref<string | null>(null)
@@ -30,7 +38,7 @@ const resetting = ref(false)
 
 const userColumns: TableColumnType<User>[] = [
   { title: 'Username', dataIndex: 'username', key: 'username' },
-  { title: 'Role', key: 'role', width: 110 },
+  { title: 'Role', key: 'role', width: 130 },
   { title: 'Active', key: 'is_active', width: 90 },
   { title: 'Created', dataIndex: 'created_at', key: 'created_at', width: 180,
     customRender: ({ value }) => new Date(value).toLocaleString() },
@@ -56,8 +64,18 @@ async function toggleActive(row: User) {
 }
 
 function openCreate() {
-  createForm.value = { username: '', password: '', is_superuser: false }
+  createForm.value = { username: '', password: '', role: 'operator' }
   createOpen.value = true
+}
+
+async function changeRole(row: User, role: UserRole) {
+  try {
+    await usersApi.update(row.username, { role })
+    message.success('Role updated')
+    await loadUsers()
+  } catch {
+    message.error('Failed to update role')
+  }
 }
 
 async function submitCreate() {
@@ -240,9 +258,16 @@ onMounted(loadUsers)
         >
           <template #bodyCell="{ column, record }">
             <template v-if="column.key === 'role'">
-              <a-tag :color="record.is_superuser ? 'gold' : 'default'">
-                {{ record.is_superuser ? 'Superuser' : 'User' }}
-              </a-tag>
+              <a-select
+                :value="record.role"
+                size="small"
+                style="width: 110px"
+                @change="(v: unknown) => changeRole(record, v as UserRole)"
+              >
+                <a-select-option v-for="opt in ROLE_OPTIONS" :key="opt.value" :value="opt.value">
+                  <a-tag :color="ROLE_TAG_COLOR[opt.value]" style="margin: 0">{{ opt.label }}</a-tag>
+                </a-select-option>
+              </a-select>
             </template>
 
             <template v-else-if="column.key === 'is_active'">
@@ -326,7 +351,16 @@ onMounted(loadUsers)
           <a-input-password v-model:value="createForm.password" />
         </a-form-item>
         <a-form-item label="Role">
-          <a-checkbox v-model:checked="createForm.is_superuser">Superuser</a-checkbox>
+          <a-select v-model:value="createForm.role" style="width: 100%">
+            <a-select-option v-for="opt in ROLE_OPTIONS" :key="opt.value" :value="opt.value">
+              <div>
+                <a-tag :color="ROLE_TAG_COLOR[opt.value]" style="margin: 0">{{ opt.label }}</a-tag>
+              </div>
+            </a-select-option>
+          </a-select>
+          <div style="font-size: 12px; color: #888; margin-top: 6px">
+            {{ ROLE_OPTIONS.find(o => o.value === createForm.role)?.hint }}
+          </div>
         </a-form-item>
       </a-form>
       <template #footer>

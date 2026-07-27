@@ -40,7 +40,7 @@ const columns: TableColumnType<Subscription>[] = [
   { title: 'Destination', key: 'destination', width: 180 },
   { title: 'Type', key: 'dest_type', width: 120 },
   { title: 'Topic', key: 'topic' },
-  { title: 'Source Filter', dataIndex: 'topics', key: 'topics', width: 160 },
+  { title: 'Protocol', dataIndex: 'topics', key: 'topics', width: 160 },
   { title: 'Format', dataIndex: 'payload_format', key: 'payload_format', width: 100 },
   { title: 'Compression', dataIndex: 'compression', key: 'compression', width: 160 },
   { title: 'Enabled', dataIndex: 'enabled', key: 'enabled', width: 90 },

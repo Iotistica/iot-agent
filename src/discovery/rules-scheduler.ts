@@ -5,6 +5,14 @@ import { DiscoveryRuleModel, type DiscoveryRule } from '../db/models/discovery-r
 import { DiscoveryRunModel } from '../db/models/discovery-run.model';
 
 const POLL_INTERVAL_MS = 30_000;
+// start() only resets a rule stuck at status='running' when the agent process
+// itself restarts — if a run crashes/hangs without taking the whole process
+// down with it (or the container just stays up for hours after), that status
+// never clears on its own. Treat 'running' older than this as abandoned rather
+// than genuinely in-progress, so the overlap guard below can't permanently wedge
+// a rule shut. Generous relative to observed scan durations (even 500 devices
+// under heavy load has taken low minutes, not hours).
+const STALE_RUNNING_THRESHOLD_MS = 15 * 60 * 1000;
 
 export class DiscoveryRulesScheduler {
 	private logger?: AgentLogger;
@@ -53,6 +61,25 @@ export class DiscoveryRulesScheduler {
 		const rule = DiscoveryRuleModel.getByUuid(uuid);
 		if (!rule) {
 			throw Object.assign(new Error(`Discovery rule not found: ${uuid}`), { statusCode: 404 });
+		}
+		// At larger device counts a scan+reconcile can run well past a client's request
+		// timeout — without this guard, a client retrying after its own timeout fires
+		// a second overlapping run on the same rule while the first is still finishing.
+		if (rule.status === 'running') {
+			const runningSinceMs = rule.last_run_at ? Date.now() - new Date(rule.last_run_at).getTime() : Infinity;
+			if (runningSinceMs <= STALE_RUNNING_THRESHOLD_MS) {
+				throw Object.assign(
+					new Error(`Discovery rule "${rule.name}" is already running — wait for it to finish before running again`),
+					{ statusCode: 409 }
+				);
+			}
+			this.logger?.warnSync('Discovery rule stuck at status=running past the stale threshold — treating as abandoned and allowing this run', {
+				component: LogComponents.agent,
+				ruleUuid: rule.uuid,
+				ruleName: rule.name,
+				lastRunAt: rule.last_run_at,
+				runningForMs: runningSinceMs,
+			});
 		}
 
 		// Prune is opt-in per manual run only — never applied on a scheduled tick,

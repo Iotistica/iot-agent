@@ -24,28 +24,38 @@ export function setupConfigEventListeners(ctx: AgentInitContext): void {
 		});
 
 		if (change.old.enableAnomalyDetection !== change.new.enableAnomalyDetection) {
-			if (change.new.enableAnomalyDetection && !ctx.anomalyService) {
-				logger?.infoSync('Starting Anomaly Detection Service (dynamically enabled)', {
-					component: LogComponents.agent
-				});
-				const { initAnomalyDetection, configureAnomalyFeed } = await import('./anomaly.js');
-				await initAnomalyDetection(ctx);
-				await configureAnomalyFeed(ctx);
+			if (!ctx.anomalyService) {
+				// No instance exists yet at all (only possible if this fires before the
+				// `features` init phase has ever run) — bootstrap it fully.
+				if (change.new.enableAnomalyDetection) {
+					logger?.infoSync('Starting Anomaly Detection Service (dynamically enabled)', {
+						component: LogComponents.agent
+					});
+					const { initAnomalyDetection, configureAnomalyFeed } = await import('./anomaly.js');
+					await initAnomalyDetection(ctx);
+					await configureAnomalyFeed(ctx);
 
-				// Simulation init runs before target state is available (in features.ts).
-				// Now that anomaly detection is up, re-run simulation init so it can
-				// attach to the anomaly service correctly.
-				if (ctx.anomalyService && !ctx.simulationOrchestrator) {
-					const { initSimulationMode } = await import('./simulation.js');
-					await initSimulationMode(ctx);
+					// Simulation init runs before target state is available (in features.ts).
+					// Now that anomaly detection is up, re-run simulation init so it can
+					// attach to the anomaly service correctly.
+					if (ctx.anomalyService && !ctx.simulationOrchestrator) {
+						const { initSimulationMode } = await import('./simulation.js');
+						await initSimulationMode(ctx);
+					}
 				}
-			} else if (!change.new.enableAnomalyDetection && ctx.anomalyService) {
-				logger?.infoSync('Stopping Anomaly Detection Service (dynamically disabled)', {
-					component: LogComponents.agent
-				});
-				ctx.anomalyService.stop();
-				ctx.anomalyService = undefined;
-				ctx.featureInitializer?.setAnomalyService?.(undefined);
+			} else {
+				// initAnomalyDetection() always creates an instance, even when the feature
+				// starts disabled — it just runs in catalog-only mode (setEnabled(false)).
+				// So ctx.anomalyService is essentially never undefined past first boot, and
+				// the old `!ctx.anomalyService` check above never fires here again — this
+				// toggle used to silently no-op on every enable/disable after the first one.
+				// Flip the runtime flag directly instead of tearing the instance down, so the
+				// observed-metric catalog and any live buffers survive a disable/re-enable.
+				logger?.infoSync(
+					`${change.new.enableAnomalyDetection ? 'Enabling' : 'Disabling'} Anomaly Detection Service (dynamically toggled)`,
+					{ component: LogComponents.agent }
+				);
+				ctx.anomalyService.setEnabled(change.new.enableAnomalyDetection);
 			}
 		}
 

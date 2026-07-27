@@ -13,13 +13,16 @@ import { MessageBatcher } from './batch.js';
 import { SocketConnection } from './socket.js';
 import { PublishStats } from './stats.js';
 import { HeartbeatManager } from './heartbeat.js';
-import { SchemaDriftDetector } from './drift.js';
+import { createHash } from 'crypto';
+import { loadSchemaDrift } from '../../pro/loader.js';
 import { SchemaDriftModel } from '../../db/models/schema-drift.model.js';
+import type { AnomalyEventPayload } from '../../db/models/anomaly-event.model.js';
 import type { DictionaryManager } from '../../mqtt/dictionary.js';
 import type { PublishDestinationInfo, PublishBatchItem } from './types.js';
 import { PublishDestinationsModel, PublishSubscriptionsModel } from '../../db/models/index.js';
 import type { PublisherRecord, PublishSubscriptionRecord, PublishSubscriptionRoute } from '../../db/models/index.js';
 import { activityMonitor } from './activity-monitor.js';
+import { cleanDriftFieldName, prettifyDriftDeviceId, cleanProtocolPipeName, stripFieldDevicePrefix } from '../../db/models/drift-labels.js';
 
 // Adaptive batch safety limits (calculated once at module load)
 const MAX_BATCH_MESSAGES = 10000;
@@ -36,6 +39,23 @@ const MAX_BATCH_BYTES = (() => {
 // the full field set instead of flagging most of every batch as "new".
 const DRIFT_OBSERVE_WINDOW_MS = 15000;
 const DRIFT_ACCUMULATOR_MAX_MESSAGES = 5000;
+
+// Mirrors the Pro package's own DriftAlertEvent shape structurally (schema
+// drift detection is a Pro feature — see pro/loader.ts's loadSchemaDrift()) —
+// defined locally rather than imported so this file has no compile-time
+// dependency on the Pro package being installed. Community builds still type-
+// check cleanly even without @iotistica/agent-pro present.
+type DriftAlertEvent = {
+	endpointName: string;
+	device?: string;
+	driftType: 'new-field' | 'missing-field' | 'type-drift' | 'rename-candidate';
+	fieldName?: string;
+	expectedType?: string;
+	observedTypes?: string[];
+	renameCandidateFrom?: string;
+	renameCandidateTo?: string;
+	renameSimilarity?: number;
+};
 
 type PayloadFormat = 'custom' | 'tags' | 'ecp' | 'ml';
 
@@ -106,7 +126,11 @@ export class PublishManager extends EventEmitter {
 	private readonly stats: PublishStats;
 	private readonly feed: AnomalyFeed;
 	private readonly enricher: AnomalyEnricher;
-	private readonly schemaDriftDetector: SchemaDriftDetector;
+	// Schema drift is a Pro feature — loaded asynchronously post-construction
+	// (see initSchemaDrift()) since the dynamic import can't complete inside a
+	// synchronous constructor. Undefined until it resolves, and stays undefined
+	// forever in a Community build where the Pro package isn't installed.
+	private schemaDriftDetector?: any;
 	private driftAccumulator: ProtocolMessage[] = [];
 	private driftWindowStartedAt = Date.now();
 	private heartbeat?: HeartbeatManager;
@@ -188,19 +212,104 @@ export class PublishManager extends EventEmitter {
 		this.stats = new PublishStats();
 		this.feed = new AnomalyFeed(() => this.anomalyService, deviceUuid, protocol, logger);
 		this.enricher = new AnomalyEnricher(() => this.anomalyService, deviceUuid, protocol, logger);
-		this.schemaDriftDetector = new SchemaDriftDetector(
-			config.name || 'unknown',
-			logger,
-			config.driftOptions ?? undefined,
-			SchemaDriftModel,
-		);
+		this.initSchemaDrift().catch((error) => {
+			this.logger?.warn(`Schema drift init failed for endpoint '${this.endpointName}', continuing without it`, error);
+		});
 
 		this.batcher.on('flush', () => { this.publishBatch(); });
 		this.batcher.on('message-added', () => { this.stats.data.messagesReceived++; });
 	}
 
+	/** Schema drift is Pro-only — resolves to a no-op (schemaDriftDetector stays undefined) on Community builds. */
+	private async initSchemaDrift(): Promise<void> {
+		const pro = await loadSchemaDrift();
+		if (!pro) {
+			this.logger?.debug(`Schema drift detection skipped for endpoint '${this.endpointName}' — requires Iotistica Pro`);
+			return;
+		}
+
+		this.schemaDriftDetector = new pro.SchemaDriftDetector(
+			this.config.name || 'unknown',
+			this.logger,
+			this.config.driftOptions ?? undefined,
+			SchemaDriftModel,
+		);
+
+		// setIncidentCorrelator() may already have been called before this resolved
+		// (it's async, called from the constructor) — re-apply now that there's
+		// finally a detector instance to wire it into.
+		if (this.incidentCorrelator) {
+			this.schemaDriftDetector.setDriftAlertHandler((event: DriftAlertEvent) => this.handleDriftAlert(event));
+		}
+	}
+
 	public setAnomalyService(service?: any): void {
 		this.anomalyService = service;
+	}
+
+	private incidentCorrelator?: { processEvent: (payload: AnomalyEventPayload) => void };
+
+	/**
+	 * Wires (or clears) the shared incident correlator — the same one anomaly
+	 * events feed into — so critical schema drift (missing-field, type-drift)
+	 * shows up in Events/Incidents/Alerts alongside anomalies instead of only
+	 * ever being visible in raw logs. Independent of anomaly detection/Pro
+	 * licensing for the correlator itself (it runs regardless) — but schema
+	 * drift alerts obviously only ever fire if the Pro drift detector loaded.
+	 */
+	public setIncidentCorrelator(correlator?: { processEvent: (payload: AnomalyEventPayload) => void }): void {
+		this.incidentCorrelator = correlator;
+		this.schemaDriftDetector?.setDriftAlertHandler(
+			correlator ? (event: DriftAlertEvent) => this.handleDriftAlert(event) : undefined,
+		);
+	}
+
+	private handleDriftAlert(event: DriftAlertEvent): void {
+		if (!this.incidentCorrelator) return;
+
+		const deviceLabel = event.device ?? this.config.name ?? this.protocol;
+		// rename-candidate has no single fieldName — it's a from/to pair — so
+		// fall back to the "to" field for the metric label and fingerprint.
+		const rawField = event.fieldName ?? event.renameCandidateTo ?? 'unknown';
+		// Only missing-field/type-drift indicate real breakage; new-field and
+		// rename-candidate are still just informational even when the user has
+		// opted into alerting on them.
+		const severity = event.driftType === 'missing-field' || event.driftType === 'type-drift'
+			? 'critical' as const
+			: 'warning' as const;
+
+		// Stable per (endpoint, device, drift type, field) so repeated occurrences
+		// of the SAME problem escalate one incident instead of creating a new one
+		// every time — mirrors how anomaly events fingerprint by metric+device.
+		// Hashed on the raw (uncleaned) values so this stays stable regardless of
+		// display formatting changes.
+		const fingerprint = createHash('sha256')
+			.update(`schema-drift:${event.endpointName}:${deviceLabel}:${event.driftType}:${rawField}`)
+			.digest('hex')
+			.slice(0, 32);
+
+		const metric = stripFieldDevicePrefix(cleanDriftFieldName(rawField), deviceLabel);
+
+		this.incidentCorrelator.processEvent({
+			metric,
+			fingerprint,
+			timestamp_ms: Date.now(),
+			// Drift isn't a statistical measurement — these have no natural anomaly
+			// equivalent, so they're fixed sentinels representing "confirmed, not
+			// estimated" rather than a real observed value/score/confidence.
+			observed_value: 0,
+			anomaly_score: 1,
+			confidence: 1,
+			severity,
+			consecutive_count: 1,
+			device_name: prettifyDriftDeviceId(deviceLabel),
+			device_type: this.protocol,
+			device_uuid: this.deviceUuid,
+			kind: 'schema-drift',
+			drift_type: event.driftType,
+			drift_field: metric,
+			drift_endpoint: cleanProtocolPipeName(event.endpointName),
+		});
 	}
 
 	public setLiveDataInterceptor(interceptor?: (messages: ProtocolMessage[], endpointName: string) => Promise<ProtocolMessage[]> | ProtocolMessage[]): void {
@@ -456,7 +565,7 @@ export class PublishManager extends EventEmitter {
 			const nowMs = Date.now();
 			if (nowMs - this.driftWindowStartedAt >= DRIFT_OBSERVE_WINDOW_MS) {
 				try {
-					this.schemaDriftDetector.observe(this.driftAccumulator);
+					this.schemaDriftDetector?.observe(this.driftAccumulator);
 				} catch (err) {
 					this.logger?.warn(`Schema drift detector failed for endpoint '${name}', continuing with original payload`, err);
 				}

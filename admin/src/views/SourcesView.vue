@@ -4,11 +4,14 @@ import { message, Modal } from 'ant-design-vue'
 import { PlusOutlined, EditOutlined, DeleteOutlined, RadarChartOutlined, CheckCircleOutlined, StopOutlined } from '@ant-design/icons-vue'
 import type { TableColumnType } from 'ant-design-vue'
 import AppLayout from '@/components/layout/AppLayout.vue'
+import { useAuth } from '@/composables/useAuth'
 import SourceDrawer from '@/components/sources/SourceDrawer.vue'
 import DiscoveryDrawer from '@/components/discovery/DiscoveryDrawer.vue'
 import type { Endpoint, EndpointCommunicationQuality, EndpointCreateData } from '@/types'
 import { sourcesApi } from '@/api/sources'
-import { protocolColor } from '@/utils/protocol'
+import { protocolColor, protocolLabel } from '@/utils/protocol'
+
+const { hasRole } = useAuth()
 
 const rows = ref<Endpoint[]>([])
 const loading = ref(false)
@@ -281,7 +284,7 @@ onUnmounted(() => {
             <template #icon><StopOutlined /></template>
             Disable
           </a-button>
-          <a-button danger :loading="deleting" @click="confirmDeleteSelected">
+          <a-button v-if="hasRole('operator')" danger :loading="deleting" @click="confirmDeleteSelected">
             <template #icon><DeleteOutlined /></template>
             Delete
           </a-button>
@@ -295,7 +298,7 @@ onUnmounted(() => {
           Add Source
         </a-button>
         <a-button
-          v-if="rows.length > 0"
+          v-if="rows.length > 0 && hasRole('admin')"
           danger
           :loading="deletingAll"
           :disabled="selectedUuids.length > 0"
@@ -336,7 +339,7 @@ onUnmounted(() => {
 
         <template v-else-if="column.key === 'protocol'">
           <a-tag :color="protocolColor(record.protocol)">
-            {{ record.protocol === 'opcua' ? 'OPC-UA' : record.protocol }}
+            {{ protocolLabel(record.protocol) }}
           </a-tag>
         </template>
 
@@ -385,7 +388,7 @@ onUnmounted(() => {
             <a-button size="small" @click="openEdit(record)">
               <template #icon><EditOutlined /></template>
             </a-button>
-            <a-button size="small" danger @click="confirmDelete(record)">
+            <a-button v-if="hasRole('operator')" size="small" danger @click="confirmDelete(record)">
               <template #icon><DeleteOutlined /></template>
             </a-button>
           </a-space>

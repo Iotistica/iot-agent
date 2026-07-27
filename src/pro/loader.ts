@@ -31,6 +31,10 @@ export async function loadAnomalyDetection(): Promise<{ AnomalyDetectionService:
 	return tryLoad('anomaly')
 }
 
+export async function loadSchemaDrift(): Promise<{ SchemaDriftDetector: any } | null> {
+	return tryLoad('schema-drift')
+}
+
 export async function loadSimulationModule(): Promise<{ SimulationOrchestrator: any; loadSimulationConfig: any } | null> {
 	return tryLoad('anomaly')
 }

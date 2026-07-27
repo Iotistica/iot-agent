@@ -157,10 +157,19 @@ export abstract class BaseProtocolAdapter extends EventEmitter implements IProto
 		try {
 			this.validateDeviceConfig(device);
 
+			// This function is also the retry entry point — scheduleDeviceRetry()'s
+			// setTimeout calls it directly — so unconditionally resetting
+			// errorCount/backoffDelay here defeated the whole backoff mechanism:
+			// every retry started counting from 0 again, meaning it never escalated
+			// past the initial delay no matter how many consecutive failures
+			// occurred (every log line read "attempt 1", forever, at ~1s intervals).
+			// Preserve them across retries; only a genuinely first-time
+			// initialization (no existing entry) gets the fresh defaults.
+			const existing = this.connections.get(device.name);
 			this.connections.set(device.name, {
 				connected: false,
-				errorCount: 0,
-				backoffDelay: this.initialBackoffDelay
+				errorCount: existing?.errorCount ?? 0,
+				backoffDelay: existing?.backoffDelay ?? this.initialBackoffDelay
 			});
 
 			await this.connectDevice(device);

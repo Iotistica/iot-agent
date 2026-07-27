@@ -1,8 +1,10 @@
 import { client } from './client'
+import type { UserRole } from './auth'
 
 export interface User {
   id: number
   username: string
+  role: UserRole
   is_superuser: boolean
   is_active: boolean
   created_at: string
@@ -26,11 +28,11 @@ export const usersApi = {
     return client.get<{ users: User[] }>(BASE).then((r) => r.data.users)
   },
 
-  create(data: { username: string; password: string; is_superuser?: boolean }): Promise<User> {
+  create(data: { username: string; password: string; role?: UserRole }): Promise<User> {
     return client.post<{ user: User }>(BASE, data).then((r) => r.data.user)
   },
 
-  update(username: string, data: { is_active?: boolean; is_superuser?: boolean; password?: string }): Promise<User> {
+  update(username: string, data: { is_active?: boolean; role?: UserRole; password?: string }): Promise<User> {
     return client.patch<{ user: User }>(`${BASE}/${encodeURIComponent(username)}`, data).then((r) => r.data.user)
   },
 

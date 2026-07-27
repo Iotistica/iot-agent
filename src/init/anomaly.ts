@@ -56,6 +56,11 @@ export async function initAnomalyDetection(ctx: AgentInitContext): Promise<void>
 		ctx.correlator.start();
 	}
 
+	// Wired unconditionally, before the Pro-gated try block below — schema
+	// drift alerting shouldn't depend on whether Pro anomaly detection loaded
+	// successfully, since the correlator itself runs regardless of license.
+	ctx.featureInitializer?.setIncidentCorrelator?.(ctx.correlator);
+
 	try {
 		const pro = await loadAnomalyDetection();
 		if (!pro) {

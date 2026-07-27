@@ -41,6 +41,17 @@ export interface AnomalyEventPayload {
 	device_name?: string;
 	device_type?: string;
 	device_uuid?: string;
+	/**
+	 * Distinguishes a schema-drift-originated event from a statistical anomaly
+	 * — same correlation/incident/alert pipeline (fingerprint-based grouping,
+	 * severity escalation, cooldown-gated alert promotion), different message
+	 * shape. Defaults to 'anomaly' for backward compatibility with existing
+	 * callers that don't set it.
+	 */
+	kind?: 'anomaly' | 'schema-drift';
+	drift_type?: 'new-field' | 'missing-field' | 'type-drift' | 'rename-candidate';
+	drift_field?: string;
+	drift_endpoint?: string;
 }
 
 export class AnomalyEventModel {

@@ -44,6 +44,7 @@ export interface FeatureContext {
   dictionaryManager?: any; // Dictionary manager for MQTT message key compaction
   pipelineService?: PipelineService; // Node-RED payload transform pipeline (optional)
   liveDataInterceptor?: (messages: any[], endpointName: string) => Promise<any[]> | any[];
+  correlator?: { processEvent: (payload: any) => void };
 }
 
 export interface InitializedFeatures {
@@ -140,6 +141,12 @@ export class FeatureInitializer {
 	public setAnomalyService(anomalyService?: any): void {
 		this.context.anomalyService = anomalyService;
 		this.features.devicePublish?.setAnomalyService?.(anomalyService);
+	}
+
+	/** Wires the shared incident correlator into Device Publish so critical schema drift can raise alerts. */
+	public setIncidentCorrelator(correlator?: { processEvent: (payload: any) => void }): void {
+		this.context.correlator = correlator;
+		this.features.devicePublish?.setIncidentCorrelator?.(correlator);
 	}
 
 	public setLiveDataInterceptor(interceptor?: (messages: any[], endpointName: string) => Promise<any[]> | any[]): void {
@@ -404,6 +411,10 @@ export class FeatureInitializer {
 
 			if (this.context.liveDataInterceptor) {
 				this.features.devicePublish.setLiveDataInterceptor(this.context.liveDataInterceptor);
+			}
+
+			if (this.context.correlator) {
+				this.features.devicePublish.setIncidentCorrelator(this.context.correlator);
 			}
 
 			await this.features.devicePublish.start();

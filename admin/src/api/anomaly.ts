@@ -29,6 +29,19 @@ export interface BaselineProgress {
   windowSize: number
 }
 
+export interface SchemaDriftBaselineRow {
+  protocol: string
+  device?: string
+  field: string
+  status: 'baseline' | 'pending'
+  dominantType?: string
+  missingStreak?: number
+  stableBatches?: number
+  windowSize?: number
+  presenceRatio?: number
+  updatedAt: string
+}
+
 export interface BadActor {
   metric: string
   device_name: string
@@ -96,6 +109,12 @@ export const anomalyApi = {
 
   clearBaselines(): Promise<{ deleted: number }> {
     return client.delete<{ deleted: number }>(`${BASE}/baselines`).then((r) => r.data)
+  },
+
+  getSchemaDriftBaselines(params?: { q?: string }): Promise<{ baselines: SchemaDriftBaselineRow[]; total: number }> {
+    return client
+      .get<{ baselines: SchemaDriftBaselineRow[]; total: number }>('/v1/schema-drift/baselines', { params })
+      .then((r) => r.data)
   },
 
   // ── Edge tracking ────────────────────────────────────────────────────────────

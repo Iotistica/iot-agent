@@ -4,6 +4,7 @@ import { AnomalyEventModel } from '../db/models/anomaly-event.model.js';
 import { AnomalyIncidentModel } from '../db/models/anomaly-incident.model.js';
 import type { ResolutionReason } from '../db/models/anomaly-incident.model.js';
 import { AnomalyAlertModel } from '../db/models/anomaly-alert.model.js';
+import { requireRole } from './middleware/roles.js';
 
 export const anomalyRouter = express.Router();
 
@@ -79,7 +80,7 @@ anomalyRouter.get('/v1/anomaly-incidents/:incidentId', (req: Request, res: Respo
 	}
 });
 
-anomalyRouter.patch('/v1/anomaly-incidents/:incidentId/resolve', (req: Request, res: Response, next: NextFunction) => {
+anomalyRouter.patch('/v1/anomaly-incidents/:incidentId/resolve', requireRole('operator'), (req: Request, res: Response, next: NextFunction) => {
 	try {
 		const { resolvedBy = 'local-user', notes, reason } = req.body ?? {};
 		if (reason !== undefined && !VALID_RESOLUTION_REASONS.includes(reason)) {

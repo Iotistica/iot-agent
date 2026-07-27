@@ -4,6 +4,7 @@ import { message } from 'ant-design-vue'
 import { CheckCircleOutlined, ThunderboltOutlined, StopOutlined } from '@ant-design/icons-vue'
 import type { TableColumnType } from 'ant-design-vue'
 import type { DiscoveredDevice, DiscoveryRule, Endpoint } from '@/types'
+import { useAuth } from '@/composables/useAuth'
 import { discoveryRulesApi } from '@/api/discovery'
 import { sourcesApi } from '@/api/sources'
 import { protocolColor, protocolLabel } from '@/utils/protocol'
@@ -40,6 +41,8 @@ async function loadRules() {
 }
 
 // ── Scan state ───────────────────────────────────────────────────────────────
+const { hasRole } = useAuth()
+
 const running = ref(false)
 const results = ref<DiscoveredDevice[]>([])
 const hasRun = ref(false)
@@ -47,6 +50,38 @@ const adding = ref<Set<string>>(new Set())
 const addingAll = ref(false)
 const addedThisSession = ref<Set<string>>(new Set())
 let abortController: AbortController | null = null
+
+// "Run in background" — the drawer component is always mounted by its parent
+// (never v-if'd away), so a scan already keeps running after the drawer is
+// closed regardless; only `close()` used to actively abort it. When this is
+// checked, closing leaves the in-flight request alone instead of aborting it,
+// and the reopen watcher below skips its usual reset so the results are still
+// there — for the same rule — whenever the user comes back to check.
+const runInBackground = ref(false)
+const awaitingBackgroundResult = ref(false)
+const backgroundRuleUuid = ref<string | null>(null)
+
+// Elapsed-time counter shown next to "Scanning…" — a large scan (500+ devices)
+// can genuinely take minutes with no intermediate progress available from the
+// backend (BACnet's discover() only reports a count once, at the very end),
+// so a static label with no movement reads as frozen. A ticking counter is the
+// cheapest proof-of-life without needing real incremental progress reporting.
+const scanElapsedSec = ref(0)
+let scanTimer: ReturnType<typeof setInterval> | null = null
+
+function startScanTimer() {
+  scanElapsedSec.value = 0
+  stopScanTimer()
+  scanTimer = setInterval(() => { scanElapsedSec.value++ }, 1000)
+}
+function stopScanTimer() {
+  if (scanTimer) { clearInterval(scanTimer); scanTimer = null }
+}
+function fmtElapsed(sec: number): string {
+  const m = Math.floor(sec / 60)
+  const s = sec % 60
+  return m > 0 ? `${m}m ${s}s` : `${s}s`
+}
 
 // ── Prune (disable endpoints of this protocol not found in the scan) ──────────
 const pruneEnabled = ref(false)
@@ -59,6 +94,7 @@ function stopScan() {
   abortController?.abort()
   abortController = null
   running.value = false
+  stopScanTimer()
 }
 
 function isAlreadyAdded(device: DiscoveredDevice): boolean {
@@ -95,17 +131,55 @@ function fmtInterval(s: number): string {
   return `${s}s`
 }
 
+// Large scans can run for several minutes, and something in the network path
+// (not just our own request timeout) has been observed dropping connections
+// held open that long — independent of whether the scan itself is still
+// healthy server-side. Polling the rule's own persisted status (the same
+// status/last_run_at the Discovery Rules table shows) lets us tell "the
+// connection died" apart from "the scan actually failed", so a dropped
+// connection can report an accurate outcome instead of a bare error.
+const STATUS_POLL_MS = 5000
+
+async function pollUntilRuleSettles(ruleUuid: string, onSettled: (rule: DiscoveryRule) => void) {
+  let stopped = false
+  const timer = setInterval(async () => {
+    if (stopped) return
+    try {
+      const rules = await discoveryRulesApi.getAll()
+      const match = rules.find((r) => r.uuid === ruleUuid)
+      if (match && match.status !== 'running') {
+        stopped = true
+        clearInterval(timer)
+        onSettled(match)
+      }
+    } catch {
+      // transient poll failure — just try again next tick
+    }
+  }, STATUS_POLL_MS)
+  return () => { stopped = true; clearInterval(timer) }
+}
+
 async function runRuleScan() {
   if (!selectedRule.value) return
   const rule = selectedRule.value
+  const bgMode = runInBackground.value
   abortController = new AbortController()
   running.value = true
+  awaitingBackgroundResult.value = false
+  backgroundRuleUuid.value = bgMode ? rule.uuid : null
+  startScanTimer()
   results.value = []
   hasRun.value = false
   pruneConfirmVisible.value = false
   prunePreview.value = []
   lastPrunedCount.value = null
   addedThisSession.value = new Set()
+
+  const pollResult: { settled: DiscoveryRule | null } = { settled: null }
+  const stopPolling = await pollUntilRuleSettles(rule.uuid, (settled) => {
+    pollResult.settled = settled
+  })
+
   try {
     // Prune dry-run: same scan, nothing gets disabled yet — just previews what
     // would be, so the confirmation modal can show exactly what's about to change.
@@ -129,12 +203,30 @@ async function runRuleScan() {
       emit('saved')
       return
     }
+    // The HTTP connection failed, but polling already saw the rule settle —
+    // the scan itself completed (or errored) server-side regardless, we just
+    // never got its response. Report what actually happened instead of a bare
+    // "Discovery failed" that reads as if nothing occurred.
+    if (pollResult.settled) {
+      const found = pollResult.settled.last_result_json?.found ?? 0
+      if (pollResult.settled.status === 'ok') {
+        message.warning(`Connection dropped, but the scan finished on the agent (found ${found} device${found !== 1 ? 's' : ''}) — click Run Again to load the results.`)
+      } else {
+        message.error('Connection dropped, and the scan itself failed on the agent — check the Discovery Rules page for details.')
+      }
+      existingEndpoints.value = await sourcesApi.getAll().catch(() => existingEndpoints.value)
+      emit('saved')
+      return
+    }
     const e = err as { message?: string }
     message.error(e?.message ?? 'Discovery failed')
     emit('saved')
   } finally {
+    stopPolling()
     abortController = null
     running.value = false
+    stopScanTimer()
+    if (bgMode) awaitingBackgroundResult.value = true
   }
 }
 
@@ -230,9 +322,18 @@ async function addDevice(device: DiscoveredDevice, opts: { silent?: boolean } = 
 }
 
 function close() {
-  if (running.value) stopScan()
+  if (running.value) {
+    if (runInBackground.value) {
+      message.info('Scan continues running in the background — reopen this rule to see the results.')
+      emit('update:open', false)
+      return
+    }
+    stopScan()
+  }
   results.value = []
   hasRun.value = false
+  awaitingBackgroundResult.value = false
+  backgroundRuleUuid.value = null
   emit('update:open', false)
 }
 
@@ -246,11 +347,25 @@ watch(
         sourcesApi.getAll().catch(() => [] as Endpoint[]),
       ])
       existingEndpoints.value = endpoints
-      selectedRuleUuid.value = props.preSelectedRuleUuid ?? (rules.value.length === 1 ? rules.value[0].uuid : null)
+      const targetUuid = props.preSelectedRuleUuid ?? (rules.value.length === 1 ? rules.value[0].uuid : null)
+      selectedRuleUuid.value = targetUuid
+
+      // Reopening for the same rule a backgrounded scan was started on — keep
+      // its state (still running, or finished with results waiting) instead
+      // of wiping it out.
+      if (backgroundRuleUuid.value && backgroundRuleUuid.value === targetUuid) {
+        if (!running.value) {
+          backgroundRuleUuid.value = null
+          awaitingBackgroundResult.value = false
+        }
+        return
+      }
+
       results.value = []
       hasRun.value = false
       addedThisSession.value = new Set()
       pruneEnabled.value = false
+      runInBackground.value = false
       pruneConfirmVisible.value = false
       prunePreview.value = []
       lastPrunedCount.value = null
@@ -422,21 +537,33 @@ watch(selectedRuleUuid, () => {
 
       <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap">
         <a-button
+          v-if="hasRole('operator')"
           type="primary"
           :loading="running"
           :disabled="running"
           @click="runRuleScan"
         >
           <template #icon><ThunderboltOutlined /></template>
-          {{ running ? 'Scanning…' : hasRun ? 'Run Again' : 'Run Scan' }}
+          {{ running ? `Scanning… (${fmtElapsed(scanElapsedSec)})` : hasRun ? 'Run Again' : 'Run Scan' }}
         </a-button>
+        <span v-else style="color: #888; font-size: 13px">Viewers cannot run discovery scans.</span>
         <a-button v-if="running" danger @click="stopScan">
           <template #icon><StopOutlined /></template>
           Stop
         </a-button>
         <span style="color: #aaa; font-size: 12px; margin-left: 4px">
-          Results are shown below — endpoints are not added automatically.
+          <template v-if="running && runInBackground">Large scans can take a few minutes — you can close this panel, the scan keeps running.</template>
+          <template v-else-if="running">Large scans (hundreds of devices) can take a few minutes — this isn't frozen.</template>
+          <template v-else>Results are shown below — endpoints are not added automatically.</template>
         </span>
+      </div>
+      <div style="margin-top: 10px">
+        <a-checkbox v-model:checked="runInBackground" :disabled="running">
+          Run in background
+        </a-checkbox>
+        <a-tooltip title="Keep the scan running on the agent after you close this panel — reopen this rule to see the results.">
+          <span style="color: #aaa; font-size: 12px; margin-left: 6px; cursor: help">(?)</span>
+        </a-tooltip>
       </div>
       <div style="margin-top: 10px">
         <a-checkbox v-model:checked="pruneEnabled" :disabled="running">

@@ -16,6 +16,7 @@ import { MqttPublishPlugin } from './plugins/mqtt.js';
 import { NoopPublishPlugin } from './plugins/noop.js';
 import { BasePublishPlugin } from './core/base-plugin.js';
 import type { IPublishPlugin, IPublishClient } from './core/types.js';
+import type { AnomalyEventPayload } from '../db/models/anomaly-event.model.js';
 
 /**
  * DevicePublish - Manages multiple devices and publishes data to MQTT
@@ -39,6 +40,7 @@ export class DevicePublish extends EventEmitter {
 	private readonly useKeyCompactionPoc: boolean;
 	private readonly useDeflatePoc: boolean;
 	private anomalyService?: any;
+	private incidentCorrelator?: { processEvent: (payload: AnomalyEventPayload) => void };
 	private liveDataInterceptor?: (messages: any[], endpointName: string) => Promise<any[]> | any[];
 	private proPlugins: { azure?: any; aws?: any; gcp?: any; influxdb?: any } = {};
 
@@ -98,6 +100,25 @@ export class DevicePublish extends EventEmitter {
 
 		this.logger.debug('Updated anomaly service binding for Device Publish Feature', {
 			hasAnomalyService: !!anomalyService,
+			deviceCount: this.devices.length,
+		});
+	}
+
+	/**
+	 * Wires (or clears) the shared incident correlator so critical schema
+	 * drift feeds into Events/Incidents/Alerts alongside anomalies. Stored on
+	 * this instance (not just forwarded) so devices created later — via
+	 * onInitialize()'s per-device loop, before this method may have run yet —
+	 * still pick it up, the same way liveDataInterceptor already works.
+	 */
+	public setIncidentCorrelator(correlator?: { processEvent: (payload: AnomalyEventPayload) => void }): void {
+		this.incidentCorrelator = correlator;
+		for (const device of this.devices) {
+			device.setIncidentCorrelator(correlator);
+		}
+
+		this.logger.debug('Updated incident correlator binding for Device Publish Feature', {
+			hasCorrelator: !!correlator,
 			deviceCount: this.devices.length,
 		});
 	}
@@ -167,6 +188,7 @@ export class DevicePublish extends EventEmitter {
 
 			const device = this.createDeviceManager(config, i, deviceConfig.endpoints.length);
 			if (this.liveDataInterceptor) device.setLiveDataInterceptor(this.liveDataInterceptor);
+			if (this.incidentCorrelator) device.setIncidentCorrelator(this.incidentCorrelator);
 			this.attachDeviceEventHandlers(device, config.name!);
 			this.devices.push(device);
 			await this.startDeviceManager(device, config);

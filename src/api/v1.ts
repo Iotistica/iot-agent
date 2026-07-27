@@ -21,6 +21,7 @@ import {
 import bcrypt from 'bcryptjs';
 import { UserModel } from '../db/models/admin-user.model.js';
 import { AdminSessionModel } from '../db/models/admin-session.model.js';
+import { requireRole, parseCookie, SESSION_COOKIE } from './middleware/roles.js';
 
 export const router = express.Router();
 
@@ -28,7 +29,7 @@ export const router = express.Router();
  * POST /v1/restart
  * Restart an application
  */
-router.post('/v1/restart', async (req: Request, res: Response, next: NextFunction) => {
+router.post('/v1/restart', requireRole('admin'), async (req: Request, res: Response, next: NextFunction) => {
 	try {
 		const appId = parseInt(req.body.appId);
 		const force = req.body.force === true || req.body.force === 'true';
@@ -48,7 +49,7 @@ router.post('/v1/restart', async (req: Request, res: Response, next: NextFunctio
  * POST /v1/apps/:appId/stop
  * Stop a service in an application
  */
-router.post('/v1/apps/:appId/stop', async (req: Request, res: Response, next: NextFunction) => {
+router.post('/v1/apps/:appId/stop', requireRole('operator'), async (req: Request, res: Response, next: NextFunction) => {
 	try {
 		const appId = parseInt(req.params.appId);
 		const force = req.body.force === true || req.body.force === 'true';
@@ -71,7 +72,7 @@ router.post('/v1/apps/:appId/stop', async (req: Request, res: Response, next: Ne
  * POST /v1/apps/:appId/start
  * Start a service in an application
  */
-router.post('/v1/apps/:appId/start', async (req: Request, res: Response, next: NextFunction) => {
+router.post('/v1/apps/:appId/start', requireRole('operator'), async (req: Request, res: Response, next: NextFunction) => {
 	try {
 		const appId = parseInt(req.params.appId);
 		const force = req.body.force === true || req.body.force === 'true';
@@ -136,7 +137,7 @@ router.get('/v1/apps', async (req: Request, res: Response, next: NextFunction) =
  * POST /v1/apps
  * Deploy a new application (adds to target state and reconciles)
  */
-router.post('/v1/apps', async (req: Request, res: Response, next: NextFunction) => {
+router.post('/v1/apps', requireRole('operator'), async (req: Request, res: Response, next: NextFunction) => {
 	try {
 		const result = await actions.deployApp(req.body);
 		return res.status(201).json(result);
@@ -149,7 +150,7 @@ router.post('/v1/apps', async (req: Request, res: Response, next: NextFunction) 
  * DELETE /v1/apps/:appId
  * Remove an application from target state (stops + removes containers)
  */
-router.delete('/v1/apps/:appId', async (req: Request, res: Response, next: NextFunction) => {
+router.delete('/v1/apps/:appId', requireRole('operator'), async (req: Request, res: Response, next: NextFunction) => {
 	try {
 		const appId = parseInt(req.params.appId);
 		if (isNaN(appId)) return res.status(400).json({ error: 'Invalid app id' });
@@ -164,7 +165,7 @@ router.delete('/v1/apps/:appId', async (req: Request, res: Response, next: NextF
  * POST /v1/apps/:appId/services
  * Add a service to an existing application
  */
-router.post('/v1/apps/:appId/services', async (req: Request, res: Response, next: NextFunction) => {
+router.post('/v1/apps/:appId/services', requireRole('operator'), async (req: Request, res: Response, next: NextFunction) => {
 	try {
 		const appId = parseInt(req.params.appId);
 		if (isNaN(appId)) return res.status(400).json({ error: 'Invalid app id' });
@@ -179,7 +180,7 @@ router.post('/v1/apps/:appId/services', async (req: Request, res: Response, next
  * PUT /v1/apps/:appId/services/:serviceName
  * Update a service's config; triggers reconciliation (container recreated if needed)
  */
-router.put('/v1/apps/:appId/services/:serviceName', async (req: Request, res: Response, next: NextFunction) => {
+router.put('/v1/apps/:appId/services/:serviceName', requireRole('operator'), async (req: Request, res: Response, next: NextFunction) => {
 	try {
 		const appId = parseInt(req.params.appId);
 		const { serviceName } = req.params;
@@ -195,7 +196,7 @@ router.put('/v1/apps/:appId/services/:serviceName', async (req: Request, res: Re
  * DELETE /v1/apps/:appId/services/:serviceName
  * Remove a service from an app (stops + removes its container)
  */
-router.delete('/v1/apps/:appId/services/:serviceName', async (req: Request, res: Response, next: NextFunction) => {
+router.delete('/v1/apps/:appId/services/:serviceName', requireRole('operator'), async (req: Request, res: Response, next: NextFunction) => {
 	try {
 		const appId = parseInt(req.params.appId);
 		const { serviceName } = req.params;
@@ -302,7 +303,7 @@ function parseMuxedLogs(buf: Buffer): Array<{ msg: string; stream: 'stdout' | 's
  * POST /v1/apps/:appId/services/:serviceName/start|stop|restart
  * Perform an action on a specific service
  */
-router.post('/v1/apps/:appId/services/:serviceName/:action', async (req: Request, res: Response, next: NextFunction) => {
+router.post('/v1/apps/:appId/services/:serviceName/:action', requireRole('operator'), async (req: Request, res: Response, next: NextFunction) => {
 	try {
 		const appId = parseInt(req.params.appId);
 		const { serviceName, action } = req.params;
@@ -325,10 +326,10 @@ router.post('/v1/apps/:appId/services/:serviceName/:action', async (req: Request
 router.get('/v1/docker/config', async (_req: Request, res: Response, next: NextFunction) => {
 	try { return res.json(await actions.getDockerConfig()); } catch (e) { next(e); }
 });
-router.post('/v1/docker/config', async (req: Request, res: Response, next: NextFunction) => {
+router.post('/v1/docker/config', requireRole('admin'), async (req: Request, res: Response, next: NextFunction) => {
 	try { await actions.saveDockerConfig(req.body); return res.json({ ok: true }); } catch (e) { next(e); }
 });
-router.post('/v1/docker/test', async (req: Request, res: Response, next: NextFunction) => {
+router.post('/v1/docker/test', requireRole('operator'), async (req: Request, res: Response, next: NextFunction) => {
 	try { return res.json(await actions.testDockerConnection(req.body)); } catch (e) { next(e); }
 });
 
@@ -336,7 +337,7 @@ router.post('/v1/docker/test', async (req: Request, res: Response, next: NextFun
  * POST /v1/discover
  * Run device discovery for protocols
  */
-router.post('/v1/discover', async (req: Request, res: Response, next: NextFunction) => {
+router.post('/v1/discover', requireRole('operator'), async (req: Request, res: Response, next: NextFunction) => {
 	try {
 		const protocols = req.body.protocols as string[] | undefined;
 		const validate = req.body.validate === true || req.body.validate === 'true';
@@ -371,7 +372,7 @@ router.post('/v1/discover', async (req: Request, res: Response, next: NextFuncti
  * Browse OPC UA address space and return full tree nodes for tag-browser UI.
  * Body: { endpointUrl, maxDepth?, securityMode?, securityPolicy?, certificateTrustMode?, username?, password? }
  */
-router.post('/v1/discover/opcua/browse', async (req: Request, res: Response, next: NextFunction) => {
+router.post('/v1/discover/opcua/browse', requireRole('operator'), async (req: Request, res: Response, next: NextFunction) => {
 	try {
 		const { endpointUrl, maxDepth, securityMode, securityPolicy, certificateTrustMode, username, password } = req.body ?? {};
 
@@ -420,7 +421,7 @@ router.get('/v1/device', async (req: Request, res: Response, next: NextFunction)
  * POST /v1/sync/pull
  * Trigger on-demand target-state pull from cloud API
  */
-router.post('/v1/sync/pull', async (req: Request, res: Response, next: NextFunction) => {
+router.post('/v1/sync/pull', requireRole('operator'), async (req: Request, res: Response, next: NextFunction) => {
 	try {
 		const result = await actions.pullTargetStateNow();
 		return res.status(200).json(result);
@@ -433,7 +434,7 @@ router.post('/v1/sync/pull', async (req: Request, res: Response, next: NextFunct
  * POST /v1/purge
  * Purge application data (volumes)
  */
-router.post('/v1/purge', async (req: Request, res: Response, next: NextFunction) => {
+router.post('/v1/purge', requireRole('admin'), async (req: Request, res: Response, next: NextFunction) => {
 	try {
 		const appId = parseInt(req.body.appId);
 		const force = req.body.force === true || req.body.force === 'true';
@@ -453,7 +454,7 @@ router.post('/v1/purge', async (req: Request, res: Response, next: NextFunction)
  * POST /v1/reboot
  * Restart agent services (soft restart - keeps API running)
  */
-router.post('/v1/reboot', async (req: Request, res: Response, next: NextFunction) => {
+router.post('/v1/reboot', requireRole('admin'), async (req: Request, res: Response, next: NextFunction) => {
 	try {
 		const agent = actions.getAgent();
 		const state = agent.getLifecycleState?.() ?? 'UNKNOWN';
@@ -490,7 +491,7 @@ router.post('/v1/reboot', async (req: Request, res: Response, next: NextFunction
  * POST /v1/shutdown
  * Shutdown the device (placeholder - requires platform-specific implementation)
  */
-router.post('/v1/shutdown', async (req: Request, res: Response, next: NextFunction) => {
+router.post('/v1/shutdown', requireRole('admin'), async (req: Request, res: Response, next: NextFunction) => {
 	try {
 		console.log('Shutdown requested');
 		// This would need platform-specific implementation
@@ -509,7 +510,7 @@ router.post('/v1/shutdown', async (req: Request, res: Response, next: NextFuncti
  * Inject test data to simulate anomalies (for testing only)
  * Body: { metric: 'cpu_usage', value: 95, count: 5 }
  */
-router.post('/v1/test/anomaly', async (req: Request, res: Response, next: NextFunction) => {
+router.post('/v1/test/anomaly', requireRole('operator'), async (req: Request, res: Response, next: NextFunction) => {
 	try {
 		const { metric = 'cpu_usage', value, count = 1 } = req.body;
 		
@@ -591,7 +592,7 @@ router.get('/v1/anomaly/config', (req: Request, res: Response, next: NextFunctio
  * restarts in standalone mode. When the agent is provisioned, the cloud
  * target state continues to take precedence on the next reconciliation cycle.
  */
-router.patch('/v1/anomaly/config', async (req: Request, res: Response, next: NextFunction) => {
+router.patch('/v1/anomaly/config', requireRole('operator'), async (req: Request, res: Response, next: NextFunction) => {
 	try {
 		const anomalyService = actions.getAnomalyService();
 		if (!anomalyService) {
@@ -670,7 +671,7 @@ router.get('/v1/anomaly/alerts', (req: Request, res: Response, next: NextFunctio
  * DELETE /v1/anomaly/alerts
  * Clear all in-memory anomaly alerts
  */
-router.delete('/v1/anomaly/alerts', (req: Request, res: Response, next: NextFunction) => {
+router.delete('/v1/anomaly/alerts', requireRole('operator'), (req: Request, res: Response, next: NextFunction) => {
 	try {
 		const anomalyService = actions.getAnomalyService();
 		if (!anomalyService) {
@@ -750,7 +751,7 @@ router.get('/v1/anomaly/baseline-progress', (req: Request, res: Response, next: 
  * DELETE /v1/anomaly/baselines
  * Clear all persisted baseline statistics from SQLite and reset in-memory buffers.
  */
-router.delete('/v1/anomaly/baselines', (req: Request, res: Response, next: NextFunction) => {
+router.delete('/v1/anomaly/baselines', requireRole('operator'), (req: Request, res: Response, next: NextFunction) => {
 	try {
 		const deleted = actions.clearAnomalyBaselines();
 		return res.status(200).json({ deleted });
@@ -776,7 +777,7 @@ router.get('/v1/anomaly/templates', async (req: Request, res: Response, next: Ne
  * POST /v1/anomaly/templates
  * Save the current rule form as a new template
  */
-router.post('/v1/anomaly/templates', async (req: Request, res: Response, next: NextFunction) => {
+router.post('/v1/anomaly/templates', requireRole('operator'), async (req: Request, res: Response, next: NextFunction) => {
 	try {
 		const template = await actions.createAnomalyTemplate(req.body);
 		return res.status(201).json({ template });
@@ -789,7 +790,7 @@ router.post('/v1/anomaly/templates', async (req: Request, res: Response, next: N
  * PATCH /v1/anomaly/templates/:uuid
  * Update a saved template
  */
-router.patch('/v1/anomaly/templates/:uuid', async (req: Request, res: Response, next: NextFunction) => {
+router.patch('/v1/anomaly/templates/:uuid', requireRole('operator'), async (req: Request, res: Response, next: NextFunction) => {
 	try {
 		const template = await actions.updateAnomalyTemplate(req.params.uuid, req.body);
 		return res.status(200).json({ template });
@@ -802,7 +803,7 @@ router.patch('/v1/anomaly/templates/:uuid', async (req: Request, res: Response, 
  * DELETE /v1/anomaly/templates/:uuid
  * Delete a saved template
  */
-router.delete('/v1/anomaly/templates/:uuid', async (req: Request, res: Response, next: NextFunction) => {
+router.delete('/v1/anomaly/templates/:uuid', requireRole('operator'), async (req: Request, res: Response, next: NextFunction) => {
 	try {
 		await actions.deleteAnomalyTemplate(req.params.uuid);
 		return res.status(204).send();
@@ -863,7 +864,7 @@ router.get('/v1/simulation/status', async (req: Request, res: Response, next: Ne
  * POST /v1/simulation/scenarios/:scenario/start
  * Start a specific simulation scenario
  */
-router.post('/v1/simulation/scenarios/:scenario/start', async (req: Request, res: Response, next: NextFunction) => {
+router.post('/v1/simulation/scenarios/:scenario/start', requireRole('operator'), async (req: Request, res: Response, next: NextFunction) => {
 	try {
 		const { scenario } = req.params;
 		
@@ -888,7 +889,7 @@ router.post('/v1/simulation/scenarios/:scenario/start', async (req: Request, res
  * POST /v1/simulation/scenarios/:scenario/stop
  * Stop a specific simulation scenario
  */
-router.post('/v1/simulation/scenarios/:scenario/stop', async (req: Request, res: Response, next: NextFunction) => {
+router.post('/v1/simulation/scenarios/:scenario/stop', requireRole('operator'), async (req: Request, res: Response, next: NextFunction) => {
 	try {
 		const { scenario } = req.params;
 		
@@ -913,7 +914,7 @@ router.post('/v1/simulation/scenarios/:scenario/stop', async (req: Request, res:
  * POST /v1/simulation/stop-all
  * Stop all running simulation scenarios
  */
-router.post('/v1/simulation/stop-all', async (req: Request, res: Response, next: NextFunction) => {
+router.post('/v1/simulation/stop-all', requireRole('operator'), async (req: Request, res: Response, next: NextFunction) => {
 	try {
 		const simulationOrchestrator = (actions as any).getSimulationOrchestrator?.();
 		if (!simulationOrchestrator) {
@@ -963,7 +964,7 @@ router.get('/v1/provision/status', async (req: Request, res: Response, next: Nex
  * POST /v1/deprovision
  * Deprovision device (remove cloud registration, keep UUID and deviceApiKey)
  */
-router.post('/v1/deprovision', async (req: Request, res: Response, next: NextFunction) => {
+router.post('/v1/deprovision', requireRole('admin'), async (req: Request, res: Response, next: NextFunction) => {
 	try {
 		await actions.deprovisionDevice();
 		return res.status(200).json({ 
@@ -979,7 +980,7 @@ router.post('/v1/deprovision', async (req: Request, res: Response, next: NextFun
  * POST /v1/factory-reset
  * Factory reset - complete data wipe (WARNING: deletes all apps, services, state, devices)
  */
-router.post('/v1/factory-reset', async (req: Request, res: Response, next: NextFunction) => {
+router.post('/v1/factory-reset', requireRole('admin'), async (req: Request, res: Response, next: NextFunction) => {
 	try {
 		await actions.factoryResetDevice();
 		return res.status(200).json({ 
@@ -1004,7 +1005,7 @@ router.post('/v1/factory-reset', async (req: Request, res: Response, next: NextF
  *   acceptDNS?: boolean
  * }
  */
-router.post('/v1/vpn/tailscale/connect', async (req: Request, res: Response, next: NextFunction) => {
+router.post('/v1/vpn/tailscale/connect', requireRole('admin'), async (req: Request, res: Response, next: NextFunction) => {
 	try {
 		const { authKey, tailnetName, hostname, shieldsUp, acceptRoutes, acceptDNS } = req.body;
 
@@ -1033,7 +1034,7 @@ router.post('/v1/vpn/tailscale/connect', async (req: Request, res: Response, nex
  * POST /v1/vpn/tailscale/disconnect
  * Disconnect from Tailscale VPN
  */
-router.post('/v1/vpn/tailscale/disconnect', async (req: Request, res: Response, next: NextFunction) => {
+router.post('/v1/vpn/tailscale/disconnect', requireRole('admin'), async (req: Request, res: Response, next: NextFunction) => {
 	try {
 		const result = await actions.disconnectTailscale();
 		return res.status(200).json(result);
@@ -1077,7 +1078,7 @@ router.get('/v1/vpn/tailscale/ip', async (req: Request, res: Response, next: Nex
  *   count?: number
  * }
  */
-router.post('/v1/vpn/tailscale/ping', async (req: Request, res: Response, next: NextFunction) => {
+router.post('/v1/vpn/tailscale/ping', requireRole('operator'), async (req: Request, res: Response, next: NextFunction) => {
 	try {
 		const { hostname, count } = req.body;
 
@@ -1190,7 +1191,7 @@ router.get('/v1/adapters/:protocol/devices/:deviceName/metrics', async (req: Req
  * Write value to a Modbus register
  * Body: { register: string, value: number | boolean | string }
  */
-router.post('/v1/adapters/modbus/devices/:deviceName/write', async (req: Request, res: Response, next: NextFunction) => {
+router.post('/v1/adapters/modbus/devices/:deviceName/write', requireRole('operator'), async (req: Request, res: Response, next: NextFunction) => {
 	try {
 		const { deviceName } = req.params;
 		const { register, value } = req.body ?? {};
@@ -1281,7 +1282,7 @@ router.get('/v1/endpoints', async (req: Request, res: Response, next: NextFuncti
  * Add a new endpoint to the agent configuration
  * Body: { name, protocol, connection, poll_interval?, enabled?, data_points?, metadata? }
  */
-router.post('/v1/endpoints', async (req: Request, res: Response, next: NextFunction) => {
+router.post('/v1/endpoints', requireRole('operator'), async (req: Request, res: Response, next: NextFunction) => {
 	try {
 		const endpoint = await actions.addEndpoint(req.body);
 		return res.status(201).json({ endpoint });
@@ -1296,7 +1297,7 @@ router.post('/v1/endpoints', async (req: Request, res: Response, next: NextFunct
  * Update an endpoint (enable/disable, poll interval) by UUID or name
  * Body: { enabled?: boolean, poll_interval?: number }
  */
-router.patch('/v1/endpoints/:uuid', async (req: Request, res: Response, next: NextFunction) => {
+router.patch('/v1/endpoints/:uuid', requireRole('operator'), async (req: Request, res: Response, next: NextFunction) => {
 	try {
 		const result = await actions.updateEndpoint(req.params.uuid, req.body);
 		return res.status(200).json({ endpoint: result });
@@ -1310,7 +1311,7 @@ router.patch('/v1/endpoints/:uuid', async (req: Request, res: Response, next: Ne
  * PUT /v1/endpoints/:uuid
  * Full replace — update all fields including name, protocol, connection, data_points.
  */
-router.put('/v1/endpoints/:uuid', async (req: Request, res: Response, next: NextFunction) => {
+router.put('/v1/endpoints/:uuid', requireRole('operator'), async (req: Request, res: Response, next: NextFunction) => {
 	try {
 		const result = await actions.replaceEndpoint(req.params.uuid, req.body);
 		return res.status(200).json({ endpoint: result });
@@ -1324,7 +1325,7 @@ router.put('/v1/endpoints/:uuid', async (req: Request, res: Response, next: Next
  * DELETE /v1/endpoints/:uuid
  * Remove an endpoint from the agent configuration by UUID
  */
-router.delete('/v1/endpoints/:uuid', async (req: Request, res: Response, next: NextFunction) => {
+router.delete('/v1/endpoints/:uuid', requireRole('operator'), async (req: Request, res: Response, next: NextFunction) => {
 	try {
 		await actions.removeEndpoint(req.params.uuid);
 		return res.status(200).json({ message: 'Endpoint removed' });
@@ -1338,7 +1339,7 @@ router.delete('/v1/endpoints/:uuid', async (req: Request, res: Response, next: N
  * DELETE /v1/endpoints
  * Remove all endpoints from the agent configuration
  */
-router.delete('/v1/endpoints', async (req: Request, res: Response, next: NextFunction) => {
+router.delete('/v1/endpoints', requireRole('admin'), async (req: Request, res: Response, next: NextFunction) => {
 	try {
 		const result = await actions.removeAllEndpoints();
 		return res.status(200).json({ message: `Removed ${result.removed} endpoint(s)`, removed: result.removed });
@@ -1379,7 +1380,7 @@ router.get('/v1/publish/destinations', async (req: Request, res: Response, next:
  * POST /v1/publish/destinations/test
  * Test connectivity for a destination config without saving it
  */
-router.post('/v1/publish/destinations/test', async (req: Request, res: Response, next: NextFunction) => {
+router.post('/v1/publish/destinations/test', requireRole('operator'), async (req: Request, res: Response, next: NextFunction) => {
 	try {
 		const { type, config_json: cfg } = req.body as { type?: string; config_json?: Record<string, unknown> };
 		if (!type) return res.status(400).json({ ok: false, error: 'type is required' });
@@ -1456,7 +1457,7 @@ router.post('/v1/publish/destinations/test', async (req: Request, res: Response,
  * POST /v1/publish/destinations
  * Create an upstream publish destination
  */
-router.post('/v1/publish/destinations', async (req: Request, res: Response, next: NextFunction) => {
+router.post('/v1/publish/destinations', requireRole('operator'), async (req: Request, res: Response, next: NextFunction) => {
 	try {
 		const publisher = await actions.createPublisher(req.body);
 		return res.status(201).json({ publisher });
@@ -1469,7 +1470,7 @@ router.post('/v1/publish/destinations', async (req: Request, res: Response, next
  * PATCH /v1/publish/destinations/:id
  * Update an upstream publish destination
  */
-router.patch('/v1/publish/destinations/:id', async (req: Request, res: Response, next: NextFunction) => {
+router.patch('/v1/publish/destinations/:id', requireRole('operator'), async (req: Request, res: Response, next: NextFunction) => {
 	try {
 		const id = Number(req.params.id);
 		if (!Number.isFinite(id)) {
@@ -1488,7 +1489,7 @@ router.patch('/v1/publish/destinations/:id', async (req: Request, res: Response,
  * DELETE /v1/publish/destinations/:id
  * Delete an upstream publish destination
  */
-router.delete('/v1/publish/destinations/:id', async (req: Request, res: Response, next: NextFunction) => {
+router.delete('/v1/publish/destinations/:id', requireRole('operator'), async (req: Request, res: Response, next: NextFunction) => {
 	try {
 		const id = Number(req.params.id);
 		if (!Number.isFinite(id)) {
@@ -1526,7 +1527,7 @@ router.get('/v1/publish/subscriptions', async (req: Request, res: Response, next
  * POST /v1/publish/subscriptions
  * Create a publish subscription
  */
-router.post('/v1/publish/subscriptions', async (req: Request, res: Response, next: NextFunction) => {
+router.post('/v1/publish/subscriptions', requireRole('operator'), async (req: Request, res: Response, next: NextFunction) => {
 	try {
 		const subscription = await actions.createPublishSubscription(req.body);
 		return res.status(201).json({ subscription });
@@ -1540,7 +1541,7 @@ router.post('/v1/publish/subscriptions', async (req: Request, res: Response, nex
  * PATCH /v1/publish/subscriptions/:id
  * Update a publish subscription
  */
-router.patch('/v1/publish/subscriptions/:id', async (req: Request, res: Response, next: NextFunction) => {
+router.patch('/v1/publish/subscriptions/:id', requireRole('operator'), async (req: Request, res: Response, next: NextFunction) => {
 	try {
 		const id = Number(req.params.id);
 		if (!Number.isFinite(id)) {
@@ -1559,7 +1560,7 @@ router.patch('/v1/publish/subscriptions/:id', async (req: Request, res: Response
  * DELETE /v1/publish/subscriptions/:id
  * Delete a publish subscription
  */
-router.delete('/v1/publish/subscriptions/:id', async (req: Request, res: Response, next: NextFunction) => {
+router.delete('/v1/publish/subscriptions/:id', requireRole('operator'), async (req: Request, res: Response, next: NextFunction) => {
 	try {
 		const id = Number(req.params.id);
 		if (!Number.isFinite(id)) {
@@ -1581,7 +1582,7 @@ router.delete('/v1/publish/subscriptions/:id', async (req: Request, res: Respons
  * - version: target version string or "latest"
  * - force: skip same-version guard (default false)
  */
-router.post('/v1/update', async (req: Request, res: Response, next: NextFunction) => {
+router.post('/v1/update', requireRole('admin'), async (req: Request, res: Response, next: NextFunction) => {
 	try {
 		const { version, force } = req.body as { version?: string; force?: boolean };
 
@@ -1616,7 +1617,7 @@ router.get('/v1/discovery-rules', async (_req: Request, res: Response, next: Nex
  * POST /v1/discovery-rules
  * Create a discovery rule
  */
-router.post('/v1/discovery-rules', async (req: Request, res: Response, next: NextFunction) => {
+router.post('/v1/discovery-rules', requireRole('operator'), async (req: Request, res: Response, next: NextFunction) => {
 	try {
 		const rule = await actions.createDiscoveryRule(req.body);
 		return res.status(201).json({ rule });
@@ -1629,7 +1630,7 @@ router.post('/v1/discovery-rules', async (req: Request, res: Response, next: Nex
  * PATCH /v1/discovery-rules/:uuid
  * Update a discovery rule
  */
-router.patch('/v1/discovery-rules/:uuid', async (req: Request, res: Response, next: NextFunction) => {
+router.patch('/v1/discovery-rules/:uuid', requireRole('operator'), async (req: Request, res: Response, next: NextFunction) => {
 	try {
 		const rule = await actions.updateDiscoveryRule(req.params.uuid, req.body);
 		return res.status(200).json({ rule });
@@ -1642,7 +1643,7 @@ router.patch('/v1/discovery-rules/:uuid', async (req: Request, res: Response, ne
  * DELETE /v1/discovery-rules/:uuid
  * Delete a discovery rule
  */
-router.delete('/v1/discovery-rules/:uuid', async (req: Request, res: Response, next: NextFunction) => {
+router.delete('/v1/discovery-rules/:uuid', requireRole('operator'), async (req: Request, res: Response, next: NextFunction) => {
 	try {
 		await actions.deleteDiscoveryRule(req.params.uuid);
 		return res.status(204).send();
@@ -1655,13 +1656,15 @@ router.delete('/v1/discovery-rules/:uuid', async (req: Request, res: Response, n
  * POST /v1/discovery-rules/:uuid/run
  * Trigger a discovery rule immediately
  */
-router.post('/v1/discovery-rules/:uuid/run', async (req: Request, res: Response, next: NextFunction) => {
+router.post('/v1/discovery-rules/:uuid/run', requireRole('operator'), async (req: Request, res: Response, next: NextFunction) => {
 	try {
 		const prune = req.body?.prune === true || req.body?.prune === 'true';
 		const pruneDryRun = req.body?.pruneDryRun === true || req.body?.pruneDryRun === 'true';
 		const result = await actions.runDiscoveryRule(req.params.uuid, prune ? { prune, pruneDryRun } : undefined);
 		return res.status(200).json(result);
-	} catch (error) {
+	} catch (error: any) {
+		if (error?.statusCode === 404) return res.status(404).json({ error: error.message });
+		if (error?.statusCode === 409) return res.status(409).json({ error: error.message });
 		next(error);
 	}
 });
@@ -1712,7 +1715,7 @@ router.get('/v1/protocol-outputs', async (_req: Request, res: Response, next: Ne
  * PATCH /v1/protocol-outputs/:protocol/drift
  * Update schema drift options for a single protocol pipe.
  */
-router.patch('/v1/protocol-outputs/:protocol/drift', async (req: Request, res: Response, next: NextFunction) => {
+router.patch('/v1/protocol-outputs/:protocol/drift', requireRole('operator'), async (req: Request, res: Response, next: NextFunction) => {
 	try {
 		const { protocol } = req.params;
 		const { EndpointOutputModel } = await import('../db/models/endpoint-outputs.model.js');
@@ -1728,6 +1731,138 @@ router.patch('/v1/protocol-outputs/:protocol/drift', async (req: Request, res: R
 		};
 		const updated = await EndpointOutputModel.setOutput({ ...existing, drift_options });
 		res.json({ output: updated });
+	} catch (err) {
+		next(err);
+	}
+});
+
+/**
+ * PATCH /v1/protocol-outputs/drift
+ * Apply the same schema drift options to every configured protocol pipe.
+ * Drift tuning (warmup length, missing-field tolerance, cooldown, presence
+ * ratio) isn't actually protocol-specific — it's stored per-row on
+ * endpoint_outputs alongside genuinely protocol-specific fields (socket_path,
+ * buffer_capacity) as a storage convenience, not because bacnet/modbus/opcua
+ * need different values. This is the one control surface operators use;
+ * the per-protocol PATCH above still exists for scripting/edge cases.
+ */
+router.patch('/v1/protocol-outputs/drift', requireRole('operator'), async (req: Request, res: Response, next: NextFunction) => {
+	try {
+		const { EndpointOutputModel } = await import('../db/models/endpoint-outputs.model.js');
+		const body = req.body ?? {};
+		const drift_options = body.drift_options === null ? null : body.drift_options;
+
+		const outputs = await EndpointOutputModel.getAll();
+		const updated = [];
+		for (const existing of outputs) {
+			const merged = drift_options === null ? null : {
+				...existing.drift_options,
+				...drift_options,
+			};
+			updated.push(await EndpointOutputModel.setOutput({ ...existing, drift_options: merged }));
+		}
+
+		res.json({ outputs: updated });
+	} catch (err) {
+		next(err);
+	}
+});
+
+/**
+ * GET /v1/schema-drift/baselines
+ * Flattens every protocol pipe's persisted per-device schema drift state into
+ * one row per field — established baseline fields plus fields still
+ * accumulating toward promotion — for the admin UI's Schema Drift grid.
+ * Query: ?q=<search text across protocol/device/field>
+ */
+router.get('/v1/schema-drift/baselines', async (req: Request, res: Response, next: NextFunction) => {
+	try {
+		const { SchemaDriftModel } = await import('../db/models/schema-drift.model.js');
+		const { cleanDriftFieldName, prettifyDriftDeviceId, cleanProtocolPipeName, stripFieldDevicePrefix } = await import('../db/models/drift-labels.js');
+		const q = typeof req.query.q === 'string' ? req.query.q.trim().toLowerCase() : undefined;
+
+		const rows: Array<{
+			protocol: string;
+			device?: string;
+			field: string;
+			status: 'baseline' | 'pending';
+			dominantType?: string;
+			missingStreak?: number;
+			stableBatches?: number;
+			windowSize?: number;
+			presenceRatio?: number;
+			updatedAt: string;
+		}> = [];
+
+		for (const state of SchemaDriftModel.getAllBaselines()) {
+			// Rows saved before the per-device baseline model (SchemaDriftDetector's
+			// restorePersistedBaseline() migrates these in memory, but the row on
+			// disk stays in the old flat shape — no `devices` map — until that
+			// source's detector next persists a fresh baseline). Skip rather than
+			// crash on Object.entries(undefined).
+			if (!state.devices) {
+				continue;
+			}
+
+			// __default__ only ever means "no device identity" today when it's the
+			// *only* bucket (a genuinely single-device source — Modbus, OPC-UA, a
+			// lone BACnet device). Once real per-device buckets exist alongside it,
+			// __default__ is a frozen leftover from before device identity resolved
+			// correctly for this source — every message now lands in a real device
+			// bucket, so it never grows again. Surfacing hundreds of stale,
+			// cross-device-mixed fields under a blank "Device" column next to
+			// current per-device rows is misleading, so drop it once it's vestigial.
+			const deviceIds = Object.keys(state.devices);
+			const hasRealDevices = deviceIds.some((id) => id !== '__default__');
+
+			const protocol = cleanProtocolPipeName(state.endpointName);
+
+			for (const [deviceId, ds] of Object.entries(state.devices)) {
+				if (deviceId === '__default__' && hasRealDevices) {
+					continue;
+				}
+				const device = deviceId === '__default__' ? undefined : prettifyDriftDeviceId(deviceId);
+
+				for (const field of ds.baselineFields) {
+					const freq = ds.baselineTypeFreq?.[field];
+					const dominantType = freq
+						? Object.entries(freq.counts).sort((a, b) => b[1] - a[1])[0]?.[0]
+						: undefined;
+
+					rows.push({
+						protocol,
+						device,
+						field: stripFieldDevicePrefix(cleanDriftFieldName(field), deviceId),
+						status: 'baseline',
+						dominantType,
+						missingStreak: ds.missingStreakByField?.[field] ?? 0,
+						updatedAt: state.updatedAt ?? '',
+					});
+				}
+
+				for (const [field, stableBatches] of Object.entries(ds.newFieldCounts ?? {})) {
+					const firstSeen = ds.newFieldFirstSeen?.[field];
+					const windowSize = firstSeen != null ? ds.totalBatches - firstSeen + 1 : undefined;
+
+					rows.push({
+						protocol,
+						device,
+						field: stripFieldDevicePrefix(cleanDriftFieldName(field), deviceId),
+						status: 'pending',
+						stableBatches,
+						windowSize,
+						presenceRatio: windowSize ? stableBatches / windowSize : undefined,
+						updatedAt: state.updatedAt ?? '',
+					});
+				}
+			}
+		}
+
+		const filtered = q
+			? rows.filter((r) => `${r.protocol} ${r.device ?? ''} ${r.field}`.toLowerCase().includes(q))
+			: rows;
+
+		res.json({ baselines: filtered, total: filtered.length });
 	} catch (err) {
 		next(err);
 	}
@@ -1753,7 +1888,7 @@ router.get('/v1/settings', async (req: Request, res: Response, next: NextFunctio
  * Only recognised top-level keys (logging, features, intervals, runtime,
  * anomalyDetection) are applied; everything else is silently ignored.
  */
-router.patch('/v1/settings', async (req: Request, res: Response, next: NextFunction) => {
+router.patch('/v1/settings', requireRole('operator'), async (req: Request, res: Response, next: NextFunction) => {
 	try {
 		if (!req.body || typeof req.body !== 'object') {
 			return res.status(400).json({ error: 'Request body must be a JSON object' });
@@ -1766,7 +1901,7 @@ router.patch('/v1/settings', async (req: Request, res: Response, next: NextFunct
 	}
 });
 
-router.patch('/v1/settings/target-sync', async (req: Request, res: Response, next: NextFunction) => {
+router.patch('/v1/settings/target-sync', requireRole('operator'), async (req: Request, res: Response, next: NextFunction) => {
 	try {
 		const { enabled } = req.body ?? {};
 		if (typeof enabled !== 'boolean') {
@@ -1811,16 +1946,6 @@ router.get('/v1/dashboard/stats', async (_req: Request, res: Response, next: Nex
 
 // ── Auth: login / logout / me ────────────────────────────────────────────────
 
-function parseCookie(header: string | undefined, name: string): string | undefined {
-	if (!header) return undefined;
-	for (const part of header.split(';')) {
-		const [k, v] = part.trim().split('=');
-		if (k === name) return v;
-	}
-	return undefined;
-}
-
-const SESSION_COOKIE = 'admin_session';
 const COOKIE_OPTS = 'HttpOnly; Path=/; SameSite=Strict; Max-Age=86400';
 
 router.post('/v1/auth/login', async (req: Request, res: Response, next: NextFunction) => {
@@ -1839,7 +1964,7 @@ router.post('/v1/auth/login', async (req: Request, res: Response, next: NextFunc
 		if (!ok) return res.status(401).json({ error: 'Invalid credentials' });
 		const token = AdminSessionModel.create(username);
 		res.setHeader('Set-Cookie', `${SESSION_COOKIE}=${token}; ${COOKIE_OPTS}`);
-		return res.status(200).json({ username, is_superuser: user.is_superuser, must_change_password: user.must_change_password });
+		return res.status(200).json({ username, role: user.role, is_superuser: user.is_superuser, must_change_password: user.must_change_password });
 	} catch (error) {
 		next(error);
 	}
@@ -1859,19 +1984,12 @@ router.get('/v1/auth/me', (req: Request, res: Response) => {
 	if (!session) return res.status(401).json({ error: 'Session expired' });
 	const user = UserModel.getByUsername(session.username);
 	if (!user) return res.status(401).json({ error: 'User not found' });
-	return res.status(200).json({ username: user.username, is_superuser: user.is_superuser, must_change_password: user.must_change_password });
+	return res.status(200).json({ username: user.username, role: user.role, is_superuser: user.is_superuser, must_change_password: user.must_change_password });
 });
 
-// ── Session guard for all /v1/admin/* routes ─────────────────────────────────
+// ── Role guard for all /v1/admin/* routes (user/session/MQTT-user/backup management) ──
 
-router.use('/v1/admin', (req: Request, res: Response, next: NextFunction) => {
-	const token = parseCookie(req.headers.cookie, SESSION_COOKIE);
-	if (!token) return res.status(401).json({ error: 'Not authenticated' });
-	const session = AdminSessionModel.find(token);
-	if (!session) return res.status(401).json({ error: 'Session expired' });
-	(req as any).adminUser = session.username;
-	next();
-});
+router.use('/v1/admin', requireRole('admin'));
 
 // ── Administration: Users ────────────────────────────────────────────────────
 
@@ -1883,20 +2001,25 @@ router.get('/v1/admin/users', (_req: Request, res: Response, next: NextFunction)
 	}
 });
 
+const VALID_ROLES = ['viewer', 'operator', 'admin'] as const;
+
 router.post('/v1/admin/users', async (req: Request, res: Response, next: NextFunction) => {
 	try {
-		const { username, password, is_superuser = false } = req.body ?? {};
+		const { username, password, role = 'operator' } = req.body ?? {};
 		if (!username || typeof username !== 'string' || !username.trim()) {
 			return res.status(400).json({ error: 'username is required' });
 		}
 		if (!password || typeof password !== 'string' || password.length < 6) {
 			return res.status(400).json({ error: 'password must be at least 6 characters' });
 		}
+		if (!VALID_ROLES.includes(role)) {
+			return res.status(400).json({ error: `role must be one of: ${VALID_ROLES.join(', ')}` });
+		}
 		if (UserModel.existsByUsername(username.trim())) {
 			return res.status(409).json({ error: 'Username already exists' });
 		}
 		const hash = await bcrypt.hash(password, 10);
-		const user = UserModel.create(username.trim(), hash, Boolean(is_superuser));
+		const user = UserModel.create(username.trim(), hash, role);
 		return res.status(201).json({ user });
 	} catch (error) {
 		next(error);
@@ -1909,10 +2032,15 @@ router.patch('/v1/admin/users/:username', async (req: Request, res: Response, ne
 		if (!UserModel.existsByUsername(username)) {
 			return res.status(404).json({ error: 'User not found' });
 		}
-		const { is_active, is_superuser, password } = req.body ?? {};
-		const fields: { is_active?: boolean; is_superuser?: boolean; password_hash?: string } = {};
+		const { is_active, role, password } = req.body ?? {};
+		const fields: { is_active?: boolean; role?: typeof VALID_ROLES[number]; password_hash?: string } = {};
 		if (is_active !== undefined) fields.is_active = Boolean(is_active);
-		if (is_superuser !== undefined) fields.is_superuser = Boolean(is_superuser);
+		if (role !== undefined) {
+			if (!VALID_ROLES.includes(role)) {
+				return res.status(400).json({ error: `role must be one of: ${VALID_ROLES.join(', ')}` });
+			}
+			fields.role = role;
+		}
 		if (password) {
 			if (typeof password !== 'string' || password.length < 6) {
 				return res.status(400).json({ error: 'password must be at least 6 characters' });
@@ -1998,7 +2126,7 @@ router.get('/v1/mqtt/users', (_req: Request, res: Response, next: NextFunction) 
 	} catch (err) { next(err); }
 });
 
-router.post('/v1/mqtt/users', async (req: Request, res: Response, next: NextFunction) => {
+router.post('/v1/mqtt/users', requireRole('admin'), async (req: Request, res: Response, next: NextFunction) => {
 	try {
 		const { username, password } = req.body ?? {};
 		if (!username || typeof username !== 'string') return res.status(400).json({ error: '"username" is required' });
@@ -2014,7 +2142,7 @@ router.post('/v1/mqtt/users', async (req: Request, res: Response, next: NextFunc
 	} catch (err) { next(err); }
 });
 
-router.delete('/v1/mqtt/users/:username', async (req: Request, res: Response, next: NextFunction) => {
+router.delete('/v1/mqtt/users/:username', requireRole('admin'), async (req: Request, res: Response, next: NextFunction) => {
 	try {
 		const { username } = req.params;
 		const bootstrapUsername = process.env.MQTT_USERNAME ?? 'admin';
@@ -2046,7 +2174,7 @@ router.get('/v1/mqtt/topics', (_req: Request, res: Response) => {
 	res.json(monitor.getTopics());
 });
 
-router.post('/v1/mqtt/broker/test', (req: Request, res: Response) => {
+router.post('/v1/mqtt/broker/test', requireRole('operator'), (req: Request, res: Response) => {
 	const { url, username, password } = req.body ?? {};
 	if (typeof url !== 'string' || !url.trim()) {
 		return res.status(400).json({ ok: false, error: '"url" is required' });
@@ -2073,7 +2201,7 @@ router.post('/v1/mqtt/broker/test', (req: Request, res: Response) => {
 	}).catch((err: Error) => res.status(500).json({ ok: false, error: err.message }));
 });
 
-router.patch('/v1/mqtt/broker/config', async (req: Request, res: Response, next: NextFunction) => {
+router.patch('/v1/mqtt/broker/config', requireRole('admin'), async (req: Request, res: Response, next: NextFunction) => {
 	try {
 		const { url, username, password } = req.body ?? {};
 		if (typeof url !== 'string' || !url.trim()) {
@@ -2149,7 +2277,7 @@ router.get('/v1/backups', async (_req: Request, res: Response, next: NextFunctio
 });
 
 /** POST /v1/backups — create a new database backup */
-router.post('/v1/backups', async (_req: Request, res: Response, next: NextFunction) => {
+router.post('/v1/backups', requireRole('operator'), async (_req: Request, res: Response, next: NextFunction) => {
 	try {
 		const dbPath = getDatabasePath();
 		const backup = await createDbBackup({ dbPath });
@@ -2160,7 +2288,7 @@ router.post('/v1/backups', async (_req: Request, res: Response, next: NextFuncti
 });
 
 /** POST /v1/backups/:fileName/restore — restore database from a named backup */
-router.post('/v1/backups/:fileName/restore', async (req: Request, res: Response, next: NextFunction) => {
+router.post('/v1/backups/:fileName/restore', requireRole('admin'), async (req: Request, res: Response, next: NextFunction) => {
 	try {
 		const fileName = safeBackupFileName(req.params.fileName);
 		const dbPath = getDatabasePath();
@@ -2174,7 +2302,7 @@ router.post('/v1/backups/:fileName/restore', async (req: Request, res: Response,
 });
 
 /** DELETE /v1/backups/:fileName — delete a backup file */
-router.delete('/v1/backups/:fileName', async (req: Request, res: Response, next: NextFunction) => {
+router.delete('/v1/backups/:fileName', requireRole('operator'), async (req: Request, res: Response, next: NextFunction) => {
 	try {
 		const fileName = safeBackupFileName(req.params.fileName);
 		const dbPath = getDatabasePath();
@@ -2211,6 +2339,7 @@ router.get('/v1/backups/:fileName/download', async (req: Request, res: Response,
 /** POST /v1/backups/upload — upload a backup file downloaded from another device */
 router.post(
 	'/v1/backups/upload',
+	requireRole('operator'),
 	express.raw({ type: '*/*', limit: '200mb' }),
 	async (req: Request, res: Response, next: NextFunction) => {
 		try {
@@ -2238,7 +2367,7 @@ router.get('/v1/backups/schedule', (_req: Request, res: Response, next: NextFunc
 });
 
 /** PUT /v1/backups/schedule — update the backup schedule config */
-router.put('/v1/backups/schedule', (req: Request, res: Response, next: NextFunction) => {
+router.put('/v1/backups/schedule', requireRole('operator'), (req: Request, res: Response, next: NextFunction) => {
 	try {
 		const { enabled, intervalHours, keepCount } = req.body as {
 			enabled?: boolean;

@@ -1971,7 +1971,20 @@ export const updateDiscoveryRule = async (uuid: string, body: {
 		throw Object.assign(new Error(`Discovery rule not found: ${uuid}`), { statusCode: 404 });
 	}
 
-	const rule = DiscoveryRuleModel.update(uuid, body);
+	// next_run_at is otherwise only recomputed when a run finishes (rules-scheduler.ts),
+	// using whatever interval_seconds was true at that moment — so editing the interval
+	// (or re-enabling a rule) left the old schedule frozen in place until one more run
+	// fired under the stale interval. Recompute it here whenever the effective schedule
+	// actually changes, so the new interval/enable state takes effect immediately.
+	const intervalChanged = body.interval_seconds !== undefined && body.interval_seconds !== existing.interval_seconds;
+	const reEnabled = body.enabled === true && existing.enabled === false;
+	const patch: typeof body & { next_run_at?: string } = { ...body };
+	if (intervalChanged || reEnabled) {
+		const effectiveInterval = body.interval_seconds ?? existing.interval_seconds;
+		patch.next_run_at = new Date(Date.now() + effectiveInterval * 1000).toISOString();
+	}
+
+	const rule = DiscoveryRuleModel.update(uuid, patch);
 
 	logger?.infoSync('Discovery rule updated', {
 		component: LogComponents.deviceApi,

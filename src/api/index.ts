@@ -103,6 +103,22 @@ export class DeviceAPI {
 		this.api.use(express.urlencoded({ limit: '10mb', extended: true }));
 		this.api.use(express.json({ limit: '10mb' }));
 
+		// Admin session/role gate — applies to every /v1/* route from here on,
+		// except an explicit allowlist: auth routes (can't require a session to
+		// get one), and provisioning/device-state bootstrap routes (called by
+		// external tooling before a browser admin session exists, or without
+		// one at all). Health/readiness/ping/admin static assets are already
+		// fully handled above and never reach this point. Non-/v1 paths (e.g.
+		// websocket upgrade requests) pass through untouched.
+		const PUBLIC_API_PATH_PREFIXES = ['/v1/auth', '/v1/provision', '/v1/device'];
+		this.api.use((req, res, next) => {
+			if (!req.path.startsWith('/v1/')) return next();
+			if (PUBLIC_API_PATH_PREFIXES.some((p) => req.path === p || req.path.startsWith(`${p}/`))) {
+				return next();
+			}
+			return middleware.requireRole('viewer')(req, res, next);
+		});
+
 		// Serve admin panel static files (built output from agent/admin/dist)
 		const adminDist = join(__dirname, '../../admin/dist');
 		// Hashed assets (JS/CSS chunks) get long-lived cache; index.html must never be cached

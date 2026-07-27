@@ -1,7 +1,10 @@
 import { client } from './client'
 
+export type UserRole = 'viewer' | 'operator' | 'admin'
+
 export interface AuthUser {
   username: string
+  role: UserRole
   is_superuser: boolean
   must_change_password: boolean
 }

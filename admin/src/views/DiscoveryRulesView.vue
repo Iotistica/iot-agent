@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { message, Modal } from 'ant-design-vue'
 import { PlusOutlined, PlayCircleOutlined, HistoryOutlined, DeleteOutlined, CheckCircleOutlined, StopOutlined } from '@ant-design/icons-vue'
 import type { TableColumnType } from 'ant-design-vue'
@@ -51,15 +51,15 @@ function fmtDuration(ms: number | null): string {
   return `${(ms / 1000).toFixed(1)}s`
 }
 
-async function loadRecentRuns() {
-  recentRunsLoading.value = true
+async function loadRecentRuns(silent = false) {
+  if (!silent) recentRunsLoading.value = true
   try {
     recentRuns.value = await discoveryRulesApi.getRecentRuns(15)
     runsLoaded.value = true
   } catch {
     // non-fatal
   } finally {
-    recentRunsLoading.value = false
+    if (!silent) recentRunsLoading.value = false
   }
 }
 
@@ -89,6 +89,7 @@ const columns: TableColumnType<DiscoveryRule>[] = [
   { title: 'Auto-enable', key: 'auto_enable', width: 100 },
   { title: 'Status', key: 'status', width: 95 },
   { title: 'Last run', key: 'last_run_at', width: 140, ellipsis: true },
+  { title: 'Next run', key: 'next_run_at', width: 140, ellipsis: true },
   { title: 'Last result', key: 'last_result_json', width: 130, ellipsis: true },
   { title: 'Enabled', key: 'enabled', width: 90 },
   { title: 'Actions', key: 'actions', width: 160, fixed: 'right' },
@@ -116,8 +117,11 @@ function resultSummary(rule: DiscoveryRule): string {
   return parts.join(' · ')
 }
 
-async function load() {
-  loading.value = true
+// silent=true (used by the background auto-refresh poll) skips toggling
+// `loading` so the table doesn't flash its spinner every 5s — only the
+// initial mount and manual actions show it.
+async function load(silent = false) {
+  if (!silent) loading.value = true
   error.value = null
   try {
     rows.value = await discoveryRulesApi.getAll()
@@ -125,7 +129,7 @@ async function load() {
     const e = err as { message?: string }
     error.value = e?.message ?? 'Failed to load discovery rules'
   } finally {
-    loading.value = false
+    if (!silent) loading.value = false
   }
 }
 
@@ -212,7 +216,22 @@ async function bulkDisable() {
   }
 }
 
-onMounted(load)
+// A discovery run against a large fleet (e.g. 500 BACnet devices) can take
+// several minutes with no visible log activity during validation — without
+// polling, this page only ever shows whatever was loaded at the moment it was
+// opened, so a run's status/last-run/next-run can look stuck or stale for the
+// entire time you're looking at it. Refresh whichever tab is currently active.
+const REFRESH_MS = 5000
+let refreshTimer: ReturnType<typeof setInterval> | null = null
+
+onMounted(() => {
+  load()
+  refreshTimer = setInterval(() => {
+    if (activeTab.value === 'rules') load(true)
+    else if (activeTab.value === 'runs') loadRecentRuns(true)
+  }, REFRESH_MS)
+})
+onUnmounted(() => { if (refreshTimer) clearInterval(refreshTimer) })
 </script>
 
 <template>
@@ -287,6 +306,12 @@ onMounted(load)
 
             <template v-else-if="column.key === 'last_run_at'">
               <span style="color: #888; font-size: 12px">{{ fmtDate(record.last_run_at) }}</span>
+            </template>
+
+            <template v-else-if="column.key === 'next_run_at'">
+              <span style="color: #888; font-size: 12px">
+                {{ record.enabled ? fmtDate(record.next_run_at) : '—' }}
+              </span>
             </template>
 
             <template v-else-if="column.key === 'last_result_json'">
