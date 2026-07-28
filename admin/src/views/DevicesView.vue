@@ -33,16 +33,19 @@ const rowSelection = computed(() => ({
   onChange: (keys: string[]) => { selectedUuids.value = keys },
 }))
 
-const protocols = computed(() => {
-  const seen = new Set(rows.value.map(d => d.protocol))
-  return [...seen].sort()
-})
-
 const filtered = computed(() =>
   activeProtocol.value
     ? rows.value.filter(d => d.protocol === activeProtocol.value)
     : rows.value,
 )
+
+const protocolCounts = computed(() => {
+  const counts: Record<string, number> = {}
+  for (const d of rows.value) {
+    counts[d.protocol] = (counts[d.protocol] ?? 0) + 1
+  }
+  return counts
+})
 
 const columns: TableColumnType[] = [
   { title: 'Name',       key: 'name',       ellipsis: true },
@@ -103,9 +106,9 @@ function confirmDeleteSelected() {
     async onOk() {
       deleting.value = true
       try {
-        await Promise.allSettled(selectedUuids.value.map((uuid) => client.delete(`/v1/devices/${uuid}`)))
+        const results = await Promise.allSettled(selectedUuids.value.map((uuid) => client.delete(`/v1/devices/${uuid}`)))
+        reportBulkResult(results, 'Deleted', 'delete')
         selectedUuids.value = []
-        message.success(`Deleted ${count} device${count !== 1 ? 's' : ''}`)
         await load()
       } finally {
         deleting.value = false
@@ -114,13 +117,28 @@ function confirmDeleteSelected() {
   })
 }
 
+// Promise.allSettled never throws — without inspecting each result, a bulk
+// action against a broken/missing endpoint silently "succeeds" with nothing
+// actually changed. Surface real failures instead of a blanket success.
+function reportBulkResult(results: PromiseSettledResult<unknown>[], verbPast: string, verbInf: string): void {
+  const failed = results.filter((r) => r.status === 'rejected').length
+  const ok = results.length - failed
+  if (failed === 0) {
+    message.success(`${verbPast} ${ok} device${ok !== 1 ? 's' : ''}`)
+  } else if (ok === 0) {
+    message.error(`Failed to ${verbInf} ${failed} device${failed !== 1 ? 's' : ''}`)
+  } else {
+    message.warning(`${verbPast} ${ok}, failed to ${verbInf} ${failed}`)
+  }
+}
+
 async function bulkEnable() {
   const uuids = [...selectedUuids.value]
   bulkEnabling.value = true
   try {
-    await Promise.allSettled(uuids.map((uuid) => client.patch(`/v1/devices/${uuid}`, { enabled: true })))
+    const results = await Promise.allSettled(uuids.map((uuid) => client.patch(`/v1/devices/${uuid}`, { enabled: true })))
+    reportBulkResult(results, 'Enabled', 'enable')
     selectedUuids.value = []
-    message.success(`Enabled ${uuids.length} device${uuids.length !== 1 ? 's' : ''}`)
     await load()
   } finally {
     bulkEnabling.value = false
@@ -131,9 +149,9 @@ async function bulkDisable() {
   const uuids = [...selectedUuids.value]
   bulkDisabling.value = true
   try {
-    await Promise.allSettled(uuids.map((uuid) => client.patch(`/v1/devices/${uuid}`, { enabled: false })))
+    const results = await Promise.allSettled(uuids.map((uuid) => client.patch(`/v1/devices/${uuid}`, { enabled: false })))
+    reportBulkResult(results, 'Disabled', 'disable')
     selectedUuids.value = []
-    message.success(`Disabled ${uuids.length} device${uuids.length !== 1 ? 's' : ''}`)
     await load()
   } finally {
     bulkDisabling.value = false
@@ -176,20 +194,17 @@ onUnmounted(() => {
       </div>
 
       <!-- Protocol filter tabs -->
-      <div v-if="protocols.length > 1" class="protocol-tabs">
+      <div class="protocol-tabs">
         <a-radio-group
           v-model:value="activeProtocol"
           button-style="solid"
           size="small"
         >
           <a-radio-button value="">All ({{ rows.length }})</a-radio-button>
-          <a-radio-button
-            v-for="p in protocols"
-            :key="p"
-            :value="p"
-          >
-            {{ protocolLabel(p) }} ({{ rows.filter(d => d.protocol === p).length }})
-          </a-radio-button>
+          <a-radio-button value="modbus">Modbus ({{ protocolCounts.modbus ?? 0 }})</a-radio-button>
+          <a-radio-button value="opcua">OPC-UA ({{ protocolCounts.opcua ?? 0 }})</a-radio-button>
+          <a-radio-button value="mqtt">MQTT ({{ protocolCounts.mqtt ?? 0 }})</a-radio-button>
+          <a-radio-button value="bacnet">BACnet ({{ protocolCounts.bacnet ?? 0 }})</a-radio-button>
         </a-radio-group>
       </div>
 

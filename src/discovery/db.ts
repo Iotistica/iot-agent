@@ -27,7 +27,12 @@ export class DiscoveryStore {
 		// weren't matched by any discovered device get disabled (soft — mirrors the
 		// cloud API's deleteEndpoint, not hardDeleteEndpoint). dryRun reports what
 		// would be pruned without writing, so a caller can preview before committing.
-		prune?: { protocols: string[]; dryRun?: boolean }
+		prune?: { protocols: string[]; dryRun?: boolean },
+		// Default `enabled` state for newly-created endpoints (a discovery rule's
+		// "auto-enable found endpoints" setting) — independent of updateOnly, which
+		// controls whether new endpoints get created at all. A pre-existing target
+		// endpoint's own explicit `enabled` value (below) still takes priority.
+		autoEnableNew: boolean = false
 	): Promise<{ saved: number; skipped: number; pruned: number; prunedDevices?: Array<{ name: string; protocol: string }> }> {
 		if (discovered.length === 0 && !prune) {
 			this.logger?.debugSync('No discovered endpoints to save', {
@@ -111,6 +116,14 @@ export class DiscoveryStore {
 					const wouldClearDataPoints = (existing.data_points?.length ?? 0) > 0 && (device.dataPoints?.length ?? 0) === 0;
 					const dataPointsChanged = !wouldClearDataPoints && JSON.stringify(existing.data_points) !== JSON.stringify(device.dataPoints);
 					const validationChanged = device.validated && !existing.metadata?.validated;
+					// One-way ratchet: a rule with auto_enable on turns an already-known
+					// device on if it wasn't already — a rule WITHOUT auto_enable never
+					// forces it back off. Applies on every run this device is matched, not
+					// just at first discovery — otherwise "auto-enable" only ever took
+					// effect once, and a device created before this option existed (or
+					// before it was turned on) would stay disabled forever regardless of
+					// the rule's current setting.
+					const shouldRatchetEnable = autoEnableNew && !existing.enabled;
 
 					this.logger?.debugSync(`Configuration comparison for "${device.name}"`, {
 						component: LogComponents.discovery,
@@ -138,6 +151,17 @@ export class DiscoveryStore {
 
 						await EndpointModel.update(existing.name, {
 							data_points: device.dataPoints || [],
+							// Merge fresh discovery-derived connection fields (security mode/
+							// policy/trust mode/credentials — this rule's discovery run is
+							// authoritative for these) on top of the existing connection,
+							// preserving any other manually-set fields (connectionTimeout etc.)
+							// discovery doesn't know about. Without this, a device discovered
+							// once with a broken/stale connection (e.g. wrong certificateTrustMode)
+							// stays broken forever — this "already exists" branch previously
+							// never touched `connection` at all, so re-running discovery could
+							// never actually fix it.
+							connection: { ...existing.connection, ...device.connection },
+							enabled: shouldRatchetEnable ? true : existing.enabled,
 							metadata: {
 								...existing.metadata,
 								...device.metadata,
@@ -155,6 +179,14 @@ export class DiscoveryStore {
 							updatedDataPoints: device.dataPoints?.length || 0,
 							operation: 'DeviceEndpointModel.update'
 						});
+
+						if (shouldRatchetEnable) {
+							this.logger?.infoSync(`Device "${existing.name}" auto-enabled by discovery rule`, {
+								component: LogComponents.discovery,
+								traceId,
+								protocol: device.protocol
+							});
+						}
 
 						const updatedDevice = await EndpointModel.getByName(existing.name);
 						if (updatedDevice) {
@@ -177,11 +209,16 @@ export class DiscoveryStore {
 							);
 						}
 
-						if (existing.enabled) {
+						// existing.enabled is the pre-update value — shouldRatchetEnable means
+						// we just flipped it to true in the write above, so check the
+						// resulting state, not the stale one, or a freshly auto-enabled
+						// device's adapter never gets told to actually start polling it.
+						if (existing.enabled || shouldRatchetEnable) {
 							this.emit('endpoint-enabled', {
 								protocol: device.protocol,
 								endpoint: {
 									...existing,
+									enabled: true,
 									data_points: device.dataPoints || [],
 									metadata: { ...existing.metadata, profile: device.metadata?.profile }
 								},
@@ -199,16 +236,57 @@ export class DiscoveryStore {
 						continue;
 
 					} else {
-						await EndpointModel.updateLastSeen(device.fingerprint);
-
-						if (configChanged) {
-							this.logger?.debugSync(`Device "${device.name}" moved/reconfigured`, {
-								component: LogComponents.discovery,
-								traceId,
-								oldConnection: existing.connection,
-								newConnection: device.connection
+						if (configChanged || shouldRatchetEnable) {
+							// Actually persist the merged connection — this branch previously
+							// only logged oldConnection/newConnection for debugging and bumped
+							// lastSeenAt, never writing the change. That meant a device whose
+							// data/profile hadn't changed but whose connection HAD (e.g. fixing
+							// certificateTrustMode/credentials on a discovery rule) could never
+							// be corrected by re-running discovery, no matter how many times.
+							// Safe to merge unconditionally here: `existing` was matched by
+							// fingerprint/name/endpointUrl above, so this is confirmed to be the
+							// same server — even an endpointUrl change reflects that server
+							// genuinely being found at a new address, which is exactly what
+							// should be persisted.
+							await EndpointModel.update(existing.name, {
+								connection: { ...existing.connection, ...device.connection },
+								enabled: shouldRatchetEnable ? true : existing.enabled,
+								lastSeenAt: new Date()
 							});
-						} else if (fingerprintChanged) {
+							if (configChanged) {
+								this.logger?.debugSync(`Device "${device.name}" moved/reconfigured — connection updated`, {
+									component: LogComponents.discovery,
+									traceId,
+									oldConnection: existing.connection,
+									newConnection: device.connection
+								});
+							}
+							if (shouldRatchetEnable) {
+								this.logger?.infoSync(`Device "${device.name}" auto-enabled by discovery rule`, {
+									component: LogComponents.discovery,
+									traceId,
+									protocol: device.protocol
+								});
+								// Same reload-trigger this branch's sibling above already does on
+								// enable — without it, an adapter restart would be the only way to
+								// pick up a device auto-enabled via this "connection changed"/
+								// "unchanged" path specifically (see init/adapters.ts's listener).
+								this.emit('endpoint-enabled', {
+									protocol: device.protocol,
+									endpoint: {
+										...existing,
+										enabled: true,
+										connection: { ...existing.connection, ...device.connection },
+										data_points: device.dataPoints || existing.data_points
+									},
+									isBatchDiscovery: !!traceId
+								});
+							}
+						} else {
+							await EndpointModel.updateLastSeen(device.fingerprint);
+						}
+
+						if (fingerprintChanged) {
 							this.logger?.debugSync(`Device "${device.name}" fingerprint changed (dynamic data)`, {
 								component: LogComponents.discovery,
 								traceId,
@@ -247,7 +325,7 @@ export class DiscoveryStore {
 					continue;
 				}
 
-				let endpointEnabled = false;
+				let endpointEnabled = autoEnableNew;
 				const targetEndpoint = device.metadata?.connectionName
 					? targetEndpointByName.get(device.metadata.connectionName)
 					: targetEndpointByName.get(device.name);

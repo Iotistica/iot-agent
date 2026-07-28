@@ -44,12 +44,19 @@ const form = ref<DiscoveryRuleFormData>(blankForm())
 // ── Per-protocol param editors ───────────────────────────────────────────────
 interface BACnetParams { targets: string; timeout: number | null; maxDevices: number | null }
 interface ModbusParams  { tcpHost: string; tcpPort: number | null; slaveMin: number; slaveMax: number; timeout: number | null }
-interface OpcuaParams   { discoveryUrls: string }
+interface OpcuaParams   {
+  discoveryUrls: string
+  securityMode: string
+  securityPolicy: string
+  certificateTrustMode: string
+  username: string
+  password: string
+}
 interface MqttParams    { brokerUrl: string; topics: string; samplingDurationMs: number | null }
 
 const bacnet = ref<BACnetParams>({ targets: '', timeout: null, maxDevices: null })
 const modbus = ref<ModbusParams>({ tcpHost: '', tcpPort: null, slaveMin: 1, slaveMax: 10, timeout: null })
-const opcua  = ref<OpcuaParams>({ discoveryUrls: '' })
+const opcua  = ref<OpcuaParams>({ discoveryUrls: '', securityMode: '', securityPolicy: '', certificateTrustMode: '', username: '', password: '' })
 const mqttP  = ref<MqttParams>({ brokerUrl: '', topics: '', samplingDurationMs: null })
 
 function parseParamsInto(protocol: string, params: Record<string, any> | null): void {
@@ -67,8 +74,13 @@ function parseParamsInto(protocol: string, params: Record<string, any> | null): 
     modbus.value.slaveMax       = Array.isArray(range) ? range[1] : 10
     modbus.value.timeout        = params.timeout  ?? null
   } else if (protocol === 'opcua') {
-    const urls                  = params.discoveryUrls
-    opcua.value.discoveryUrls   = Array.isArray(urls) ? urls.join(', ') : (urls ?? '')
+    const urls                        = params.discoveryUrls
+    opcua.value.discoveryUrls         = Array.isArray(urls) ? urls.join(', ') : (urls ?? '')
+    opcua.value.securityMode          = params.securityMode          ?? ''
+    opcua.value.securityPolicy        = params.securityPolicy        ?? ''
+    opcua.value.certificateTrustMode  = params.certificateTrustMode  ?? ''
+    opcua.value.username              = params.username              ?? ''
+    opcua.value.password              = params.password              ?? ''
   } else if (protocol === 'mqtt') {
     const topics                = params.topics
     mqttP.value.brokerUrl       = params.brokerUrl          ?? ''
@@ -80,7 +92,7 @@ function parseParamsInto(protocol: string, params: Record<string, any> | null): 
 function resetProtocolParams(protocol: string): void {
   if (protocol === 'bacnet')  bacnet.value = { targets: '', timeout: null, maxDevices: null }
   if (protocol === 'modbus')  modbus.value = { tcpHost: '', tcpPort: null, slaveMin: 1, slaveMax: 10, timeout: null }
-  if (protocol === 'opcua')   opcua.value  = { discoveryUrls: '' }
+  if (protocol === 'opcua')   opcua.value  = { discoveryUrls: '', securityMode: '', securityPolicy: '', certificateTrustMode: '', username: '', password: '' }
   if (protocol === 'mqtt')    mqttP.value  = { brokerUrl: '', topics: '', samplingDurationMs: null }
 }
 
@@ -103,7 +115,14 @@ function buildParamsJson(protocol: string): Record<string, any> | null {
   }
   if (protocol === 'opcua') {
     const urls = opcua.value.discoveryUrls.split(',').map(s => s.trim()).filter(Boolean)
-    return urls.length ? { discoveryUrls: urls } : null
+    const p: Record<string, any> = {}
+    if (urls.length)                          p.discoveryUrls        = urls
+    if (opcua.value.securityMode)             p.securityMode         = opcua.value.securityMode
+    if (opcua.value.securityPolicy)           p.securityPolicy       = opcua.value.securityPolicy
+    if (opcua.value.certificateTrustMode)     p.certificateTrustMode = opcua.value.certificateTrustMode
+    if (opcua.value.username)                 p.username             = opcua.value.username
+    if (opcua.value.password)                 p.password             = opcua.value.password
+    return Object.keys(p).length ? p : null
   }
   if (protocol === 'mqtt') {
     const p: Record<string, any> = {}
@@ -214,7 +233,7 @@ function close() {
         </a-col>
         <a-col :span="12">
           <a-form-item
-            label="Auto-enable found endpoints"
+            label="Auto-enable found sources"
             name="auto_enable"
           >
             <a-switch v-model:checked="form.auto_enable" />
@@ -293,6 +312,35 @@ function close() {
               :rows="3"
               placeholder="opc.tcp://192.168.1.50:4840, opc.tcp://plc.local:4840"
             />
+          </a-form-item>
+          <a-form-item label="Security Mode" extra="Leave as None unless the server requires signing/encryption.">
+            <a-select v-model:value="opcua.securityMode" allow-clear placeholder="None">
+              <a-select-option value="None">None</a-select-option>
+              <a-select-option value="Sign">Sign</a-select-option>
+              <a-select-option value="SignAndEncrypt">SignAndEncrypt</a-select-option>
+            </a-select>
+          </a-form-item>
+          <a-form-item label="Security Policy">
+            <a-select v-model:value="opcua.securityPolicy" allow-clear placeholder="None">
+              <a-select-option value="None">None</a-select-option>
+              <a-select-option value="Basic128Rsa15">Basic128Rsa15</a-select-option>
+              <a-select-option value="Basic256">Basic256</a-select-option>
+              <a-select-option value="Basic256Sha256">Basic256Sha256</a-select-option>
+              <a-select-option value="Aes128_Sha256_RsaOaep">Aes128_Sha256_RsaOaep</a-select-option>
+              <a-select-option value="Aes256_Sha256_RsaPss">Aes256_Sha256_RsaPss</a-select-option>
+            </a-select>
+          </a-form-item>
+          <a-form-item label="Certificate Trust Mode" extra="Self-signed server certs need trust-on-first-use.">
+            <a-select v-model:value="opcua.certificateTrustMode" allow-clear placeholder="strict">
+              <a-select-option value="strict">strict</a-select-option>
+              <a-select-option value="trust-on-first-use">trust-on-first-use</a-select-option>
+            </a-select>
+          </a-form-item>
+          <a-form-item label="Username">
+            <a-input v-model:value="opcua.username" autocomplete="off" />
+          </a-form-item>
+          <a-form-item label="Password">
+            <a-input-password v-model:value="opcua.password" autocomplete="new-password" />
           </a-form-item>
         </template>
 

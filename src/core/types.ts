@@ -206,6 +206,8 @@ export interface ConfigStep {
 	action: 'registerDevice' | 'unregisterDevice' | 'updateDevice';
 	device?: ProtocolAdapterDevice;
 	deviceId?: string;
+	/** Protocol of the removed device — only needed for unregisterDevice, where `device` isn't set. */
+	protocol?: string;
 }
 
 export interface ConfigReconciliationResult {
@@ -218,4 +220,6 @@ export interface ConfigReconciliationResult {
 		error: string;
 	}>;
 	timestamp: Date;
+	/** Protocols touched by this reconciliation's steps — lets listeners scope reloads instead of reloading every protocol. */
+	changedProtocols: string[];
 }

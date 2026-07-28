@@ -184,6 +184,16 @@ onMounted(() => { if (props.protocol === 'bacnet') loadVendors() })
         <a-select-option value="Aes128_Sha256_RsaOaep">Aes128_Sha256_RsaOaep</a-select-option>
       </a-select>
     </a-form-item>
+    <a-form-item
+      label="Certificate Trust Mode"
+      :name="['connection', 'certificateTrustMode']"
+      extra="Self-signed server certs (e.g. dev/test servers) need trust-on-first-use, or the connection will be rejected."
+    >
+      <a-select :value="get('certificateTrustMode', 'strict')" @update:value="set('certificateTrustMode', $event)">
+        <a-select-option value="strict">strict</a-select-option>
+        <a-select-option value="trust-on-first-use">trust-on-first-use</a-select-option>
+      </a-select>
+    </a-form-item>
     <a-form-item label="Username" :name="['connection', 'username']">
       <a-input
         :value="get('username', '')"

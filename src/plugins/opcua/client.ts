@@ -1,20 +1,25 @@
 import { createHash } from 'crypto';
 import {
 	AttributeIds,
+	type ClientAlarm,
+	type ClientAlarmList,
 	type ClientMonitoredItem,
 	type ClientSession,
 	type ClientSubscription,
 	DataType,
 	type DataValue,
+	installAlarmMonitoring,
 	MessageSecurityMode,
 	type OPCUAClient,
 	OPCUAClient as OPCUAClientFactory,
 	type ReadValueIdOptions,
 	SecurityPolicy,
 	type StatusCode,
+	uninstallAlarmMonitoring,
 	UserTokenType,
 	Variant,
 } from 'node-opcua-client';
+import { ProtocolAlarmModel } from '../../db/models/protocol-alarm.model.js';
 import {
 	type IProtocolClient,
 	type Logger,
@@ -45,6 +50,7 @@ export interface OPCUASession {
 	reconnectTimer?: NodeJS.Timeout;
 	currentRetryDelay: number;
 	consecutiveFailures: number;
+	clientAlarmList?: ClientAlarmList | null;
 }
 
 /**
@@ -149,6 +155,9 @@ implements IProtocolClient<ReadValueIdOptions[], DataValue[]>
 			}
 
 			this.sessionWrapper = createOPCUASession(client, session, this.minRetryDelay);
+			// Best-effort — a server that doesn't support A&C (or any other
+			// failure here) must not be treated as a failed device connection.
+			await this.wireAlarmMonitoring(this.sessionWrapper);
 		} catch (error) {
 			try {
 				await client.disconnect();
@@ -156,6 +165,48 @@ implements IProtocolClient<ReadValueIdOptions[], DataValue[]>
 				// Ignore cleanup errors when primary connect failed.
 			}
 			throw error;
+		}
+	}
+
+	/**
+	 * Installs node-opcua's built-in Alarms & Conditions client support
+	 * (subscribes for Condition events on the Server node, calls
+	 * ConditionRefresh automatically) and persists open/clear transitions
+	 * to the protocol_alarms table (protocol='opcua'). Best-effort: swallows its own failures so a
+	 * server without A&C support doesn't affect the device connection.
+	 */
+	private async wireAlarmMonitoring(sessionWrapper: OPCUASession): Promise<void> {
+		if (!sessionWrapper.session) {
+			return;
+		}
+		try {
+			const clientAlarmList = await installAlarmMonitoring(sessionWrapper.session);
+			sessionWrapper.clientAlarmList = clientAlarmList;
+
+			clientAlarmList.on('newAlarm', (alarm: ClientAlarm) => {
+				const messageField = alarm.getField('message')?.value;
+				const message = (messageField && typeof messageField === 'object' && 'text' in messageField
+					? String((messageField as { text?: unknown }).text)
+					: undefined) ?? alarm.eventType.toString();
+				const severity = Number(alarm.getField('severity')?.value ?? 0);
+				ProtocolAlarmModel.insert({
+					protocol: 'opcua',
+					condition_id: alarm.conditionId.toString(),
+					event_type: alarm.eventType.toString(),
+					device_name: this.device.name,
+					message,
+					severity,
+				});
+				this.logger.warn(`OPC-UA alarm on ${this.device.name}: ${message}`);
+			});
+
+			clientAlarmList.on('alarmChanged', (alarm: ClientAlarm) => {
+				if (!alarm.getRetain()) {
+					ProtocolAlarmModel.markCleared('opcua', alarm.conditionId.toString());
+				}
+			});
+		} catch (error) {
+			this.logger.debug(`Alarm monitoring not available for ${this.device.name}: ${error}`);
 		}
 	}
 
@@ -199,6 +250,17 @@ implements IProtocolClient<ReadValueIdOptions[], DataValue[]>
 					// Ignore per-subscription errors during cleanup.
 				}
 				sessionWrapper.subscription = null;
+			}
+
+			if (sessionWrapper.session && sessionWrapper.clientAlarmList) {
+				try {
+					await uninstallAlarmMonitoring(sessionWrapper.session);
+				} catch (error) {
+					// Same reasoning as the session.close() catch just below —
+					// must not skip session/client cleanup.
+					this.logger.debug(`Error uninstalling OPC-UA alarm monitoring during cleanup: ${error}`);
+				}
+				sessionWrapper.clientAlarmList = null;
 			}
 
 			if (sessionWrapper.session) {

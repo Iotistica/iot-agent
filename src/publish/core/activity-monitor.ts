@@ -18,6 +18,7 @@ export interface SubscriptionActivity {
 	endpointName: string;
 	lastMetric: string;
 	lastValue: unknown;
+	lastUnit?: string;
 	lastQuality?: string;
 	pointCount: number;
 	totalBatches: number;
@@ -31,6 +32,7 @@ export interface ActivityEvent {
 	protocol: string;
 	metric: string;
 	value: unknown;
+	unit?: string;
 	quality?: string;
 	subscriptionId: number | null;
 	destinationId: number;
@@ -40,8 +42,10 @@ export interface ActivityEvent {
 
 // One event is now recorded per distinct metric per batch (not one per batch),
 // so a single BACnet endpoint with dozens of points fills this far faster than
-// when it was tuned for one row per publish tick.
-const MAX_EVENTS = 2000;
+// when it was tuned for one row per publish tick. Capped per protocol (see
+// eventsByProtocol below), not globally — a single shared buffer let a
+// high-volume protocol evict a quieter one's entire history within seconds.
+const MAX_EVENTS_PER_PROTOCOL = 500;
 
 // Endpoint names are generated internally as "{protocol}-pipe" (see
 // init/features.ts) — "pipe" reflects internal plumbing (the endpoint's
@@ -55,7 +59,12 @@ function displayEndpointName(endpointName: string): string {
 
 class ActivityMonitor {
 	private bySubscription = new Map<string, SubscriptionActivity>();
-	private recentEvents: ActivityEvent[] = [];
+	// Keyed by lowercased protocol — each protocol gets its own ring buffer so a
+	// high-volume one (e.g. many BACnet points polling every few seconds) can
+	// never evict a quieter protocol's history. `id` stays a single monotonic
+	// counter across all buckets so the no-filter view can still merge them back
+	// into one correctly-ordered feed.
+	private eventsByProtocol = new Map<string, ActivityEvent[]>();
 	private nextEventId = 1;
 
 	record(params: {
@@ -67,6 +76,7 @@ class ActivityMonitor {
 		endpointName: string;
 		metric: string;
 		value: unknown;
+		unit?: string;
 		quality?: string;
 		pointCount: number;
 	}): void {
@@ -84,28 +94,35 @@ class ActivityMonitor {
 			endpointName: params.endpointName,
 			lastMetric: params.metric,
 			lastValue: params.value,
+			lastUnit: params.unit,
 			lastQuality: params.quality,
 			pointCount: params.pointCount,
 			totalBatches: (existing?.totalBatches ?? 0) + 1,
 			lastPublishTime: now,
 		});
 
-		this.recentEvents.push({
+		const event: ActivityEvent = {
 			id: this.nextEventId++,
 			timestamp: now,
 			endpointName: params.endpointName,
 			protocol: params.protocol,
 			metric: params.metric,
 			value: params.value,
+			unit: params.unit,
 			quality: params.quality,
 			subscriptionId: params.subscriptionId,
 			destinationId: params.destinationId,
 			destinationName: params.destinationName,
 			pointCount: params.pointCount,
-		});
-		if (this.recentEvents.length > MAX_EVENTS) {
-			this.recentEvents.splice(0, this.recentEvents.length - MAX_EVENTS);
+		};
+
+		const protocolKey = params.protocol.toLowerCase();
+		const bucket = this.eventsByProtocol.get(protocolKey) ?? [];
+		bucket.push(event);
+		if (bucket.length > MAX_EVENTS_PER_PROTOCOL) {
+			bucket.splice(0, bucket.length - MAX_EVENTS_PER_PROTOCOL);
 		}
+		this.eventsByProtocol.set(protocolKey, bucket);
 	}
 
 	getSubscriptions(): SubscriptionActivity[] {
@@ -114,8 +131,15 @@ class ActivityMonitor {
 			.map((s) => ({ ...s, endpointName: displayEndpointName(s.endpointName) }));
 	}
 
-	getRecentEvents(limit = 100): ActivityEvent[] {
-		return this.recentEvents.slice(-limit).reverse()
+	getRecentEvents(limit = 100, protocol?: string): ActivityEvent[] {
+		let merged: ActivityEvent[];
+		if (protocol) {
+			merged = this.eventsByProtocol.get(protocol.toLowerCase()) ?? [];
+		} else {
+			merged = Array.from(this.eventsByProtocol.values()).flat();
+			merged.sort((a, b) => a.id - b.id);
+		}
+		return merged.slice(-limit).reverse()
 			.map((e) => ({ ...e, endpointName: displayEndpointName(e.endpointName) }));
 	}
 }

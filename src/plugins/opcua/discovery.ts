@@ -15,6 +15,11 @@ import type { ConfigManager } from '../../core/config.js';
 export interface OPCUADiscoveryOptions {
   discoveryUrls?: string[]; // e.g., ['opc.tcp://localhost:4840']
   scanForServers?: boolean; // Use LDS (Local Discovery Server)
+  securityMode?: 'None' | 'Sign' | 'SignAndEncrypt';
+  securityPolicy?: 'None' | 'Basic128Rsa15' | 'Basic256' | 'Basic256Sha256' | 'Aes128_Sha256_RsaOaep' | 'Aes256_Sha256_RsaPss';
+  certificateTrustMode?: 'strict' | 'trust-on-first-use';
+  username?: string;
+  password?: string;
 }
 
 export interface OPCUABrowseRequest {
@@ -342,7 +347,14 @@ export class OPCUADiscovery extends BaseDiscovery {
 				uuid: undefined,
 				name: `opcua_${endpointUrl.replace(/[^a-zA-Z0-9]/g, '_')}`,
 				protocol: 'opcua',
-				connection: { endpointUrl },
+				connection: {
+					endpointUrl,
+					securityMode: options?.securityMode,
+					securityPolicy: options?.securityPolicy,
+					certificateTrustMode: options?.certificateTrustMode,
+					username: options?.username,
+					password: options?.password,
+				},
 				dataPoints: []
 			}));
 
@@ -386,7 +398,7 @@ export class OPCUADiscovery extends BaseDiscovery {
 			if (!url) continue;
 
 			try {
-				const { OPCUAClient } = await import('node-opcua-client');
+				const { OPCUAClient, MessageSecurityMode, SecurityPolicy, UserTokenType } = await import('node-opcua-client');
 				const { getDefaultCertificateManager } = await import('node-opcua-certificate-manager');
 				const certificateManager = getDefaultCertificateManager('PKI');
 				certificateManager.automaticallyAcceptUnknownCertificate =
@@ -396,6 +408,8 @@ export class OPCUADiscovery extends BaseDiscovery {
 					applicationName: 'Iotistica Agent',
 					applicationUri: 'urn:iotistica:agent',
 					endpointMustExist : false,
+					securityMode: this.resolveBrowseSecurityMode(endpoint.connection?.securityMode, MessageSecurityMode),
+					securityPolicy: this.resolveBrowseSecurityPolicy(endpoint.connection?.securityPolicy, SecurityPolicy),
 					clientCertificateManager: certificateManager,
 					connectionStrategy: {
 						maxRetry: 1,
@@ -406,11 +420,17 @@ export class OPCUADiscovery extends BaseDiscovery {
 
 				await client.connect(url);
 				const endpoints = await client.getEndpoints();
-				
+
 				// Create session to browse the node tree
-				const session = await client.createSession();
-				const dataPoints: Array<{ nodeId: string; name: string; browseName?: string; device_uuid?: string }> = [];
-				
+				const session = endpoint.connection?.username && endpoint.connection?.password
+					? await client.createSession({
+						type: UserTokenType.UserName,
+						userName: endpoint.connection.username,
+						password: endpoint.connection.password,
+					})
+					: await client.createSession();
+				const dataPoints: Array<{ nodeId: string; name: string; browseName?: string; device_uuid?: string; device_name?: string }> = [];
+
 				try {
 					// Recursive tree browsing function
 					const browseRecursive = async (
@@ -418,7 +438,8 @@ export class OPCUADiscovery extends BaseDiscovery {
 						pathSegments: string[] = [],
 						depth: number = 0,
 						maxDepth: number = 10,
-						inheritedDeviceUuid?: string  // UUID from parent folder's DeviceUUID node
+						inheritedDeviceUuid?: string,  // UUID from parent folder's DeviceUUID node
+						inheritedDeviceName?: string   // Friendly name of the folder that owns that DeviceUUID node
 					): Promise<void> => {
 						// Protection against infinite loops
 						if (depth > maxDepth) {
@@ -435,6 +456,12 @@ export class OPCUADiscovery extends BaseDiscovery {
 
 							// Pre-scan: look for a DeviceUUID variable in this folder to stamp on siblings
 							let folderDeviceUuid: string | undefined = inheritedDeviceUuid;
+							// The folder that directly owns the DeviceUUID marker IS the device —
+							// its own browseName (last segment of pathSegments, e.g. "FCU-11A") is
+							// the human-friendly name the device actually reports, as opposed to
+							// the technical endpoint-name+uuid-suffix fallback device.model.ts
+							// otherwise has to construct.
+							let folderDeviceName: string | undefined = inheritedDeviceName;
 							for (const ref of refs) {
 								if (ref.browseName?.name === 'DeviceUUID') {
 									try {
@@ -444,6 +471,7 @@ export class OPCUADiscovery extends BaseDiscovery {
 										});
 										if (val.value?.value && typeof val.value.value === 'string') {
 											folderDeviceUuid = val.value.value;
+											folderDeviceName = pathSegments[pathSegments.length - 1] || folderDeviceName;
 										}
 									} catch (_) { /* ignore read errors */ }
 									break;
@@ -492,6 +520,7 @@ export class OPCUADiscovery extends BaseDiscovery {
 											// use as the metric tag — preserved separately here for accurate display.
 											browseName: nodeName,
 											...(folderDeviceUuid && { device_uuid: folderDeviceUuid }),
+											...(folderDeviceName && { device_name: folderDeviceName }),
 										});
 										
 										this.logger?.debugSync(`Discovered variable: ${currentPath.join('/')}`, {
@@ -503,14 +532,14 @@ export class OPCUADiscovery extends BaseDiscovery {
 											...(folderDeviceUuid && { device_uuid: folderDeviceUuid }),
 										});
 									} else if (actualNodeClass === 1) {
-										// Verified folder - recurse into it, propagating any UUID found
+										// Verified folder - recurse into it, propagating any UUID/name found
 										this.logger?.debugSync(`Browsing into folder: ${currentPath.join('/')}`, {
 											component: LogComponents.discovery + "] [" + this.protocol as any,
 											nodeId: childNodeId,
 											depth
 										});
-										
-										await browseRecursive(childNodeId, currentPath, depth + 1, maxDepth, folderDeviceUuid);
+
+										await browseRecursive(childNodeId, currentPath, depth + 1, maxDepth, folderDeviceUuid, folderDeviceName);
 									}
 								} catch (readError) {
 									// If we can't read NodeClass, skip this node
@@ -592,7 +621,17 @@ export class OPCUADiscovery extends BaseDiscovery {
 							endpointUrl: url,
 							securityMode: selectedSecurityMode,
 							securityPolicy: selectedSecurityPolicy,
-							certificateTrustMode: 'strict',
+							// Was hardcoded 'strict' regardless of what this discovery run was
+							// actually configured with — meaning the browse itself could succeed
+							// (using endpoint.connection?.certificateTrustMode further up, from
+							// the rule's own options) while the SAVED device connection silently
+							// reverted to 'strict', breaking every subsequent connection attempt
+							// (the live polling client, any future rediscovery) against a
+							// self-signed server cert with BadCertificateUntrusted. Carry forward
+							// whatever this discovery run was actually configured with instead.
+							certificateTrustMode: endpoint.connection?.certificateTrustMode || 'strict',
+							...(endpoint.connection?.username && { username: endpoint.connection.username }),
+							...(endpoint.connection?.password && { password: endpoint.connection.password }),
 							...(certThumbprint ? { expectedServerThumbprint: certThumbprint } : {})
 						},
 						dataPoints: dataPoints.length > 0 ? dataPoints : [{

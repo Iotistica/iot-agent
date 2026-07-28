@@ -36,7 +36,7 @@ export interface AgentState {
 interface StateReconcilerEvents {
 	'target-state-changed': (state: AgentState) => void;
 	'state-applied': () => void;
-	'reconciliation-complete': (hasEndpointChanges: boolean) => void;
+	'reconciliation-complete': (hasEndpointChanges: boolean, changedProtocols: string[]) => void;
 	'logging-config-changed': (change: { old: any; new: any }) => void;
 	'intervals-changed': (change: { old: any; new: any }) => void;
 	'memory-config-changed': (change: { old: any; new: any }) => void;
@@ -302,6 +302,7 @@ export class StateManager extends EventEmitter {
 			
 			const configResult = await this.configManager.setTarget(this.targetState.config || {});
 			const hasEndpointChanges = (configResult.devicesRegistered + configResult.devicesUpdated + configResult.devicesUnregistered) > 0;
+			const changedProtocols = configResult.changedProtocols || [];
 
 
 			// Step 3: Reconcile agent version (if needed)
@@ -333,7 +334,7 @@ export class StateManager extends EventEmitter {
 				operation: 'reconcile',
 			});
 
-			this.emit('reconciliation-complete', hasEndpointChanges);
+			this.emit('reconciliation-complete', hasEndpointChanges, changedProtocols);
 		} catch (error) {
 			this.logger?.errorSync(
 				'State reconciliation failed',

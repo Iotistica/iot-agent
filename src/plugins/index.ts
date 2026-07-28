@@ -18,6 +18,7 @@ import {
 } from "./types.js";
 import { PluginLoader } from "./plugin-loader.js";
 import { EndpointOutputModel } from "../db/models/endpoint-outputs.model.js";
+import { deviceNameSuffixFor } from "../db/models/device.model.js";
 import { EndpointModel } from "../db/models/endpoint.model.js";
 import { DeviceModel } from "../db/models/device.model.js";
 import { encodeIfUuid } from "../mqtt/codec.js";
@@ -41,6 +42,10 @@ export class AdapterManager extends EventEmitter {
 	private adapters: Map<string, IProtocolAdapter> = new Map();
 	private socketServers: Map<string, SocketServer> = new Map();
 	private adapterStarters: Map<string, ProtocolAdapterStarter> = new Map();
+	// groupName -> protocol, so reloadAdapterGroup() can find every running group
+	// (single-instance and multi-instance) that belongs to one protocol without
+	// touching adapters for other protocols.
+	private groupProtocol: Map<string, string> = new Map();
 	private protocolEnabledOverrides: Map<string, boolean> = new Map();
 	// Shared endpoint UUID lookup for MQTT hot-reloads.
 	private mqttEndpointUuidByName: Map<string, string> = new Map();
@@ -77,11 +82,21 @@ export class AdapterManager extends EventEmitter {
 			// Prefer source-provided device_uuid; otherwise use endpoint UUID.
 			const device_uuid = point.device_uuid || endpointUuid;
 
-			// Build a stable display name suffix with device UUID.
+			// Build a stable display name suffix with device UUID. deviceNameSuffixFor()
+			// (src/db/models/device.model.ts) truncates real UUIDs to 8 hex chars for
+			// readability but keeps non-UUID human-readable identifiers (e.g. the
+			// OPC UA simulator's "lighting-f10") in full, since truncating those
+			// collides whenever multiple devices share a common prefix — except when
+			// that non-UUID identifier is itself just the display name restated
+			// (e.g. device_uuid "vav-f9c" against display name "VAV-F9-C"), in which
+			// case it adds no disambiguating information and is dropped instead of
+			// producing "VAV-F9-C-vavf9c". Must use the same helper as device.model.ts's
+			// device Name — a mismatch would make it impossible to correlate UI device
+			// rows with their own telemetry.
 			const displayBase = this.normalizeDisplayBaseName(point.resolvedDisplayName || point.deviceName);
-			const uuidSuffix = device_uuid.replace(/-/g, "").slice(0, 8);
+			const uuidSuffix = deviceNameSuffixFor(displayBase, device_uuid);
 			const deviceName =
-				uuidSuffix.length === 8 ? `${displayBase}-${uuidSuffix}` : displayBase;
+				uuidSuffix.length > 0 ? `${displayBase}-${uuidSuffix}` : displayBase;
 
 			this.logger.debug("Built endpoint deviceName", {
 				displayBase,
@@ -256,6 +271,7 @@ export class AdapterManager extends EventEmitter {
 		
 		const socket = await this.createSocketServer(protocol);
 		this.adapters.set(normalizedGroup, adapter);
+		this.groupProtocol.set(normalizedGroup, protocol);
 		this.wireAdapterEvents(normalizedGroup, adapter, socket, uuidMap);
 		await adapter.start();
 	}
@@ -379,6 +395,7 @@ export class AdapterManager extends EventEmitter {
 			if (adapter && typeof adapter.stop === "function") await adapter.stop();
 		}
 		this.adapters.clear();
+		this.groupProtocol.clear();
 		for (const [, server] of this.socketServers) await server.stop();
 		this.socketServers.clear();
 		this.running = false;
@@ -444,6 +461,7 @@ export class AdapterManager extends EventEmitter {
 			const socket = await this.createSocketServer("modbus");
 			const adapter = new ModbusAdapter(modbusConfig, this.logger);
 			this.adapters.set("modbus", adapter);
+			this.groupProtocol.set("modbus", "modbus");
 			(adapter as any)._socketServer = socket;
 			this.wireAdapterEvents("modbus", adapter, socket, uuidMap);
 			await adapter.start();
@@ -503,6 +521,7 @@ export class AdapterManager extends EventEmitter {
 			const socket = await this.createSocketServer("modbus");
 			const adapter = new ModbusAdapter(modbusConfig, this.logger);
 			this.adapters.set(groupName, adapter);
+			this.groupProtocol.set(groupName, "modbus");
 			(adapter as any)._socketServer = socket;
 			this.wireAdapterEvents(groupName, adapter, socket, uuidMap);
 			await adapter.start();
@@ -542,6 +561,7 @@ export class AdapterManager extends EventEmitter {
 			const { OPCUAAdapter } = await import("./opcua/adapter.js");
 			const adapter = new OPCUAAdapter(opcuaDevices, this.logger);
 			this.adapters.set("opcua", adapter);
+			this.groupProtocol.set("opcua", "opcua");
 			this.wireAdapterEvents("opcua", adapter, socket, uuidMap);
 			await adapter.start();
 		} catch (error) {
@@ -575,6 +595,7 @@ export class AdapterManager extends EventEmitter {
 			const { OPCUAAdapter } = await import("./opcua/adapter.js");
 			const adapter = new OPCUAAdapter(opcuaDevices, this.logger);
 			this.adapters.set(groupName, adapter);
+			this.groupProtocol.set(groupName, "opcua");
 			this.wireAdapterEvents(groupName, adapter, socket, uuidMap);
 			await adapter.start();
 		} catch (error) {
@@ -713,6 +734,7 @@ export class AdapterManager extends EventEmitter {
 				this.deviceUuid,
 			);
 			this.adapters.set("mqtt", adapter);
+			this.groupProtocol.set("mqtt", "mqtt");
 			// Use class map so handlers always see latest UUID mappings.
 			this.wireAdapterEvents(
 				"mqtt",
@@ -775,6 +797,7 @@ export class AdapterManager extends EventEmitter {
 			const socket = await this.createSocketServer("mqtt");
 			const adapter = new MqttAdapter(mqttConfig, this.logger, this.deviceUuid);
 			this.adapters.set(groupName, adapter);
+			this.groupProtocol.set(groupName, "mqtt");
 			(adapter as any)._socketServer = socket;
 			this.wireAdapterEvents(groupName, adapter, socket, uuidMap);
 			await adapter.start();
@@ -789,6 +812,80 @@ export class AdapterManager extends EventEmitter {
 	async reloadMQTTAdapter(): Promise<void> {
 		if (this.config.mqtt?.enabled) {
 			await this.startMQTTAdapter();
+		}
+	}
+
+	/**
+	 * Stop and restart only the adapter group(s) for one protocol, leaving every
+	 * other protocol's adapters running untouched. Used when reconciliation only
+	 * changed endpoints of a single protocol (e.g. a poll_interval edit), so a
+	 * config edit on one OPC-UA device doesn't disconnect/reconnect BACnet, Modbus,
+	 * etc. Falls back to doing nothing if the protocol has no starter registered —
+	 * callers should use _fullReload() instead when that's a possibility.
+	 */
+	async reloadAdapterGroup(protocol: string): Promise<void> {
+		const normalizedProtocol = protocol.toLowerCase();
+
+		// MQTT already supports in-place hot device updates without reconnecting
+		// (startMQTTAdapter()'s existingAdapter.updateDevices() path, for the
+		// default single-instance groupName) — reuse it instead of tearing the
+		// client down like every other protocol below.
+		if (normalizedProtocol === "mqtt") {
+			(this.config as any).mqtt = { enabled: true };
+			await this.startMQTTAdapter();
+			return;
+		}
+
+		// Stop and remove every currently-running group belonging to this protocol
+		// (covers both the single-instance default groupName===protocol case and
+		// custom multi-instance group names).
+		for (const [groupName, groupProtocol] of [...this.groupProtocol]) {
+			if (groupProtocol !== normalizedProtocol) continue;
+			const adapter = this.adapters.get(groupName);
+			if (adapter && typeof adapter.stop === "function") {
+				await adapter.stop();
+			}
+			this.adapters.delete(groupName);
+			this.groupProtocol.delete(groupName);
+		}
+
+		const oldSocket = this.socketServers.get(normalizedProtocol);
+		if (oldSocket) {
+			await oldSocket.stop();
+			this.socketServers.delete(normalizedProtocol);
+		}
+
+		const starter = this.adapterStarters.get(normalizedProtocol);
+		if (!starter) return;
+
+		// Determine live enabled-ness from the DB rather than the AdapterManager's
+		// static `this.config[protocol].enabled` flag, which was only computed once
+		// at construction time (initProtocolAdapters()) and goes stale — a protocol
+		// with zero enabled endpoints at boot but some enabled later would otherwise
+		// never start here.
+		const allEndpoints = await EndpointModel.getAll();
+		const groups = new Map<string, any[]>();
+		for (const endpoint of allEndpoints) {
+			if (endpoint.protocol !== normalizedProtocol) continue;
+			const groupName = this.getEffectiveGroupName(endpoint.protocol, endpoint.groupName);
+			if (!groups.has(groupName)) groups.set(groupName, []);
+			groups.get(groupName)!.push(endpoint);
+		}
+
+		if (groups.size > 0) {
+			(this.config as any)[normalizedProtocol] = { enabled: true };
+			for (const [groupName, endpoints] of groups) {
+				if (endpoints.length > 0) {
+					await this.startAdapterGroup(normalizedProtocol, groupName, endpoints);
+				}
+			}
+		} else if (
+			this.config[normalizedProtocol as keyof AdapterConfig] &&
+			(this.config[normalizedProtocol as keyof AdapterConfig] as any)?.config
+		) {
+			await starter();
+		} else {
+			(this.config as any)[normalizedProtocol] = { enabled: false };
 		}
 	}
 
@@ -970,6 +1067,7 @@ export class AdapterManager extends EventEmitter {
 			const socket = await this.createSocketServer("bacnet");
 			const adapter = new BACnetAdapter(bacnetConfig, this.logger);
 			this.adapters.set("bacnet", adapter);
+			this.groupProtocol.set("bacnet", "bacnet");
 			this.wireAdapterEvents("bacnet", adapter, socket, uuidMap);
 			await adapter.start();
 			this.logger.info(
@@ -1024,6 +1122,7 @@ export class AdapterManager extends EventEmitter {
 			const socket = await this.createSocketServer("bacnet");
 			const adapter = new BACnetAdapter(bacnetConfig, this.logger);
 			this.adapters.set(groupName, adapter);
+			this.groupProtocol.set(groupName, "bacnet");
 			this.wireAdapterEvents(groupName, adapter, socket, uuidMap);
 			await adapter.start();
 		} catch (error) {

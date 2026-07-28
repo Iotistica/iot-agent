@@ -554,7 +554,7 @@ watch(selectedRuleUuid, () => {
         <span style="color: #aaa; font-size: 12px; margin-left: 4px">
           <template v-if="running && runInBackground">Large scans can take a few minutes — you can close this panel, the scan keeps running.</template>
           <template v-else-if="running">Large scans (hundreds of devices) can take a few minutes — this isn't frozen.</template>
-          <template v-else>Results are shown below — endpoints are not added automatically.</template>
+          <template v-else>Results are shown below — sources are not added automatically.</template>
         </span>
       </div>
       <div style="margin-top: 10px">
@@ -567,13 +567,13 @@ watch(selectedRuleUuid, () => {
       </div>
       <div style="margin-top: 10px">
         <a-checkbox v-model:checked="pruneEnabled" :disabled="running">
-          Disable endpoints not found in this scan
+          Disable sources not found in this scan
         </a-checkbox>
-        <a-tooltip title="After the scan, previously-added endpoints for this protocol that no longer show up (renamed, removed, or reassigned) get disabled — not deleted. You'll see exactly what would be disabled and confirm before anything changes.">
+        <a-tooltip title="After the scan, previously-added sources for this protocol that no longer show up (renamed, removed, or reassigned) get disabled — not deleted. You'll see exactly what would be disabled and confirm before anything changes.">
           <span style="color: #aaa; font-size: 12px; margin-left: 6px; cursor: help">(?)</span>
         </a-tooltip>
         <div v-if="lastPrunedCount !== null" style="color: #888; font-size: 12px; margin-top: 4px">
-          Last run disabled {{ lastPrunedCount }} endpoint{{ lastPrunedCount !== 1 ? 's' : '' }}.
+          Last run disabled {{ lastPrunedCount }} source{{ lastPrunedCount !== 1 ? 's' : '' }}.
         </div>
       </div>
     </template>

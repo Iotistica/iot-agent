@@ -35,6 +35,10 @@ export interface DiscoveryOptions {
 	// Preview what `prune` would disable without writing anything — independent of
 	// skipDbWrites, which has an unrelated meaning (skip creating new endpoints).
 	pruneDryRun?: boolean;
+	// Default `enabled` state for newly-created endpoints (a discovery rule's
+	// "auto-enable found endpoints" setting) — independent of skipDbWrites, which
+	// controls whether new endpoints get created at all, not what state they start in.
+	autoEnableNew?: boolean;
 }
 
 export type { DiscoveredDevice } from '../plugins/types';
@@ -331,7 +335,8 @@ export class DiscoveryService extends EventEmitter {
 			options.skipDbWrites || false,
 			options.prune
 				? { protocols: Array.from(actuallyScannedProtocols), dryRun: options.pruneDryRun ?? false }
-				: undefined
+				: undefined,
+			options.autoEnableNew ?? false
 		);
 
 		for (const device of allDiscovered) {

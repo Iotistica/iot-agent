@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import type { TableColumnType } from 'ant-design-vue'
 import { SearchOutlined } from '@ant-design/icons-vue'
 import AppLayout from '@/components/layout/AppLayout.vue'
@@ -48,11 +48,10 @@ const eventProtocolFilter = ref('')
 const filteredEvents = computed(() => {
   const sourceQ = eventSourceFilter.value.trim().toLowerCase()
   const metricQ = eventMetricFilter.value.trim().toLowerCase()
-  const protocolQ = eventProtocolFilter.value.trim().toLowerCase()
   return events.value.filter((e) =>
     (!sourceQ || friendlySource(e.endpointName).toLowerCase().includes(sourceQ)) &&
     (!metricQ || e.metric.toLowerCase().includes(metricQ)) &&
-    (!protocolQ || protocolLabel(e.protocol).toLowerCase().includes(protocolQ) || e.protocol.toLowerCase().includes(protocolQ))
+    (!eventProtocolFilter.value || e.protocol.toLowerCase() === eventProtocolFilter.value)
   )
 })
 
@@ -63,7 +62,7 @@ async function poll() {
   try {
     const [subs, evts] = await Promise.all([
       pipelineApi.getSubscriptions(),
-      pipelineApi.getEvents(100),
+      pipelineApi.getEvents(100, eventProtocolFilter.value || undefined),
     ])
     subscriptions.value = subs
     events.value = evts
@@ -121,6 +120,7 @@ const subscriptionColumns: TableColumnType<SubscriptionActivity>[] = [
   { title: 'Destination', key: 'destination', width: 180, ellipsis: true },
   { title: 'Last Metric', dataIndex: 'lastMetric', key: 'lastMetric', width: 220, ellipsis: true },
   { title: 'Last Value', key: 'lastValue', width: 140, ellipsis: true },
+  { title: 'Unit', key: 'lastUnit', width: 90, ellipsis: true },
   { title: 'Points', dataIndex: 'pointCount', key: 'pointCount', width: 80 },
   { title: 'Last Publish', key: 'lastPublishTime', width: 110 },
 ]
@@ -131,8 +131,14 @@ const eventColumns: TableColumnType<ActivityEvent>[] = [
   { title: 'Source', key: 'source', width: 220, ellipsis: true },
   { title: 'Metric', dataIndex: 'metric', key: 'metric', width: 220, ellipsis: true },
   { title: 'Value', key: 'value', width: 140, ellipsis: true },
+  { title: 'Unit', key: 'unit', width: 90, ellipsis: true },
   { title: 'Destination', dataIndex: 'destinationName', key: 'destinationName', width: 160, ellipsis: true },
 ]
+
+// Events are now fetched pre-filtered by protocol server-side (see poll()), so
+// changing the dropdown must trigger an immediate refetch instead of waiting
+// up to POLL_MS for the next tick to show the newly-scoped results.
+watch(eventProtocolFilter, () => { poll() })
 
 onMounted(() => {
   ensureDeviceMap()
@@ -143,7 +149,7 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
 </script>
 
 <template>
-  <AppLayout title="Data Flow">
+  <AppLayout title="Data View">
 
     <a-alert
       type="info"
@@ -184,6 +190,9 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
               <a-tag v-if="record.lastQuality === 'BAD'" color="red" style="margin-left: 4px">BAD</a-tag>
             </template>
           </template>
+          <template v-else-if="column.key === 'lastUnit'">
+            {{ record.lastUnit || '—' }}
+          </template>
           <template v-else-if="column.key === 'lastPublishTime'">
             {{ fmtTime(record.lastPublishTime) }}
           </template>
@@ -214,14 +223,17 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
         >
           <template #prefix><SearchOutlined style="color: #bbb" /></template>
         </a-input>
-        <a-input
+        <a-select
           v-model:value="eventProtocolFilter"
-          placeholder="Search by protocol…"
+          placeholder="All protocols"
           allow-clear
-          style="width: 260px"
+          style="width: 180px"
         >
-          <template #prefix><SearchOutlined style="color: #bbb" /></template>
-        </a-input>
+          <a-select-option value="modbus">Modbus</a-select-option>
+          <a-select-option value="opcua">OPC-UA</a-select-option>
+          <a-select-option value="mqtt">MQTT</a-select-option>
+          <a-select-option value="bacnet">BACnet</a-select-option>
+        </a-select>
       </div>
       <a-table
         :columns="eventColumns"
@@ -251,6 +263,9 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
               <span style="font-family: monospace">{{ fmtValue(record.value) }}</span>
               <a-tag v-if="record.quality === 'BAD'" color="red" style="margin-left: 4px">BAD</a-tag>
             </template>
+          </template>
+          <template v-else-if="column.key === 'unit'">
+            {{ record.unit || '—' }}
           </template>
         </template>
         <template #emptyText>

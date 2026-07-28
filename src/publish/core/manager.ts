@@ -1338,6 +1338,7 @@ export class PublishManager extends EventEmitter {
 						endpointName: sourceName,
 						metric,
 						value: record?.value ?? record?.rawValue ?? null,
+						unit: typeof record?.unit === 'string' ? record.unit : undefined,
 						quality: typeof record?.quality === 'string' ? record.quality : undefined,
 						pointCount: records.length,
 					});

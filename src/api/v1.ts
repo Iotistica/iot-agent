@@ -1363,6 +1363,34 @@ router.get('/v1/devices', async (req: Request, res: Response, next: NextFunction
 });
 
 /**
+ * PATCH /v1/devices/:uuid
+ * Enable/disable a device
+ */
+router.patch('/v1/devices/:uuid', requireRole('operator'), async (req: Request, res: Response, next: NextFunction) => {
+	try {
+		const { enabled } = req.body as { enabled?: boolean };
+		if (typeof enabled !== 'boolean') return res.status(400).json({ error: 'enabled (boolean) is required' });
+		const device = await actions.setDeviceEnabled(req.params.uuid, enabled);
+		return res.status(200).json({ device });
+	} catch (error) {
+		next(error);
+	}
+});
+
+/**
+ * DELETE /v1/devices/:uuid
+ * Remove a cached device row
+ */
+router.delete('/v1/devices/:uuid', requireRole('operator'), async (req: Request, res: Response, next: NextFunction) => {
+	try {
+		await actions.deleteDevice(req.params.uuid);
+		return res.status(204).send();
+	} catch (error) {
+		next(error);
+	}
+});
+
+/**
  * GET /v1/publish/destinations
  * List configured upstream publish destinations
  */
@@ -2240,7 +2268,8 @@ router.get('/v1/pipeline/subscriptions', (_req: Request, res: Response) => {
 
 router.get('/v1/pipeline/events', (req: Request, res: Response) => {
 	const limit = Math.min(Math.max(parseInt(String(req.query.limit ?? '100'), 10) || 100, 1), 300);
-	res.json({ events: activityMonitor.getRecentEvents(limit) });
+	const protocol = typeof req.query.protocol === 'string' && req.query.protocol.trim() ? req.query.protocol.trim() : undefined;
+	res.json({ events: activityMonitor.getRecentEvents(limit, protocol) });
 });
 
 // ─── Database Backups ─────────────────────────────────────────────────────────

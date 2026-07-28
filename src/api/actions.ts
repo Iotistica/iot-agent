@@ -1380,6 +1380,29 @@ export const getDevices = async (protocol?: string) => {
 };
 
 /**
+ * Enable/disable a device (and cascade to its parent endpoint when it's a
+ * genuine 1:1 device — see DeviceModel.setEnabled for why).
+ * Used by: PATCH /v1/devices/:uuid
+ */
+export const setDeviceEnabled = async (uuid: string, enabled: boolean) => {
+	const { DeviceModel } = await import('../db/models/device.model.js');
+	const device = await DeviceModel.setEnabled(uuid, enabled);
+	if (!device) throw Object.assign(new Error(`Device not found: ${uuid}`), { statusCode: 404 });
+	return device;
+};
+
+/**
+ * Remove a cached device row (reappears on next discovery if the endpoint
+ * is still reachable).
+ * Used by: DELETE /v1/devices/:uuid
+ */
+export const deleteDevice = async (uuid: string) => {
+	const { DeviceModel } = await import('../db/models/device.model.js');
+	const removed = await DeviceModel.deleteByUuid(uuid);
+	if (!removed) throw Object.assign(new Error(`Device not found: ${uuid}`), { statusCode: 404 });
+};
+
+/**
  * Publish control: list publishers
  */
 export const listPublishDestinations = async (includeDisabled: boolean = true) => {

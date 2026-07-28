@@ -135,6 +135,11 @@ export const OPCUADataPointSchema = z.object({
 	/** Device group UUID — shared by all nodes in the same profile group */
 	device_uuid: z.string().optional(),
 
+	/** Human-readable device name captured at discovery time (e.g. "AHU-1") —
+	 *  the browseName of the folder that owns this node's DeviceUUID marker.
+	 *  See discovery.ts's folderDeviceName. Not all servers expose this. */
+	device_name: z.string().optional(),
+
 	/** Explicitly allow writes for this node. Default false keeps current read-only behavior. */
 	writable: z.boolean().optional().default(false),
 

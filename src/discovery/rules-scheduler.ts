@@ -151,13 +151,18 @@ export class DiscoveryRulesScheduler {
 				protocols: [rule.protocol as any],
 				forceRun: true,
 				validate: true,
-				skipDbWrites: !rule.auto_enable,
+				// Discovered devices are always persisted — auto_enable only controls
+				// what `enabled` state they start in (see autoEnableNew below), not
+				// whether they get saved at all. skipDbWrites has an unrelated meaning
+				// (used by config.ts for the reconcile-owns-creation case) and must
+				// never be derived from auto_enable.
+				autoEnableNew: rule.auto_enable,
 				...(rule.params_json ? { optionOverrides: { [rule.protocol]: rule.params_json } } : {}),
 				...(pruneOptions?.prune ? { prune: true, pruneDryRun: pruneOptions.pruneDryRun ?? false } : {}),
 			});
 
 			const found = devices.length;
-			const saved = rule.auto_enable ? found : 0;
+			const saved = found;
 			const finishedAt = new Date().toISOString();
 			const durationMs = Date.now() - new Date(startedAt).getTime();
 			const next = new Date(Date.now() + rule.interval_seconds * 1000).toISOString();

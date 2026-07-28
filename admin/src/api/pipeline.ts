@@ -10,6 +10,7 @@ export interface SubscriptionActivity {
   endpointName: string
   lastMetric: string
   lastValue: unknown
+  lastUnit?: string
   lastQuality?: string
   pointCount: number
   totalBatches: number
@@ -23,6 +24,7 @@ export interface ActivityEvent {
   protocol: string
   metric: string
   value: unknown
+  unit?: string
   quality?: string
   subscriptionId: number | null
   destinationId: number
@@ -34,7 +36,8 @@ export const pipelineApi = {
   getSubscriptions(): Promise<SubscriptionActivity[]> {
     return client.get<{ subscriptions: SubscriptionActivity[] }>('/v1/pipeline/subscriptions').then(r => r.data.subscriptions)
   },
-  getEvents(limit = 100): Promise<ActivityEvent[]> {
-    return client.get<{ events: ActivityEvent[] }>(`/v1/pipeline/events?limit=${limit}`).then(r => r.data.events)
+  getEvents(limit = 100, protocol?: string): Promise<ActivityEvent[]> {
+    const query = protocol ? `?limit=${limit}&protocol=${encodeURIComponent(protocol)}` : `?limit=${limit}`
+    return client.get<{ events: ActivityEvent[] }>(`/v1/pipeline/events${query}`).then(r => r.data.events)
   },
 }

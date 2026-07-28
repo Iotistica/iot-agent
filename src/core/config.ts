@@ -729,6 +729,7 @@ export class ConfigManager extends EventEmitter {
 			devicesUnregistered: 0,
 			errors: [],
 			timestamp: new Date(),
+			changedProtocols: [],
 		};
 
 		try {
@@ -822,6 +823,14 @@ export class ConfigManager extends EventEmitter {
 				operation: "reconcile",
 				stepsCount: steps.length,
 			});
+
+			const changedProtocols = new Set<string>();
+			for (const step of steps) {
+				const protocol = step.device?.protocol || step.protocol;
+				if (protocol) changedProtocols.add(protocol);
+			}
+			result.changedProtocols = [...changedProtocols];
+
 			// Execute steps
 			for (const step of steps) {
 				try {
@@ -1342,6 +1351,7 @@ export class ConfigManager extends EventEmitter {
 				steps.push({
 					action: "unregisterDevice",
 					deviceId: currentDeviceId,
+					protocol: (device as any).protocol,
 				});
 			}
 		}

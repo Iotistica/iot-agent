@@ -243,7 +243,7 @@ export class AdapterInitializer {
 		});
 
 		if (this.context.stateReconciler) {
-			this.context.stateReconciler.on('reconciliation-complete', (hasEndpointChanges: boolean) => {
+			this.context.stateReconciler.on('reconciliation-complete', (hasEndpointChanges: boolean, changedProtocols: string[] = []) => {
 				if (!hasEndpointChanges) {
 					logger.debugSync('Skipping adapter reload on reconciliation-complete — no endpoint changes', {
 						component: LogComponents.agent
@@ -263,47 +263,38 @@ export class AdapterInitializer {
 				// concurrent async handlers each call onAdaptersReady() concurrently and create
 				// duplicate DevicePublish instances with the same MQTT clientId.
 				this.scheduleReload('reconciliation-complete', async () => {
-					// Hot-update path: MQTT adapter already connected — diff subscriptions in-place,
-					// but only if no new non-MQTT protocol was added that needs a socket server.
-					if (this.features.devices?.getAdapter('mqtt')) {
-						const { EndpointModel } = await import('../db/models/endpoint.model.js');
-						let hasNewProtocol = false;
-						for (const protocol of ['modbus', 'opcua', 'snmp', 'can', 'bacnet']) {
-							const devices = await EndpointModel.getEnabled(protocol);
-							const valid = devices.filter((d: any) => !!d.uuid);
-							if (valid.length > 0 && !this.features.devices.getAdapter(protocol)) {
-								hasNewProtocol = true;
-								logger.infoSync('New protocol requires socket server — falling back to full reload', {
-									component: LogComponents.agent,
-									protocol,
-									trigger: 'reconciliation-complete'
-								});
-								break;
-							}
+					// Scoped path: reconciliation told us exactly which protocol(s) changed
+					// (config.ts's calculateSteps()), and an AdapterManager already exists to
+					// reload into — reload only those protocols' adapter group(s) so unrelated
+					// protocols (e.g. BACnet) stay connected while e.g. one OPC-UA endpoint's
+					// poll_interval is edited.
+					if (changedProtocols.length > 0 && this.features.devices) {
+						logger.infoSync('Reloading only the changed protocol adapter(s) after reconciliation', {
+							component: LogComponents.agent,
+							trigger: 'reconciliation-complete',
+							changedProtocols
+						});
+
+						for (const protocol of changedProtocols) {
+							await this.features.devices.reloadAdapterGroup(protocol);
 						}
+						await this.onAdaptersStopping();
+						await this.onAdaptersReady();
+						this._updateCloudSync();
 
-						if (!hasNewProtocol) {
-							logger.infoSync('Hot-reloading MQTT adapter after endpoint changes (no reconnect)', {
-								component: LogComponents.agent,
-								trigger: 'reconciliation-complete'
-							});
-
-							await this.features.devices.reloadMQTTAdapter();
-							await this.onAdaptersStopping();
-							await this.onAdaptersReady();
-							this._updateCloudSync();
-
-							logger.infoSync('MQTT adapter hot-reloaded after reconciliation', {
-								component: LogComponents.agent
-							});
-							return;
-						}
+						logger.infoSync('Protocol adapter(s) reloaded after reconciliation (scoped)', {
+							component: LogComponents.agent,
+							changedProtocols
+						});
+						return;
 					}
 
-					// Full reinit path: no adapter running, or non-MQTT protocol changes.
+					// Fallback: no AdapterManager yet, or reconciliation didn't report which
+					// protocol(s) changed — full reinit (previous, broader-but-safe behavior).
 					logger.infoSync('Reloading protocol adapters after reconciliation complete', {
 						component: LogComponents.agent,
-						trigger: 'reconciliation-complete'
+						trigger: 'reconciliation-complete',
+						reason: changedProtocols.length === 0 ? 'no changedProtocols reported' : 'no AdapterManager running yet'
 					});
 
 					await this._fullReload();
@@ -330,7 +321,7 @@ export class AdapterInitializer {
 		const { logger } = this.context;
 		if (!this.context.discoveryService || !this.features.devices) return;
 
-		this.features.devices.on('rediscovery-needed', async (data: { deviceName: string; protocol?: string; endpointUrl?: string }) => {
+		this.features.devices.on('rediscovery-needed', async (data: { deviceName: string; protocol?: string; endpointUrl?: string; connection?: Record<string, any> }) => {
 			const protocol = data.protocol;
 			if (!protocol) {
 				logger.warnSync('rediscovery-needed event missing protocol, ignoring', {
@@ -363,8 +354,22 @@ export class AdapterInitializer {
 					// device. Other protocols (BACnet's WhoIs broadcast, etc.) scan the whole
 					// network from global config regardless of which device triggered this, so
 					// they need no per-device targeting here.
+					// Security fields come from the device's own already-working connection
+					// (data.connection) — rediscovery must authenticate the same way the live
+					// session already does, not fall back to NoSecurity/Anonymous.
 					...(protocol === 'opcua' && data.endpointUrl
-						? { optionOverrides: { opcua: { discoveryUrls: [data.endpointUrl] } } }
+						? {
+							optionOverrides: {
+								opcua: {
+									discoveryUrls: [data.endpointUrl],
+									securityMode: data.connection?.securityMode,
+									securityPolicy: data.connection?.securityPolicy,
+									certificateTrustMode: data.connection?.certificateTrustMode,
+									username: data.connection?.username,
+									password: data.connection?.password,
+								},
+							},
+						}
 						: {}),
 				});
 			} catch (error) {

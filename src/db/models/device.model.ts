@@ -46,6 +46,42 @@ function toDeviceUuid(rawDeviceUuid: string): string {
 	return UUID_RE.test(rawDeviceUuid) ? rawDeviceUuid : uuidv5(rawDeviceUuid, DEVICE_UUID_NAMESPACE);
 }
 
+/**
+ * Build a device-name suffix from a raw device_uuid. Real UUIDs (the common
+ * case — most OPC-UA servers report an actual UUID) are truncated to 8 hex
+ * chars for readability; their entropy makes a prefix collision practically
+ * impossible. Non-UUID human-readable identifiers (e.g. this project's own
+ * simulator uses tags like "lighting-f10") are used in full instead — those
+ * are often short already, and truncating them collides for real whenever
+ * multiple devices share a common prefix ("lighting-f10"/"lighting-f11"/...
+ * all truncate to "lighting"). Exported so src/plugins/index.ts's metric/
+ * anomaly-detection deviceName pipeline stays consistent with this table's
+ * device Name — a mismatch would make UI rows impossible to correlate with
+ * their own telemetry.
+ */
+export function deviceNameSuffix(rawDeviceUuid: string): string {
+	const stripped = rawDeviceUuid.replace(/-/g, '');
+	return UUID_RE.test(rawDeviceUuid) ? stripped.slice(0, 8) : stripped;
+}
+
+function normalizeForCompare(s: string): string {
+	return s.toLowerCase().replace(/[-_\s]/g, '');
+}
+
+/**
+ * Same as deviceNameSuffix(), but omits the suffix entirely when it would be
+ * redundant with the display name it'd be appended to — e.g. a non-UUID
+ * device_uuid of "vav-f9c" against a display name of "VAV-F9-C" strips down
+ * to "vavf9c" either way, so appending it just repeats the name back
+ * ("VAV-F9-C-vavf9c") instead of disambiguating anything. Real UUIDs never
+ * trip this (their hex slice essentially never matches a human-readable name).
+ */
+export function deviceNameSuffixFor(displayName: string, rawDeviceUuid: string): string {
+	const suffix = deviceNameSuffix(rawDeviceUuid);
+	if (!suffix) return suffix;
+	return normalizeForCompare(displayName).includes(normalizeForCompare(suffix)) ? '' : suffix;
+}
+
 export interface Device {
   id?: number;
   /** Stable UUID used in metric payloads (deviceDataPoint.device_uuid) */
@@ -143,6 +179,41 @@ export class DeviceModel {
 
 		db.prepare(`UPDATE ${this.table} SET lastSeenAt = ?, updated_at = ? WHERE endpoint_id = ?`)
 			.run(now, now, endpoint.id);
+	}
+
+	/**
+   * Enable/disable a device. Always updates this device's own `devices.enabled`
+   * row. Additionally cascades to the parent endpoint's `enabled` — but ONLY
+   * when this device is in a genuine 1:1 relationship with its endpoint
+   * (BACnet/SNMP/MQTT/CAN, or an OPC-UA endpoint with just one device group):
+   * that's the case where "enable this device" and "enable this connection"
+   * are actually the same action, and the only place enabled state has a real
+   * runtime effect today (the poll/connect loop reads endpoint.enabled, not
+   * devices.enabled). For an OPC-UA endpoint with many devices sharing one
+   * connection, cascading would incorrectly enable/disable every other
+   * sibling device's connection too — so multi-device endpoints only get the
+   * (display-only, for now) devices.enabled column updated.
+   */
+	static async setEnabled(uuid: string, enabled: boolean): Promise<Device | null> {
+		const db = this.getDb();
+		const now = new Date().toISOString();
+
+		const device = db.prepare(`SELECT * FROM ${this.table} WHERE uuid = ? LIMIT 1`).get(uuid) as unknown as DeviceRow | undefined;
+		if (!device) return null;
+
+		db.prepare(`UPDATE ${this.table} SET enabled = ?, updated_at = ? WHERE uuid = ?`)
+			.run(enabled ? 1 : 0, now, uuid);
+
+		const siblingCount = (db.prepare(`SELECT COUNT(*) as n FROM ${this.table} WHERE endpoint_id = ?`)
+			.get(device.endpoint_id) as { n: number }).n;
+
+		if (siblingCount <= 1) {
+			db.prepare(`UPDATE endpoints SET enabled = ?, updated_at = ? WHERE id = ?`)
+				.run(enabled ? 1 : 0, now, device.endpoint_id);
+		}
+
+		const updated = db.prepare(`SELECT * FROM ${this.table} WHERE uuid = ? LIMIT 1`).get(uuid) as unknown as DeviceRow;
+		return this.parse(updated);
 	}
 
 	/**
@@ -245,11 +316,19 @@ export class DeviceModel {
 		} else if (protocol === 'opcua') {
 			const dataPoints: any[] = endpoint.data_points || [];
 
-			// Collect distinct device_uuid values (undefined → '__default__')
-			const seen = new Map<string, number>(); // device_uuid → node count
+			// Collect distinct device_uuid values (undefined → '__default__'), along
+			// with a representative friendly name if the server exposed one (the
+			// browseName of the folder that owns the DeviceUUID marker — see
+			// discovery.ts's folderDeviceName — e.g. "FCU-11A", not every server
+			// provides this).
+			const seen = new Map<string, { nodeCount: number; deviceName?: string }>();
 			for (const dp of dataPoints) {
 				const key = dp.device_uuid || '__default__';
-				seen.set(key, (seen.get(key) ?? 0) + 1);
+				const existing = seen.get(key);
+				seen.set(key, {
+					nodeCount: (existing?.nodeCount ?? 0) + 1,
+					deviceName: existing?.deviceName || dp.device_name,
+				});
 			}
 
 			if (seen.size === 0) {
@@ -268,7 +347,7 @@ export class DeviceModel {
 
 			const hasIdentifiedDevices = [...seen.keys()].some(k => k !== '__default__');
 
-			for (const [deviceUuid, nodeCount] of seen) {
+			for (const [deviceUuid, { nodeCount, deviceName }] of seen) {
 				const isDefault = deviceUuid === '__default__';
 
 				// Skip the catch-all default group when there are real identified devices.
@@ -277,11 +356,21 @@ export class DeviceModel {
 				// Only emit a default row when the server exposes NO device grouping at all.
 				if (isDefault && hasIdentifiedDevices) continue;
 
-				// Name matches the format the metric pipeline already emits:
-				//   "{endpoint.name}-{first8ofUuid}" for identified devices,
-				//   "{endpoint.name}" for the catch-all default group.
-				const uuidSuffix = isDefault ? '' : deviceUuid.replace(/-/g, '').slice(0, 8);
-				const devName = isDefault ? endpoint.name : `${endpoint.name}-${uuidSuffix}`;
+				// Prefer the device's own reported friendly name (e.g. "FCU-11A", from
+				// discovery.ts's folderDeviceName) when the server exposed one — matches
+				// how BACnet/etc. use their own objectName. Falls back to the technical
+				// "{endpoint.name}-{suffix}" format (same one src/plugins/index.ts's
+				// buildDeviceNames constructs for the live telemetry deviceName — see
+				// deviceNameSuffix() above) for servers that don't provide a friendly
+				// name. NOTE: when a friendly name IS used here, it intentionally
+				// diverges from the telemetry-tag deviceName in plugins/index.ts, which
+				// doesn't have this friendly name available at live-read time — devices
+				// still correlate correctly via the uuid/identifier columns, just the
+				// display strings differ between this table and raw telemetry.
+				const uuidSuffix = isDefault ? '' : deviceNameSuffixFor(endpoint.name, deviceUuid);
+				const devName = isDefault
+					? endpoint.name
+					: (deviceName || (uuidSuffix ? `${endpoint.name}-${uuidSuffix}` : endpoint.name));
 
 				await this.upsertDevice({
 					uuid: isDefault ? (endpoint.uuid || randomUUID()) : toDeviceUuid(deviceUuid),
@@ -315,6 +404,14 @@ export class DeviceModel {
 				lastSeenAt,
 			});
 		}
+	}
+
+	/** Remove a device row. It reappears on the endpoint's next discovery/sync
+   * if the endpoint is still reachable — this only clears the cached row,
+   * it doesn't disable or delete the underlying endpoint. */
+	static async deleteByUuid(uuid: string): Promise<boolean> {
+		const result = this.getDb().prepare(`DELETE FROM ${this.table} WHERE uuid = ?`).run(uuid);
+		return result.changes > 0;
 	}
 
 	private static parse(row: DeviceRow): Device {

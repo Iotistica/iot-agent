@@ -63,6 +63,8 @@ import {
 	MonitoringParametersOptions as _MonitoringParametersOptions,
 	type ReadValueIdOptions,
 	DataType as _DataType,
+	BrowsePath,
+	type BrowsePathResult,
 } from 'node-opcua-client';
 import { BaseProtocolAdapter, type GenericDeviceConfig } from '../base.js';
 import { type DeviceDataPoint, type Logger, type IProtocolAdapter as _IProtocolAdapter } from '../types.js';
@@ -241,11 +243,84 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 		return 'metadata';
 	}
 
+	// Well-known OPC UA ReferenceTypeId for "HasProperty" (ns=0;i=46 — stable
+	// across the spec, Part 6). Used below to browse each node's standard
+	// EngineeringUnits child property without pulling in node-opcua-nodeid just
+	// for resolveNodeId("HasProperty").
+	private static readonly HAS_PROPERTY_REF_ID = 'i=46';
+
+	/**
+	 * Batch-resolve the standard EngineeringUnits property (an EUInformation
+	 * struct with a real unit symbol, e.g. "°C") for every data point missing a
+	 * configured unit. Costs two round trips total regardless of node count
+	 * (one translateBrowsePath + one read for the whole batch), matching the
+	 * batching approach validateNodeIds already uses below — not one browse per
+	 * node. Servers that don't expose EngineeringUnits for a given node (most
+	 * boolean/string points) just get a not-found result for that entry and are
+	 * left for validateNodeIds' existing Description-text fallback to try.
+	 */
+	private async readEngineeringUnits(
+		session: ClientSession,
+		dataPoints: OPCUADataPoint[],
+		deviceName: string
+	): Promise<Map<string, string>> {
+		const units = new Map<string, string>();
+		const candidates = dataPoints.filter((dp) => !dp.unit);
+		if (candidates.length === 0) return units;
+
+		try {
+			const browsePaths = candidates.map((dp) => new BrowsePath({
+				startingNode: dp.nodeId,
+				relativePath: {
+					elements: [{
+						includeSubtypes: false,
+						isInverse: false,
+						referenceTypeId: OPCUAAdapter.HAS_PROPERTY_REF_ID,
+						targetName: { namespaceIndex: 0, name: 'EngineeringUnits' },
+					}],
+				},
+			}));
+
+			const browsePathResults = await session.translateBrowsePath(browsePaths);
+
+			const propertyNodeIds: string[] = [];
+			const ownerNodeIds: string[] = [];
+			browsePathResults.forEach((result: BrowsePathResult, i: number) => {
+				if (result.statusCode.isGood() && result.targets && result.targets.length > 0) {
+					propertyNodeIds.push(result.targets[0].targetId.toString());
+					ownerNodeIds.push(candidates[i].nodeId);
+				}
+			});
+			if (propertyNodeIds.length === 0) return units;
+
+			const values = await session.read(
+				propertyNodeIds.map((nodeId) => ({ nodeId, attributeId: AttributeIds.Value }))
+			);
+
+			values.forEach((result: DataValue, i: number) => {
+				if (!result.statusCode.isGood()) return;
+				const euInfo = result.value?.value as { displayName?: { text?: string } | string } | undefined;
+				const displayName = euInfo?.displayName;
+				const symbol = typeof displayName === 'string' ? displayName : displayName?.text;
+				if (symbol) {
+					units.set(ownerNodeIds[i], symbol);
+				}
+			});
+		} catch (error) {
+			this.logger.debug(`EngineeringUnits lookup failed for ${deviceName}, falling back to Description parsing`, {
+				deviceName,
+				error: error instanceof Error ? error.message : String(error)
+			});
+		}
+
+		return units;
+	}
+
 	/**
    * Validate that NodeIDs exist and are accessible
    * Prevents runtime errors from misconfigured or missing nodes
    * Also auto-classifies nodes based on OPC UA metadata (NodeClass, DataType)
-   * 
+   *
    * @param session - Active OPC-UA session
    * @param dataPoints - Data points to validate
    * @param deviceName - Device name (for logging)
@@ -286,7 +361,13 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 			readCount: nodesToRead.length,
 			avgTimePerNode: Math.round(validationTime / dataPoints.length)
 		});
-    
+
+		// Standard EngineeringUnits property is the authoritative unit source when
+		// present (real unit symbol, e.g. "°C") — resolved for the whole batch in
+		// two extra round trips, not one per node. Description-text parsing below
+		// only runs for nodes this doesn't find anything for.
+		const engineeringUnits = await this.readEngineeringUnits(session, dataPoints, deviceName);
+
 		// Parse results (4 consecutive results per data point)
 		for (let i = 0; i < dataPoints.length; i++) {
 			const dp = dataPoints[i];
@@ -311,9 +392,12 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 			const nodeClass = nodeClassResult.value?.value;
 			const dataTypeNodeId = dataTypeResult.value?.value;
 
-			// Auto-populate unit from Description if not already set
-			// OPC UA Description often contains unit info (e.g., "Temperature in °C")
-			if (!dp.unit && descriptionResult.statusCode.isGood()) {
+			// Auto-populate unit: prefer the standard EngineeringUnits property (real
+			// unit symbol, resolved above); fall back to parsing Description text
+			// only when a server doesn't expose EngineeringUnits for this node.
+			if (!dp.unit && engineeringUnits.has(dp.nodeId)) {
+				(dp as any).unit = engineeringUnits.get(dp.nodeId);
+			} else if (!dp.unit && descriptionResult.statusCode.isGood()) {
 				const description = descriptionResult.value?.value?.text || descriptionResult.value?.value;
 				if (description && typeof description === 'string') {
 					// Extract unit from description - supports both simple and composite units
@@ -817,6 +901,7 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 						deviceName: device.name,
 						protocol: 'opcua',
 						endpointUrl: device.connection.endpointUrl,
+						connection: device.connection,
 					});
 				}
 				// Session is genuinely usable (connected, just nothing to poll yet) — commit it.
@@ -867,7 +952,8 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 					this.emit('rediscovery-needed', {
 						deviceName: device.name,
 						protocol: 'opcua',
-						endpointUrl: device.connection.endpointUrl
+						endpointUrl: device.connection.endpointUrl,
+						connection: device.connection,
 					});
 				}
 			}
@@ -892,13 +978,28 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 			// Read metadata nodes once on connect (separate from time-series)
 			await this.readMetadata(session, device.dataPoints, device.name);
 
+			// Prefer the friendly device name already captured at discovery time
+			// (discovery.ts's folderDeviceName — the browseName of the folder that
+			// owns each node's DeviceUUID marker) — free, no network round trip,
+			// and correct regardless of NodeId shape. Only fall back to the
+			// live parent-DisplayName browse below (which relies on parsing a
+			// path-style NodeId — see deriveParentNodeId) for nodes that don't
+			// have one, e.g. servers discovered before this field existed, or
+			// third-party servers this app doesn't control discovery for.
+			for (const dp of validDataPoints) {
+				if (dp.device_name?.trim()) {
+					this.resolvedNodeDisplayNames.set(dp.nodeId, dp.device_name.trim());
+				}
+			}
+
 			// Read per-node DisplayNames from parent device folder nodes.
 			// Allows OPC-UA servers (e.g. simulator profiles with a "displayName" field) to
 			// advertise human-readable names per device group. These override the raw endpoint
 			// name when building the device_name in readings. Batched in a single read call.
-			if (validDataPoints.length > 0) {
+			const dataPointsNeedingBrowseLookup = validDataPoints.filter(dp => !this.resolvedNodeDisplayNames.has(dp.nodeId));
+			if (dataPointsNeedingBrowseLookup.length > 0) {
 				const nodeToParent = new Map<string, string>();
-				for (const dp of validDataPoints) {
+				for (const dp of dataPointsNeedingBrowseLookup) {
 					const parentId = this.deriveParentNodeId(dp.nodeId);
 					if (parentId) nodeToParent.set(dp.nodeId, parentId);
 				}
