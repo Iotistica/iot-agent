@@ -142,6 +142,7 @@ export class DiscoveryStore {
 							traceId,
 							deviceName: existing.name,
 							protocol: device.protocol,
+							reason,
 							dataPointsCount: device.dataPoints?.length || 0,
 							sampleNodes: device.dataPoints?.slice(0, 3).map(dp => ({
 								nodeId: dp.nodeId,

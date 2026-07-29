@@ -1423,7 +1423,7 @@ export class PublishManager extends EventEmitter {
 			const snapshot = this.destinationSnapshot(destination);
 			const cached = this.pluginByDestinationId.get(subscription.publish_destination_id);
 			let plugin: IPublishPlugin;
-			if (cached && cached.snapshot === snapshot) {
+			if (cached?.snapshot === snapshot) {
 				plugin = cached.plugin;
 			} else {
 				plugin = this.buildPlugin(destination, this.defaultClient, this.logger, this.endpointName);

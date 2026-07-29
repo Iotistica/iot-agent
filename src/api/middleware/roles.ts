@@ -30,7 +30,7 @@ export function requireRole(min: UserRole) {
 		}
 
 		const user = UserModel.getByUsername(session.username);
-		if (!user || !user.is_active) {
+		if (!user?.is_active) {
 			return res.status(401).json({ error: 'Not authenticated' });
 		}
 
