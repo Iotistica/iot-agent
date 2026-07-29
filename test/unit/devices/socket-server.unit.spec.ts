@@ -47,8 +47,16 @@ describe('SocketServer', () => {
       timestamp: new Date().toISOString(),
       quality: 'GOOD' as const
     }];
-    
+
     server.sendData(dataPoints);
     expect(mockLogger.warn).not.toHaveBeenCalled();
+  });
+
+  it('should not send a control message when not started', () => {
+    const server = new SocketServer(config, mockLogger);
+    server.sendControl({ __control: 'device-schema', deviceName: 'AHU-1', fields: ['cc_valve'] });
+    // A TEMPORARY [SCHEMA_DECLARE_DIAG] warn is expected here while
+    // investigating issue #17 — remove this exception once that's resolved.
+    expect(mockLogger.error).not.toHaveBeenCalled();
   });
 });

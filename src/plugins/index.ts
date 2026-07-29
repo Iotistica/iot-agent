@@ -39,6 +39,47 @@ export interface AdapterConfig {
 	plugins?: ExternalPluginConfig[];
 }
 
+/**
+ * Groups a connection's configured data points by which logical device each
+ * one actually belongs to, for declaring device schemas to schema drift.
+ *
+ * One "device" in adapter/config terms can be a single connection spanning
+ * many logical devices — e.g. OPC-UA: one server connection whose
+ * dataPoints cover every AHU/BMS/Boiler/etc., each data point carrying its
+ * own `device_name` for the folder it actually belongs to (see
+ * OPCUADataPointSchema.device_name). Declaring the whole flat list under the
+ * connection's own name (`fallbackDeviceName`) would land every logical
+ * device's fields in one bucket that doesn't correspond to anything schema
+ * drift actually tracks — each data point's own device_name must be used
+ * when present. Falls back to `fallbackDeviceName` for data points with no
+ * device_name of their own — true single-device sources (most Modbus,
+ * per-device BACnet), where the connection name already is the device.
+ */
+export function groupFieldNamesByOwningDevice(
+	fallbackDeviceName: string,
+	dataPoints: unknown[],
+): Map<string, string[]> {
+	const fieldsByDevice = new Map<string, string[]>();
+
+	for (const dp of dataPoints) {
+		if (!dp || typeof dp !== "object") continue;
+		const fieldName = (dp as { name?: unknown }).name;
+		if (typeof fieldName !== "string" || fieldName.length === 0) continue;
+
+		const ownerRaw = (dp as { device_name?: unknown }).device_name;
+		const owner = typeof ownerRaw === "string" && ownerRaw.length > 0 ? ownerRaw : fallbackDeviceName;
+
+		const existing = fieldsByDevice.get(owner);
+		if (existing) {
+			existing.push(fieldName);
+		} else {
+			fieldsByDevice.set(owner, [fieldName]);
+		}
+	}
+
+	return fieldsByDevice;
+}
+
 export class AdapterManager extends EventEmitter {
 	private adapters: Map<string, IProtocolAdapter> = new Map();
 	private socketServers: Map<string, SocketServer> = new Map();
@@ -76,6 +117,56 @@ export class AdapterManager extends EventEmitter {
 		return value.replace(/^(?:iotistica_){2,}/i, "iotistica_");
 	}
 
+	/**
+	 * Resolves the same enriched display deviceName a reading would get,
+	 * given only the raw identity fields (no full DeviceDataPoint needed) —
+	 * extracted out of enrichWithEndpointUuid so a non-reading event (e.g.
+	 * "declare this device's configured fields" for schema drift) can be
+	 * enriched identically to real telemetry, landing in the same downstream
+	 * device bucket. Returns undefined when there's no endpoint UUID on file
+	 * for this device name, matching enrichWithEndpointUuid's "leave unchanged"
+	 * behavior for that case.
+	 */
+	private resolveEnrichedDeviceName(
+		deviceName: string,
+		resolvedDisplayName: string | undefined,
+		sourceDeviceUuid: string | undefined,
+		endpointUuidByName: Map<string, string>,
+	): { deviceName: string; endpoint_uuid: string; device_uuid: string } | undefined {
+		const endpointUuid = endpointUuidByName.get(deviceName);
+		if (!endpointUuid) {
+			return undefined;
+		}
+
+		// Prefer source-provided device_uuid; otherwise use endpoint UUID.
+		const device_uuid = sourceDeviceUuid || endpointUuid;
+
+		// Build a stable display name suffix with device UUID. deviceNameSuffixFor()
+		// (src/db/models/device.model.ts) truncates real UUIDs to 8 hex chars for
+		// readability but keeps non-UUID human-readable identifiers (e.g. the
+		// OPC UA simulator's "lighting-f10") in full, since truncating those
+		// collides whenever multiple devices share a common prefix — except when
+		// that non-UUID identifier is itself just the display name restated
+		// (e.g. device_uuid "vav-f9c" against display name "VAV-F9-C"), in which
+		// case it adds no disambiguating information and is dropped instead of
+		// producing "VAV-F9-C-vavf9c". Must use the same helper as device.model.ts's
+		// device Name — a mismatch would make it impossible to correlate UI device
+		// rows with their own telemetry.
+		const displayBase = this.normalizeDisplayBaseName(resolvedDisplayName || deviceName);
+		const uuidSuffix = deviceNameSuffixFor(displayBase, device_uuid);
+		const finalDeviceName =
+			uuidSuffix.length > 0 ? `${displayBase}-${uuidSuffix}` : displayBase;
+
+		this.logger.debug("Built endpoint deviceName", {
+			displayBase,
+			device_uuid,
+			endpointUuid,
+			finalDeviceName,
+		});
+
+		return { deviceName: finalDeviceName, endpoint_uuid: endpointUuid, device_uuid };
+	}
+
 	private enrichWithEndpointUuid(
 		dataPoints: DeviceDataPoint[],
 		endpointUuidByName: Map<string, string>,
@@ -85,42 +176,21 @@ export class AdapterManager extends EventEmitter {
 		}
 
 		return dataPoints.map((point) => {
-			const endpointUuid = endpointUuidByName.get(point.deviceName);
-			if (!endpointUuid) {
+			const resolved = this.resolveEnrichedDeviceName(
+				point.deviceName,
+				point.resolvedDisplayName,
+				point.device_uuid,
+				endpointUuidByName,
+			);
+			if (!resolved) {
 				return point;
 			}
 
-			// Prefer source-provided device_uuid; otherwise use endpoint UUID.
-			const device_uuid = point.device_uuid || endpointUuid;
-
-			// Build a stable display name suffix with device UUID. deviceNameSuffixFor()
-			// (src/db/models/device.model.ts) truncates real UUIDs to 8 hex chars for
-			// readability but keeps non-UUID human-readable identifiers (e.g. the
-			// OPC UA simulator's "lighting-f10") in full, since truncating those
-			// collides whenever multiple devices share a common prefix — except when
-			// that non-UUID identifier is itself just the display name restated
-			// (e.g. device_uuid "vav-f9c" against display name "VAV-F9-C"), in which
-			// case it adds no disambiguating information and is dropped instead of
-			// producing "VAV-F9-C-vavf9c". Must use the same helper as device.model.ts's
-			// device Name — a mismatch would make it impossible to correlate UI device
-			// rows with their own telemetry.
-			const displayBase = this.normalizeDisplayBaseName(point.resolvedDisplayName || point.deviceName);
-			const uuidSuffix = deviceNameSuffixFor(displayBase, device_uuid);
-			const deviceName =
-				uuidSuffix.length > 0 ? `${displayBase}-${uuidSuffix}` : displayBase;
-
-			this.logger.debug("Built endpoint deviceName", {
-				displayBase,
-				device_uuid,
-				endpointUuid,
-				finalDeviceName: deviceName,
-			});
-
 			return {
 				...point,
-				deviceName,
-				endpoint_uuid: endpointUuid,
-				device_uuid,
+				deviceName: resolved.deviceName,
+				endpoint_uuid: resolved.endpoint_uuid,
+				device_uuid: resolved.device_uuid,
 			};
 		});
 	}
@@ -189,9 +259,39 @@ export class AdapterManager extends EventEmitter {
 				DeviceModel.updateLastSeenByEndpointName(name).catch(() => {});
 			}
 		});
-		adapter.on("device-connected", (name: string) =>
-			this.logger.info(`${label} device connected: ${name}`),
-		);
+		adapter.on("device-connected", (name: string, dataPoints?: unknown[]) => {
+			this.logger.info(`${label} device connected: ${name}`);
+
+			// TEMPORARY diagnostic — see issue #17 follow-up investigation.
+			this.logger.info(`[SCHEMA_DECLARE_DIAG] name=${name} isArray=${Array.isArray(dataPoints)} length=${Array.isArray(dataPoints) ? dataPoints.length : 'n/a'} sample=${Array.isArray(dataPoints) ? JSON.stringify(dataPoints.slice(0, 2)) : 'n/a'}`);
+
+			// Declare each configured field's owning device's full field list to
+			// schema drift — ground truth for "does this field exist," independent
+			// of how often its value happens to change (fixes fields that report
+			// rarely or never under COV/subscription protocols: intermittent fault
+			// points, manual alarm bits nobody has toggled since the last restart —
+			// see SchemaDriftDetector.declareDeviceSchema in the Pro package).
+			//
+			// One connection ("device" in adapter/config terms) can span many
+			// logical devices — e.g. OPC-UA: a single server connection whose
+			// dataPoints cover every AHU/BMS/Boiler/etc., each data point carrying
+			// its own device_name for the folder it actually belongs to. Group by
+			// that (falling back to the connection's own name when a data point
+			// doesn't specify one — true single-device sources) instead of
+			// declaring the whole flat list under the connection's name, which
+			// would land every logical device's fields in one wrong bucket.
+			if (Array.isArray(dataPoints) && dataPoints.length > 0) {
+				const fieldsByDevice = groupFieldNamesByOwningDevice(name, dataPoints);
+
+				for (const [ownerDeviceName, fields] of fieldsByDevice) {
+					const resolved = this.resolveEnrichedDeviceName(ownerDeviceName, undefined, undefined, uuidMap);
+					socket.sendControl(
+						{ __control: "device-schema", protocol, deviceName: resolved?.deviceName ?? ownerDeviceName, fields },
+						protocol,
+					);
+				}
+			}
+		});
 		adapter.on("device-disconnected", (name: string) =>
 			this.logger.warn(`${label} device disconnected: ${name}`),
 		);

@@ -1293,7 +1293,7 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 			sessionWrapper.consecutiveFailures = 0;
       
 			this.logger.debug(`Reconnected successfully to ${device.name}`);
-			this.emit('device-connected', device.name);
+			this.emit('device-connected', device.name, device.dataPoints);
       
 		} catch (error) {
 			const errorMessage = error instanceof Error ? error.message : String(error);

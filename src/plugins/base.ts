@@ -183,7 +183,7 @@ export abstract class BaseProtocolAdapter extends EventEmitter implements IProto
 			status.connected = true;
 
 			this.logger.debug(`Device initialized: ${device.name}`);
-			this.emit('device-connected', device.name);
+			this.emit('device-connected', device.name, device.dataPoints);
 
 			this.startPolling(device);
 

@@ -242,6 +242,51 @@ export class SocketServer {
 		}
 	}
 
+	/**
+	 * Sends a single out-of-band control message — not a device reading — to
+	 * every client subscribed to `topic`. Used today to declare a device's
+	 * full configured field list to schema drift (see MessageBatcher's
+	 * "device-schema" handling on the receiving end), decoupled from any
+	 * particular value change.
+	 *
+	 * Deliberately bypasses applyRoutingRules()/formatData(): those only make
+	 * sense for per-device DeviceDataPoint telemetry (metric/device
+	 * include-exclude filters, quality filters, rate limiting), none of which
+	 * apply to a one-off control payload. Every subscriber of the topic gets
+	 * every control message, same as the subscription handshake itself.
+	 */
+	sendControl(payload: Record<string, unknown>, topic: string = "generic"): void {
+		if (!this.started || this.subscriptions.size === 0) {
+			// TEMPORARY diagnostic — see issue #17 follow-up investigation.
+			this.logger.warn(`[SCHEMA_DECLARE_DIAG] sendControl dropped: started=${this.started} subscriptions=${this.subscriptions.size} topic=${topic}`);
+			return;
+		}
+
+		try {
+			const data = JSON.stringify(payload) + this.config.delimiter;
+			const sentTo = new Set<net.Socket>();
+
+			const topicSubscribers = this.topicToSockets.get(topic);
+			// TEMPORARY diagnostic — see issue #17 follow-up investigation.
+			this.logger.warn(`[SCHEMA_DECLARE_DIAG] sendControl topic=${topic} topicSubscribers=${topicSubscribers?.size ?? 0} wildcardSockets=${this.wildcardSockets.size}`);
+			if (topicSubscribers) {
+				topicSubscribers.forEach((socket) => {
+					this.sendToSocket(socket, data, topic, sentTo);
+				});
+			}
+
+			this.wildcardSockets.forEach((socket) => {
+				if (!sentTo.has(socket)) {
+					this.sendToSocket(socket, data, topic, sentTo);
+				}
+			});
+		} catch (error) {
+			const errorMessage =
+				error instanceof Error ? error.message : String(error);
+			this.logger.error(`Error sending control message: ${errorMessage}`);
+		}
+	}
+
 	private routeAndSendToSocket(
 		socket: net.Socket,
 		dataPoints: DeviceDataPoint[],

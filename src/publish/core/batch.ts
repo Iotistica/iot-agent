@@ -178,6 +178,17 @@ export class MessageBatcher extends EventEmitter {
 			return;
 		}
 
+		// A control frame (see SocketServer.sendControl()) — not a device
+		// reading. Route it out-of-band instead of feeding it into the batch,
+		// where it would otherwise be published as bogus telemetry and fed to
+		// schema drift as a malformed message.
+		if (parsed && typeof parsed === 'object' && parsed.__control) {
+			// TEMPORARY diagnostic — see issue #17 follow-up investigation.
+			this.logger?.warn(`[SCHEMA_DECLARE_DIAG] batcher routing control frame: ${parsed.__control}`);
+			this.emit(parsed.__control, parsed);
+			return;
+		}
+
 		if (this._messages.length === 0) this._firstMessageTime = Date.now();
 		this._messages.push(parsed);
 		this._totalBytes += byteLen;

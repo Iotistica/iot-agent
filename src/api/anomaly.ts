@@ -11,6 +11,19 @@ export const anomalyRouter = express.Router();
 
 const VALID_RESOLUTION_REASONS: ResolutionReason[] = ['false_positive', 'true_positive', 'expected', 'accepted'];
 
+// The agent's own self-monitoring metrics (cpu/memory/etc.) are keyed with a
+// UUID prefix for fleet-wide uniqueness — "{agentUuid}_system_memory_percent",
+// or "{uuid}_{uuid}_metric" for some container/endpoint-scoped metrics — see
+// getMetricConfig's systemPrefixMatch/endpointPrefixMatch in iot-agent-pro's
+// anomaly/metric-router.ts, which strips the same prefix to resolve config.
+// Pure noise for display: the Device column already identifies the agent by
+// (a truncated form of) the same UUID, so showing the full UUID again in the
+// metric name adds nothing. Strip it before prettifying.
+const SYSTEM_METRIC_UUID_PREFIX_RE = /^[0-9a-f-]{36}_(?:[0-9a-f-]{36}_|system_)/i;
+export function stripMetricUuidPrefix(metric: string): string {
+	return metric.replace(SYSTEM_METRIC_UUID_PREFIX_RE, '');
+}
+
 // device_name/metric are stored as whatever raw identifiers the anomaly
 // pipeline resolved at ingest time (resolveDeviceId in iot-agent-pro's
 // anomaly/metric-router.ts for device_name; manager.ts's stripFieldDevicePrefix
@@ -24,7 +37,7 @@ function withPrettyDeviceName<T extends { device_name: string; metric?: string }
 	return {
 		...record,
 		device_name: prettifyDriftDeviceId(record.device_name),
-		...(record.metric !== undefined ? { metric: prettifyDriftFieldName(record.metric) } : {}),
+		...(record.metric !== undefined ? { metric: prettifyDriftFieldName(stripMetricUuidPrefix(record.metric)) } : {}),
 	};
 }
 

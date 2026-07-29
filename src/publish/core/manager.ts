@@ -219,6 +219,24 @@ export class PublishManager extends EventEmitter {
 
 		this.batcher.on('flush', () => { this.publishBatch(); });
 		this.batcher.on('message-added', () => { this.stats.data.messagesReceived++; });
+		this.batcher.on('device-schema', (payload: any) => {
+			// TEMPORARY diagnostic — see issue #17 follow-up investigation.
+			this.logger?.warn(`[SCHEMA_DECLARE_DIAG] manager received device-schema for endpoint '${this.endpointName}': deviceName=${payload?.deviceName} fieldCount=${Array.isArray(payload?.fields) ? payload.fields.length : 'n/a'} detectorReady=${!!this.schemaDriftDetector}`);
+			// If schemaDriftDetector hasn't resolved yet (initSchemaDrift() is
+			// async), this declaration is silently dropped — same cold-start
+			// tolerance as any other message that arrives before it's ready.
+			// The adapter re-declares on every reconnect, so it isn't lost for
+			// good, just until the next one.
+			if (typeof payload?.deviceName !== 'string' || !Array.isArray(payload?.fields)) {
+				this.logger?.warn(`[SCHEMA_DECLARE_DIAG] manager dropped malformed device-schema payload for endpoint '${this.endpointName}'`);
+				return;
+			}
+			try {
+				this.schemaDriftDetector?.declareDeviceSchema(payload.deviceName, payload.fields);
+			} catch (err) {
+				this.logger?.warn(`Failed to declare device schema for endpoint '${this.endpointName}'`, err);
+			}
+		});
 	}
 
 	/** Schema drift is Pro-only — resolves to a no-op (schemaDriftDetector stays undefined) on Community builds. */

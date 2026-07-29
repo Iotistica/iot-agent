@@ -42,16 +42,10 @@ const router = createRouter({
       component: () => import('@/views/AssetsView.vue'),
       meta: { title: 'Assets' },
     },
-    {
-      path: '/maintenance',
-      component: () => import('@/views/MaintenanceView.vue'),
-      meta: { title: 'Maintenance' },
-    },
-    {
-      path: '/energy',
-      component: () => import('@/views/EnergyView.vue'),
-      meta: { title: 'Energy' },
-    },
+    // Maintenance and Energy were merged into tabs on /assets to shorten the
+    // sidebar — redirect old bookmarks/links rather than 404 them.
+    { path: '/maintenance', redirect: '/assets' },
+    { path: '/energy', redirect: '/assets' },
     {
       path: '/discovery-rules',
       component: () => import('@/views/DiscoveryRulesView.vue'),
