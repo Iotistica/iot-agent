@@ -219,6 +219,41 @@ export class OPCUADiscovery extends BaseDiscovery {
 		return createHash('sha1').update(certificate).digest('hex');
 	}
 
+	/**
+	 * Probes whether this server actually supports OPC-UA subscriptions, by
+	 * creating a real (throwaway) one and seeing whether the server accepts
+	 * it — the same session.createSubscription2() call the adapter uses at
+	 * runtime, just with a short lifetime since it's discarded immediately.
+	 * A server that doesn't implement the Subscribe service, or that's
+	 * already at a subscription/session limit, rejects CreateSubscription
+	 * outright (e.g. BadServiceUnsupported, BadTooManySubscriptions) — a far
+	 * more reliable signal than any capability string in
+	 * GetEndpoints/ServerCapabilities, which describe conformance profiles
+	 * rather than concrete per-service support and are inconsistently kept
+	 * accurate across vendors. Never throws; a failed probe just means
+	 * "assume no" so discovery itself is never blocked by it.
+	 */
+	private async probeSubscriptionSupport(session: { createSubscription2: (options: Record<string, unknown>) => Promise<{ terminate: () => Promise<void> }> }): Promise<boolean> {
+		try {
+			const subscription = await session.createSubscription2({
+				requestedPublishingInterval: 1000,
+				requestedLifetimeCount: 10,
+				requestedMaxKeepAliveCount: 5,
+				maxNotificationsPerPublish: 10,
+				publishingEnabled: true,
+				priority: 10,
+			});
+			await subscription.terminate().catch(() => {});
+			return true;
+		} catch (error) {
+			this.logger?.debugSync('Server does not support OPC-UA subscriptions (or the probe failed) — will use polling', {
+				component: LogComponents.discovery + "] [" + this.protocol as any,
+				error: error instanceof Error ? error.message : String(error),
+			});
+			return false;
+		}
+	}
+
 	constructor(logger?: AgentLogger, configManager?: ConfigManager) {
 		super('opcua', logger);
 		this.configManager = configManager;
@@ -430,6 +465,7 @@ export class OPCUADiscovery extends BaseDiscovery {
 					})
 					: await client.createSession();
 				const dataPoints: Array<{ nodeId: string; name: string; browseName?: string; device_uuid?: string; device_name?: string }> = [];
+				let subscriptionsSupported = false;
 
 				try {
 					// Recursive tree browsing function
@@ -576,9 +612,17 @@ export class OPCUADiscovery extends BaseDiscovery {
 						});
 					}
 				} finally {
+					// Probe subscription support while the session is still open, before
+					// closing it — a server that doesn't implement the Subscribe service
+					// (or has hit a subscription/session limit) rejects CreateSubscription
+					// outright, which is a much more reliable signal than any capability
+					// string in GetEndpoints/ServerCapabilities (those describe conformance
+					// profiles, not concrete per-service support, and vendors are
+					// inconsistent about keeping them accurate).
+					subscriptionsSupported = await this.probeSubscriptionSupport(session);
 					await session.close();
 				}
-				
+
 				this.logger?.debugSync(`OPC UA recursive tree browsing complete: discovered ${dataPoints.length} nodes`, {
 					component: LogComponents.discovery + "] [" + this.protocol as any,
 					url,
@@ -630,6 +674,12 @@ export class OPCUADiscovery extends BaseDiscovery {
 							// self-signed server cert with BadCertificateUntrusted. Carry forward
 							// whatever this discovery run was actually configured with instead.
 							certificateTrustMode: endpoint.connection?.certificateTrustMode || 'strict',
+							// Probed live against this server during discovery (see
+							// probeSubscriptionSupport) rather than left to the schema
+							// default — a server that can't actually create a subscription
+							// gets saved as polling-only up front, instead of discovering
+							// that the hard way on every connection attempt afterward.
+							useSubscription: subscriptionsSupported,
 							...(endpoint.connection?.username && { username: endpoint.connection.username }),
 							...(endpoint.connection?.password && { password: endpoint.connection.password }),
 							...(certThumbprint ? { expectedServerThumbprint: certThumbprint } : {})

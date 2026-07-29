@@ -69,8 +69,16 @@ export const OPCUAConnectionSchema = z.object({
 	/** Keep-alive interval in milliseconds */
 	keepAliveInterval: z.number().int().positive().default(5000),
   
-	/** Enable subscription mode (real-time streaming instead of polling) */
-	useSubscription: z.boolean().default(false),
+	/**
+	 * Enable subscription mode (real-time streaming instead of polling).
+	 * Defaults to true: subscription creation is now batched via
+	 * ClientMonitoredItemGroup (one round-trip per subscription instead of
+	 * one per node), data emission is coalesced per publish cycle, and
+	 * queueSize defaults to 1 — the failure modes that originally motivated
+	 * defaulting this to false (event-loop stalls, IPC backpressure) are
+	 * fixed at the source rather than avoided by staying on polling.
+	 */
+	useSubscription: z.boolean().default(true),
   
 	/** Subscription publishing interval in milliseconds (only if useSubscription=true) */
 	publishingInterval: z.number().int().positive().default(1000),

@@ -170,6 +170,13 @@ onMounted(() => { if (props.protocol === 'bacnet') loadVendors() })
         @update:value="set('endpointUrl', $event)"
       />
     </a-form-item>
+    <a-form-item
+      label="Use Subscriptions"
+      :name="['connection', 'useSubscription']"
+      extra="Real-time streaming instead of polling. Recommended for most servers. Turn off only if the server doesn't support subscriptions, or as a diagnostic fallback for one misbehaving device."
+    >
+      <a-switch :checked="get('useSubscription', true)" @change="set('useSubscription', $event)" />
+    </a-form-item>
     <a-form-item label="Security Mode" :name="['connection', 'securityMode']">
       <a-select :value="get('securityMode', 'None')" @update:value="set('securityMode', $event)">
         <a-select-option value="None">None</a-select-option>
