@@ -42,6 +42,7 @@ let agentManager: AgentManager;
 let cloudSync: CloudSync | undefined;
 let logger: AgentLogger | undefined;
 let anomalyService: any | undefined;
+let maintenanceEnergyService: any | undefined;
 let simulationOrchestrator: any;
 let adapterManager: AdapterManager | undefined;
 let configManager: ConfigManager | undefined;
@@ -227,12 +228,13 @@ export async function getBufferStatusPayload(): Promise<{
 }
 
 export function initialize(
-	cm: ContainerManager, 
-	dm: AgentManager, 
-	ab?: CloudSync, 
+	cm: ContainerManager,
+	dm: AgentManager,
+	ab?: CloudSync,
 	agentLogger?: AgentLogger,
 	anomaly?: any,
-	simulation?: any
+	simulation?: any,
+	maintenanceEnergy?: any
 ) {
 	containerManager = cm;
 	agentManager = dm;
@@ -240,6 +242,7 @@ export function initialize(
 	logger = agentLogger;
 	anomalyService = anomaly;
 	simulationOrchestrator = simulation;
+	maintenanceEnergyService = maintenanceEnergy;
 }
 
 /**
@@ -448,6 +451,14 @@ export function getAdapterManager(): AdapterManager | undefined {
  */
 export function getAnomalyService(): any | undefined {
 	return anomalyService;
+}
+
+/**
+ * Get the preventive maintenance / energy recommendations service (Pro-only —
+ * undefined when @iotistica/agent-pro isn't installed, same gating as anomalyService).
+ */
+export function getMaintenanceEnergyService(): any | undefined {
+	return maintenanceEnergyService;
 }
 
 /**
@@ -2323,4 +2334,481 @@ export const getDbStats = async () => {
 		tableCount: tables.length,
 		tables,
 	};
+};
+
+/**
+ * Assets: list all assets
+ */
+export const listAssets = async () => {
+	const { AssetModel } = await import('../db/models/asset.model.js');
+	const { AssetMetricModel } = await import('../db/models/asset-metric.model.js');
+	return AssetModel.getAll().map((asset) => ({
+		...asset,
+		metrics: AssetMetricModel.listByAssetId(asset.id!),
+	}));
+};
+
+/**
+ * Assets: get a single asset (with its metric bindings)
+ */
+export const getAsset = async (uuid: string) => {
+	const { AssetModel } = await import('../db/models/asset.model.js');
+	const { AssetMetricModel } = await import('../db/models/asset-metric.model.js');
+	const asset = AssetModel.getByUuid(uuid);
+	if (!asset) {
+		throw Object.assign(new Error(`Asset not found: ${uuid}`), { statusCode: 404 });
+	}
+	return { ...asset, metrics: AssetMetricModel.listByAssetId(asset.id!) };
+};
+
+/**
+ * Assets: create an asset
+ */
+export const createAsset = async (body: {
+	name: string;
+	asset_type?: string | null;
+	criticality?: 'low' | 'medium' | 'high' | 'critical';
+	manufacturer?: string | null;
+	model?: string | null;
+	rated_life_hours?: number | null;
+	rated_cycles?: number | null;
+	install_date?: number | null;
+	last_service_date?: number | null;
+	location?: string | null;
+}) => {
+	if (!body.name) throw new Error('name is required');
+
+	const { AssetModel } = await import('../db/models/asset.model.js');
+	const asset = AssetModel.create({
+		name: body.name,
+		asset_type: body.asset_type ?? null,
+		criticality: body.criticality ?? 'medium',
+		manufacturer: body.manufacturer ?? null,
+		model: body.model ?? null,
+		rated_life_hours: body.rated_life_hours ?? null,
+		rated_cycles: body.rated_cycles ?? null,
+		install_date: body.install_date ?? null,
+		last_service_date: body.last_service_date ?? null,
+		location: body.location ?? null,
+	});
+
+	logger?.infoSync('Asset created', {
+		component: LogComponents.deviceApi,
+		assetUuid: asset.uuid,
+		name: asset.name,
+	});
+
+	return { ...asset, metrics: [] };
+};
+
+/**
+ * Assets: update an asset
+ */
+export const updateAsset = async (uuid: string, body: {
+	name?: string;
+	asset_type?: string | null;
+	criticality?: 'low' | 'medium' | 'high' | 'critical';
+	manufacturer?: string | null;
+	model?: string | null;
+	rated_life_hours?: number | null;
+	rated_cycles?: number | null;
+	install_date?: number | null;
+	last_service_date?: number | null;
+	location?: string | null;
+}) => {
+	const { AssetModel } = await import('../db/models/asset.model.js');
+	const existing = AssetModel.getByUuid(uuid);
+	if (!existing) {
+		throw Object.assign(new Error(`Asset not found: ${uuid}`), { statusCode: 404 });
+	}
+
+	const asset = AssetModel.update(uuid, body);
+
+	logger?.infoSync('Asset updated', {
+		component: LogComponents.deviceApi,
+		assetUuid: uuid,
+	});
+
+	return asset;
+};
+
+/**
+ * Assets: delete an asset and its metric bindings
+ *
+ * SQLite foreign keys aren't enforced in this DB (PRAGMA foreign_keys is never
+ * turned on), so ON DELETE CASCADE on asset_metrics is not actually applied —
+ * bindings must be cleaned up explicitly here.
+ */
+export const deleteAsset = async (uuid: string) => {
+	const { AssetModel } = await import('../db/models/asset.model.js');
+	const { AssetMetricModel } = await import('../db/models/asset-metric.model.js');
+
+	const asset = AssetModel.getByUuid(uuid);
+	if (!asset) {
+		throw Object.assign(new Error(`Asset not found: ${uuid}`), { statusCode: 404 });
+	}
+
+	AssetMetricModel.deleteByAssetId(asset.id!);
+	AssetModel.delete(uuid);
+
+	logger?.infoSync('Asset deleted', {
+		component: LogComponents.deviceApi,
+		assetUuid: uuid,
+	});
+
+	return { deleted: true };
+};
+
+/**
+ * Asset metric bindings: add a metric binding to an asset
+ */
+export const addAssetMetric = async (assetUuid: string, body: {
+	device_uuid: string;
+	endpoint_uuid?: string | null;
+	metric: string;
+}) => {
+	if (!body.device_uuid) throw new Error('device_uuid is required');
+	if (!body.metric) throw new Error('metric is required');
+
+	const { AssetModel } = await import('../db/models/asset.model.js');
+	const { AssetMetricModel } = await import('../db/models/asset-metric.model.js');
+
+	const asset = AssetModel.getByUuid(assetUuid);
+	if (!asset) {
+		throw Object.assign(new Error(`Asset not found: ${assetUuid}`), { statusCode: 404 });
+	}
+
+	const binding = AssetMetricModel.create({
+		asset_id: asset.id!,
+		device_uuid: body.device_uuid,
+		endpoint_uuid: body.endpoint_uuid ?? null,
+		metric: body.metric,
+	});
+
+	logger?.infoSync('Asset metric binding created', {
+		component: LogComponents.deviceApi,
+		assetUuid,
+		metric: body.metric,
+	});
+
+	return binding;
+};
+
+/**
+ * Asset metric bindings: remove a metric binding from an asset
+ */
+export const removeAssetMetric = async (assetUuid: string, bindingId: number) => {
+	const { AssetModel } = await import('../db/models/asset.model.js');
+	const { AssetMetricModel } = await import('../db/models/asset-metric.model.js');
+
+	const asset = AssetModel.getByUuid(assetUuid);
+	if (!asset) {
+		throw Object.assign(new Error(`Asset not found: ${assetUuid}`), { statusCode: 404 });
+	}
+
+	const binding = AssetMetricModel.getById(bindingId);
+	if (!binding || binding.asset_id !== asset.id) {
+		throw Object.assign(new Error(`Metric binding not found: ${bindingId}`), { statusCode: 404 });
+	}
+
+	AssetMetricModel.delete(bindingId);
+
+	logger?.infoSync('Asset metric binding removed', {
+		component: LogComponents.deviceApi,
+		assetUuid,
+		bindingId,
+	});
+
+	return { deleted: true };
+};
+
+// ─────────────────────────────────────────────────────────────────────────
+// Preventive maintenance / energy rules + recommendations.
+//
+// Route-level gating: v1.ts checks actions.getMaintenanceEnergyService() and
+// returns 503 before calling any of these — same pattern as the anomaly
+// routes — so these functions assume the Pro service is already known to be
+// available and focus only on the CRUD/validation logic itself.
+//
+// Public API surface deals in asset_uuid (never the raw numeric asset_id),
+// matching how /v1/assets works — these functions resolve asset_uuid to the
+// internal asset_id FK and denormalize asset_uuid/asset_name back onto rule
+// responses for the caller's convenience.
+// ─────────────────────────────────────────────────────────────────────────
+
+async function resolveAssetOr404(assetUuid: string) {
+	const { AssetModel } = await import('../db/models/asset.model.js');
+	const asset = AssetModel.getByUuid(assetUuid);
+	if (!asset) {
+		throw Object.assign(new Error(`Asset not found: ${assetUuid}`), { statusCode: 404 });
+	}
+	return asset;
+}
+
+/**
+ * Maintenance rules: list all, with asset_uuid/asset_name resolved for display.
+ */
+export const listMaintenanceRules = async () => {
+	const { MaintenanceRuleModel } = await import('../db/models/maintenance-rule.model.js');
+	const { AssetModel } = await import('../db/models/asset.model.js');
+	const assetsById = new Map(AssetModel.getAll().map((a) => [a.id, a]));
+	return MaintenanceRuleModel.getAll().map((rule) => {
+		const asset = assetsById.get(rule.asset_id);
+		return { ...rule, asset_uuid: asset?.uuid, asset_name: asset?.name };
+	});
+};
+
+/**
+ * Maintenance rules: create a rule
+ */
+export const createMaintenanceRule = async (body: {
+	asset_uuid: string;
+	component: string;
+	rule_type: string;
+	enabled?: boolean;
+	config: Record<string, any>;
+}) => {
+	if (!body.asset_uuid) throw new Error('asset_uuid is required');
+	if (!body.component) throw new Error('component is required');
+	if (!body.rule_type) throw new Error('rule_type is required');
+	if (!body.config) throw new Error('config is required');
+
+	const asset = await resolveAssetOr404(body.asset_uuid);
+	const { MaintenanceRuleModel } = await import('../db/models/maintenance-rule.model.js');
+	const rule = MaintenanceRuleModel.create({
+		asset_id: asset.id!,
+		component: body.component,
+		rule_type: body.rule_type as any,
+		enabled: body.enabled !== false,
+		config: body.config,
+	});
+
+	logger?.infoSync('Maintenance rule created', {
+		component: LogComponents.deviceApi,
+		ruleId: rule.id,
+		assetUuid: body.asset_uuid,
+		ruleType: rule.rule_type,
+	});
+
+	return { ...rule, asset_uuid: asset.uuid, asset_name: asset.name };
+};
+
+/**
+ * Maintenance rules: update a rule
+ */
+export const updateMaintenanceRule = async (id: number, body: {
+	component?: string;
+	rule_type?: string;
+	enabled?: boolean;
+	config?: Record<string, any>;
+}) => {
+	const { MaintenanceRuleModel } = await import('../db/models/maintenance-rule.model.js');
+	const existing = MaintenanceRuleModel.getById(id);
+	if (!existing) {
+		throw Object.assign(new Error(`Maintenance rule not found: ${id}`), { statusCode: 404 });
+	}
+
+	const rule = MaintenanceRuleModel.update(id, body as any);
+
+	logger?.infoSync('Maintenance rule updated', { component: LogComponents.deviceApi, ruleId: id });
+
+	return rule;
+};
+
+/**
+ * Maintenance rules: delete a rule
+ */
+export const deleteMaintenanceRule = async (id: number) => {
+	const { MaintenanceRuleModel } = await import('../db/models/maintenance-rule.model.js');
+	const deleted = MaintenanceRuleModel.delete(id);
+	if (!deleted) {
+		throw Object.assign(new Error(`Maintenance rule not found: ${id}`), { statusCode: 404 });
+	}
+
+	logger?.infoSync('Maintenance rule deleted', { component: LogComponents.deviceApi, ruleId: id });
+
+	return { deleted: true };
+};
+
+/**
+ * Energy rules: list all, with asset_uuid/asset_name resolved for display.
+ */
+export const listEnergyRules = async () => {
+	const { EnergyRuleModel } = await import('../db/models/energy-rule.model.js');
+	const { AssetModel } = await import('../db/models/asset.model.js');
+	const assetsById = new Map(AssetModel.getAll().map((a) => [a.id, a]));
+	return EnergyRuleModel.getAll().map((rule) => {
+		const asset = assetsById.get(rule.asset_id);
+		return { ...rule, asset_uuid: asset?.uuid, asset_name: asset?.name };
+	});
+};
+
+/**
+ * Energy rules: create a rule
+ */
+export const createEnergyRule = async (body: {
+	asset_uuid: string;
+	metric: string;
+	rule_type: string;
+	enabled?: boolean;
+	config: Record<string, any>;
+}) => {
+	if (!body.asset_uuid) throw new Error('asset_uuid is required');
+	if (!body.metric) throw new Error('metric is required');
+	if (!body.rule_type) throw new Error('rule_type is required');
+	if (!body.config) throw new Error('config is required');
+
+	const asset = await resolveAssetOr404(body.asset_uuid);
+	const { EnergyRuleModel } = await import('../db/models/energy-rule.model.js');
+	const rule = EnergyRuleModel.create({
+		asset_id: asset.id!,
+		metric: body.metric,
+		rule_type: body.rule_type as any,
+		enabled: body.enabled !== false,
+		config: body.config,
+	});
+
+	logger?.infoSync('Energy rule created', {
+		component: LogComponents.deviceApi,
+		ruleId: rule.id,
+		assetUuid: body.asset_uuid,
+		ruleType: rule.rule_type,
+	});
+
+	return { ...rule, asset_uuid: asset.uuid, asset_name: asset.name };
+};
+
+/**
+ * Energy rules: update a rule
+ */
+export const updateEnergyRule = async (id: number, body: {
+	metric?: string;
+	rule_type?: string;
+	enabled?: boolean;
+	config?: Record<string, any>;
+}) => {
+	const { EnergyRuleModel } = await import('../db/models/energy-rule.model.js');
+	const existing = EnergyRuleModel.getById(id);
+	if (!existing) {
+		throw Object.assign(new Error(`Energy rule not found: ${id}`), { statusCode: 404 });
+	}
+
+	const rule = EnergyRuleModel.update(id, body as any);
+
+	logger?.infoSync('Energy rule updated', { component: LogComponents.deviceApi, ruleId: id });
+
+	return rule;
+};
+
+/**
+ * Energy rules: delete a rule
+ */
+export const deleteEnergyRule = async (id: number) => {
+	const { EnergyRuleModel } = await import('../db/models/energy-rule.model.js');
+	const deleted = EnergyRuleModel.delete(id);
+	if (!deleted) {
+		throw Object.assign(new Error(`Energy rule not found: ${id}`), { statusCode: 404 });
+	}
+
+	logger?.infoSync('Energy rule deleted', { component: LogComponents.deviceApi, ruleId: id });
+
+	return { deleted: true };
+};
+
+/**
+ * Maintenance recommendations: list all (read-only — rows are written by the
+ * Pro rule evaluator via upsert(), never created directly through this API).
+ */
+export const listMaintenanceRecommendations = async () => {
+	const { MaintenanceRecommendationModel } = await import('../db/models/maintenance-recommendation.model.js');
+	return MaintenanceRecommendationModel.getAll();
+};
+
+/**
+ * Maintenance recommendations: update status (the operator action — mark
+ * scheduled/completed/dismissed).
+ */
+export const updateMaintenanceRecommendationStatus = async (id: number, status: string) => {
+	const validStatuses = ['open', 'scheduled', 'completed', 'dismissed'];
+	if (!validStatuses.includes(status)) {
+		throw new Error(`status must be one of: ${validStatuses.join(', ')}`);
+	}
+
+	const { MaintenanceRecommendationModel } = await import('../db/models/maintenance-recommendation.model.js');
+	const existing = MaintenanceRecommendationModel.getById(id);
+	if (!existing) {
+		throw Object.assign(new Error(`Maintenance recommendation not found: ${id}`), { statusCode: 404 });
+	}
+
+	const rec = MaintenanceRecommendationModel.updateStatus(id, status as any);
+
+	logger?.infoSync('Maintenance recommendation status updated', {
+		component: LogComponents.deviceApi,
+		recommendationId: id,
+		status,
+	});
+
+	return rec;
+};
+
+/**
+ * Energy recommendations: list all (read-only, same reasoning as maintenance above).
+ */
+export const listEnergyRecommendations = async () => {
+	const { EnergyRecommendationModel } = await import('../db/models/energy-recommendation.model.js');
+	return EnergyRecommendationModel.getAll();
+};
+
+/**
+ * Energy recommendations: update status.
+ */
+export const updateEnergyRecommendationStatus = async (id: number, status: string) => {
+	const validStatuses = ['open', 'scheduled', 'completed', 'dismissed'];
+	if (!validStatuses.includes(status)) {
+		throw new Error(`status must be one of: ${validStatuses.join(', ')}`);
+	}
+
+	const { EnergyRecommendationModel } = await import('../db/models/energy-recommendation.model.js');
+	const existing = EnergyRecommendationModel.getById(id);
+	if (!existing) {
+		throw Object.assign(new Error(`Energy recommendation not found: ${id}`), { statusCode: 404 });
+	}
+
+	const rec = EnergyRecommendationModel.updateStatus(id, status as any);
+
+	logger?.infoSync('Energy recommendation status updated', {
+		component: LogComponents.deviceApi,
+		recommendationId: id,
+		status,
+	});
+
+	return rec;
+};
+
+/**
+ * Recommendation publish settings: get (maintenance or energy — same shape, own row).
+ */
+export const getRecommendationPublishSettings = async (module: 'maintenance' | 'energy') => {
+	const { RecommendationPublishSettingsModel } = await import('../db/models/recommendation-publish-settings.model.js');
+	return RecommendationPublishSettingsModel.getByModule(module);
+};
+
+/**
+ * Recommendation publish settings: update.
+ */
+export const updateRecommendationPublishSettings = async (module: 'maintenance' | 'energy', body: {
+	mqtt?: boolean;
+	cloud?: boolean;
+	alert_destination_id?: number | null;
+	alert_topic?: string | null;
+}) => {
+	const { RecommendationPublishSettingsModel } = await import('../db/models/recommendation-publish-settings.model.js');
+	const settings = RecommendationPublishSettingsModel.update(module, body);
+
+	logger?.infoSync('Recommendation publish settings updated', {
+		component: LogComponents.deviceApi,
+		module,
+	});
+
+	return settings;
 };

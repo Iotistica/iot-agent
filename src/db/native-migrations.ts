@@ -26,6 +26,9 @@ import { migration as addAnomalyIncidentResolutionReason } from './migrations/20
 import { migration as addAnomalyRuleTemplates } from './migrations/20260723010000_add_anomaly_rule_templates.js';
 import { migration as addRoleToUsers } from './migrations/20260726000000_add_role_to_users.js';
 import { migration as addOpcuaAlarms } from './migrations/20260727000000_add_opcua_alarms.js';
+import { migration as addAssets } from './migrations/20260728000000_add_assets.js';
+import { migration as addMaintenanceEnergy } from './migrations/20260728010000_add_maintenance_energy.js';
+import { migration as addRecommendationPublishSettings } from './migrations/20260728020000_add_recommendation_publish_settings.js';
 import type { NativeSqliteMigration } from './migration-types.js';
 
 export const nativeMigrations: NativeSqliteMigration[] = [
@@ -57,4 +60,7 @@ export const nativeMigrations: NativeSqliteMigration[] = [
 	addAnomalyRuleTemplates,
 	addRoleToUsers,
 	addOpcuaAlarms,
+	addAssets,
+	addMaintenanceEnergy,
+	addRecommendationPublishSettings,
 ];

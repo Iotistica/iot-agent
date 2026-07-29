@@ -40,4 +40,7 @@ export const pipelineApi = {
     const query = protocol ? `?limit=${limit}&protocol=${encodeURIComponent(protocol)}` : `?limit=${limit}`
     return client.get<{ events: ActivityEvent[] }>(`/v1/pipeline/events${query}`).then(r => r.data.events)
   },
+  getThroughput(): Promise<Record<string, number>> {
+    return client.get<{ counters: Record<string, number> }>('/v1/pipeline/throughput').then(r => r.data.counters)
+  },
 }

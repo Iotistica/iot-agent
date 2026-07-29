@@ -25,6 +25,7 @@ import { encodeIfUuid } from "../mqtt/codec.js";
 
 // Type-only import.
 import type { OPCUAAdapterConfig } from "./opcua/types.js";
+import { OPCUAConnectionSchema } from "./opcua/types.js";
 import { BACnetAdapter } from "./bacnet/adapter.js";
 import { type BACnetAdapterConfig } from "./bacnet/types.js";
 
@@ -49,6 +50,16 @@ export class AdapterManager extends EventEmitter {
 	private protocolEnabledOverrides: Map<string, boolean> = new Map();
 	// Shared endpoint UUID lookup for MQTT hot-reloads.
 	private mqttEndpointUuidByName: Map<string, string> = new Map();
+	// Throttles lastSeenAt DB writes per device name — see wireAdapterEvents's
+	// "data" handler. A protocol that emits one 'data' event per changed value
+	// (OPC-UA subscriptions) rather than one batched event per poll (BACnet,
+	// Modbus) can fire hundreds of these in the same second; each write is a
+	// synchronous SQLite call (EndpointModel/DeviceModel's updateLastSeenBy*
+	// are `async` in name only — no real async I/O underneath), so without
+	// this throttle a busy subscription can spend most of a second doing
+	// redundant writes of the same timestamp to the same row.
+	private lastSeenAtUpdated: Map<string, number> = new Map();
+	private readonly LAST_SEEN_THROTTLE_MS = 5000;
 	private config: AdapterConfig;
 	private deviceUuid: string;
 	private running = false;
@@ -160,10 +171,20 @@ export class AdapterManager extends EventEmitter {
 		adapter.on("started", () => this.logger.info(`${label} adapter started`));
 		adapter.on("data", (dps: DeviceDataPoint[]) => {
 			socket.sendData(this.enrichWithEndpointUuid(dps, uuidMap), protocol);
-			// Stamp lastSeenAt on every data arrival for both endpoint and device tables.
-			// This keeps health status fresh regardless of which protocol emits data.
+			// Stamp lastSeenAt for both endpoint and device tables, throttled per
+			// device name (see LAST_SEEN_THROTTLE_MS above) — health freshness
+			// doesn't need sub-second resolution, and each write is a synchronous
+			// SQLite call that a high-frequency emitter (e.g. an OPC-UA
+			// subscription firing once per changed node) could otherwise repeat
+			// hundreds of times a second for no benefit beyond the first write.
 			const names = [...new Set(dps.map((dp) => dp.deviceName).filter(Boolean))];
+			const now = Date.now();
 			for (const name of names) {
+				const lastUpdated = this.lastSeenAtUpdated.get(name) ?? 0;
+				if (now - lastUpdated < this.LAST_SEEN_THROTTLE_MS) {
+					continue;
+				}
+				this.lastSeenAtUpdated.set(name, now);
 				EndpointModel.updateLastSeenByName(name).catch(() => {});
 				DeviceModel.updateLastSeenByEndpointName(name).catch(() => {});
 			}
@@ -531,6 +552,34 @@ export class AdapterManager extends EventEmitter {
 			throw error;
 		}
 	}
+	/**
+	 * Applies OPCUAConnectionSchema (with its Zod defaults — useSubscription,
+	 * samplingInterval, publishingInterval, maxMonitoredItemsPerSubscription,
+	 * queueSize, etc.) to a raw connection object loaded from the DB.
+	 *
+	 * Without this, `connection: d.connection` was used completely as-is: any
+	 * field missing from the stored JSON (e.g. an endpoint saved before
+	 * useSubscription existed) came through as `undefined`, not even the
+	 * schema's own documented default — `if (device.connection.useSubscription
+	 * && ...)` treats undefined exactly like false, so subscriptions were
+	 * silently never attempted for such devices, no error or warning anywhere.
+	 *
+	 * Uses safeParse + a raw fallback rather than parse(), so one endpoint
+	 * with a genuinely malformed connection (e.g. an unparseable endpointUrl)
+	 * degrades to today's behavior for that device instead of throwing and
+	 * aborting the whole adapter's device list.
+	 */
+	private normalizeOpcuaConnection(deviceName: string, rawConnection: unknown): any {
+		const result = OPCUAConnectionSchema.safeParse(rawConnection);
+		if (result.success) {
+			return result.data;
+		}
+		this.logger.warn(
+			`OPC-UA device ${deviceName}: connection config failed schema validation, using raw config as-is (${result.error.message})`,
+		);
+		return rawConnection;
+	}
+
 	private async startOPCUAAdapter(): Promise<void> {
 		try {
 			let opcuaDevices: any[];
@@ -544,7 +593,7 @@ export class AdapterManager extends EventEmitter {
 					name: d.name,
 					protocol: "opcua",
 					enabled: d.enabled,
-					connection: d.connection,
+					connection: this.normalizeOpcuaConnection(d.name, d.connection),
 					pollInterval: d.poll_interval,
 					dataPoints: (d.data_points || []).map((dp: any) => ({
 						...dp,
@@ -579,7 +628,7 @@ export class AdapterManager extends EventEmitter {
 				uuid: d.uuid,
 				name: d.name,
 				enabled: d.enabled,
-				connection: d.connection,
+				connection: this.normalizeOpcuaConnection(d.name, d.connection),
 				pollInterval: d.poll_interval,
 				dataPoints: (d.data_points || []).map((dp: any) => ({
 					...dp,

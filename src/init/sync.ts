@@ -4,6 +4,7 @@ import { LogComponents } from '../logging/types.js';
 import { CloudMqttClient } from '../mqtt/manager.js';
 import { CloudSync } from '../sync/index.js';
 import { initAnomalyDetection, configureAnomalyFeed } from './anomaly.js';
+import { initMaintenanceEnergy, configureMaintenanceEnergyFeed } from './maintenance-energy.js';
 import { isStandaloneMode } from '../utils/env.js';
 
 export async function initSync(ctx: AgentInitContext): Promise<void> {
@@ -14,13 +15,19 @@ export async function initSync(ctx: AgentInitContext): Promise<void> {
 	}
 	await configureAnomalyFeed(ctx);
 
+	if (!ctx.maintenanceEnergyService) {
+		await initMaintenanceEnergy(ctx);
+	}
+	configureMaintenanceEnergyFeed(ctx);
+
 	deviceActions.initialize(
 		ctx.containerManager!,
 		ctx.agentManager!,
 		ctx.cloudSync,
 		ctx.agentLogger,
 		ctx.anomalyService,
-		ctx.simulationOrchestrator
+		ctx.simulationOrchestrator,
+		ctx.maintenanceEnergyService
 	);
 
 	deviceActions.setAgent(ctx.agent);

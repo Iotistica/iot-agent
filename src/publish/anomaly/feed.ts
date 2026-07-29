@@ -23,6 +23,7 @@ export class AnomalyFeed {
 		private readonly deviceUuid: string,
 		private readonly protocol: Protocol | undefined,
 		private readonly logger?: Logger,
+		private readonly getMaintenanceEnergyService?: () => any | undefined,
 	) {}
 
 	processBatch(messages: unknown[], deviceName: string): void {
@@ -126,6 +127,8 @@ export class AnomalyFeed {
 		metricKey: string,
 		point: any,
 	): boolean {
+		this.dispatchToMaintenanceEnergy(point);
+
 		const service = this.currentService;
 		this.batchCandidateMetrics.add(metricKey);
 		this.batchMetricLabels.set(
@@ -148,6 +151,36 @@ export class AnomalyFeed {
 			return false;
 		}
 		return true;
+	}
+
+	/**
+	 * Forwards the same reading to the (independent, Pro-only) maintenance/
+	 * energy service, if one is wired in — regardless of whether anomaly
+	 * detection itself is configured/enabled for this metric, since the two
+	 * features are unrelated. Every call site above tags its point with
+	 * either `fieldName` (reading-object/array dispatch) or `field` (direct-
+	 * numeric/generic-walk dispatch) — the bare metric name, as opposed to
+	 * `metricKey`'s full canonical `{endpointUuid}_{deviceIdentifier}_{field}`
+	 * form, since asset_metrics bindings are keyed on the bare name (see
+	 * AssetDrawer.vue's metric-binding picker in iot-agent's admin).
+	 * Failures here must never affect anomaly dispatch — hence the try/catch.
+	 */
+	private dispatchToMaintenanceEnergy(point: any): void {
+		const service = this.getMaintenanceEnergyService?.();
+		if (!service) return;
+
+		const bareMetric: string | undefined = point?.tags?.fieldName ?? point?.tags?.field;
+		if (!bareMetric || typeof point?.value !== 'number' || !Number.isFinite(point.value)) return;
+
+		try {
+			service.processDataPoint(this.deviceUuid, null, bareMetric, point.value, point.timestamp);
+		} catch (error) {
+			this.logger?.debug('Maintenance/energy dispatch failed, continuing without it', {
+				deviceUuid: this.deviceUuid,
+				metric: bareMetric,
+				error: error instanceof Error ? error.message : String(error),
+			});
+		}
 	}
 
 	private buildFriendlyMetricLabel(

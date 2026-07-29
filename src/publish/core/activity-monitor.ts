@@ -66,6 +66,12 @@ class ActivityMonitor {
 	// into one correctly-ordered feed.
 	private eventsByProtocol = new Map<string, ActivityEvent[]>();
 	private nextEventId = 1;
+	// Monotonic, never-evicted point counter per protocol (unlike eventsByProtocol,
+	// which is capped and rolls off old entries) — lets a poller compute a
+	// points/sec rate by diffing two snapshots, the same way the dashboard derives
+	// CPU/network history from repeated stat snapshots rather than server-tracked
+	// time series.
+	private totalPointsByProtocol = new Map<string, number>();
 
 	record(params: {
 		subscriptionId: number | null;
@@ -123,6 +129,8 @@ class ActivityMonitor {
 			bucket.splice(0, bucket.length - MAX_EVENTS_PER_PROTOCOL);
 		}
 		this.eventsByProtocol.set(protocolKey, bucket);
+
+		this.totalPointsByProtocol.set(protocolKey, (this.totalPointsByProtocol.get(protocolKey) ?? 0) + 1);
 	}
 
 	getSubscriptions(): SubscriptionActivity[] {
@@ -141,6 +149,11 @@ class ActivityMonitor {
 		}
 		return merged.slice(-limit).reverse()
 			.map((e) => ({ ...e, endpointName: displayEndpointName(e.endpointName) }));
+	}
+
+	/** Cumulative points recorded per protocol since agent start — never resets or evicts. */
+	getThroughputCounters(): Record<string, number> {
+		return Object.fromEntries(this.totalPointsByProtocol);
 	}
 }
 

@@ -105,6 +105,11 @@ param(
     [ValidateSet('on', 'off', 'auto', 'disabled')]
     [string]$FirewallMode = "auto",
     [string]$ProForce = "false",
+    # Sets a known admin password at first boot instead of a random generated one
+    # (INITIAL_ADMIN_PASSWORD — see src/db/migrations/20260620010000_add_admin_users.ts).
+    # Only takes effect the first time the users table is seeded; the account is
+    # still forced to change it once on first login.
+    [string]$InitialAdminPassword = "",
     [string]$UseMsgpackPoc = "false",
     [string]$UseKeyCompactionPoc = "false",
     [string]$UseDeflateCompression = "false",
@@ -533,13 +538,14 @@ if (
         Write-Host "  Build source : $(if ($BuildFromSource) { 'yes (--build)' } else { 'no (image pull)' })" -ForegroundColor Gray
 
         # Patch publish target env vars in-place if explicitly supplied.
-        if ($PSBoundParameters.ContainsKey('PublishTarget') -or $PSBoundParameters.ContainsKey('AzureIothubConnectionString') -or $PSBoundParameters.ContainsKey('ProForce')) {
+        if ($PSBoundParameters.ContainsKey('PublishTarget') -or $PSBoundParameters.ContainsKey('AzureIothubConnectionString') -or $PSBoundParameters.ContainsKey('ProForce') -or $PSBoundParameters.ContainsKey('InitialAdminPassword')) {
             $composeLines = Get-Content $composeFile
             # Strip any existing lines we're about to re-emit so we don't duplicate them.
             $composeLines = $composeLines | Where-Object {
                 $_ -notmatch '^\s+- PUBLISH_TARGET=' -and
                 $_ -notmatch '^\s+- AZURE_IOTHUB_CONNECTION_STRING=' -and
-                $_ -notmatch '^\s+- PRO_FORCE='
+                $_ -notmatch '^\s+- PRO_FORCE=' -and
+                $_ -notmatch '^\s+- INITIAL_ADMIN_PASSWORD='
             }
             # Re-insert after the last fixed env var (AGENT_SHELL_MAX_SESSION_MS).
             $anchor = '      - AGENT_SHELL_MAX_SESSION_MS=3600000'
@@ -550,6 +556,7 @@ if (
                     if ($PSBoundParameters.ContainsKey('ProForce'))                { $patched += "      - PRO_FORCE=$ProForce" }
                     if ($PublishTarget -ne '')                                      { $patched += "      - PUBLISH_TARGET=$PublishTarget" }
                     if ($AzureIothubConnectionString -ne '')                        { $patched += "      - AZURE_IOTHUB_CONNECTION_STRING=$AzureIothubConnectionString" }
+                    if ($InitialAdminPassword -ne '')                               { $patched += "      - INITIAL_ADMIN_PASSWORD=$InitialAdminPassword" }
                 }
             }
             $patched | Set-Content $composeFile
@@ -1567,6 +1574,9 @@ for ($i = $StartIndex; $i -lt ($StartIndex + $Count); $i++) {
         }
         if ($AzureIothubConnectionString -ne "") {
             $serviceLines += "      - AZURE_IOTHUB_CONNECTION_STRING=$AzureIothubConnectionString"
+        }
+        if ($InitialAdminPassword -ne "") {
+            $serviceLines += "      - INITIAL_ADMIN_PASSWORD=$InitialAdminPassword"
         }
         $service = [string]::Join("`n", $serviceLines)
     

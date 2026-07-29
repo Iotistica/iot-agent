@@ -40,6 +40,7 @@ export interface FeatureContext {
   cloudApiEndpoint: string;
   deviceApiPort: number;
   anomalyService?: any;
+  maintenanceEnergyService?: any;
   discoveryService?: any; // Discovery service for endpoint auto-reload
   dictionaryManager?: any; // Dictionary manager for MQTT message key compaction
   pipelineService?: PipelineService; // Node-RED payload transform pipeline (optional)
@@ -141,6 +142,11 @@ export class FeatureInitializer {
 	public setAnomalyService(anomalyService?: any): void {
 		this.context.anomalyService = anomalyService;
 		this.features.devicePublish?.setAnomalyService?.(anomalyService);
+	}
+
+	public setMaintenanceEnergyService(maintenanceEnergyService?: any): void {
+		this.context.maintenanceEnergyService = maintenanceEnergyService;
+		this.features.devicePublish?.setMaintenanceEnergyService?.(maintenanceEnergyService);
 	}
 
 	/** Wires the shared incident correlator into Device Publish so critical schema drift can raise alerts. */
@@ -266,7 +272,7 @@ export class FeatureInitializer {
    * Reads endpoint configuration from database and starts device Publish
    */
 	async initDevicePublish(): Promise<void> {
-		const { logger, deviceInfo, anomalyService } = this.context;
+		const { logger, deviceInfo, anomalyService, maintenanceEnergyService } = this.context;
 
 		const devicePublishEnabled = this.isDevicePublishEnabled();
 		if (!devicePublishEnabled) {
@@ -407,6 +413,7 @@ export class FeatureInitializer {
         useKeyCompactionPoc,
         useDeflatePoc,
         anomalyService,
+        maintenanceEnergyService,
 			);
 
 			if (this.context.liveDataInterceptor) {
@@ -689,6 +696,7 @@ export async function initFeatures(ctx: AgentInitContext): Promise<void> {
 		cloudApiEndpoint: ctx.configManager!.getCloudApiEndpoint(),
 		deviceApiPort: ctx.configManager!.getAgentApiPort(),
 		anomalyService: ctx.anomalyService,
+		maintenanceEnergyService: ctx.maintenanceEnergyService,
 		dictionaryManager: ctx.dictionaryManager,
 		pipelineService: ctx.pipelineService,
 	};
@@ -708,6 +716,10 @@ export async function initFeatures(ctx: AgentInitContext): Promise<void> {
 	const { initAnomalyDetection, configureAnomalyFeed } = await import('./anomaly.js');
 	await initAnomalyDetection(ctx);
 	await configureAnomalyFeed(ctx);
+
+	const { initMaintenanceEnergy, configureMaintenanceEnergyFeed } = await import('./maintenance-energy.js');
+	await initMaintenanceEnergy(ctx);
+	configureMaintenanceEnergyFeed(ctx);
 
 	const { initSimulationMode } = await import('./simulation.js');
 	await initSimulationMode(ctx);

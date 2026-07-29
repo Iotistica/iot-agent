@@ -57,6 +57,7 @@
 // @ts-ignore - Optional dependency: node-opcua-client may not be installed
 import {
 	type ClientSession,
+	type ClientMonitoredItem,
 	type DataValue,
 	AttributeIds,
 	TimestampsToReturn,
@@ -65,6 +66,7 @@ import {
 	DataType as _DataType,
 	BrowsePath,
 	type BrowsePathResult,
+	ClientMonitoredItemGroup,
 } from 'node-opcua-client';
 import { BaseProtocolAdapter, type GenericDeviceConfig } from '../base.js';
 import { type DeviceDataPoint, type Logger, type IProtocolAdapter as _IProtocolAdapter } from '../types.js';
@@ -74,6 +76,7 @@ import {
 	type OPCUADataPoint,
 } from './types.js';
 import { OPCUADeviceClient, type OPCUASession } from './client.js';
+import { OpcuaStartupDiagnostics } from './diagnostics.js';
 
 /**
  * OPC-UA Protocol Adapter
@@ -84,6 +87,10 @@ import { OPCUADeviceClient, type OPCUASession } from './client.js';
 export class OPCUAAdapter extends BaseProtocolAdapter  {
 	private clients: Map<string, OPCUADeviceClient> = new Map();
 	private sessions: Map<string, OPCUASession> = new Map();
+
+	// TEMPORARY — see diagnostics.ts. Remove once the monitored-item-count
+	// investigation is done.
+	private diagnostics: OpcuaStartupDiagnostics;
 
 	// Human-readable names resolved from the OPC-UA server at connect time.
 	// Populated from: metadata.displayName (config override) > server DisplayName attribute > unset
@@ -157,6 +164,7 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
    */
 	constructor(devices: OPCUADeviceConfig[], logger?: Logger) {
 		super(devices as GenericDeviceConfig[], logger || new ConsoleLogger('debug'));
+		this.diagnostics = new OpcuaStartupDiagnostics(this.logger);
 	}
   
 	/**
@@ -582,84 +590,134 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 				totalItems: validDataPoints.length,
 			});
 
-			// Create monitored items for this subscription's batch
-			for (const dp of batchDataPoints) {
-				try {
-					const itemToMonitor = {
-						nodeId: dp.nodeId,
-						attributeId: AttributeIds.Value,
-					};
+			// Create every monitored item for this subscription's batch in ONE network
+			// round-trip via ClientMonitoredItemGroup, instead of one subscription.monitor()
+			// call per node. The previous per-item loop meant one createMonitoredItems
+			// request per node (e.g. 665 sequential round-trips for a 665-node device) —
+			// this had never actually run against a real device before useSubscription
+			// worked correctly, and turned out to stall the event loop badly once it did.
+			// See node-opcua-client's ClientMonitoredItemToolbox._toolbox_monitor: it
+			// builds one CreateMonitoredItemsRequest covering the whole array and maps
+			// response.results[i] back to monitoredItems[i] in order — per-item status
+			// codes are preserved exactly as before, just from one batched response.
+			const parameters = {
+				samplingInterval: connection.samplingInterval || 500,
+				discardOldest: true,
+				queueSize: connection.queueSize ?? 1,
+			};
 
-					const parameters = {
-						samplingInterval: connection.samplingInterval || 500,
-						discardOldest: true,
-						queueSize: 10,
-					};
+			const itemsToMonitor = batchDataPoints.map(dp => ({
+				nodeId: dp.nodeId,
+				attributeId: AttributeIds.Value,
+			}));
 
-					const monitoredItem = await subscription.monitor(
-						itemToMonitor,
-						parameters,
-						TimestampsToReturn.Both
-					);
+			const group = ClientMonitoredItemGroup.create(subscription, itemsToMonitor, parameters, TimestampsToReturn.Both);
 
-					// Handle data changes (real-time streaming)
-					monitoredItem.on('changed', (dataValue: DataValue) => {
-						// Hard gate: Never emit metadata nodes
-						if ((dp).nodeType !== 'metric') {
-							this.logger.warn(`Blocked metadata node emission: ${dp.name}`, { deviceName });
-							return;
-						}
+			try {
+				await new Promise<void>((resolve, reject) => {
+					group.once('initialized', () => resolve());
+					group.once('err', (message: string) => reject(new Error(message)));
+				});
+			} catch (error) {
+				this.logger.error(`Failed to create monitored item group for ${deviceName}: ${error}`, { deviceName, itemCount: batchDataPoints.length });
+				for (const dp of batchDataPoints) {
+					// TEMPORARY diagnostics — see diagnostics.ts.
+					this.diagnostics.recordMonitorAttempt(deviceName, dp.nodeId, false, error instanceof Error ? error.message : String(error));
+				}
+				continue;
+			}
 
-						const quality = this.determineQuality(dataValue.statusCode);
-						const qualityCode = quality !== 'GOOD' ? this.extractQualityCode(dataValue.statusCode) : undefined;
+			// One handler for the whole batch — index maps back to batchDataPoints
+			// (ClientMonitoredItemGroup preserves the order itemsToMonitor was built in).
+			//
+			// A single OPC-UA PublishResponse can report many nodes changed at once —
+			// node-opcua delivers that as one 'changed' event per node, all firing
+			// synchronously back-to-back in the same tick. Emitting 'data' immediately
+			// per node (as this used to, matching the pre-batching monitor() code)
+			// meant up to one emit per node per publish cycle — hundreds/sec for a
+			// large device — each cascading into its own IPC socket send, DB write,
+			// etc. downstream. Buffer same-tick changes and flush once via
+			// setImmediate instead: real-time streaming is unaffected (flush happens
+			// as soon as the current synchronous burst of 'changed' events ends, not
+			// on a fixed delay), but downstream consumers get one batch instead of N
+			// individual events.
+			let pendingDataPoints: DeviceDataPoint[] = [];
+			const flushPendingDataPoints = () => {
+				if (pendingDataPoints.length === 0) return;
+				const batch = pendingDataPoints;
+				pendingDataPoints = [];
+				this.emit('data', batch);
+			};
 
-						const dataPoint: DeviceDataPoint = {
-							timestamp: new Date().toISOString(),
-							deviceName,
-							deviceId: this.buildStableNodeDeviceId(device, dp),
-							metric: dp.name,
-							value: dataValue.value?.value ?? null,
-							unit: dp.unit || '',
-							quality,
-							...(qualityCode && { qualityCode }),  // Only include if quality != GOOD
-							protocol: 'opcua',  // For enum namespacing
-							nodeType: 'metric', // Always 'metric' at this point (metadata filtered)
-							...(dp.device_uuid && { device_uuid: dp.device_uuid }),
-							...((this.resolvedNodeDisplayNames.has(dp.nodeId) || this.resolvedDeviceNames.has(deviceName)) && {
-								resolvedDisplayName: this.resolvedNodeDisplayNames.get(dp.nodeId) ?? this.resolvedDeviceNames.get(deviceName),
-							}),
-						};
+			group.on('changed', (_monitoredItem: unknown, dataValue: DataValue, index: number) => {
+				const dp = batchDataPoints[index];
 
-						// Emit immediately (real-time streaming)
-						this.emit('data', [dataPoint]);
-					});
+				// Hard gate: Never emit metadata nodes
+				if (dp.nodeType !== 'metric') {
+					this.logger.warn(`Blocked metadata node emission: ${dp.name}`, { deviceName });
+					return;
+				}
 
-					// Handle errors
-					monitoredItem.on('err', (errorMessage: string) => {
-						this.logger.error(`Monitored item error for ${dp.name}: ${errorMessage}`, {
-							deviceName,
-							nodeId: dp.nodeId,
-						});
-					});
+				const quality = this.determineQuality(dataValue.statusCode);
+				const qualityCode = quality !== 'GOOD' ? this.extractQualityCode(dataValue.statusCode) : undefined;
 
-					sessionWrapper.monitoredItems.set(dp.nodeId, monitoredItem);
-				} catch (error) {
-					this.logger.error(`Failed to create monitored item for ${dp.name}: ${error}`, {
+				const dataPoint: DeviceDataPoint = {
+					timestamp: new Date().toISOString(),
+					deviceName,
+					deviceId: this.buildStableNodeDeviceId(device, dp),
+					metric: dp.name,
+					value: dataValue.value?.value ?? null,
+					unit: dp.unit || '',
+					quality,
+					...(qualityCode && { qualityCode }),  // Only include if quality != GOOD
+					protocol: 'opcua',  // For enum namespacing
+					nodeType: 'metric', // Always 'metric' at this point (metadata filtered)
+					...(dp.device_uuid && { device_uuid: dp.device_uuid }),
+					...((this.resolvedNodeDisplayNames.has(dp.nodeId) || this.resolvedDeviceNames.has(deviceName)) && {
+						resolvedDisplayName: this.resolvedNodeDisplayNames.get(dp.nodeId) ?? this.resolvedDeviceNames.get(deviceName),
+					}),
+				};
+
+				if (pendingDataPoints.length === 0) {
+					setImmediate(flushPendingDataPoints);
+				}
+				pendingDataPoints.push(dataPoint);
+			});
+
+			// Per-item creation result + per-item ongoing error handling — same
+			// granularity the previous one-monitor()-call-per-item loop had.
+			group.monitoredItems.forEach((monitoredItem, index) => {
+				const dp = batchDataPoints[index];
+
+				// TEMPORARY diagnostics — see diagnostics.ts.
+				this.diagnostics.recordMonitorAttempt(deviceName, dp.nodeId, true, monitoredItem.statusCode?.toString());
+
+				monitoredItem.on('err', (errorMessage: string) => {
+					this.logger.error(`Monitored item error for ${dp.name}: ${errorMessage}`, {
 						deviceName,
 						nodeId: dp.nodeId,
 					});
-				}
-			}
+				});
+
+				sessionWrapper.monitoredItems.set(dp.nodeId, monitoredItem as ClientMonitoredItem);
+			});
 
 			// Handle subscription errors
 			subscription.on('terminated', () => {
 				this.logger.warn(`Subscription ${subIdx + 1} terminated for ${deviceName}`);
+				// TEMPORARY diagnostics — see diagnostics.ts.
+				this.diagnostics.recordSubscriptionTerminated(deviceName);
 			});
 
 			subscription.on('keepalive', () => {
 				// keepalive: subscription is healthy, no action needed
 			});
 		}
+
+		// TEMPORARY diagnostics — see diagnostics.ts. Reaching here means every
+		// batch above completed without createSubscription2() itself throwing —
+		// individual monitor() failures are already tracked per-item above.
+		this.diagnostics.recordSubscriptionResult(deviceName, true, sessionWrapper.subscriptions.map(s => s.subscriptionId));
 	}
 
 	/**
@@ -843,6 +901,9 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
    * @returns OPCUASession object with client and session
    */
 	protected async connectDevice(device: OPCUADeviceConfig): Promise<OPCUASession> {
+		// TEMPORARY diagnostics — see diagnostics.ts.
+		this.diagnostics.recordConnectAttempt(device.name, device.connection.endpointUrl, device.connection.useSubscription);
+
 		const runtimeClient = new OPCUADeviceClient(device, this.logger, {
 			minRetryDelay: this.MIN_RETRY_DELAY,
 			maxReadRetries: this.MAX_READ_RETRIES,
@@ -876,6 +937,9 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 			}
 
 			const session = sessionWrapper.session;
+
+			// TEMPORARY diagnostics — see diagnostics.ts.
+			this.diagnostics.recordSessionEstablished(device.name, session.sessionId?.toString() ?? null);
 
 			// Resolve human-readable display name for this device.
 			// Only set when explicitly configured via metadata.displayName — do NOT read ns=0;i=2253
@@ -918,6 +982,9 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 
 			// Cache validated NodeIDs (only metrics)
 			validDataPoints.forEach(dp => sessionWrapper.validatedNodes.add(dp.nodeId));
+
+			// TEMPORARY diagnostics — see diagnostics.ts.
+			this.diagnostics.recordValidatedNodes(device.name, validDataPoints.length);
 
 			// Warn if some nodes are invalid
 			if (invalidNodeIds.length > 0) {
@@ -1037,12 +1104,17 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 				} catch (error) {
 					this.logger.error(`Failed to create subscription for ${device.name}: ${error}`);
 					this.logger.warn(`Falling back to polling mode for ${device.name}`);
+					// TEMPORARY diagnostics — see diagnostics.ts.
+					this.diagnostics.recordSubscriptionResult(device.name, false, [], error instanceof Error ? error.message : String(error));
+					this.diagnostics.recordPollingFallback(device.name);
 				}
 			}
 
 			// Everything up to here can still throw (metadata reads, etc.) without leaking a
 			// listener-carrying session — commit only now that initialization has fully succeeded.
 			commitSession(sessionWrapper);
+			// TEMPORARY diagnostics — see diagnostics.ts.
+			this.diagnostics.logAggregateSnapshot(this.sessions);
 			return sessionWrapper;
 		} catch (error) {
 			// Safe unconditionally: commitSession() above is the only place that attaches

@@ -110,6 +110,198 @@ export interface DiscoveryRuleFormData {
   params_json: Record<string, unknown> | null
 }
 
+export type AssetCriticality = 'low' | 'medium' | 'high' | 'critical'
+
+export interface AssetMetricBinding {
+  id: number
+  asset_id: number
+  device_uuid: string
+  endpoint_uuid: string | null
+  metric: string
+  created_at?: string
+  updated_at?: string
+}
+
+export interface Asset {
+  uuid: string
+  name: string
+  asset_type: string | null
+  criticality: AssetCriticality
+  manufacturer: string | null
+  model: string | null
+  rated_life_hours: number | null
+  rated_cycles: number | null
+  install_date: number | null
+  last_service_date: number | null
+  location: string | null
+  metrics: AssetMetricBinding[]
+  created_at?: string
+  updated_at?: string
+}
+
+export interface AssetFormData {
+  name: string
+  asset_type: string | null
+  criticality: AssetCriticality
+  manufacturer: string | null
+  model: string | null
+  rated_life_hours: number | null
+  rated_cycles: number | null
+  install_date: number | null
+  last_service_date: number | null
+  location: string | null
+}
+
+export interface AssetMetricBindingFormData {
+  device_uuid: string
+  endpoint_uuid: string | null
+  metric: string
+}
+
+// ── Preventive maintenance / energy recommendations (Pro-only) ─────────────
+
+export type MaintenanceRuleType = 'cumulative_runtime' | 'cycle_count' | 'threshold_duration'
+export type EnergyRuleType = 'standby_waste' | 'schedule_mismatch' | 'duty_cycle'
+export type RecommendationStatus = 'open' | 'scheduled' | 'completed' | 'dismissed'
+
+export interface WindowGating {
+  metric: string
+  min?: number
+  max?: number
+}
+
+export interface CumulativeRuntimeRuleConfig {
+  metric: string
+  thresholdHours: number
+  windowGating?: WindowGating
+}
+
+export interface CycleCountRuleConfig {
+  metric: string
+  thresholdCycles: number
+}
+
+export interface ThresholdDurationRuleConfig {
+  metric: string
+  threshold: number
+  comparator: 'gt' | 'lt'
+  sustainedForMs: number
+  consecutiveWindowsRequired: number
+  windowGating?: WindowGating
+}
+
+export type MaintenanceRuleConfig = CumulativeRuntimeRuleConfig | CycleCountRuleConfig | ThresholdDurationRuleConfig
+
+export interface MaintenanceRule {
+  id: number
+  asset_id: number
+  asset_uuid?: string
+  asset_name?: string
+  component: string
+  rule_type: MaintenanceRuleType
+  enabled: boolean
+  config: MaintenanceRuleConfig
+  created_at?: string
+  updated_at?: string
+}
+
+export interface MaintenanceRuleFormData {
+  asset_uuid: string
+  component: string
+  rule_type: MaintenanceRuleType
+  enabled: boolean
+  config: MaintenanceRuleConfig
+}
+
+export interface MaintenanceRecommendation {
+  id: number
+  asset_id: number
+  asset_name: string
+  criticality: string
+  component: string
+  rule_type: string
+  rule_config: Record<string, unknown>
+  status: RecommendationStatus
+  message: string
+  due_by: number | null
+  confidence: number | null
+  consecutive_count: number
+  first_evaluated_at: number
+  last_evaluated_at: number
+  created_at?: string
+  updated_at?: string
+}
+
+export interface StandbyWasteRuleConfig {
+  metric: string
+  standbyThreshold: number
+  outsideScheduleOnly: boolean
+  schedule?: { start: string; end: string; days: number[] }
+}
+
+export interface ScheduleMismatchRuleConfig {
+  metric: string
+  expectedSchedule: { start: string; end: string; days: number[] }
+  toleranceMinutes: number
+}
+
+export interface DutyCycleRuleConfig {
+  metric: string
+  windowMs: number
+  expectedMinRatio?: number
+  expectedMaxRatio?: number
+}
+
+export type EnergyRuleConfig = StandbyWasteRuleConfig | ScheduleMismatchRuleConfig | DutyCycleRuleConfig
+
+export interface EnergyRule {
+  id: number
+  asset_id: number
+  asset_uuid?: string
+  asset_name?: string
+  metric: string
+  rule_type: EnergyRuleType
+  enabled: boolean
+  config: EnergyRuleConfig
+  created_at?: string
+  updated_at?: string
+}
+
+export interface EnergyRuleFormData {
+  asset_uuid: string
+  metric: string
+  rule_type: EnergyRuleType
+  enabled: boolean
+  config: EnergyRuleConfig
+}
+
+export interface EnergyRecommendation {
+  id: number
+  asset_id: number
+  asset_name: string
+  criticality: string
+  metric: string
+  rule_type: string
+  rule_config: Record<string, unknown>
+  status: RecommendationStatus
+  message: string
+  estimated_impact: string | null
+  confidence: number | null
+  consecutive_count: number
+  first_evaluated_at: number
+  last_evaluated_at: number
+  created_at?: string
+  updated_at?: string
+}
+
+export interface RecommendationPublishSettings {
+  module: 'maintenance' | 'energy'
+  mqtt: boolean
+  cloud: boolean
+  alert_destination_id: number | null
+  alert_topic: string | null
+}
+
 export interface EndpointCreateData {
   name: string
   protocol: string

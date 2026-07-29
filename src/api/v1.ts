@@ -1726,6 +1726,316 @@ router.get('/v1/discovery-runs', async (req: Request, res: Response, next: NextF
 });
 
 /**
+ * GET /v1/assets
+ * List all assets (with their metric bindings)
+ */
+router.get('/v1/assets', async (_req: Request, res: Response, next: NextFunction) => {
+	try {
+		const assets = await actions.listAssets();
+		return res.status(200).json({ assets });
+	} catch (error) {
+		next(error);
+	}
+});
+
+/**
+ * GET /v1/assets/:uuid
+ * Get a single asset with its metric bindings
+ */
+router.get('/v1/assets/:uuid', async (req: Request, res: Response, next: NextFunction) => {
+	try {
+		const asset = await actions.getAsset(req.params.uuid);
+		return res.status(200).json({ asset });
+	} catch (error: any) {
+		if (error?.statusCode === 404) return res.status(404).json({ error: error.message });
+		next(error);
+	}
+});
+
+/**
+ * POST /v1/assets
+ * Create an asset
+ */
+router.post('/v1/assets', requireRole('operator'), async (req: Request, res: Response, next: NextFunction) => {
+	try {
+		const asset = await actions.createAsset(req.body);
+		return res.status(201).json({ asset });
+	} catch (error) {
+		next(error);
+	}
+});
+
+/**
+ * PATCH /v1/assets/:uuid
+ * Update an asset
+ */
+router.patch('/v1/assets/:uuid', requireRole('operator'), async (req: Request, res: Response, next: NextFunction) => {
+	try {
+		const asset = await actions.updateAsset(req.params.uuid, req.body);
+		return res.status(200).json({ asset });
+	} catch (error: any) {
+		if (error?.statusCode === 404) return res.status(404).json({ error: error.message });
+		next(error);
+	}
+});
+
+/**
+ * DELETE /v1/assets/:uuid
+ * Delete an asset (its metric bindings cascade with it)
+ */
+router.delete('/v1/assets/:uuid', requireRole('operator'), async (req: Request, res: Response, next: NextFunction) => {
+	try {
+		await actions.deleteAsset(req.params.uuid);
+		return res.status(204).send();
+	} catch (error: any) {
+		if (error?.statusCode === 404) return res.status(404).json({ error: error.message });
+		next(error);
+	}
+});
+
+/**
+ * POST /v1/assets/:uuid/metrics
+ * Bind a device/endpoint metric to an asset
+ */
+router.post('/v1/assets/:uuid/metrics', requireRole('operator'), async (req: Request, res: Response, next: NextFunction) => {
+	try {
+		const binding = await actions.addAssetMetric(req.params.uuid, req.body);
+		return res.status(201).json({ binding });
+	} catch (error: any) {
+		if (error?.statusCode === 404) return res.status(404).json({ error: error.message });
+		next(error);
+	}
+});
+
+/**
+ * DELETE /v1/assets/:uuid/metrics/:bindingId
+ * Remove a metric binding from an asset
+ */
+router.delete('/v1/assets/:uuid/metrics/:bindingId', requireRole('operator'), async (req: Request, res: Response, next: NextFunction) => {
+	try {
+		await actions.removeAssetMetric(req.params.uuid, parseInt(req.params.bindingId, 10));
+		return res.status(204).send();
+	} catch (error: any) {
+		if (error?.statusCode === 404) return res.status(404).json({ error: error.message });
+		next(error);
+	}
+});
+
+/**
+ * Preventive maintenance / energy recommendations — Pro-only feature.
+ * Every route below 503s if @iotistica/agent-pro isn't installed, same
+ * gating as the /v1/anomaly/* routes.
+ */
+
+router.get('/v1/maintenance/rules', async (_req: Request, res: Response, next: NextFunction) => {
+	if (!actions.getMaintenanceEnergyService()) {
+		return res.status(503).json({ error: 'Preventive maintenance requires Iotistica Pro' });
+	}
+	try {
+		const rules = await actions.listMaintenanceRules();
+		return res.status(200).json({ rules });
+	} catch (error) {
+		next(error);
+	}
+});
+
+router.post('/v1/maintenance/rules', requireRole('operator'), async (req: Request, res: Response, next: NextFunction) => {
+	if (!actions.getMaintenanceEnergyService()) {
+		return res.status(503).json({ error: 'Preventive maintenance requires Iotistica Pro' });
+	}
+	try {
+		const rule = await actions.createMaintenanceRule(req.body);
+		return res.status(201).json({ rule });
+	} catch (error: any) {
+		if (error?.statusCode === 404) return res.status(404).json({ error: error.message });
+		next(error);
+	}
+});
+
+router.patch('/v1/maintenance/rules/:id', requireRole('operator'), async (req: Request, res: Response, next: NextFunction) => {
+	if (!actions.getMaintenanceEnergyService()) {
+		return res.status(503).json({ error: 'Preventive maintenance requires Iotistica Pro' });
+	}
+	try {
+		const rule = await actions.updateMaintenanceRule(parseInt(req.params.id, 10), req.body);
+		return res.status(200).json({ rule });
+	} catch (error: any) {
+		if (error?.statusCode === 404) return res.status(404).json({ error: error.message });
+		next(error);
+	}
+});
+
+router.delete('/v1/maintenance/rules/:id', requireRole('operator'), async (req: Request, res: Response, next: NextFunction) => {
+	if (!actions.getMaintenanceEnergyService()) {
+		return res.status(503).json({ error: 'Preventive maintenance requires Iotistica Pro' });
+	}
+	try {
+		await actions.deleteMaintenanceRule(parseInt(req.params.id, 10));
+		return res.status(204).send();
+	} catch (error: any) {
+		if (error?.statusCode === 404) return res.status(404).json({ error: error.message });
+		next(error);
+	}
+});
+
+router.get('/v1/maintenance/recommendations', async (_req: Request, res: Response, next: NextFunction) => {
+	if (!actions.getMaintenanceEnergyService()) {
+		return res.status(503).json({ error: 'Preventive maintenance requires Iotistica Pro' });
+	}
+	try {
+		const recommendations = await actions.listMaintenanceRecommendations();
+		return res.status(200).json({ recommendations });
+	} catch (error) {
+		next(error);
+	}
+});
+
+router.patch('/v1/maintenance/recommendations/:id', requireRole('operator'), async (req: Request, res: Response, next: NextFunction) => {
+	if (!actions.getMaintenanceEnergyService()) {
+		return res.status(503).json({ error: 'Preventive maintenance requires Iotistica Pro' });
+	}
+	try {
+		const recommendation = await actions.updateMaintenanceRecommendationStatus(parseInt(req.params.id, 10), req.body?.status);
+		return res.status(200).json({ recommendation });
+	} catch (error: any) {
+		if (error?.statusCode === 404) return res.status(404).json({ error: error.message });
+		next(error);
+	}
+});
+
+router.get('/v1/energy/rules', async (_req: Request, res: Response, next: NextFunction) => {
+	if (!actions.getMaintenanceEnergyService()) {
+		return res.status(503).json({ error: 'Energy recommendations require Iotistica Pro' });
+	}
+	try {
+		const rules = await actions.listEnergyRules();
+		return res.status(200).json({ rules });
+	} catch (error) {
+		next(error);
+	}
+});
+
+router.post('/v1/energy/rules', requireRole('operator'), async (req: Request, res: Response, next: NextFunction) => {
+	if (!actions.getMaintenanceEnergyService()) {
+		return res.status(503).json({ error: 'Energy recommendations require Iotistica Pro' });
+	}
+	try {
+		const rule = await actions.createEnergyRule(req.body);
+		return res.status(201).json({ rule });
+	} catch (error: any) {
+		if (error?.statusCode === 404) return res.status(404).json({ error: error.message });
+		next(error);
+	}
+});
+
+router.patch('/v1/energy/rules/:id', requireRole('operator'), async (req: Request, res: Response, next: NextFunction) => {
+	if (!actions.getMaintenanceEnergyService()) {
+		return res.status(503).json({ error: 'Energy recommendations require Iotistica Pro' });
+	}
+	try {
+		const rule = await actions.updateEnergyRule(parseInt(req.params.id, 10), req.body);
+		return res.status(200).json({ rule });
+	} catch (error: any) {
+		if (error?.statusCode === 404) return res.status(404).json({ error: error.message });
+		next(error);
+	}
+});
+
+router.delete('/v1/energy/rules/:id', requireRole('operator'), async (req: Request, res: Response, next: NextFunction) => {
+	if (!actions.getMaintenanceEnergyService()) {
+		return res.status(503).json({ error: 'Energy recommendations require Iotistica Pro' });
+	}
+	try {
+		await actions.deleteEnergyRule(parseInt(req.params.id, 10));
+		return res.status(204).send();
+	} catch (error: any) {
+		if (error?.statusCode === 404) return res.status(404).json({ error: error.message });
+		next(error);
+	}
+});
+
+router.get('/v1/energy/recommendations', async (_req: Request, res: Response, next: NextFunction) => {
+	if (!actions.getMaintenanceEnergyService()) {
+		return res.status(503).json({ error: 'Energy recommendations require Iotistica Pro' });
+	}
+	try {
+		const recommendations = await actions.listEnergyRecommendations();
+		return res.status(200).json({ recommendations });
+	} catch (error) {
+		next(error);
+	}
+});
+
+router.patch('/v1/energy/recommendations/:id', requireRole('operator'), async (req: Request, res: Response, next: NextFunction) => {
+	if (!actions.getMaintenanceEnergyService()) {
+		return res.status(503).json({ error: 'Energy recommendations require Iotistica Pro' });
+	}
+	try {
+		const recommendation = await actions.updateEnergyRecommendationStatus(parseInt(req.params.id, 10), req.body?.status);
+		return res.status(200).json({ recommendation });
+	} catch (error: any) {
+		if (error?.statusCode === 404) return res.status(404).json({ error: error.message });
+		next(error);
+	}
+});
+
+/**
+ * GET /v1/maintenance/publish-settings
+ * PATCH /v1/maintenance/publish-settings
+ * GET /v1/energy/publish-settings
+ * PATCH /v1/energy/publish-settings
+ * Alert routing config (mqtt/cloud toggles, destination, topic) — same shape
+ * for both modules, own row each (see recommendation_publish_settings).
+ */
+router.get('/v1/maintenance/publish-settings', async (_req: Request, res: Response, next: NextFunction) => {
+	if (!actions.getMaintenanceEnergyService()) {
+		return res.status(503).json({ error: 'Preventive maintenance requires Iotistica Pro' });
+	}
+	try {
+		const settings = await actions.getRecommendationPublishSettings('maintenance');
+		return res.status(200).json({ settings });
+	} catch (error) {
+		next(error);
+	}
+});
+
+router.patch('/v1/maintenance/publish-settings', requireRole('operator'), async (req: Request, res: Response, next: NextFunction) => {
+	if (!actions.getMaintenanceEnergyService()) {
+		return res.status(503).json({ error: 'Preventive maintenance requires Iotistica Pro' });
+	}
+	try {
+		const settings = await actions.updateRecommendationPublishSettings('maintenance', req.body);
+		return res.status(200).json({ settings });
+	} catch (error) {
+		next(error);
+	}
+});
+
+router.get('/v1/energy/publish-settings', async (_req: Request, res: Response, next: NextFunction) => {
+	if (!actions.getMaintenanceEnergyService()) {
+		return res.status(503).json({ error: 'Energy recommendations require Iotistica Pro' });
+	}
+	try {
+		const settings = await actions.getRecommendationPublishSettings('energy');
+		return res.status(200).json({ settings });
+	} catch (error) {
+		next(error);
+	}
+});
+
+router.patch('/v1/energy/publish-settings', requireRole('operator'), async (req: Request, res: Response, next: NextFunction) => {
+	if (!actions.getMaintenanceEnergyService()) {
+		return res.status(503).json({ error: 'Energy recommendations require Iotistica Pro' });
+	}
+	try {
+		const settings = await actions.updateRecommendationPublishSettings('energy', req.body);
+		return res.status(200).json({ settings });
+	} catch (error) {
+		next(error);
+	}
+});
+
+/**
  * GET /v1/protocol-outputs
  * Return all protocol output configs (one per protocol: modbus, opcua, bacnet…).
  */
@@ -2270,6 +2580,14 @@ router.get('/v1/pipeline/events', (req: Request, res: Response) => {
 	const limit = Math.min(Math.max(parseInt(String(req.query.limit ?? '100'), 10) || 100, 1), 300);
 	const protocol = typeof req.query.protocol === 'string' && req.query.protocol.trim() ? req.query.protocol.trim() : undefined;
 	res.json({ events: activityMonitor.getRecentEvents(limit, protocol) });
+});
+
+// Cumulative (never-resets-until-restart) point counters per protocol. Callers
+// poll this repeatedly and diff two snapshots to derive a points/sec rate —
+// same client-side-history approach the Dashboard already uses for CPU/network
+// sparklines, rather than the agent maintaining its own time-bucketed series.
+router.get('/v1/pipeline/throughput', (_req: Request, res: Response) => {
+	res.json({ counters: activityMonitor.getThroughputCounters() });
 });
 
 // ─── Database Backups ─────────────────────────────────────────────────────────

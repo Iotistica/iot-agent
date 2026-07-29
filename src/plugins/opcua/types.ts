@@ -81,6 +81,15 @@ export const OPCUAConnectionSchema = z.object({
 	/** Maximum monitored items per subscription (default: 100) */
 	/** Many PLCs struggle with 200+ items - this auto-splits subscriptions for load distribution */
 	maxMonitoredItemsPerSubscription: z.number().int().positive().default(100),
+
+	/**
+	 * Per-monitored-item notification queue size (only if useSubscription=true).
+	 * Default 1: only the latest value matters for real-time telemetry — a
+	 * deeper queue just replays a backlog of stale values after a reconnect.
+	 * Paired with discardOldest=true (hardcoded at the monitor() call site),
+	 * so once the queue is full the newest value always wins.
+	 */
+	queueSize: z.number().int().positive().default(1),
 });
 export type OPCUAConnection = z.infer<typeof OPCUAConnectionSchema>;
 

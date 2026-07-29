@@ -40,6 +40,7 @@ export class DevicePublish extends EventEmitter {
 	private readonly useKeyCompactionPoc: boolean;
 	private readonly useDeflatePoc: boolean;
 	private anomalyService?: any;
+	private maintenanceEnergyService?: any;
 	private incidentCorrelator?: { processEvent: (payload: AnomalyEventPayload) => void };
 	private liveDataInterceptor?: (messages: any[], endpointName: string) => Promise<any[]> | any[];
 	private proPlugins: { azure?: any; aws?: any; gcp?: any; influxdb?: any } = {};
@@ -53,6 +54,7 @@ export class DevicePublish extends EventEmitter {
 		useKeyCompactionPoc: boolean = false, // Enable dictionary key compaction POC
 		useDeflatePoc: boolean = false, // Enable DEFLATE compression POC
 		anomalyService?: any,
+		maintenanceEnergyService?: any,
 	) {
 		super();
 		this.config = config;
@@ -90,6 +92,7 @@ export class DevicePublish extends EventEmitter {
 		this.useKeyCompactionPoc = useKeyCompactionPoc;
 		this.useDeflatePoc = useDeflatePoc;
 		this.anomalyService = anomalyService;
+		this.maintenanceEnergyService = maintenanceEnergyService;
 	}
 
 	public setAnomalyService(anomalyService?: any): void {
@@ -100,6 +103,18 @@ export class DevicePublish extends EventEmitter {
 
 		this.logger.debug('Updated anomaly service binding for Device Publish Feature', {
 			hasAnomalyService: !!anomalyService,
+			deviceCount: this.devices.length,
+		});
+	}
+
+	public setMaintenanceEnergyService(maintenanceEnergyService?: any): void {
+		this.maintenanceEnergyService = maintenanceEnergyService;
+		for (const device of this.devices) {
+			device.setMaintenanceEnergyService(maintenanceEnergyService);
+		}
+
+		this.logger.debug('Updated maintenance/energy service binding for Device Publish Feature', {
+			hasMaintenanceEnergyService: !!maintenanceEnergyService,
 			deviceCount: this.devices.length,
 		});
 	}
@@ -330,6 +345,8 @@ export class DevicePublish extends EventEmitter {
 			this.useKeyCompactionPoc,
 			this.useDeflatePoc,
 			this.anomalyService,
+			'custom',
+			this.maintenanceEnergyService,
 		);
 	}
 

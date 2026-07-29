@@ -20,6 +20,9 @@ import {
   WifiOutlined,
   ApiOutlined,
   ClusterOutlined,
+  DeploymentUnitOutlined,
+  ToolOutlined,
+  ThunderboltOutlined,
   DatabaseOutlined,
   CodeOutlined,
   NodeIndexOutlined,
@@ -113,6 +116,23 @@ function onMenuClick({ key }: { key: string }) {
         <a-menu-item key="/devices">
           <template #icon><ClusterOutlined /></template>
           Devices
+        </a-menu-item>
+
+        <a-menu-item key="/assets">
+          <template #icon><DeploymentUnitOutlined /></template>
+          Assets
+        </a-menu-item>
+
+        <a-menu-item key="/maintenance">
+          <template #icon><ToolOutlined /></template>
+          Maintenance
+          <a-tag v-if="!proInstalled" class="pro-badge">PRO</a-tag>
+        </a-menu-item>
+
+        <a-menu-item key="/energy">
+          <template #icon><ThunderboltOutlined /></template>
+          Energy
+          <a-tag v-if="!proInstalled" class="pro-badge">PRO</a-tag>
         </a-menu-item>
 
         <a-menu-item key="/discovery-rules">

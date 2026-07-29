@@ -60,6 +60,7 @@ export default class Agent {
 	private updater?: AgentUpdater; // Agent self-update handler
 	private featureInitializer?: FeatureInitializer;
 	private anomalyService?: any; // Edge-based AI anomaly detection for metrics and devices
+	private maintenanceEnergyService?: any; // Pro-only preventive maintenance / energy recommendations engine
 	private simulationOrchestrator?: any; // Simulation framework for testing
 	private discoveryService?: DiscoveryService; // Protocol discovery (Modbus, OPC-UA, CAN, etc.)
 	private configManager!: ConfigManager; // Configuration manager (centralized config access)
@@ -127,6 +128,7 @@ export default class Agent {
 			updater: this.updater,
 			featureInitializer: this.featureInitializer,
 			anomalyService: this.anomalyService,
+			maintenanceEnergyService: this.maintenanceEnergyService,
 			simulationOrchestrator: this.simulationOrchestrator,
 			discoveryService: this.discoveryService,
 			dictionaryManager: this.dictionaryManager,
@@ -195,6 +197,7 @@ export default class Agent {
 		this.updater = ctx.updater ?? undefined;
 		this.featureInitializer = ctx.featureInitializer ?? undefined;
 		this.anomalyService = ctx.anomalyService ?? undefined;
+		this.maintenanceEnergyService = ctx.maintenanceEnergyService ?? undefined;
 		this.simulationOrchestrator = ctx.simulationOrchestrator;
 		this.discoveryService = ctx.discoveryService;
 		this.dictionaryManager = ctx.dictionaryManager;

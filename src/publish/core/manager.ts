@@ -200,6 +200,7 @@ export class PublishManager extends EventEmitter {
     private useDeflatePoc = false,
     private anomalyService?: any,
 	private readonly payloadFormat: PayloadFormat = 'custom',
+    private maintenanceEnergyService?: any,
 	) {
 		super();
 
@@ -210,7 +211,7 @@ export class PublishManager extends EventEmitter {
 			mqttConnection, dictionaryManager,  protocol,
 		);
 		this.stats = new PublishStats();
-		this.feed = new AnomalyFeed(() => this.anomalyService, deviceUuid, protocol, logger);
+		this.feed = new AnomalyFeed(() => this.anomalyService, deviceUuid, protocol, logger, () => this.maintenanceEnergyService);
 		this.enricher = new AnomalyEnricher(() => this.anomalyService, deviceUuid, protocol, logger);
 		this.initSchemaDrift().catch((error) => {
 			this.logger?.warn(`Schema drift init failed for endpoint '${this.endpointName}', continuing without it`, error);
@@ -245,6 +246,10 @@ export class PublishManager extends EventEmitter {
 
 	public setAnomalyService(service?: any): void {
 		this.anomalyService = service;
+	}
+
+	public setMaintenanceEnergyService(service?: any): void {
+		this.maintenanceEnergyService = service;
 	}
 
 	private incidentCorrelator?: { processEvent: (payload: AnomalyEventPayload) => void };

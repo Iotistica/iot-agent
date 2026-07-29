@@ -38,6 +38,21 @@ const router = createRouter({
       meta: { title: 'Devices' },
     },
     {
+      path: '/assets',
+      component: () => import('@/views/AssetsView.vue'),
+      meta: { title: 'Assets' },
+    },
+    {
+      path: '/maintenance',
+      component: () => import('@/views/MaintenanceView.vue'),
+      meta: { title: 'Maintenance' },
+    },
+    {
+      path: '/energy',
+      component: () => import('@/views/EnergyView.vue'),
+      meta: { title: 'Energy' },
+    },
+    {
       path: '/discovery-rules',
       component: () => import('@/views/DiscoveryRulesView.vue'),
       meta: { title: 'Discovery' },

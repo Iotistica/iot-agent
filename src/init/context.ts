@@ -39,6 +39,7 @@ export interface AgentInitContext {
 	updater?: AgentUpdater;
 	featureInitializer?: FeatureInitializer;
 	anomalyService?: any;
+	maintenanceEnergyService?: any;
 	correlator?: IncidentCorrelator;
 	pipelineService?: PipelineService;
 	simulationOrchestrator?: any;

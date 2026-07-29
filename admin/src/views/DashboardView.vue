@@ -6,6 +6,8 @@ import AppLayout from '@/components/layout/AppLayout.vue'
 import SparklineChart from '@/components/SparklineChart.vue'
 import { dashboardApi, type DashboardStats, type NetworkBandwidth } from '@/api/dashboard'
 import { anomalyApi } from '@/api/anomaly'
+import { pipelineApi } from '@/api/pipeline'
+import { protocolLabel } from '@/utils/protocol'
 import type { EdgeAnomalyAlert } from '@/types'
 
 const router = useRouter()
@@ -99,6 +101,38 @@ function push(buf: number[], val: number) {
   if (buf.length > HISTORY) buf.shift()
 }
 
+// Data flow by protocol — points/sec sparklines. The backend only exposes a
+// monotonic cumulative counter per protocol (activityMonitor.getThroughputCounters()),
+// same as CPU/network here derive history from repeated snapshots rather than a
+// server-tracked time series — diff two polls and divide by the elapsed time.
+const PROTOCOL_ORDER = ['modbus', 'opcua', 'bacnet', 'mqtt']
+const PROTOCOL_HEX: Record<string, string> = { modbus: '#1677ff', opcua: '#722ed1', bacnet: '#fa8c16', mqtt: '#52c41a' }
+const protocolHistory  = ref<Record<string, number[]>>(Object.fromEntries(PROTOCOL_ORDER.map(p => [p, []])))
+const protocolRate     = ref<Record<string, number>>({})
+let previousThroughput: Record<string, number> | null = null
+let previousThroughputAt: number | null = null
+
+async function pollThroughput() {
+  try {
+    const counters = await pipelineApi.getThroughput()
+    const now = Date.now()
+    if (previousThroughput && previousThroughputAt) {
+      const deltaSec = (now - previousThroughputAt) / 1000
+      for (const protocol of PROTOCOL_ORDER) {
+        const prev = previousThroughput[protocol] ?? 0
+        const curr = counters[protocol] ?? 0
+        // A drop (curr < prev) means the agent restarted and the counter reset —
+        // treat that tick as 0 rather than a negative rate.
+        const rate = deltaSec > 0 && curr >= prev ? (curr - prev) / deltaSec : 0
+        protocolRate.value[protocol] = rate
+        push(protocolHistory.value[protocol], rate)
+      }
+    }
+    previousThroughput = counters
+    previousThroughputAt = now
+  } catch { /* non-fatal — keep showing last known history */ }
+}
+
 // Pick the busiest non-loopback interface
 function primaryNet(network: NetworkBandwidth[]): NetworkBandwidth | null {
   const candidates = network.filter((n) => !n.iface.startsWith('lo'))
@@ -123,6 +157,7 @@ async function poll() {
     error.value = true
     loading.value = false
   }
+  await pollThroughput()
 }
 
 let timer: ReturnType<typeof setInterval> | null = null
@@ -168,6 +203,10 @@ function fmtBytesTotal(bytes: number): string {
   if (bytes >= 1024 ** 2) return `${(bytes / 1024 ** 2).toFixed(1)} MB`
   if (bytes >= 1024)      return `${(bytes / 1024).toFixed(0)} KB`
   return `${bytes} B`
+}
+
+function fmtRate(v: number): string {
+  return v >= 10 ? `${v.toFixed(0)}/s` : `${v.toFixed(1)}/s`
 }
 
 function cpuColor(v: number) { return v >= 90 ? '#cf1322' : v >= 70 ? '#fa8c16' : '#52c41a' }
@@ -375,6 +414,34 @@ const netIface   = computed(() => stats.value ? (primaryNet(stats.value.network)
             </div>
           </a-col>
 
+        </a-row>
+
+        <!-- ── Row 2b: Data flow by protocol ─────────────────────────────── -->
+        <div class="section-label">
+          Data Flow by Protocol
+          <span class="section-link" @click="router.push('/data-flow')">View details →</span>
+        </div>
+        <a-row :gutter="16" style="margin-bottom:16px">
+          <a-col v-for="protocol in PROTOCOL_ORDER" :key="protocol" :xs="24" :sm="12" :lg="6">
+            <div class="widget chart-widget">
+              <div class="chart-header">
+                <span class="widget-title">{{ protocolLabel(protocol) }}</span>
+                <span class="chart-current" :style="{ color: PROTOCOL_HEX[protocol] }">
+                  {{ fmtRate(protocolRate[protocol] ?? 0) }}
+                </span>
+              </div>
+              <div class="chart-body">
+                <SparklineChart
+                  :data="protocolHistory[protocol]"
+                  :color="PROTOCOL_HEX[protocol]"
+                  :fill-color="`${PROTOCOL_HEX[protocol]}22`"
+                  :height="60"
+                  full-width
+                />
+              </div>
+              <div class="widget-sub">points/sec</div>
+            </div>
+          </a-col>
         </a-row>
 
         <!-- ── Row 3: System ───────────────────────────────────────────────── -->
