@@ -1,3 +1,4 @@
+import { BACnetAdapter } from '../../../src/plugins/bacnet/adapter';
 import { ModbusAdapter } from '../../../src/plugins/modbus/adapter';
 import { OPCUAAdapter } from '../../../src/plugins/opcua/adapter';
 import type { AdapterManager } from '../../../src/plugins/index';
@@ -101,14 +102,39 @@ describe('dispatchWrite', () => {
 		});
 	});
 
-	it('rejects a protocol with no write support (e.g. bacnet, not yet implemented)', async () => {
-		const bacnetAdapter = fakeInstance(class Fake {}, {
+	it('rejects a protocol with no write support at all (e.g. a future/unknown protocol)', async () => {
+		const unknownAdapter = fakeInstance(class Fake {}, {
 			getDeviceStatuses: () => [{ deviceName: 'ahu-1' }],
 		});
-		const adapterManager = fakeAdapterManager({ bacnet: bacnetAdapter as any });
+		const adapterManager = fakeAdapterManager({ 'future-protocol': unknownAdapter as any });
 
 		await expect(dispatchWrite(adapterManager, 'ahu-1', 'x', 1)).rejects.toMatchObject({
 			code: CommandErrorCode.unsupportedCommandType,
+		});
+	});
+
+	it('writes a BACnet object via writeProperty', async () => {
+		const writeProperty = jest.fn().mockResolvedValue(undefined);
+		const bacnetAdapter = fakeInstance(BACnetAdapter, {
+			getDeviceStatuses: () => [{ deviceName: 'ahu-1' }],
+			writeProperty,
+		});
+		const adapterManager = fakeAdapterManager({ bacnet: bacnetAdapter as any });
+
+		await dispatchWrite(adapterManager, 'ahu-1', 'SpeedSetpoint', 42.5);
+
+		expect(writeProperty).toHaveBeenCalledWith('ahu-1', 'SpeedSetpoint', 42.5);
+	});
+
+	it('classifies a thrown "not writable" error from a BACnet write as NODE_NOT_ALLOWED', async () => {
+		const bacnetAdapter = fakeInstance(BACnetAdapter, {
+			getDeviceStatuses: () => [{ deviceName: 'ahu-1' }],
+			writeProperty: jest.fn().mockRejectedValue(new Error('Object is not writable: SpeedSetpoint')),
+		});
+		const adapterManager = fakeAdapterManager({ bacnet: bacnetAdapter as any });
+
+		await expect(dispatchWrite(adapterManager, 'ahu-1', 'SpeedSetpoint', 1)).rejects.toMatchObject({
+			code: CommandErrorCode.nodeNotAllowed,
 		});
 	});
 });

@@ -31,6 +31,16 @@ export enum BACnetProperty {
 /**
  * BACnet Object Configuration Schema
  */
+/**
+ * BACnet application data type used when encoding a write, independent of
+ * `objectType` since e.g. an analog-value can legitimately be Real or
+ * Double. Optional — when omitted, the write path infers a sensible default
+ * from `objectType` (analog-* -> real, binary-* -> boolean, multi-state-* ->
+ * unsigned).
+ */
+export const BACnetWriteDataTypeSchema = z.enum(['boolean', 'unsigned', 'signed', 'real', 'double', 'enumerated', 'string']);
+export type BACnetWriteDataType = z.infer<typeof BACnetWriteDataTypeSchema>;
+
 export const BACnetObjectSchema = z.object({
 	name: z.string().min(1),
 	/** Raw BACnet object-name property as reported by the device (e.g. "Space-Temp"),
@@ -42,6 +52,23 @@ export const BACnetObjectSchema = z.object({
 	unit: z.string().optional().default(''),
 	pollIntervalMs: z.number().min(1000).optional().default(5000),
 	enabled: z.boolean().optional().default(true),
+
+	/**
+	 * Explicit allowlist flag for the MQTT command-write path (see src/commands/).
+	 * Default false: an object must opt in before it can be written via an
+	 * inbound MQTT command.
+	 */
+	writable: z.boolean().optional().default(false),
+
+	/** Write data type override — see BACnetWriteDataTypeSchema. */
+	writeDataType: BACnetWriteDataTypeSchema.optional(),
+
+	/**
+	 * BACnet write priority (1-16, lower number = higher priority in the
+	 * priority array). Configured per point, never caller-controlled — an
+	 * inbound command's own notion of priority, if any, is ignored.
+	 */
+	writePriority: z.number().int().min(1).max(16).optional().default(8),
 });
 
 export type BACnetObject = z.infer<typeof BACnetObjectSchema>;

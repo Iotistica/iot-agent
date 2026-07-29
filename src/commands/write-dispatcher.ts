@@ -1,4 +1,5 @@
 import type { AdapterManager } from '../plugins/index.js';
+import { BACnetAdapter } from '../plugins/bacnet/adapter.js';
 import { ModbusAdapter } from '../plugins/modbus/adapter.js';
 import { OPCUAAdapter } from '../plugins/opcua/adapter.js';
 import { CommandError } from './command-errors.js';
@@ -38,10 +39,11 @@ function classifyWriteError(error: unknown): CommandError {
 /**
  * Executes a validated write command against whichever adapter owns the
  * device. Each adapter already enforces its own writable-point allowlist
- * (OPC-UA: `dataPoints[].writable`, Modbus: checked here via the register's
- * `writable` flag since the existing HTTP write endpoint intentionally
- * doesn't gate on it) — this function does not duplicate that logic, only
- * dispatches to it and normalizes the resulting errors.
+ * (OPC-UA: `dataPoints[].writable`, BACnet: `objects[].writable`, both
+ * checked inside the client's own write() — Modbus: checked here via the
+ * register's `writable` flag since the existing HTTP write endpoint
+ * intentionally doesn't gate on it) — this function does not duplicate that
+ * logic, only dispatches to it and normalizes the resulting errors.
  */
 export async function dispatchWrite(
 	adapterManager: AdapterManager,
@@ -69,6 +71,11 @@ export async function dispatchWrite(
 
 		if (owner.protocol === 'opcua' && owner.adapter instanceof OPCUAAdapter) {
 			await owner.adapter.writeNode(deviceName, pointName, value);
+			return;
+		}
+
+		if (owner.protocol === 'bacnet' && owner.adapter instanceof BACnetAdapter) {
+			await owner.adapter.writeProperty(deviceName, pointName, value);
 			return;
 		}
 

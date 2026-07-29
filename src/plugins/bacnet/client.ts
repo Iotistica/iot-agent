@@ -1,7 +1,20 @@
-import { type BACnetDevice, type BACnetObject, BACnetProperty } from './types';
+import { type BACnetDevice, type BACnetObject, type BACnetWriteDataType, BACnetObjectType, BACnetProperty } from './types';
 import { type Logger, type IProtocolClient } from '../types';
 import { pLimit } from '../../lib/p-limit.js';
 import BACnet from 'bacstack';
+
+/** Shared between reads and writes — bacstack identifies object types by number, not by our string enum. */
+const OBJECT_TYPE_MAP: Record<string, number> = {
+	'analog-input': 0,
+	'analog-output': 1,
+	'analog-value': 2,
+	'binary-input': 3,
+	'binary-output': 4,
+	'binary-value': 5,
+	'multi-state-input': 13,
+	'multi-state-output': 14,
+	'multi-state-value': 19,
+};
 
 interface BACnetReadResult {
   objectId: {
@@ -175,20 +188,7 @@ export class BACnetClient implements IProtocolClient<BACnetObject[], Map<string,
 		}
 
 		try {
-			// Map object type string to bacstack type number
-			const objectTypeMap: Record<string, number> = {
-				'analog-input': 0,
-				'analog-output': 1,
-				'analog-value': 2,
-				'binary-input': 3,
-				'binary-output': 4,
-				'binary-value': 5,
-				'multi-state-input': 13,
-				'multi-state-output': 14,
-				'multi-state-value': 19,
-			};
-
-			const objectTypeNum = objectTypeMap[object.objectType];
+			const objectTypeNum = OBJECT_TYPE_MAP[object.objectType];
 			if (objectTypeNum === undefined) {
 				throw new Error(`Unknown object type: ${object.objectType}`);
 			}
@@ -268,6 +268,121 @@ export class BACnetClient implements IProtocolClient<BACnetObject[], Map<string,
 
 	async read(objects: BACnetObject[] = this.config.objects): Promise<Map<string, { value: any; quality: 'GOOD' | 'BAD'; error?: string }>> {
 		return this.readObjects(objects);
+	}
+
+	/** Read-only lookup of a configured object by name, e.g. for allowlist checks by callers that don't own a write path of their own. */
+	getObjectConfig(pointName: string): BACnetObject | undefined {
+		return this.config.objects.find((o) => o.name === pointName);
+	}
+
+	/**
+	 * Resolves the BACnet application tag to encode a write with. Explicit
+	 * `writeDataType` wins; otherwise inferred from `objectType`, since an
+	 * analog-* is virtually always Real, a binary-* Boolean, and a
+	 * multi-state-* an Unsigned Integer.
+	 */
+	private resolveWriteTag(object: BACnetObject): number {
+		const tags = BACnet.enum.ApplicationTags;
+		const explicit: Record<BACnetWriteDataType, number> = {
+			boolean: tags.BOOLEAN,
+			unsigned: tags.UNSIGNED_INTEGER,
+			signed: tags.SIGNED_INTEGER,
+			real: tags.REAL,
+			double: tags.DOUBLE,
+			enumerated: tags.ENUMERATED,
+			string: tags.CHARACTER_STRING,
+		};
+		if (object.writeDataType) {
+			return explicit[object.writeDataType];
+		}
+
+		switch (object.objectType) {
+			case BACnetObjectType.ANALOG_INPUT:
+			case BACnetObjectType.ANALOG_OUTPUT:
+			case BACnetObjectType.ANALOG_VALUE:
+				return tags.REAL;
+			case BACnetObjectType.BINARY_INPUT:
+			case BACnetObjectType.BINARY_OUTPUT:
+			case BACnetObjectType.BINARY_VALUE:
+				return tags.BOOLEAN;
+			case BACnetObjectType.MULTI_STATE_INPUT:
+			case BACnetObjectType.MULTI_STATE_OUTPUT:
+			case BACnetObjectType.MULTI_STATE_VALUE:
+				return tags.UNSIGNED_INTEGER;
+			default:
+				throw new Error(`Cannot infer BACnet write data type for object type: ${object.objectType} — set writeDataType explicitly`);
+		}
+	}
+
+	/** Validates the command value matches what the resolved application tag expects, without silently coercing types. */
+	private coerceWriteValue(tag: number, value: number | boolean | string): number | boolean | string {
+		const tags = BACnet.enum.ApplicationTags;
+		if (tag === tags.BOOLEAN) {
+			if (typeof value !== 'boolean') {
+				throw new Error(`Expected a boolean value, got ${typeof value}`);
+			}
+			return value;
+		}
+		if (tag === tags.CHARACTER_STRING) {
+			if (typeof value !== 'string') {
+				throw new Error(`Expected a string value, got ${typeof value}`);
+			}
+			return value;
+		}
+		// UNSIGNED_INTEGER, SIGNED_INTEGER, REAL, DOUBLE, ENUMERATED all take a JS number.
+		if (typeof value !== 'number' || !Number.isFinite(value)) {
+			throw new Error(`Expected a finite numeric value, got ${typeof value === 'number' ? value : typeof value}`);
+		}
+		return value;
+	}
+
+	/**
+	 * Writes a single object's present value using BACnet's priority-array
+	 * WriteProperty service. `writable` and `writePriority` come from this
+	 * object's own configuration — never from the caller — matching the
+	 * read-only allowlist pattern OPC-UA/Modbus already use for MQTT commands.
+	 */
+	async write(pointName: string, value: number | boolean | string): Promise<void> {
+		const object = this.config.objects.find((o) => o.name === pointName);
+		if (!object) {
+			throw new Error(`Object not found on device ${this.config.name}: ${pointName}`);
+		}
+		if (!object.writable) {
+			throw new Error(`Object is not writable: ${object.name}`);
+		}
+		if (!this.connected) {
+			throw new Error(`Device ${this.config.name} is not connected`);
+		}
+
+		const objectTypeNum = OBJECT_TYPE_MAP[object.objectType];
+		if (objectTypeNum === undefined) {
+			throw new Error(`Unknown object type: ${object.objectType}`);
+		}
+
+		const tag = this.resolveWriteTag(object);
+		const encodedValue = this.coerceWriteValue(tag, value);
+
+		await new Promise<void>((resolve, reject) => {
+			const timeout = setTimeout(() => {
+				reject(new Error('Write timeout'));
+			}, this.config.connectionTimeoutMs);
+
+			this.client.writeProperty(
+				this.config.ipAddress,
+				{ type: objectTypeNum, instance: object.objectInstance },
+				object.propertyId || BACnetProperty.PRESENT_VALUE,
+				[{ type: tag, value: encodedValue }],
+				{ priority: object.writePriority },
+				(err: Error | null) => {
+					clearTimeout(timeout);
+					if (err) {
+						reject(err);
+					} else {
+						resolve();
+					}
+				}
+			);
+		});
 	}
 
 	/**

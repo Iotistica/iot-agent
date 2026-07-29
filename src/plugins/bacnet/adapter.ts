@@ -176,6 +176,25 @@ export class BACnetAdapter extends BaseProtocolAdapter {
 		return this.running;
 	}
 
+	/** Writes a single BACnet object's present value, e.g. for the MQTT command-write path (see src/commands/). */
+	async writeProperty(deviceName: string, pointName: string, value: number | boolean | string): Promise<void> {
+		const client = this.clients.get(deviceName);
+		if (!client) {
+			throw new Error(`Device not found: ${deviceName}`);
+		}
+
+		if (!client.isConnected()) {
+			throw new Error(`Device ${deviceName} is not connected`);
+		}
+
+		await client.write(pointName, value);
+	}
+
+	/** Read-only object lookup, e.g. for the MQTT command layer's own allowlist check (see src/commands/). */
+	getObjectConfig(deviceName: string, pointName: string) {
+		return this.clients.get(deviceName)?.getObjectConfig(pointName);
+	}
+
 	// ==================== Private Methods ====================
 
 	/**

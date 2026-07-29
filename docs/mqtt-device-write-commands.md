@@ -119,6 +119,11 @@ node/register identity as authorization on its own:
   `ModbusAdapter.writeRegister` itself — the pre-existing, role-gated HTTP
   endpoint (`POST /v1/adapters/modbus/devices/:deviceName/write`) is
   unaffected and keeps its current behavior.
+- **BACnet**: each object now supports `writable: true` + `writePriority`
+  (1-16, default 8) + an optional `writeDataType` override (new fields on
+  `BACnetObjectSchema`, added in Phase 2). Enforced inside
+  `BACnetClient.write()` itself, same pattern as OPC-UA — there was no
+  pre-existing BACnet write path to avoid disrupting.
 
 ## Protocol support
 
@@ -126,7 +131,21 @@ node/register identity as authorization on its own:
 |----------|------------------|--------|
 | OPC-UA   | `OPCUAAdapter.writeNode()` (pre-existing) | Supported |
 | Modbus   | `ModbusAdapter.writeRegister()` (pre-existing) | Supported |
-| BACnet   | none yet | Not implemented — commands targeting a BACnet device are rejected with `UNSUPPORTED_COMMAND_TYPE` until `BACnetAdapter` gains a `write()` capability (tracked separately, issue #6) |
+| BACnet   | `BACnetAdapter.writeProperty()` / `BACnetClient.write()` (added in Phase 2, uses `bacstack`'s `writeProperty` with a configurable per-object priority) | Supported |
+
+### BACnet write data types
+
+Each writable object needs its BACnet application tag known at write time.
+`writeDataType` (`boolean` \| `unsigned` \| `signed` \| `real` \| `double` \|
+`enumerated` \| `string`) is optional — when omitted, it's inferred from
+`objectType`: analog-\* → `real`, binary-\* → `boolean`, multi-state-\* →
+`unsigned`. The value is validated against the resolved tag (e.g. a boolean
+sent for an analog point is rejected, not silently coerced to `1`/`0`).
+
+BACnet's Null-write (releasing a priority-array entry) is not wired through
+the MQTT command schema in this pass — `WriteCommandSchema.value` doesn't
+accept `null` yet. `BACnetClient.write()` could support it at the protocol
+layer, but there's no way to request it via a command today.
 
 ## Architecture
 
@@ -165,5 +184,5 @@ sufficient for MQTT QoS 1 redelivery, but does not survive an agent restart.
 - Per-protocol metrics (`agent_commands_*` counters) — no metrics/prom-client
   system exists in this codebase yet to hook into; structured logs
   (`component: LogComponents.commands`) cover the same audit trail for now.
-- BACnet write support (see table above).
 - Per-device (rather than agent-wide) queues.
+- BACnet Null-writes (priority-array release) — see above.
