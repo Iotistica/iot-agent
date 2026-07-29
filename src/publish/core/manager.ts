@@ -269,6 +269,11 @@ export class PublishManager extends EventEmitter {
 		);
 	}
 
+	/** No-op if schema drift isn't loaded (Community build, or Pro not yet initialized). */
+	public clearSchemaDriftBaseline(): void {
+		this.schemaDriftDetector?.clearBaselines();
+	}
+
 	private handleDriftAlert(event: DriftAlertEvent): void {
 		if (!this.incidentCorrelator) return;
 

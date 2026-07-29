@@ -1824,6 +1824,21 @@ export const clearAnomalyBaselines = (): number => {
 };
 
 /**
+ * Delete all schema-drift baselines from SQLite and reset every endpoint's
+ * in-memory drift state. Used by: DELETE /v1/schema-drift/baselines
+ */
+export const clearSchemaDriftBaselines = async (): Promise<number> => {
+	try {
+		const { SchemaDriftModel } = await import('../db/models/schema-drift.model.js');
+		const deleted = SchemaDriftModel.clearAllBaselines();
+		devicePublish?.clearSchemaDriftBaselines();
+		return deleted;
+	} catch {
+		return 0;
+	}
+};
+
+/**
  * Query stored anomaly baselines from SQLite
  * Used by: GET /v1/anomaly/baselines
  */

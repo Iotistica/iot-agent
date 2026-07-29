@@ -5,10 +5,28 @@ import { AnomalyIncidentModel } from '../db/models/anomaly-incident.model.js';
 import type { ResolutionReason } from '../db/models/anomaly-incident.model.js';
 import { AnomalyAlertModel } from '../db/models/anomaly-alert.model.js';
 import { requireRole } from './middleware/roles.js';
+import { prettifyDriftDeviceId, prettifyDriftFieldName } from '../db/models/drift-labels.js';
 
 export const anomalyRouter = express.Router();
 
 const VALID_RESOLUTION_REASONS: ResolutionReason[] = ['false_positive', 'true_positive', 'expected', 'accepted'];
+
+// device_name/metric are stored as whatever raw identifiers the anomaly
+// pipeline resolved at ingest time (resolveDeviceId in iot-agent-pro's
+// anomaly/metric-router.ts for device_name; manager.ts's stripFieldDevicePrefix
+// call for schema-drift-sourced metric names) — left untouched here rather
+// than renormalized, since changing either would split a device/metric's
+// existing history across two different stored keys. This only reformats
+// them for display, the same treatment the Schema Drift grid gets from
+// prettifyDriftDeviceId/prettifyDriftFieldName — so a device and its metrics
+// read the same way in both places without touching stored data.
+function withPrettyDeviceName<T extends { device_name: string; metric?: string }>(record: T): T {
+	return {
+		...record,
+		device_name: prettifyDriftDeviceId(record.device_name),
+		...(record.metric !== undefined ? { metric: prettifyDriftFieldName(record.metric) } : {}),
+	};
+}
 
 // ── Events ────────────────────────────────────────────────────────────────────
 
@@ -22,7 +40,7 @@ anomalyRouter.get('/v1/anomaly-events', (req: Request, res: Response, next: Next
 			limit: req.query.limit ? Number(req.query.limit)  : undefined,
 			offset:req.query.offset? Number(req.query.offset) : undefined,
 		});
-		res.json(result);
+		res.json({ ...result, events: result.events.map(withPrettyDeviceName) });
 	} catch (err) {
 		next(err);
 	}
@@ -45,7 +63,7 @@ anomalyRouter.get('/v1/anomaly-incidents/bad-actors', (req: Request, res: Respon
 		const windowDays = req.query.windowDays ? Number(req.query.windowDays) : 30;
 		const limit = req.query.limit ? Number(req.query.limit) : 20;
 		const badActors = AnomalyIncidentModel.badActors(windowDays * 24 * 60 * 60 * 1000, limit);
-		res.json({ badActors, windowDays });
+		res.json({ badActors: badActors.map(withPrettyDeviceName), windowDays });
 	} catch (err) {
 		next(err);
 	}
@@ -61,7 +79,7 @@ anomalyRouter.get('/v1/anomaly-incidents', (req: Request, res: Response, next: N
 			limit: req.query.limit ? Number(req.query.limit)  : undefined,
 			offset:req.query.offset? Number(req.query.offset) : undefined,
 		});
-		res.json(result);
+		res.json({ ...result, incidents: result.incidents.map(withPrettyDeviceName) });
 	} catch (err) {
 		next(err);
 	}
@@ -74,7 +92,11 @@ anomalyRouter.get('/v1/anomaly-incidents/:incidentId', (req: Request, res: Respo
 
 		const alerts = AnomalyAlertModel.getByIncidentId(req.params.incidentId);
 		const recentEvents = AnomalyEventModel.list({ fingerprint: incident.fingerprint, limit: 20 });
-		res.json({ ...incident, alerts, recentEvents: recentEvents.events });
+		res.json({
+			...withPrettyDeviceName(incident),
+			alerts: alerts.map(withPrettyDeviceName),
+			recentEvents: recentEvents.events.map(withPrettyDeviceName),
+		});
 	} catch (err) {
 		next(err);
 	}
@@ -106,7 +128,7 @@ anomalyRouter.get('/v1/anomaly-alerts', (req: Request, res: Response, next: Next
 			limit: req.query.limit ? Number(req.query.limit)  : undefined,
 			offset:req.query.offset? Number(req.query.offset) : undefined,
 		});
-		res.json(result);
+		res.json({ ...result, alerts: result.alerts.map(withPrettyDeviceName) });
 	} catch (err) {
 		next(err);
 	}
@@ -118,7 +140,10 @@ anomalyRouter.get('/v1/anomaly-alerts/:alertId', (req: Request, res: Response, n
 		if (!alert) return res.status(404).json({ error: 'Alert not found' });
 
 		const incident = AnomalyIncidentModel.getById(alert.incident_id);
-		res.json({ ...alert, incident });
+		res.json({
+			...withPrettyDeviceName(alert),
+			incident: incident ? withPrettyDeviceName(incident) : incident,
+		});
 	} catch (err) {
 		next(err);
 	}

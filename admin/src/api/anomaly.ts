@@ -117,6 +117,10 @@ export const anomalyApi = {
       .then((r) => r.data)
   },
 
+  clearSchemaDriftBaselines(): Promise<{ deleted: number }> {
+    return client.delete<{ deleted: number }>('/v1/schema-drift/baselines').then((r) => r.data)
+  },
+
   // ── Edge tracking ────────────────────────────────────────────────────────────
 
   getEdgeEvents(params?: { severity?: string; limit?: number; offset?: number }): Promise<{ events: EdgeAnomalyEvent[]; total: number }> {

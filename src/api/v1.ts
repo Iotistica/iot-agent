@@ -2116,7 +2116,7 @@ router.patch('/v1/protocol-outputs/drift', requireRole('operator'), async (req: 
 router.get('/v1/schema-drift/baselines', async (req: Request, res: Response, next: NextFunction) => {
 	try {
 		const { SchemaDriftModel } = await import('../db/models/schema-drift.model.js');
-		const { cleanDriftFieldName, prettifyDriftDeviceId, cleanProtocolPipeName, stripFieldDevicePrefix } = await import('../db/models/drift-labels.js');
+		const { cleanDriftFieldName, prettifyDriftDeviceId, prettifyDriftFieldName, cleanProtocolPipeName, stripFieldDevicePrefix } = await import('../db/models/drift-labels.js');
 		const q = typeof req.query.q === 'string' ? req.query.q.trim().toLowerCase() : undefined;
 
 		const rows: Array<{
@@ -2170,7 +2170,7 @@ router.get('/v1/schema-drift/baselines', async (req: Request, res: Response, nex
 					rows.push({
 						protocol,
 						device,
-						field: stripFieldDevicePrefix(cleanDriftFieldName(field), deviceId),
+						field: prettifyDriftFieldName(stripFieldDevicePrefix(cleanDriftFieldName(field), deviceId)),
 						status: 'baseline',
 						dominantType,
 						missingStreak: ds.missingStreakByField?.[field] ?? 0,
@@ -2185,7 +2185,7 @@ router.get('/v1/schema-drift/baselines', async (req: Request, res: Response, nex
 					rows.push({
 						protocol,
 						device,
-						field: stripFieldDevicePrefix(cleanDriftFieldName(field), deviceId),
+						field: prettifyDriftFieldName(stripFieldDevicePrefix(cleanDriftFieldName(field), deviceId)),
 						status: 'pending',
 						stableBatches,
 						windowSize,
@@ -2203,6 +2203,20 @@ router.get('/v1/schema-drift/baselines', async (req: Request, res: Response, nex
 		res.json({ baselines: filtered, total: filtered.length });
 	} catch (err) {
 		next(err);
+	}
+});
+
+/**
+ * DELETE /v1/schema-drift/baselines
+ * Clear all persisted schema-drift baselines from SQLite and reset every
+ * endpoint's in-memory drift state — same pattern as DELETE /v1/anomaly/baselines.
+ */
+router.delete('/v1/schema-drift/baselines', requireRole('operator'), async (req: Request, res: Response, next: NextFunction) => {
+	try {
+		const deleted = await actions.clearSchemaDriftBaselines();
+		return res.status(200).json({ deleted });
+	} catch (error) {
+		next(error);
 	}
 });
 

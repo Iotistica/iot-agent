@@ -163,6 +163,19 @@ export class SchemaDriftModel {
 		return states;
 	}
 
+	/**
+	 * Deletes every persisted baseline row — used by the admin UI's Schema
+	 * Drift "Reset" action (DELETE /v1/schema-drift/baselines), the same
+	 * pattern as clearAnomalyBaselines(). Callers must also reset each live
+	 * SchemaDriftDetector's in-memory state (see DevicePublish.clearSchemaDriftBaselines())
+	 * or a detector still holding old state will just re-persist it on its
+	 * next observe() call, undoing the deletion.
+	 */
+	static clearAllBaselines(): number {
+		const result = this.getDb().prepare(`DELETE FROM ${this.baselineTable}`).run();
+		return result.changes as number;
+	}
+
 	static loadBaseline(endpointName: string): PersistedBaselineState | undefined {
 		const row = this.getDb()
 			.prepare(`

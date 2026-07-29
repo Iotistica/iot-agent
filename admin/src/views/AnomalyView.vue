@@ -596,10 +596,12 @@ watch(schemaDriftQuery, () => {
   debounce('schema-drift-filter', () => loadSchemaDriftBaselines())
 })
 
-// Matches SchemaDriftDetector's DEFAULT_OPTIONS.adaptivePromotionBatches — not
-// currently exposed as a per-protocol setting, so this is the real threshold
-// for every source today.
+// Matches SchemaDriftDetector's DEFAULT_OPTIONS.adaptivePromotionBatches/
+// adaptivePromotionRatio — not currently exposed as per-protocol settings, so
+// these are the real thresholds for every source today. Promotion requires
+// BOTH: stableBatches >= BATCHES and presenceRatio >= RATIO.
 const SCHEMA_DRIFT_PROMOTION_BATCHES = 50
+const SCHEMA_DRIFT_PROMOTION_RATIO = 0.6
 
 const schemaDriftColumns = [
   { title: 'Protocol', dataIndex: 'protocol', key: 'protocol', width: 120, ellipsis: true },
@@ -620,6 +622,24 @@ async function loadSchemaDriftBaselines() {
     message.error((err as { message?: string })?.message ?? 'Failed to load schema drift baselines')
   } finally {
     schemaDriftLoading.value = false
+  }
+}
+
+const clearingSchemaDrift = ref(false)
+const resetSchemaDriftModalOpen = ref(false)
+
+async function clearAllSchemaDriftBaselines() {
+  clearingSchemaDrift.value = true
+  try {
+    const { deleted } = await anomalyApi.clearSchemaDriftBaselines()
+    message.success(`Cleared ${deleted} schema-drift baseline${deleted !== 1 ? 's' : ''}`)
+    schemaDriftRows.value = []
+    schemaDriftTotal.value = 0
+    resetSchemaDriftModalOpen.value = false
+  } catch (err: unknown) {
+    message.error((err as { message?: string })?.message ?? 'Clear failed')
+  } finally {
+    clearingSchemaDrift.value = false
   }
 }
 
@@ -1406,7 +1426,10 @@ onUnmounted(() => {
           >
             <template #prefix><SearchOutlined style="color: #bbb" /></template>
           </a-input>
-          <span style="color: #888; font-size: 12px">{{ schemaDriftTotal }} total · auto-refresh 5s</span>
+          <a-space>
+            <span style="color: #888; font-size: 12px">{{ schemaDriftTotal }} total · auto-refresh 5s</span>
+            <a-button danger :loading="clearingSchemaDrift" @click="resetSchemaDriftModalOpen = true">Reset</a-button>
+          </a-space>
         </div>
         <a-table
           :columns="schemaDriftColumns"
@@ -1426,8 +1449,13 @@ onUnmounted(() => {
             </template>
             <template v-else-if="column.key === 'status'">
               <a-tag v-if="record.status === 'baseline'" color="green" style="font-size: 10px">Baseline</a-tag>
-              <a-tooltip v-else :title="`Seen ${record.stableBatches} times since first appearing — promotes to baseline at ~${SCHEMA_DRIFT_PROMOTION_BATCHES} consistent occurrences`">
-                <a-tag color="blue" style="font-size: 10px">Pending {{ record.stableBatches }}/{{ SCHEMA_DRIFT_PROMOTION_BATCHES }}</a-tag>
+              <a-tooltip
+                v-else
+                :title="`Seen ${record.stableBatches} of ${record.windowSize ?? '?'} batches since first appearing (${record.presenceRatio != null ? Math.round(record.presenceRatio * 100) : '?'}% presence). Promotes once occurrence count reaches ${SCHEMA_DRIFT_PROMOTION_BATCHES} AND presence reaches ${Math.round(SCHEMA_DRIFT_PROMOTION_RATIO * 100)}% — a field that's only present some of the time (e.g. an intermittent fault/alarm point) can stay pending indefinitely even past ${SCHEMA_DRIFT_PROMOTION_BATCHES} occurrences.`"
+              >
+                <a-tag color="blue" style="font-size: 10px">
+                  Pending {{ record.presenceRatio != null ? Math.round(record.presenceRatio * 100) + '%' : `${record.stableBatches}/${SCHEMA_DRIFT_PROMOTION_BATCHES}` }}
+                </a-tag>
               </a-tooltip>
             </template>
             <template v-else-if="column.key === 'dominantType'">
@@ -1944,6 +1972,19 @@ onUnmounted(() => {
       @cancel="resetBaselinesModalOpen = false"
     >
       <p>Deletes saved baselines and clears live buffers — the detection engine relearns from scratch.</p>
+    </a-modal>
+
+    <!-- ── Reset schema-drift baselines modal ───────────────────────────────── -->
+    <a-modal
+      :open="resetSchemaDriftModalOpen"
+      title="Reset all schema-drift baselines?"
+      ok-text="Reset"
+      ok-type="danger"
+      :confirm-loading="clearingSchemaDrift"
+      @ok="clearAllSchemaDriftBaselines"
+      @cancel="resetSchemaDriftModalOpen = false"
+    >
+      <p>Deletes saved schema-drift baselines and clears every endpoint's live state — every device relearns its schema from scratch (fresh warmup window per device).</p>
     </a-modal>
 
     <!-- ── Metric config drawer ─────────────────────────────────────────────── -->

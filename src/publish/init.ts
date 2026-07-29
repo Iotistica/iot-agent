@@ -520,6 +520,20 @@ export class DevicePublish extends EventEmitter {
 	}
 
 	/**
+	 * Resets every endpoint's in-memory schema-drift state. Paired with
+	 * SchemaDriftModel.clearAllBaselines() (the persisted-row deletion) by
+	 * the DELETE /v1/schema-drift/baselines route — call both together, since
+	 * clearing only the DB row without this lets a still-populated detector
+	 * silently re-persist its old state on its next observe() call.
+	 */
+	public clearSchemaDriftBaselines(): void {
+		for (const device of this.devices) {
+			device.clearSchemaDriftBaseline();
+		}
+		this.logger.info('Cleared in-memory schema-drift state for all endpoints', { deviceCount: this.devices.length });
+	}
+
+	/**
    * Check if MQTT is connected
    */
 	public isMqttConnected(): boolean {
