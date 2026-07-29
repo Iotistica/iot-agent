@@ -10,7 +10,7 @@
  *   const agentInfo = createmockAgentInfo({ provisioned: false });
  */
 
-import type { DeviceState } from '../../src/orchestrator/state-reconciler';
+import type { AgentState as DeviceState } from '../../src/core/state';
 
 // ============================================================================
 // TYPE DEFINITIONS (matching sync-state.ts)

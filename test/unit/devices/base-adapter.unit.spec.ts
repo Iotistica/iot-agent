@@ -1,5 +1,5 @@
-import { BaseProtocolAdapter, GenericDeviceConfig } from '../../../src/adapters/base';
-import { DeviceDataPoint } from '../../../src/adapters/types';
+import { BaseProtocolAdapter, GenericDeviceConfig } from '../../../src/plugins/base';
+import { DeviceDataPoint } from '../../../src/plugins/types';
 
 class TestAdapter extends BaseProtocolAdapter {
   getProtocolName(): string {

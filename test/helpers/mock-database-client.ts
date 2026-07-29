@@ -8,7 +8,7 @@
 
 import { stub } from 'sinon';
 import type { DatabaseClient, DeviceRecord } from '../../src/db/client';
-import type { UuidGenerator } from '../../src/provisioning/device-manager';
+import type { UuidGenerator } from '../../src/utils/crypto';
 
 export class MockDatabaseClient implements DatabaseClient {
 	public loadDeviceStub = stub<[], Promise<DeviceRecord | null>>();

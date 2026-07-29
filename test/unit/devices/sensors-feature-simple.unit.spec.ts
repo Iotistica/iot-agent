@@ -1,10 +1,10 @@
-import { AdapterManager, AdapterConfig } from '../../../src/adapters';
+import { AdapterManager, AdapterConfig } from '../../../src/plugins';
 import { AgentLogger } from '../../../src/logging/agent-logger';
 
-// Mock DeviceEndpointModel to avoid database dependencies in unit tests
+// Mock EndpointModel to avoid database dependencies in unit tests
 jest.mock('../../../src/db/models/endpoint.model', () => ({
-  DeviceEndpointModel: {
-    getAll: jest.fn().mockResolvedValue([])
+  EndpointModel: {
+    getEnabled: jest.fn().mockResolvedValue([])
   }
 }));
 
@@ -14,10 +14,10 @@ describe('AdapterManager - Simple Tests', () => {
 
   beforeEach(() => {
     mockLogger = {
-      debug: jest.fn(),
-      info: jest.fn(),
-      warn: jest.fn(),
-      error: jest.fn()
+      debugSync: jest.fn(),
+      infoSync: jest.fn(),
+      warnSync: jest.fn(),
+      errorSync: jest.fn()
     };
 
     config = {};

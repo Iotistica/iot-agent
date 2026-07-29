@@ -555,7 +555,7 @@ export class AgentManager {
 		this.logger?.infoSync('Agent reset (unprovisioned)', {
 			component: LogComponents.agentManager,
 			operation: 'reset',
-			note: 'UUID and deviceApiKey preserved for re-registration. MQTT credentials cleared.',
+			note: 'UUID preserved; apiKey and MQTT credentials cleared for full re-registration.',
 		});
 	}
 	

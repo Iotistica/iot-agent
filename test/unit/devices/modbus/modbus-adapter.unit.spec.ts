@@ -8,9 +8,9 @@ jest.mock('uuid', () => ({
   v4: jest.fn(() => 'test-uuid-12345')
 }));
 
-import { ModbusAdapter } from '../../../../src/features/adapters/modbus/adapter';
-import { ModbusAdapterConfig, ModbusConnectionType } from '../../../../src/features/adapters/modbus/types';
-import { DeviceDataPoint } from '../../../../src/features/adapters/types';
+import { ModbusAdapter } from '../../../../src/plugins/modbus/adapter';
+import { ModbusAdapterConfig, ModbusConnectionType } from '../../../../src/plugins/modbus/types';
+import { DeviceDataPoint } from '../../../../src/plugins/types';
 
 describe('ModbusAdapter', () => {
   let mockLogger: any;

@@ -8,11 +8,11 @@
  * - Clean, isolated tests with predictable behavior
  */
 
-import { AgentManager } from '../../../src/agent/agent';
+import { AgentManager } from '../../../src/core/index';
 import { MockHttpClient } from '../../helpers/mock-http-client';
 import { MockDatabaseClient, MockUuidGenerator } from '../../helpers/mock-database-client';
 import type { DeviceRecord } from '../../../src/db/client';
-import type { ProvisionResponse } from '../../../src/agent/types';
+import type { ProvisionResponse } from '../../../src/core/types';
 
 describe('DeviceManager - Refactored Testability', () => {
 	let deviceManager: AgentManager;
@@ -163,7 +163,7 @@ describe('DeviceManager - Refactored Testability', () => {
 			await expect(deviceManager.provision({
 				provisioningApiKey: 'provisioning-key-123',
 				apiEndpoint: 'http://api:3002',
-			})).rejects.toThrow('Failed to register device');
+			})).rejects.toThrow('Failed to register agent');
 		}, 240000); // Timeout: 6 attempts × 30s + backoff delays (211s max)
 	});
 
@@ -219,9 +219,10 @@ describe('DeviceManager - Refactored Testability', () => {
 				apiEndpoint: 'http://api:3002',
 			});
 
-			// Check first call (registration)
+			// Check first call (registration) -- uses a custom x-provisioning-key
+			// header (Ed25519 PoP flow), not a Bearer Authorization header.
 			const firstCallHeaders = mockHttpClient.postStub.firstCall.args[2]?.headers;
-			expect(firstCallHeaders?.['Authorization']).toBe('Bearer provisioning-key-123');
+			expect(firstCallHeaders?.['x-provisioning-key']).toBe('provisioning-key-123');
 			// Note: Content-Type is set automatically by HttpClient, not by DeviceManager
 		}, 35000); // Timeout: 30s per attempt + 5s buffer
 
@@ -266,9 +267,10 @@ describe('DeviceManager - Refactored Testability', () => {
 				apiEndpoint: 'http://api:3002',
 			});
 
-			// Check second call (key exchange) - should use device API key
+			// Check second call (key exchange) - should use the agent's own API key,
+			// via a custom x-agent-key header (Ed25519 PoP flow), not Bearer Authorization.
 			const secondCallHeaders = mockHttpClient.postStub.secondCall.args[2]?.headers;
-			expect(secondCallHeaders?.['Authorization']).toContain('Bearer');
+			expect(secondCallHeaders?.['x-agent-key']).toBeTruthy();
 		}, 35000); // Timeout: 30s per attempt + 5s buffer
 	});
 
@@ -331,7 +333,7 @@ describe('DeviceManager - Refactored Testability', () => {
 			const agentInfo = deviceManager.getAgentInfo();
 			expect(agentInfo.provisioned).toBe(false);
 			expect(agentInfo.uuid).toBe('test-uuid'); // UUID preserved
-			expect(agentInfo.apiKey).toBe('api-key-123'); // API key preserved
+			expect(agentInfo.apiKey).toBeUndefined(); // API key cleared -- reset forces full re-registration
 		});
 	});
 
@@ -342,7 +344,7 @@ describe('DeviceManager - Refactored Testability', () => {
 	describe('Error Handling', () => {
 		it('should throw error if getAgentInfo called before initialize', () => {
 			const uninitializedManager = new AgentManager(undefined, mockHttpClient, mockDbClient);
-			expect(() => uninitializedManager.getAgentInfo()).toThrow('Device manager not initialized');
+			expect(() => uninitializedManager.getAgentInfo()).toThrow('Agent manager not initialized');
 		});
 
 		it('should handle database save failure', async () => {

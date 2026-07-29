@@ -284,6 +284,12 @@ export abstract class BaseProtocolAdapter extends EventEmitter implements IProto
 	}
 
 	protected extractQualityCode(errorMessage: string): string {
+		// Standard Node.js network error codes (e.g. from a raw socket/TCP client
+		// error like Modbus's) — checked first since they're specific enough to
+		// never collide with the generic substring checks below.
+		if (errorMessage.includes('ETIMEDOUT')) return 'TIMEOUT';
+		if (errorMessage.includes('ECONNREFUSED')) return 'CONNECTION_REFUSED';
+		if (errorMessage.includes('ENOTFOUND')) return 'HOST_NOT_FOUND';
 		if (errorMessage.includes('timeout')) return 'TIMEOUT';
 		if (errorMessage.includes('connection')) return 'CONNECTION_ERROR';
 		if (errorMessage.includes('not open')) return 'DEVICE_OFFLINE';
