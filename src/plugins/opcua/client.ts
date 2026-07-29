@@ -183,26 +183,39 @@ implements IProtocolClient<ReadValueIdOptions[], DataValue[]>
 			const clientAlarmList = await installAlarmMonitoring(sessionWrapper.session);
 			sessionWrapper.clientAlarmList = clientAlarmList;
 
+			// These callbacks fire later, off node-opcua's own internal timer
+			// (flushQueue), not synchronously within this method's try/catch — an
+			// exception thrown in here would otherwise be a genuine uncaught
+			// process exception rather than the "best-effort" failure this method
+			// documents, so each callback body needs its own try/catch.
 			clientAlarmList.on('newAlarm', (alarm: ClientAlarm) => {
-				const messageField = alarm.getField('message')?.value;
-				const message = (messageField && typeof messageField === 'object' && 'text' in messageField
-					? String((messageField as { text?: unknown }).text)
-					: undefined) ?? alarm.eventType.toString();
-				const severity = Number(alarm.getField('severity')?.value ?? 0);
-				ProtocolAlarmModel.insert({
-					protocol: 'opcua',
-					condition_id: alarm.conditionId.toString(),
-					event_type: alarm.eventType.toString(),
-					device_name: this.device.name,
-					message,
-					severity,
-				});
-				this.logger.warn(`OPC-UA alarm on ${this.device.name}: ${message}`);
+				try {
+					const messageField = alarm.getField('message')?.value;
+					const message = (messageField && typeof messageField === 'object' && 'text' in messageField
+						? String((messageField as { text?: unknown }).text)
+						: undefined) ?? alarm.eventType.toString();
+					const severity = Number(alarm.getField('severity')?.value ?? 0);
+					ProtocolAlarmModel.insert({
+						protocol: 'opcua',
+						condition_id: alarm.conditionId.toString(),
+						event_type: alarm.eventType.toString(),
+						device_name: this.device.name,
+						message,
+						severity,
+					});
+					this.logger.warn(`OPC-UA alarm on ${this.device.name}: ${message}`);
+				} catch (error) {
+					this.logger.debug(`Failed to record OPC-UA alarm for ${this.device.name}: ${error}`);
+				}
 			});
 
 			clientAlarmList.on('alarmChanged', (alarm: ClientAlarm) => {
-				if (!alarm.getRetain()) {
-					ProtocolAlarmModel.markCleared('opcua', alarm.conditionId.toString());
+				try {
+					if (!alarm.getRetain()) {
+						ProtocolAlarmModel.markCleared('opcua', alarm.conditionId.toString());
+					}
+				} catch (error) {
+					this.logger.debug(`Failed to update OPC-UA alarm state for ${this.device.name}: ${error}`);
 				}
 			});
 		} catch (error) {

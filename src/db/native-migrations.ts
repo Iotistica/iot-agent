@@ -29,6 +29,7 @@ import { migration as addOpcuaAlarms } from './migrations/20260727000000_add_opc
 import { migration as addAssets } from './migrations/20260728000000_add_assets.js';
 import { migration as addMaintenanceEnergy } from './migrations/20260728010000_add_maintenance_energy.js';
 import { migration as addRecommendationPublishSettings } from './migrations/20260728020000_add_recommendation_publish_settings.js';
+import { migration as renameOpcuaAlarmsToProtocolAlarms } from './migrations/20260728030000_rename_opcua_alarms_to_protocol_alarms.js';
 import type { NativeSqliteMigration } from './migration-types.js';
 
 export const nativeMigrations: NativeSqliteMigration[] = [
@@ -63,4 +64,5 @@ export const nativeMigrations: NativeSqliteMigration[] = [
 	addAssets,
 	addMaintenanceEnergy,
 	addRecommendationPublishSettings,
+	renameOpcuaAlarmsToProtocolAlarms,
 ];
