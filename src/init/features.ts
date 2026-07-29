@@ -19,6 +19,7 @@ import type { AdapterManager } from '../plugins/index.js';
 import type { PipelineService } from '../features/pipeline/index.js';
 import { AdapterInitializer } from './adapters.js';
 import { AgentUpdater } from '../updater.js';
+import { createCommandFeature, type CommandFeature } from '../commands/index.js';
 import { AgentFirewall } from '../network/firewall.js';
 import { setDevicePublish, setDiscoveryRulesScheduler } from '../api/actions.js';
 import { type CloudMqttClient } from '../mqtt/manager.js';
@@ -53,6 +54,7 @@ export interface InitializedFeatures {
   devicePublish?: DevicePublish;
 	devices?: AdapterManager;
   updater?: AgentUpdater;
+  commandFeature?: CommandFeature;
   firewall?: AgentFirewall;
   shellHandler?: any; // Shell handler for remote terminal access
   discoveryService?: any; // Discovery service (passed from Agent)
@@ -124,6 +126,7 @@ export class FeatureInitializer {
 	async initSupportingFeatures(): Promise<void> {
 		await Promise.all([
 			this.initAgentUpdater(),
+			this.initCommandFeature(),
 			this.initShellHandler(),
 			this.initFirewall()
 		]);
@@ -474,6 +477,33 @@ export class FeatureInitializer {
 		}
 	}
 
+	/**
+	 * Initialize the MQTT device-write command feature (disabled by default via
+	 * COMMANDS_ENABLED — see src/commands/). Requires provisioning since command
+	 * topics are tenant-scoped, same precondition as the Agent Updater above.
+	 */
+	private async initCommandFeature(): Promise<void> {
+		const { logger, deviceInfo } = this.context;
+
+		if (!deviceInfo.provisioned) {
+			logger.debugSync('Command feature skipped — device not yet provisioned', {
+				component: LogComponents.commands,
+			});
+			return;
+		}
+
+		try {
+			this.features.commandFeature = createCommandFeature(logger, deviceInfo.uuid);
+			await this.features.commandFeature.start();
+		} catch (error) {
+			logger.errorSync('Failed to initialize command feature', error as Error, {
+				component: LogComponents.commands,
+				note: 'MQTT device-write commands will not be available'
+			});
+			this.features.commandFeature = undefined;
+		}
+	}
+
 	async initShellHandler(): Promise<void> {
 		const { logger, deviceInfo, mqttManager } = this.context;
 
@@ -648,6 +678,14 @@ export class FeatureInitializer {
 			// No explicit stop method
 			logger.debugSync('Agent Updater cleanup', {
 				component: LogComponents.agent,
+			});
+		}
+
+		// Stop Command Feature
+		if (this.features.commandFeature) {
+			await this.features.commandFeature.stop();
+			logger.debugSync('Command Feature stopped', {
+				component: LogComponents.commands,
 			});
 		}
 

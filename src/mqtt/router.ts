@@ -4,7 +4,7 @@
  */
 export type SubscriptionHandler = {
 	pattern: string;
-	handler: (topic: string, payload: Buffer) => void;
+	handler: (topic: string, payload: Buffer, retain: boolean) => void;
 };
 
 /**
@@ -14,11 +14,11 @@ export type SubscriptionHandler = {
 export class MqttRouter {
 	private handlers: SubscriptionHandler[] = [];
 
-	public addHandler(pattern: string, handler: (topic: string, payload: Buffer) => void): void {
+	public addHandler(pattern: string, handler: (topic: string, payload: Buffer, retain: boolean) => void): void {
 		this.handlers.push({ pattern, handler });
 	}
 
-	public removeHandler(handler: (topic: string, payload: Buffer) => void): void {
+	public removeHandler(handler: (topic: string, payload: Buffer, retain: boolean) => void): void {
 		this.handlers = this.handlers.filter((h) => h.handler !== handler);
 	}
 
@@ -37,12 +37,13 @@ export class MqttRouter {
 	public route(
 		topic: string,
 		payload: Buffer,
-		onHandlerError?: (pattern: string, error: unknown) => void
+		onHandlerError?: (pattern: string, error: unknown) => void,
+		retain: boolean = false
 	): void {
 		for (const subscription of this.handlers) {
 			if (this.topicMatches(subscription.pattern, topic)) {
 				try {
-					subscription.handler(topic, payload);
+					subscription.handler(topic, payload, retain);
 				} catch (error) {
 					onHandlerError?.(subscription.pattern, error);
 				}

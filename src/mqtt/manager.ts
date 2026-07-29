@@ -363,8 +363,8 @@ export class CloudMqttClient extends EventEmitter {
 			this.handleDisconnect(brokerUrl, options);
 		});
 
-		client.on("message", (topic: string, payload: Buffer) => {
-			this.routeMessage(topic, payload);
+		client.on("message", (topic: string, payload: Buffer, packet: mqtt.IPublishPacket) => {
+			this.routeMessage(topic, payload, packet.retain);
 		});
 	}
 
@@ -674,7 +674,7 @@ export class CloudMqttClient extends EventEmitter {
 	public async subscribe(
 		topic: string,
 		options?: mqtt.IClientSubscribeOptions,
-		handler?: (topic: string, payload: Buffer) => void,
+		handler?: (topic: string, payload: Buffer, retain: boolean) => void,
 	): Promise<void> {
 		if (!this.isConnected()) {
 			this.logInfo("Auto-reconnecting for subscribe operation", { topic });
@@ -838,7 +838,7 @@ export class CloudMqttClient extends EventEmitter {
 	 * Route incoming messages to registered handlers
 	 * Supports overlapping patterns (e.g., foo/# and foo/bar)
 	 */
-	private routeMessage(topic: string, payload: Buffer): void {
+	private routeMessage(topic: string, payload: Buffer, retain: boolean = false): void {
 		this.debugLog(`Received MQTT message: ${topic} (${payload.length} bytes)`);
 
 		this.router.route(topic, payload, (pattern, error) => {
@@ -850,7 +850,7 @@ export class CloudMqttClient extends EventEmitter {
 					pattern,
 				},
 			);
-		});
+		}, retain);
 	}
 
 	/**

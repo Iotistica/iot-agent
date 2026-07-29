@@ -501,6 +501,11 @@ export class ModbusClient implements IProtocolClient<void, DeviceDataPoint[]> {
 		return this.readAllRegisters();
 	}
 
+	/** Read-only lookup of a configured register by name, e.g. for allowlist checks by callers that don't own a write path of their own. */
+	getRegister(registerName: string): ModbusRegister | undefined {
+		return this.device.registers.find((r) => r.name === registerName);
+	}
+
 	async writeRegister(registerName: string, value: number | boolean | string): Promise<void> {
 		const register = this.device.registers.find((r) => r.name === registerName);
 		if (!register) {

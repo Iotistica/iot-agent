@@ -87,6 +87,7 @@ export const LogComponents = {
 	device: 'Device',
 	devicePublish: 'Publish',
 	shell: 'Shell',
+	commands: 'Commands',
 } as const;
 
 export type LogComponent = typeof LogComponents[keyof typeof LogComponents];

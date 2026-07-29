@@ -84,7 +84,16 @@ export const ModbusRegisterSchema = z.object({
 	offset: z.number().optional().default(0), // Offset value
 	unit: z.string().optional().default(''), // Unit of measurement
 	encoding: z.enum(['ascii', 'utf8', 'utf-8', 'latin1', 'binary']).optional().default('ascii'), // For STRING type
-	description: z.string().optional().default('')
+	description: z.string().optional().default(''),
+
+	/**
+	 * Explicit allowlist flag for the MQTT command-write path (see src/commands/).
+	 * Default false: a register must opt in before it can be written via an
+	 * inbound MQTT command. Does not affect the existing authenticated
+	 * HTTP write endpoint (POST /v1/adapters/modbus/devices/:deviceName/write),
+	 * which is gated by role instead and predates this flag.
+	 */
+	writable: z.boolean().optional().default(false),
 });
 
 export type ModbusRegister = z.infer<typeof ModbusRegisterSchema>;

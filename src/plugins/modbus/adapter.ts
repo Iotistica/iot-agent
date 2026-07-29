@@ -1,6 +1,6 @@
 import { BaseProtocolAdapter, type GenericDeviceConfig } from '../base.js';
 import { type ModbusAdapterConfig } from './types';
-import { type ModbusDevice } from './types';
+import { type ModbusDevice, type ModbusRegister } from './types';
 import { ModbusClient } from './client';
 import { type DeviceDataPoint, type IDeviceStatus, type Logger } from '../types.js';
 import { DeviceMetrics, type MetricsSummary } from '../metrics.js';
@@ -213,6 +213,11 @@ export class ModbusAdapter extends BaseProtocolAdapter{
 		}
 
 		await client.writeRegister(registerName, value);
+	}
+
+	/** Read-only register lookup, e.g. for the MQTT command layer's own allowlist check (see src/commands/). */
+	getRegisterConfig(deviceName: string, registerName: string): ModbusRegister | undefined {
+		return this.clients.get(deviceName)?.getRegister(registerName);
 	}
   
 	/**
