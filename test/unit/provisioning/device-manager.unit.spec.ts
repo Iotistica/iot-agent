@@ -8,6 +8,9 @@
  * - Clean, isolated tests with predictable behavior
  */
 
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 import { AgentManager } from '../../../src/core/index';
 import { MockHttpClient } from '../../helpers/mock-http-client';
 import { MockDatabaseClient, MockUuidGenerator } from '../../helpers/mock-database-client';
@@ -19,6 +22,32 @@ describe('DeviceManager - Refactored Testability', () => {
 	let mockHttpClient: MockHttpClient;
 	let mockDbClient: MockDatabaseClient;
 	let mockUuidGenerator: MockUuidGenerator;
+
+	// AgentManager.initialize() falls back to the hardcoded /app/data when
+	// DATA_DIR isn't set, since that's where it expects to run in production.
+	// PopCryptoManager writes real PoP keys there unconditionally (unlike the
+	// two encryption-model calls next to it, which swallow their own errors),
+	// so without a real, writable DATA_DIR this fails wherever /app/data
+	// doesn't already exist (e.g. any CI runner) -- it only happened to pass
+	// on machines with a stray /app/data directory left over from something
+	// else.
+	let originalDataDir: string | undefined;
+	let testDataDir: string;
+
+	beforeAll(() => {
+		originalDataDir = process.env.DATA_DIR;
+		testDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'device-manager-test-'));
+		process.env.DATA_DIR = testDataDir;
+	});
+
+	afterAll(() => {
+		if (originalDataDir === undefined) {
+			delete process.env.DATA_DIR;
+		} else {
+			process.env.DATA_DIR = originalDataDir;
+		}
+		fs.rmSync(testDataDir, { recursive: true, force: true });
+	});
 
 	beforeEach(() => {
 		mockHttpClient = new MockHttpClient();
