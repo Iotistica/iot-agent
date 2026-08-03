@@ -184,7 +184,7 @@ export class MessageBatcher extends EventEmitter {
 		// schema drift as a malformed message.
 		if (parsed && typeof parsed === 'object' && parsed.__control) {
 			// TEMPORARY diagnostic — see issue #17 follow-up investigation.
-			this.logger?.warn(`[SCHEMA_DECLARE_DIAG] batcher routing control frame: ${parsed.__control}`);
+			this.logger?.debug(`[SCHEMA_DECLARE_DIAG] batcher routing control frame: ${parsed.__control}`);
 			this.emit(parsed.__control, parsed);
 			return;
 		}

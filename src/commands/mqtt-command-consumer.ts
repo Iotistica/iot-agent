@@ -1,24 +1,33 @@
-import { CloudMqttClient } from '../mqtt/manager.js';
+import { CommandDestination } from './command-destination.js';
 import type { AgentLogger } from '../logging/agent-logger.js';
 import { LogComponents } from '../logging/types.js';
 import type { CommandService } from './command-service.js';
 
 /**
- * Subscribes to the agent's own command topic and forwards raw messages to
- * CommandService. Deliberately thin — all parsing, validation, dedup, and
- * execution live in CommandService so this class never touches a protocol
- * write directly.
+ * Subscribes to the agent's own command topic (on whichever publish
+ * destination an admin has flagged `use_for_commands` — see
+ * CommandDestination) and forwards raw messages to CommandService.
+ * Deliberately thin — all parsing, validation, dedup, and execution live in
+ * CommandService so this class never touches a protocol write directly.
  */
 export class MqttCommandConsumer {
 	constructor(
 		private readonly commandTopic: string,
 		private readonly commandService: CommandService,
 		private readonly logger: AgentLogger,
+		private readonly deviceUuid: string,
 	) {}
 
 	async start(): Promise<void> {
-		const mqttManager = CloudMqttClient.getInstance();
-		await mqttManager.subscribe(this.commandTopic, { qos: 1 }, (_topic, payload, retain) => {
+		const client = await CommandDestination.resolve(this.logger, this.deviceUuid);
+		if (!client) {
+			this.logger.warnSync('No mqtt destination flagged use_for_commands — command consumer not started', {
+				component: LogComponents.commands,
+			});
+			return;
+		}
+
+		await client.subscribe(this.commandTopic, 1, (_topic, payload, retain) => {
 			void this.commandService.handleMessage(payload, retain);
 		});
 
@@ -29,7 +38,7 @@ export class MqttCommandConsumer {
 	}
 
 	async stop(): Promise<void> {
-		const mqttManager = CloudMqttClient.getInstance();
-		await mqttManager.unsubscribe(this.commandTopic);
+		const client = await CommandDestination.resolve(this.logger, this.deviceUuid);
+		await client?.unsubscribe(this.commandTopic);
 	}
 }

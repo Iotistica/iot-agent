@@ -1428,6 +1428,7 @@ export const createPublisher = async (body: {
 	type: string;
 	config_json?: Record<string, unknown>;
 	enabled?: boolean;
+	use_for_commands?: boolean;
 }) => {
 	if (!body?.name || !body?.type) {
 		throw new Error('name and type are required');
@@ -1438,6 +1439,7 @@ export const createPublisher = async (body: {
 		type: body.type,
 		config_json: body.config_json ?? null,
 		enabled: body.enabled !== false,
+		use_for_commands: body.use_for_commands ?? false,
 	});
 
 	if (!created) {
@@ -1461,6 +1463,7 @@ export const updatePublisher = async (id: number, body: {
 	type?: string;
 	config_json?: Record<string, unknown> | null;
 	enabled?: boolean;
+	use_for_commands?: boolean;
 }) => {
 	const existing = PublishDestinationsModel.getById(id);
 	if (!existing) {
@@ -1510,6 +1513,12 @@ export const listPublishSubscriptions = async (publishDestinationId?: number, in
 	return PublishSubscriptionsModel.getAll(includeDisabled);
 };
 
+// Destination types with no per-topic column to route into — 'iotistica' always
+// publishes on the agent's own structured MQTT topic regardless of what's stored,
+// while 'influxdb' (optional measurement name) and 'timescaledb' (writes straight
+// into the readings table by metric name) simply have nothing to route on.
+const TOPIC_OPTIONAL_DESTINATION_TYPES = new Set(['iotistica', 'influxdb', 'timescaledb']);
+
 /**
  * Publish control: create subscription
  */
@@ -1540,7 +1549,7 @@ export const createPublishSubscription = async (body: {
 		throw new Error(`Invalid compression: ${body.compression}. Supported: ${VALID_COMPRESSIONS.join(', ')}`);
 	}
 
-	if (destination.type !== 'iotistica') {
+	if (!TOPIC_OPTIONAL_DESTINATION_TYPES.has(destination.type)) {
 		const destinationTopic = typeof body.route_json?.topic === 'string' ? body.route_json.topic.trim() : '';
 		if (!destinationTopic) {
 			throw new Error('route_json.topic is required for external destinations');
@@ -1609,7 +1618,7 @@ export const updatePublishSubscription = async (id: number, body: {
 		throw new Error(`Invalid compression: ${body.compression}. Supported: ${VALID_COMPRESSIONS.join(', ')}`);
 	}
 
-	if (destination.type !== 'iotistica') {
+	if (!TOPIC_OPTIONAL_DESTINATION_TYPES.has(destination.type)) {
 		const effectiveRoute = body.route_json !== undefined ? body.route_json : (existing.route_json as Record<string, unknown> | null | undefined);
 		const destinationTopic = typeof effectiveRoute?.topic === 'string' ? effectiveRoute.topic.trim() : '';
 		if (!destinationTopic) {
@@ -1677,15 +1686,28 @@ export const factoryResetDevice = async () => {
  * Each entry carries a `configured` flag so the UI can highlight gaps.
  * Used by: GET /v1/anomaly/metrics
  */
+// Metric name alone isn't unique across devices — some sources (e.g. OPC-UA's
+// bare field names, "hc_valve" reported identically by every AHU) reuse the
+// same name across many physically different devices. Every source below
+// must key its rows by (name, deviceId), or every device's occurrence of a
+// shared name collapses into one row, discarding which devices report it —
+// the same fix already applied to AnomalyDetectionService's observedMetrics.
+function anomalyMetricResultKey(name: string, deviceId?: string): string {
+	return `${name}::${deviceId ?? ''}`;
+}
+
 export const getAvailableAnomalyMetrics = async (): Promise<
 	Array<{
 		name: string;
+		deviceId?: string;
+		deviceName?: string;
 		source: 'live';
 		score?: number;
 		deviceState?: string;
 		unit?: string;
 		configured: boolean;
 		endpointName?: string;
+		protocol?: string;
 	}>
 > => {
 	const configuredNames = new Set(anomalyService?.getConfig().metrics.map((m: any) => m.name) ?? []);
@@ -1693,12 +1715,15 @@ export const getAvailableAnomalyMetrics = async (): Promise<
 		string,
 		{
 			name: string;
+			deviceId?: string;
+			deviceName?: string;
 			source: 'live';
 			score?: number;
 			deviceState?: string;
 			unit?: string;
 			configured: boolean;
 			endpointName?: string;
+			protocol?: string;
 		}
 	>();
 
@@ -1726,23 +1751,27 @@ export const getAvailableAnomalyMetrics = async (): Promise<
 	if (anomalyService) {
 		for (const observed of anomalyService.getObservedMetrics()) {
 			if (!observed.name?.trim()) continue;
-			results.set(observed.name, {
+			results.set(anomalyMetricResultKey(observed.name, observed.deviceId), {
 				name: observed.name,
+				deviceId: observed.deviceId,
 				source: 'live',
 				unit: observed.unit,
 				configured: configuredNames.has(observed.name),
+				protocol: observed.protocol,
 			});
 		}
 
 		// Overlay live anomaly scores and deviceState on top of catalog entries.
-		for (const { metricName, deviceState, score } of anomalyService.getTrackedMetrics()) {
-			const existing = results.get(metricName);
+		for (const { metricName, deviceState, deviceId, score } of anomalyService.getTrackedMetrics()) {
+			const key = anomalyMetricResultKey(metricName, deviceId);
+			const existing = results.get(key);
 			if (existing) {
 				existing.score = score;
 				existing.deviceState = deviceState;
 			} else {
-				results.set(metricName, {
+				results.set(key, {
 					name: metricName,
+					deviceId,
 					source: 'live',
 					score,
 					deviceState,
@@ -1779,18 +1808,37 @@ export const getAvailableAnomalyMetrics = async (): Promise<
 			const dpName: unknown = dp.name ?? dp.key ?? dp.tag ?? dp.label;
 			if (typeof dpName !== 'string' || !dpName.trim()) continue;
 			const name = dpName.trim();
-			if (!results.has(name)) {
-				results.set(name, {
+			// Best-effort per-device identifier for a data point that hasn't
+			// reported live yet — a data point's own device_uuid/device_name
+			// (per-node, e.g. distinguishing OPC-UA's AHU-1 from AHU-8 sharing
+			// a bare field name) takes priority over the endpoint's own
+			// identity, which is only meaningful for genuinely single-device
+			// sources. Doesn't need to byte-match the live buffer key format
+			// (see AnomalyDetectionService.recordMetricObservation) — once
+			// this metric is actually observed, that entry takes over.
+			const deviceId: string | undefined = dp.device_uuid || dp.device_name || uuid || ep.name || undefined;
+			const key = anomalyMetricResultKey(name, deviceId);
+			if (!results.has(key)) {
+				results.set(key, {
 					name,
+					deviceId,
+					// The data point's own human-readable device name (e.g. "AHU-1")
+					// when it has one — distinct from deviceId above, which is a
+					// technical identity key, not necessarily display-friendly.
+					// Only source 3 (here) has this available directly; sources 1/2
+					// don't carry a friendly name yet, so this is left undefined
+					// there rather than guessed.
+					deviceName: typeof dp.device_name === 'string' ? dp.device_name : undefined,
 					source: 'live',
 					configured: configuredNames.has(name),
 					endpointName: epDisplayName ?? undefined,
+					protocol: typeof ep.protocol === 'string' ? ep.protocol : undefined,
 				});
 			}
 		}
 	}
 
-	return Array.from(results.values()).sort((a, b) => a.name.localeCompare(b.name));
+	return Array.from(results.values()).sort((a, b) => a.name.localeCompare(b.name) || (a.deviceId ?? '').localeCompare(b.deviceId ?? ''));
 };
 
 /**

@@ -150,22 +150,28 @@ export const anomalyApi = {
   getMetrics(): Promise<
     Array<{
       name: string
+      deviceId?: string
+      deviceName?: string
       score?: number
       deviceState?: string
       unit?: string
       configured: boolean
       endpointName?: string
+      protocol?: string
     }>
   > {
     return client
       .get<{
         metrics: Array<{
           name: string
+          deviceId?: string
+          deviceName?: string
           score?: number
           deviceState?: string
           unit?: string
           configured: boolean
           endpointName?: string
+          protocol?: string
         }>
       }>(`${BASE}/metrics`)
       .then((r) => r.data.metrics)

@@ -7,6 +7,8 @@ export interface Destination {
   type: DestinationType
   config_json: Record<string, unknown> | null
   enabled: boolean
+  /** Marks this (at most one, mqtt-type) destination as the transport for inbound device-write commands. */
+  use_for_commands: boolean
   last_error: string | null
   last_error_at: string | null
   created_at: string

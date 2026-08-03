@@ -263,7 +263,7 @@ export class AdapterManager extends EventEmitter {
 			this.logger.info(`${label} device connected: ${name}`);
 
 			// TEMPORARY diagnostic — see issue #17 follow-up investigation.
-			this.logger.info(`[SCHEMA_DECLARE_DIAG] name=${name} isArray=${Array.isArray(dataPoints)} length=${Array.isArray(dataPoints) ? dataPoints.length : 'n/a'} sample=${Array.isArray(dataPoints) ? JSON.stringify(dataPoints.slice(0, 2)) : 'n/a'}`);
+			this.logger.debug(`[SCHEMA_DECLARE_DIAG] name=${name} isArray=${Array.isArray(dataPoints)} length=${Array.isArray(dataPoints) ? dataPoints.length : 'n/a'} sample=${Array.isArray(dataPoints) ? JSON.stringify(dataPoints.slice(0, 2)) : 'n/a'}`);
 
 			// Declare each configured field's owning device's full field list to
 			// schema drift — ground truth for "does this field exist," independent
@@ -1254,6 +1254,13 @@ export class AdapterManager extends EventEmitter {
 						].includes(dp.objectType))
 						.map((dp: any) => ({
 							name: dp.name || dp.objectName,
+							// Carried through separately from `name` above so
+							// BACnetDeviceClient.write() can match a command's pointName
+							// against the device's own raw, human-visible object name too
+							// (e.g. "AHU-1.SF-Run") — without this, dp.name's fallback into
+							// this same field meant the raw name was never actually
+							// reachable at runtime, only the sanitized identifier.
+							objectName: dp.objectName,
 							objectType: dp.objectType,
 							objectInstance: dp.objectInstance,
 							propertyId: dp.propertyId || 85,

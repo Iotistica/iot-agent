@@ -19,6 +19,13 @@ export abstract class BaseMqttClient extends EventEmitter implements MqttConnect
 	protected connected = false;
 	protected readonly maxPublishRetries = 3;
 
+	// Subscribe support — used by destinations flagged use_for_commands (see
+	// src/commands/command-destination.ts). Destinations were outbound-publish-only
+	// until GitHub issues #4/#5/#6; kept here (rather than a separate class) so any
+	// destination type built on BaseMqttClient gets it, and so reconnects (mqtt.js's
+	// own `resubscribe`, default true) don't need special-casing.
+	private readonly messageHandlers = new Map<string, (topic: string, payload: Buffer, retain: boolean) => void>();
+
 	// Collision self-healing: if a duplicate/orphaned client elsewhere holds the same
 	// deterministic clientId, both sides kick each other in a tight reconnect loop.
 	// Detect the pattern (connect, then drop almost immediately, repeatedly) and rotate
@@ -147,6 +154,10 @@ export abstract class BaseMqttClient extends EventEmitter implements MqttConnect
 			client.on('reconnect', onReconnect);
 			client.on('end', onEnd);
 			client.on('close', onClose);
+			client.on('message', (receivedTopic, payload, packet) => {
+				const handler = this.messageHandlers.get(receivedTopic);
+				if (handler) handler(receivedTopic, payload, !!packet.retain);
+			});
 		});
 	}
 
@@ -236,6 +247,28 @@ export abstract class BaseMqttClient extends EventEmitter implements MqttConnect
 		}
 
 		throw lastError || new Error(`${this.providerName} publish failed after retries`);
+	}
+
+	public async subscribe(
+		topic: string,
+		qos: 0 | 1 | 2,
+		onMessage: (topic: string, payload: Buffer, retain: boolean) => void,
+	): Promise<void> {
+		if (!this.client || !this.connected) {
+			throw new Error(`${this.providerName}: not connected`);
+		}
+		this.messageHandlers.set(topic, onMessage);
+		await new Promise<void>((resolve, reject) => {
+			this.client!.subscribe(topic, { qos }, (err) => (err ? reject(err) : resolve()));
+		});
+	}
+
+	public async unsubscribe(topic: string): Promise<void> {
+		this.messageHandlers.delete(topic);
+		if (!this.client) return;
+		await new Promise<void>((resolve, reject) => {
+			this.client!.unsubscribe(topic, (err) => (err ? reject(err) : resolve()));
+		});
 	}
 
 	public isConnected(): boolean {

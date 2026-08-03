@@ -23,6 +23,8 @@ import { PublishDestinationsModel, PublishSubscriptionsModel } from '../../db/mo
 import type { PublisherRecord, PublishSubscriptionRecord, PublishSubscriptionRoute } from '../../db/models/index.js';
 import { activityMonitor } from './activity-monitor.js';
 import { cleanDriftFieldName, prettifyDriftDeviceId, cleanProtocolPipeName, stripFieldDevicePrefix } from '../../db/models/drift-labels.js';
+import { buildCompactIssueCodes } from '../../quality/index.js';
+import type { DataQuality } from '../../quality/index.js';
 
 // Adaptive batch safety limits (calculated once at module load)
 const MAX_BATCH_MESSAGES = 10000;
@@ -70,6 +72,11 @@ interface TagPayload {
 	value?: unknown;
 	error?: unknown;
 	type?: 1 | 2 | 3 | 4;
+	unit?: string;
+	rawUnit?: string;
+	dqStatus?: string;
+	dqUnitConfidence?: number;
+	dqIssueCodes?: string[];
 }
 
 type MlDtype = 'bool' | 'int' | 'float' | 'string' | 'error';
@@ -90,6 +97,11 @@ interface MlFeaturePayload {
 	forecast_confidence?: number;
 	device_state?: unknown;
 	state_duration_seconds?: number;
+	unit?: string;
+	rawUnit?: string;
+	dqStatus?: string;
+	dqUnitConfidence?: number;
+	dqIssueCodes?: string[];
 }
 
 interface RuntimeSnapshot {
@@ -221,14 +233,14 @@ export class PublishManager extends EventEmitter {
 		this.batcher.on('message-added', () => { this.stats.data.messagesReceived++; });
 		this.batcher.on('device-schema', (payload: any) => {
 			// TEMPORARY diagnostic — see issue #17 follow-up investigation.
-			this.logger?.warn(`[SCHEMA_DECLARE_DIAG] manager received device-schema for endpoint '${this.endpointName}': deviceName=${payload?.deviceName} fieldCount=${Array.isArray(payload?.fields) ? payload.fields.length : 'n/a'} detectorReady=${!!this.schemaDriftDetector}`);
+			this.logger?.debug(`[SCHEMA_DECLARE_DIAG] manager received device-schema for endpoint '${this.endpointName}': deviceName=${payload?.deviceName} fieldCount=${Array.isArray(payload?.fields) ? payload.fields.length : 'n/a'} detectorReady=${!!this.schemaDriftDetector}`);
 			// If schemaDriftDetector hasn't resolved yet (initSchemaDrift() is
 			// async), this declaration is silently dropped — same cold-start
 			// tolerance as any other message that arrives before it's ready.
 			// The adapter re-declares on every reconnect, so it isn't lost for
 			// good, just until the next one.
 			if (typeof payload?.deviceName !== 'string' || !Array.isArray(payload?.fields)) {
-				this.logger?.warn(`[SCHEMA_DECLARE_DIAG] manager dropped malformed device-schema payload for endpoint '${this.endpointName}'`);
+				this.logger?.debug(`[SCHEMA_DECLARE_DIAG] manager dropped malformed device-schema payload for endpoint '${this.endpointName}'`);
 				return;
 			}
 			try {
@@ -716,6 +728,31 @@ export class PublishManager extends EventEmitter {
 		return tagRecords;
 	}
 
+	/** Flat unit fields for outbound tag/ml payloads — reads the interceptor-attached
+	 *  unitValue struct when present (see src/normalization/interceptor.ts), falling
+	 *  back to the plain .unit field for messages that never passed through it. */
+	private readNormalizedUnit(message: ProtocolMessage): { unit?: string; rawUnit?: string } {
+		const unitValue = message.unitValue as { unit?: string; rawUnit?: string } | undefined;
+		const unit = unitValue?.unit ?? (typeof message.unit === 'string' ? message.unit : undefined);
+		const rawUnit = unitValue?.rawUnit;
+		return { ...(unit && { unit }), ...(rawUnit && { rawUnit }) };
+	}
+
+	/** Compact quality projection for tag/ml payloads — reads message.dataQuality (see src/quality/interceptor.ts)
+	 *  when present. Never carries checks{}/ruleId/protocolCode/issue messages/rulesVersion/engineVersion —
+	 *  those stay 'custom'-format-only. */
+	private readQualityFields(message: ProtocolMessage): { dqStatus?: string; dqUnitConfidence?: number; dqIssueCodes?: string[] } {
+		const dataQuality = message.dataQuality as DataQuality | undefined;
+		if (!dataQuality) return {};
+		const dqUnitConfidence = dataQuality.checks.unit?.confidence;
+		const dqIssueCodes = buildCompactIssueCodes(dataQuality.checks);
+		return {
+			...(dataQuality.status && { dqStatus: dataQuality.status }),
+			...(dqUnitConfidence !== undefined && { dqUnitConfidence }),
+			...(dqIssueCodes && { dqIssueCodes }),
+		};
+	}
+
 	private mapTagPayload(message: ProtocolMessage, index: number, payloadFormat: Exclude<PayloadFormat, 'custom'>, filterBadQuality = false): TagPayload | null {
 		const name = String(
 			message.metric
@@ -726,6 +763,9 @@ export class PublishManager extends EventEmitter {
 			?? message.id
 			?? `tag_${index}`,
 		);
+
+		const unitFields = this.readNormalizedUnit(message);
+		const qualityFields = this.readQualityFields(message);
 
 		const quality = typeof message.quality === 'string' ? message.quality.toUpperCase() : undefined;
 		const hasError = message.error !== undefined
@@ -743,6 +783,8 @@ export class PublishManager extends EventEmitter {
 			return {
 				name,
 				error: message.error ?? message.errorCode ?? message.qualityCode ?? 'READ_ERROR',
+				...unitFields,
+				...qualityFields,
 			};
 		}
 
@@ -756,10 +798,12 @@ export class PublishManager extends EventEmitter {
 				name,
 				value,
 				type: this.inferEcpType(value),
+				...unitFields,
+				...qualityFields,
 			};
 		}
 
-		return { name, value };
+		return { name, value, ...unitFields, ...qualityFields };
 	}
 
 	private mapMlFeaturePayload(message: ProtocolMessage, index: number): MlFeaturePayload {
@@ -825,6 +869,8 @@ export class PublishManager extends EventEmitter {
 		if (typeof message.forecast_confidence === 'number') feature.forecast_confidence = message.forecast_confidence;
 		if (message.device_state !== undefined) feature.device_state = message.device_state;
 		if (typeof message.state_duration_seconds === 'number') feature.state_duration_seconds = message.state_duration_seconds;
+		Object.assign(feature, this.readNormalizedUnit(message));
+		Object.assign(feature, this.readQualityFields(message));
 	}
 
 	private inferMlDtype(value: unknown): MlDtype {
@@ -1235,8 +1281,9 @@ export class PublishManager extends EventEmitter {
 		const route = binding.subscription.route_json as PublishSubscriptionRoute | null;
 		const destinationTopic = typeof route?.topic === 'string' ? route.topic.trim() : '';
 		if (destinationTopic.length === 0) {
-			// InfluxDB uses an optional measurement name — empty topic is valid, plugin defaults to 'metrics'
-			if (binding.publisher.type === 'influxdb') {
+			// InfluxDB uses an optional measurement name — empty topic is valid, plugin defaults to 'metrics'.
+			// TimescaleDB has no per-topic column at all, so an empty topic is likewise valid and ignored.
+			if (binding.publisher.type === 'influxdb' || binding.publisher.type === 'timescaledb') {
 				return '';
 			}
 			this.logger?.warn('Skipping publish binding without route_json.topic destination', {
@@ -1476,6 +1523,7 @@ export class PublishManager extends EventEmitter {
 			type: target,
 			config_json: null,
 			enabled: true,
+			use_for_commands: false,
 		};
 		const plugin = this.buildPlugin(publisher, this.defaultClient, this.logger, this.endpointName);
 		return [{

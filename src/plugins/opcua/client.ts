@@ -195,6 +195,17 @@ implements IProtocolClient<ReadValueIdOptions[], DataValue[]>
 						? String((messageField as { text?: unknown }).text)
 						: undefined) ?? alarm.eventType.toString();
 					const severity = Number(alarm.getField('severity')?.value ?? 0);
+					// KNOWN LIMITATION (GitHub issue #11): when this client's `this.device`
+					// is a pooled composite representing several configured devices that
+					// share one physical server (see OPCUAAdapter.buildCompositeDevice()),
+					// `this.device.name` here is the group's primary (first-configured)
+					// member — every alarm from the shared session's Alarms & Conditions
+					// subscription is attributed to that one device, not resolved per
+					// alarm to whichever member it actually originated from. OPC-UA A&C
+					// events aren't guaranteed to correlate 1:1 with any single configured
+					// dataPoint's nodeId, so a heuristic per-alarm resolution risked being
+					// confidently wrong; this documented fallback was judged safer for v1.
+					// Real per-alarm device attribution is tracked as a separate follow-up.
 					ProtocolAlarmModel.insert({
 						protocol: 'opcua',
 						condition_id: alarm.conditionId.toString(),

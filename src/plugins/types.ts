@@ -120,6 +120,17 @@ export interface IProtocolAdapter {
 	isRunning(): boolean;
 	getDeviceStatuses(): IDeviceStatus[];
 	on(event: string, listener: (...args: any[]) => void): this;
+	/**
+	 * Optional: does this adapter recognize `name` as a device, beyond what
+	 * getDeviceStatuses() reports? Some adapters (e.g. OPC-UA, where many
+	 * logical devices — "AHU-1", "AHU-2" — can share one configured/connected
+	 * endpoint) support addressing a device by a friendlier logical name in
+	 * addition to the raw endpoint/connection name. Callers resolving device
+	 * ownership (see write-dispatcher.ts) should check this before falling
+	 * back to getDeviceStatuses(). Adapters without this concept simply don't
+	 * implement it.
+	 */
+	ownsDeviceName?(name: string): boolean;
 }
 
 export interface IDiscovery {

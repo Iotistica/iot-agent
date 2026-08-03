@@ -59,7 +59,7 @@ export type DevicePublishConfig = z.infer<typeof DevicePublishConfigSchema> & {
  */
 export type PublishMode = 'direct' | 'buffer-only' | 'recovering';
 
-export type PublishTarget = 'iotistica' | 'azure' | 'aws' | 'gcp' | 'mqtt' | 'influxdb';
+export type PublishTarget = 'iotistica' | 'azure' | 'aws' | 'gcp' | 'mqtt' | 'influxdb' | 'timescaledb';
 
 export function normalizeTarget(target?: string): PublishTarget {
 	const value = target?.trim().toLowerCase() ?? '';
@@ -71,6 +71,7 @@ export function normalizeTarget(target?: string): PublishTarget {
 		case 'gcp':
 		case 'mqtt':
 		case 'influxdb':
+		case 'timescaledb':
 			return value;
 		default:
 			return 'iotistica';

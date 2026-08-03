@@ -71,6 +71,7 @@ interface BACnetValidatedObject {
 	objectName: string;
 	presentValue: unknown;
 	units?: string;
+	writable: boolean;
 }
 
 interface BACnetArrayElement {
@@ -140,9 +141,64 @@ enum BacnetPropertyId {
 	OBJECT_LIST = 76,
 	OBJECT_NAME = 77,
 	PRESENT_VALUE = 85,
+	PRIORITY_ARRAY = 87,
 	UNITS = 117,
 	VENDOR_NAME = 121,
 }
+
+// Object types that can never be commandable per the BACnet spec (Inputs have
+// no Priority_Array) — skip the extra round-trip and just report non-writable.
+const BACNET_INPUT_OBJECT_TYPES = new Set([0, 3, 13]); // analog-input, binary-input, multi-state-input
+// Output objects always have Priority_Array; Value objects (analog/binary/
+// multi-state-value) sometimes do too, depending on vendor — worth probing
+// rather than assuming either way.
+const BACNET_POSSIBLY_COMMANDABLE_OBJECT_TYPES = new Set([1, 2, 4, 5, 14, 19]); // *-output, *-value
+
+// The UNITS property (117) is an ASN.1 Enumerated value, not a string — devices
+// return the numeric BACnet units code (e.g. 62), which `asString()` alone
+// can't decode. `bacstack` already ships the standard name->code table (Clause
+// 21 of ANSI/ASHRAE 135) as BACnet.enum.EngineeringUnits; invert it once here
+// so a discovered code can be turned back into a readable unit string.
+const BACNET_UNITS_CODE_TO_NAME: Record<number, string> = Object.fromEntries(
+	Object.entries((BACnet as any).enum?.EngineeringUnits ?? {}).map(([name, code]) => [code as number, name])
+);
+
+// Symbols for the units actually likely to show up on HVAC/energy points —
+// everything else falls back to a humanized version of the enum name (e.g.
+// CUBIC_METERS_PER_HOUR -> "cubic meters per hour") rather than a hardcoded
+// symbol for all ~262 standard codes.
+const BACNET_UNITS_SYMBOLS: Record<string, string> = {
+	DEGREES_CELSIUS: '°C',
+	DEGREES_FAHRENHEIT: '°F',
+	DEGREES_KELVIN: 'K',
+	PERCENT: '%',
+	PERCENT_RELATIVE_HUMIDITY: '%RH',
+	PARTS_PER_MILLION: 'ppm',
+	WATTS: 'W',
+	KILOWATTS: 'kW',
+	MEGAWATTS: 'MW',
+	WATT_HOURS: 'Wh',
+	KILOWATT_HOURS: 'kWh',
+	MEGAWATT_HOURS: 'MWh',
+	VOLTS: 'V',
+	AMPERES: 'A',
+	HERTZ: 'Hz',
+	PASCALS: 'Pa',
+	KILOPASCALS: 'kPa',
+	BARS: 'bar',
+	CUBIC_FEET_PER_MINUTE: 'CFM',
+	LITERS_PER_SECOND: 'L/s',
+	LITERS_PER_MINUTE: 'L/min',
+	CUBIC_METERS_PER_HOUR: 'm³/h',
+	CUBIC_METERS_PER_MINUTE: 'm³/min',
+	SECONDS: 's',
+	MINUTES: 'min',
+	HOURS: 'h',
+};
+
+// NO_UNITS (95) is BACnet's explicit "this point is dimensionless" — treat the
+// same as no unit at all rather than storing a meaningless label.
+const BACNET_NO_UNITS_CODE = 95;
 
 export class BACnetDiscovery extends BaseDiscovery {
 	private client?: BACnetClientLike;  // Reuse same BACnet client across discovery and validation
@@ -164,6 +220,26 @@ export class BACnetDiscovery extends BaseDiscovery {
 
 	private asString(value: unknown): string | undefined {
 		return typeof value === 'string' ? value : undefined;
+	}
+
+	/**
+	 * Decode a BACnet UNITS property read into a readable string. Devices
+	 * report this as an ASN.1 Enumerated (a plain number, e.g. 62 for
+	 * degrees-Celsius) — `asString()` alone always misses it. Falls back to a
+	 * humanized version of the standard enum name for codes with no curated
+	 * symbol, and treats NO_UNITS (95, "dimensionless") the same as absent.
+	 */
+	private asUnit(value: unknown): string | undefined {
+		if (typeof value === 'string') {
+			const trimmed = value.trim();
+			return trimmed || undefined;
+		}
+		if (typeof value !== 'number' || value === BACNET_NO_UNITS_CODE) {
+			return undefined;
+		}
+		const name = BACNET_UNITS_CODE_TO_NAME[value];
+		if (!name) return undefined;
+		return BACNET_UNITS_SYMBOLS[name] ?? name.toLowerCase().replace(/_/g, ' ');
 	}
 
 	private async wait(ms: number): Promise<void> {
@@ -775,7 +851,7 @@ export class BACnetDiscovery extends BaseDiscovery {
 
 								let units: string | undefined;
 								if ([0, 1, 2].includes(objectType)) {
-									units = this.asString(await this.readProperty(
+									units = this.asUnit(await this.readProperty(
 										client,
 										fullAddress,
 										{ type: objectType, instance: objectInstance },
@@ -784,12 +860,38 @@ export class BACnetDiscovery extends BaseDiscovery {
 									));
 								}
 
+								// Commandability isn't guessed from object type alone (Value objects
+								// are ambiguous — vendor-dependent) — read the actual Priority_Array
+								// property the same way OPC-UA discovery reads live AccessLevel bits.
+								// A device rejects this read with an error for a non-commandable object
+								// (no such property exists), which is itself the authoritative signal.
+								let writable = false;
+								if (BACNET_POSSIBLY_COMMANDABLE_OBJECT_TYPES.has(objectType)) {
+									try {
+										await this.readProperty(
+											client,
+											fullAddress,
+											{ type: objectType, instance: objectInstance },
+											BacnetPropertyId.PRIORITY_ARRAY,
+											timeout
+										);
+										writable = true;
+									} catch {
+										writable = false;
+									}
+								} else if (!BACNET_INPUT_OBJECT_TYPES.has(objectType)) {
+									// Unknown/other object type (e.g. device object itself) — leave
+									// non-writable rather than probing something inherently not a point.
+									writable = false;
+								}
+
 								return {
 									objectType: objectTypeName,
 									objectInstance,
 									objectName: this.asString(objectName) || `${objectTypeName}_${objectInstance}`,
 									presentValue,
-									units
+									units,
+									writable
 								};
 							} catch (error) {
 								this.logger?.debugSync('Failed to read BACnet object properties', {
@@ -829,7 +931,8 @@ export class BACnetDiscovery extends BaseDiscovery {
 					objectType: obj.objectType,
 					objectInstance: obj.objectInstance,
 					presentValue: obj.presentValue,
-					units: obj.units,
+					unit: obj.units,
+					writable: obj.writable,
 					propertyId: BacnetPropertyId.PRESENT_VALUE
 				}));
 

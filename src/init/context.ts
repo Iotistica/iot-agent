@@ -47,4 +47,5 @@ export interface AgentInitContext {
 	discoveryRulesScheduler?: DiscoveryRulesScheduler;
 	backupScheduler?: BackupScheduler;
 	dictionaryManager?: DictionaryManager;
+	liveDataInterceptor?: (messages: any[], endpointName: string) => Promise<any[]> | any[];
 }

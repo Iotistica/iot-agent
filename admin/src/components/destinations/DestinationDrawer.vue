@@ -2,6 +2,7 @@
 import { ref, computed, watch } from 'vue'
 import { message } from 'ant-design-vue'
 import type { FormInstance } from 'ant-design-vue'
+import { QuestionCircleOutlined } from '@ant-design/icons-vue'
 import type { Destination, DestinationFormData } from '@/types'
 import { destinationsApi } from '@/api/destinations'
 import DestinationConfigFields from './DestinationConfigFields.vue'
@@ -20,13 +21,13 @@ const emit = defineEmits<{
   saved: []
 }>()
 
-const ALL_DESTINATION_TYPES = ['iotistica', 'mqtt', 'influxdb', 'azure', 'aws', 'gcp', 'noop']
+const ALL_DESTINATION_TYPES = ['iotistica', 'mqtt', 'influxdb', 'timescaledb', 'azure', 'aws', 'gcp', 'noop']
 const PRO_DESTINATION_TYPES = new Set(['influxdb', 'azure', 'aws', 'gcp'])
 const DEMO_DESTINATION_TYPES = new Set(['noop'])
 const DESTINATION_TYPES = computed(() =>
   props.provisioned ? ALL_DESTINATION_TYPES : ALL_DESTINATION_TYPES.filter((t) => t !== 'iotistica'),
 )
-const TESTABLE_TYPES = ['influxdb', 'mqtt']
+const TESTABLE_TYPES = ['influxdb', 'mqtt', 'timescaledb']
 
 const CONFIG_TEMPLATES: Record<string, Record<string, unknown>> = {
   azure: {
@@ -85,6 +86,7 @@ const form = ref<DestinationFormData>({
   type: defaultType.value,
   config_json: {},
   enabled: true,
+  use_for_commands: false,
 })
 
 watch(
@@ -98,9 +100,10 @@ watch(
         type: props.editing.type,
         config_json: props.editing.config_json ?? {},
         enabled: props.editing.enabled,
+        use_for_commands: props.editing.use_for_commands,
       }
     } else {
-      form.value = { name: '', type: defaultType.value, config_json: templateFor(defaultType.value), enabled: true }
+      form.value = { name: '', type: defaultType.value, config_json: templateFor(defaultType.value), enabled: true, use_for_commands: false }
     }
   },
 )
@@ -128,7 +131,15 @@ async function testConnection() {
 }
 
 async function submit() {
-  await formRef.value?.validate()
+  try {
+    await formRef.value?.validate()
+  } catch (err: unknown) {
+    const e = err as { errorFields?: Array<{ name: (string | number)[]; errors: string[] }> }
+    const firstError = e?.errorFields?.[0]
+    message.error(firstError ? `${firstError.name.join('.')}: ${firstError.errors[0]}` : 'Please fix the highlighted fields')
+    return
+  }
+
   saving.value = true
   try {
     if (props.editing) {
@@ -208,6 +219,16 @@ function close() {
 
       <a-form-item label="Enabled" name="enabled">
         <a-switch v-model:checked="form.enabled" />
+      </a-form-item>
+
+      <a-form-item v-if="form.type === 'mqtt'" name="use_for_commands">
+        <template #label>
+          Use for device-write commands
+          <a-tooltip title="Subscribes on this broker for inbound device-write commands and publishes results back on it. Only one destination can be flagged at a time — enabling it here clears the flag on any other destination.">
+            <QuestionCircleOutlined style="margin-left: 4px; color: #999" />
+          </a-tooltip>
+        </template>
+        <a-switch v-model:checked="form.use_for_commands" />
       </a-form-item>
 
       <a-alert

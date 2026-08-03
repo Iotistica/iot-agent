@@ -68,9 +68,10 @@ const selectedDestination = computed(() =>
 const isIotisticaDestination = computed(() => selectedDestination.value?.type === 'iotistica')
 const isExternalDestination = computed(() => !!selectedDestination.value && !isIotisticaDestination.value)
 const isInfluxDbDestination = computed(() => selectedDestination.value?.type === 'influxdb')
+const isTimescaleDbDestination = computed(() => selectedDestination.value?.type === 'timescaledb')
 
 const destinationTopicRules = computed(() =>
-  isExternalDestination.value && !isInfluxDbDestination.value
+  isExternalDestination.value && !isInfluxDbDestination.value && !isTimescaleDbDestination.value
     ? [{ required: true, message: 'Destination topic is required for external destinations' }]
     : [],
 )
@@ -204,7 +205,7 @@ function close() {
 
       <!-- Destination Topic / Measurement -->
       <a-form-item
-        v-if="isExternalDestination"
+        v-if="isExternalDestination && !isTimescaleDbDestination"
         :label="isInfluxDbDestination ? 'Measurement' : 'Destination Topic'"
         :name="['route_json', 'topic']"
         :rules="destinationTopicRules"
@@ -217,6 +218,15 @@ function close() {
           :placeholder="isInfluxDbDestination ? 'e.g. temperature' : 'e.g. sensors/bacnet/readings'"
         />
       </a-form-item>
+
+      <a-alert
+        v-if="isTimescaleDbDestination"
+        type="info"
+        show-icon
+        message="No destination topic needed"
+        description="TimescaleDB rows go into the readings table by metric name — there's no per-topic destination to configure."
+        style="margin-bottom: 16px"
+      />
 
       <!-- Source Protocols -->
       <a-form-item

@@ -433,7 +433,7 @@ export class OPCUADiscovery extends BaseDiscovery {
 			if (!url) continue;
 
 			try {
-				const { OPCUAClient, MessageSecurityMode, SecurityPolicy, UserTokenType } = await import('node-opcua-client');
+				const { OPCUAClient, AttributeIds, MessageSecurityMode, SecurityPolicy, UserTokenType } = await import('node-opcua-client');
 				const { getDefaultCertificateManager } = await import('node-opcua-certificate-manager');
 				const certificateManager = getDefaultCertificateManager('PKI');
 				certificateManager.automaticallyAcceptUnknownCertificate =
@@ -464,7 +464,7 @@ export class OPCUADiscovery extends BaseDiscovery {
 						password: endpoint.connection.password,
 					})
 					: await client.createSession();
-				const dataPoints: Array<{ nodeId: string; name: string; browseName?: string; device_uuid?: string; device_name?: string }> = [];
+				const dataPoints: Array<{ nodeId: string; name: string; browseName?: string; device_uuid?: string; device_name?: string; writable?: boolean; unit?: string }> = [];
 				let subscriptionsSupported = false;
 
 				try {
@@ -513,7 +513,38 @@ export class OPCUADiscovery extends BaseDiscovery {
 									break;
 								}
 							}
-							
+
+							// Reads the OPC-UA standard EngineeringUnits property (Part 8) — a
+							// child Property node (browseName "EngineeringUnits") of an
+							// AnalogItemType Variable, holding an EUInformation struct whose
+							// displayName.text is the actual unit string (e.g. "°C"). Only
+							// analog-style variables expose this at all, so a miss is the
+							// common case, not an error — best-effort like the DeviceUUID
+							// pre-scan above, silently returning undefined on any failure.
+							const readEngineeringUnits = async (variableNodeId: string): Promise<string | undefined> => {
+								try {
+									const propBrowse = await session.browse(variableNodeId);
+									const euRef = (propBrowse.references || []).find(
+										(r: any) => r.browseName?.name === 'EngineeringUnits'
+									);
+									if (!euRef) return undefined;
+
+									const euValue = await session.read({
+										nodeId: euRef.nodeId.toString(),
+										attributeId: AttributeIds.Value,
+									});
+									const euInfo = euValue.value?.value as { displayName?: { text?: string } } | string | undefined;
+									if (typeof euInfo === 'string') {
+										const trimmed = euInfo.trim();
+										return trimmed || undefined;
+									}
+									const text = euInfo?.displayName?.text;
+									return typeof text === 'string' && text.trim() ? text.trim() : undefined;
+								} catch (_) {
+									return undefined;
+								}
+							};
+
 							for (const ref of refs) {
 								const nodeName = ref.browseName?.name || '';
 								const childNodeId = ref.nodeId.toString();
@@ -531,23 +562,41 @@ export class OPCUADiscovery extends BaseDiscovery {
 								}
 								
 								// NodeClass: 1 = Object/Folder, 2 = Variable
-								// Verify the actual NodeClass by reading node attributes
+								// Verify the actual NodeClass by reading node attributes. Also read
+								// AccessLevel/UserAccessLevel here (same attributes browseOPCUATree()
+								// uses to compute `writable`) — this recursive scan is what periodically
+								// overwrites the endpoint's persisted data_points wholesale on rediscovery
+								// (see DiscoveryStore.save()), so if it doesn't report writable itself,
+								// any previously-known writable flag silently disappears on every rescan.
 								try {
-									const nodeClass = await session.read({
-										nodeId: childNodeId,
-										attributeId: 2 // NodeClass attribute
-									});
-									
+									const [nodeClass, accessLevelResult, userAccessLevelResult, descriptionResult] = await session.read([
+										{ nodeId: childNodeId, attributeId: AttributeIds.NodeClass },
+										{ nodeId: childNodeId, attributeId: AttributeIds.AccessLevel },
+										{ nodeId: childNodeId, attributeId: AttributeIds.UserAccessLevel },
+										{ nodeId: childNodeId, attributeId: AttributeIds.Description },
+									]);
+
 									const actualNodeClass = nodeClass.value.value;
-									
+
 									if (actualNodeClass === 2) {
 										// Extract semantic metric name from browseName prefix (OPC UA standard)
 										// Format: "Temperature_device1" → metric: "temperature"
 										// If no underscore, use full browseName in lowercase
-										const metricName = nodeName.includes('_') 
+										const metricName = nodeName.includes('_')
 											? nodeName.split('_')[0].toLowerCase()
 											: nodeName.toLowerCase();
-										
+
+										const accessLevel = Number(accessLevelResult?.value?.value ?? 0);
+										const userAccessLevel = Number(userAccessLevelResult?.value?.value ?? accessLevel);
+										const writable = ((accessLevel | userAccessLevel) & 0x02) !== 0;
+										// Prefer the real EngineeringUnits property (compliant AnalogItemType
+										// servers); fall back to the Description attribute — some lightweight
+										// OPC-UA servers/simulators stash the unit string there instead of
+										// implementing the full EngineeringUnits/EUInformation structure.
+										const descriptionText = (descriptionResult?.value?.value as { text?: string } | undefined)?.text;
+										const unit = (await readEngineeringUnits(childNodeId))
+											?? (typeof descriptionText === 'string' && descriptionText.trim() ? descriptionText.trim() : undefined);
+
 										dataPoints.push({
 											nodeId: childNodeId,
 											name: metricName,
@@ -555,8 +604,10 @@ export class OPCUADiscovery extends BaseDiscovery {
 											// `name` above is lowercased and truncated to the pre-underscore prefix for
 											// use as the metric tag — preserved separately here for accurate display.
 											browseName: nodeName,
+											writable,
 											...(folderDeviceUuid && { device_uuid: folderDeviceUuid }),
 											...(folderDeviceName && { device_name: folderDeviceName }),
+											...(unit && { unit }),
 										});
 										
 										this.logger?.debugSync(`Discovered variable: ${currentPath.join('/')}`, {

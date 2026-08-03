@@ -341,9 +341,23 @@ export class BACnetClient implements IProtocolClient<BACnetObject[], Map<string,
 	 * WriteProperty service. `writable` and `writePriority` come from this
 	 * object's own configuration — never from the caller — matching the
 	 * read-only allowlist pattern OPC-UA/Modbus already use for MQTT commands.
+	 *
+	 * `pointName` matches any of: the sanitized `name` discovery persists
+	 * (lowercased, non-alphanumerics replaced with `_` — see discovery.ts); the
+	 * device's own raw `objectName`, which some BACnet devices/gateways prefix
+	 * with their own device name for cross-device global uniqueness (e.g.
+	 * "AHU-1.SF-Run"); or just the unprefixed suffix after the last `.` (e.g.
+	 * "SF-Run") — the name a user actually sees when looking at one device's
+	 * own point list, where the device-name prefix is redundant context.
+	 * `this.config.objects` is always scoped to a single device, so matching
+	 * on that suffix alone can't cross into a different device's point.
 	 */
 	async write(pointName: string, value: number | boolean | string): Promise<void> {
-		const object = this.config.objects.find((o) => o.name === pointName);
+		const object = this.config.objects.find((o) =>
+			o.name === pointName ||
+			o.objectName === pointName ||
+			o.objectName?.split('.').pop() === pointName
+		);
 		if (!object) {
 			throw new Error(`Object not found on device ${this.config.name}: ${pointName}`);
 		}

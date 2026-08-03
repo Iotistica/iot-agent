@@ -74,7 +74,7 @@ export class CommandService {
 			checkExpiry(command, this.config.maximumCommandAgeSeconds, receivedAt);
 		} catch (error) {
 			this.deduplicator.markInProgress(command.commandId);
-			await this.publishResult(command.commandId, 'expired', receivedAt, command.deviceName, command.pointName, command.value, error);
+			await this.publishResult(command.commandId, 'expired', receivedAt, command.deviceUuid, command.pointName, command.value, error);
 			return;
 		}
 
@@ -83,7 +83,7 @@ export class CommandService {
 				command.commandId,
 				'rejected',
 				receivedAt,
-				command.deviceName,
+				command.deviceUuid,
 				command.pointName,
 				command.value,
 				new CommandError(CommandErrorCode.queueFull, `Command queue is full (max ${this.config.maximumQueueSize})`),
@@ -123,15 +123,15 @@ export class CommandService {
 			}
 
 			await withTimeout(
-				dispatchWrite(adapterManager, command.deviceName, command.pointName, command.value),
+				dispatchWrite(adapterManager, command.deviceUuid, command.pointName, command.value),
 				this.config.writeTimeoutMs,
 				() => new CommandError(CommandErrorCode.writeTimeout, `Write timed out after ${this.config.writeTimeoutMs}ms — final device state is unknown`),
 			);
 
-			await this.publishResult(command.commandId, 'succeeded', receivedAt, command.deviceName, command.pointName, command.value);
+			await this.publishResult(command.commandId, 'succeeded', receivedAt, command.deviceUuid, command.pointName, command.value);
 		} catch (error) {
 			const status = error instanceof CommandError && error.code === CommandErrorCode.commandExpired ? 'expired' : 'failed';
-			await this.publishResult(command.commandId, status, receivedAt, command.deviceName, command.pointName, command.value, error);
+			await this.publishResult(command.commandId, status, receivedAt, command.deviceUuid, command.pointName, command.value, error);
 		}
 	}
 
@@ -139,7 +139,7 @@ export class CommandService {
 		commandId: string,
 		status: CommandResult['status'],
 		receivedAt: Date,
-		deviceName?: string,
+		deviceUuid?: string,
 		pointName?: string,
 		requestedValue?: number | boolean | string,
 		error?: unknown,
@@ -149,7 +149,7 @@ export class CommandService {
 			commandId,
 			type: 'device.write.result',
 			status,
-			deviceName,
+			deviceUuid,
 			pointName,
 			requestedValue,
 			receivedAt: receivedAt.toISOString(),
@@ -168,7 +168,7 @@ export class CommandService {
 		this.logger.infoSync(`Command ${status}`, {
 			component: LogComponents.commands,
 			commandId,
-			deviceName,
+			deviceUuid,
 			pointName,
 			status,
 			durationMs: new Date(result.completedAt).getTime() - receivedAt.getTime(),

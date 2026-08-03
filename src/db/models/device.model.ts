@@ -42,7 +42,15 @@ function uuidv5(name: string, namespace: string): string {
 	return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
 }
 
-function toDeviceUuid(rawDeviceUuid: string): string {
+/**
+ * Turn a raw device_uuid tag (a real UUID, or a human-readable identifier like
+ * "ahu-1" some OPC-UA servers use instead) into the stable UUID this table
+ * stores as `devices.uuid`. Exported so publish plugins (e.g. the TimescaleDB
+ * direct-write plugin) can compute the same identity a reading's device_uuid
+ * tag resolves to here, without a DB round-trip — same hash, same namespace,
+ * so the two always agree.
+ */
+export function toDeviceUuid(rawDeviceUuid: string): string {
 	return UUID_RE.test(rawDeviceUuid) ? rawDeviceUuid : uuidv5(rawDeviceUuid, DEVICE_UUID_NAMESPACE);
 }
 

@@ -79,14 +79,44 @@ import { OPCUADeviceClient, type OPCUASession } from './client.js';
 import { OpcuaStartupDiagnostics } from './diagnostics.js';
 
 /**
+ * One physical OPC-UA server session, shared by every configured device
+ * whose connection resolves to the same groupKey (same normalized
+ * endpointUrl + auth) — see GitHub issue #11.
+ */
+interface OPCUAConnectionGroup {
+	key: string;
+	memberDeviceNames: Set<string>;
+	/** Synthetic device built from every member's merged dataPoints — see buildCompositeDevice(). */
+	compositeDevice: OPCUADeviceConfig;
+	/** Real owning device per nodeId, for correct per-device attribution of pooled reads. */
+	nodeIdToDevice: Map<string, OPCUADeviceConfig>;
+	client: OPCUADeviceClient;
+	session: OPCUASession;
+	tornDown: boolean;
+}
+
+/**
  * OPC-UA Protocol Adapter
- * 
+ *
  * Extends BaseProtocolAdapter to provide OPC-UA-specific functionality.
  * Manages OPC-UA client connections, sessions, and data reading.
  */
 export class OPCUAAdapter extends BaseProtocolAdapter  {
 	private clients: Map<string, OPCUADeviceClient> = new Map();
 	private sessions: Map<string, OPCUASession> = new Map();
+
+	// Guards against two independent reconnect paths (this adapter's own
+	// scheduleReconnect/attemptReconnect, and BaseProtocolAdapter's poll-failure
+	// scheduleDeviceRetry -> initializeDevice) calling connectDevice() for the
+	// same device concurrently. Without this, a poll that lands in the brief
+	// window where attemptReconnect() has torn down the old session but not yet
+	// committed the new one (see connectDevice()'s commitSession comment below)
+	// throws "No active session", which BaseProtocolAdapter routes into its own
+	// independent connectDevice() call — racing the in-flight one. Both used to
+	// succeed and both called commitSession(), with whichever finished last
+	// winning the map slot; the other's session/subscriptions/monitored items
+	// stayed alive on the server, permanently untracked. See GitHub issue #18.
+	private connectInFlight: Map<string, Promise<OPCUASession>> = new Map();
 
 	// TEMPORARY — see diagnostics.ts. Remove once the monitored-item-count
 	// investigation is done.
@@ -118,6 +148,18 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 	private readonly REDISCOVERY_COOLDOWN_MS = 30000; // 30 seconds
 	private lastRediscoveryNeeded: Map<string, number> = new Map();
 
+	// Configured devices that resolve to the same physical server (same
+	// normalized endpointUrl + auth) share ONE OPCUADeviceClient/session
+	// instead of opening one per configured device — see GitHub issue #11.
+	// `groups`/`deviceGroupKey` are adapter-internal only: every public/
+	// base-class-facing method still takes/returns plain device names, and
+	// `clients`/`sessions` above stay keyed by device.name (with every
+	// member of a group pointing at the SAME client/session object) so the
+	// rest of this file — readDeviceData(), writeNode(), etc. — needs no
+	// changes at all.
+	private groups: Map<string, OPCUAConnectionGroup> = new Map();
+	private deviceGroupKey: Map<string, string> = new Map();
+
 	private extractNodeScope(nodeId: string): string {
 		const stringNodeMatch = nodeId.match(/^ns=(\d+);s=(.+)$/);
 		if (stringNodeMatch) {
@@ -148,10 +190,106 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 	}
 
 
-	private buildStableNodeDeviceId(device: OPCUADeviceConfig, dataPoint: OPCUADataPoint): string {
-		const endpointKey = device.connection.endpointUrl
+	/** Strips the `opc.tcp://` scheme, lowercases, and trims a trailing slash —
+	 * shared by buildStableNodeDeviceId() (anomaly/metric device scoping) and
+	 * computeGroupKey() (session-pooling grouping, GitHub issue #11), so the
+	 * two features can't silently drift on what counts as "the same endpoint." */
+	private normalizeEndpointKey(endpointUrl: string): string {
+		return endpointUrl
+			.trim()
 			.replace(/^opc\.tcp:\/\//i, '')
-			.toLowerCase();
+			.toLowerCase()
+			.replace(/\/+$/, '');
+	}
+
+	/**
+	 * Identifies which shared-session group a configured device belongs to —
+	 * devices with the same normalized endpointUrl AND the same auth settings
+	 * share one OPCUADeviceClient/session instead of opening one per device.
+	 * See GitHub issue #11. Devices on the same endpointUrl but with different
+	 * security settings deliberately land in different groups (falls back to
+	 * today's one-session-per-device behavior for that mismatched pair).
+	 */
+	private computeGroupKey(device: OPCUADeviceConfig): string {
+		const c = device.connection;
+		const authFingerprint = [c.securityPolicy ?? 'None', c.securityMode ?? 'None', c.username ?? ''].join('|');
+		return `${this.normalizeEndpointKey(c.endpointUrl)}::${authFingerprint}`;
+	}
+
+	/** Every currently-configured, enabled device sharing `groupKey` — mirrors
+	 * BaseProtocolAdapter.start()'s own `if (device.enabled)` gate so a disabled
+	 * sibling's dataPoints never get pooled into an active group. */
+	private getConfiguredGroupMembers(groupKey: string): OPCUADeviceConfig[] {
+		const members: OPCUADeviceConfig[] = [];
+		for (const config of this.devices.values()) {
+			const d = config as OPCUADeviceConfig;
+			if (d.enabled && this.computeGroupKey(d) === groupKey) {
+				members.push(d);
+			}
+		}
+		return members;
+	}
+
+	/**
+	 * Builds the synthetic device passed into the existing (unchanged)
+	 * doConnectDevice()/createSubscription() pipeline for a whole group: one
+	 * connection (the primary/first-configured member's), one merged
+	 * dataPoints array covering every member. `nodeIdToDevice` records each
+	 * node's REAL owning device, for correct per-device attribution once a
+	 * pooled subscription carries multiple distinct logical devices' nodes.
+	 */
+	private buildCompositeDevice(members: OPCUADeviceConfig[]): { device: OPCUADeviceConfig; nodeIdToDevice: Map<string, OPCUADeviceConfig> } {
+		const primary = members[0];
+		const nodeIdToDevice = new Map<string, OPCUADeviceConfig>();
+		const mergedDataPoints: OPCUADataPoint[] = [];
+		for (const m of members) {
+			for (const dp of m.dataPoints) {
+				mergedDataPoints.push(dp);
+				nodeIdToDevice.set(dp.nodeId, m);
+			}
+		}
+
+		// Reconcile a per-group policy for members that configure this
+		// differently — minimum across the group, so no server ever receives
+		// a subscription batch larger than any single member asked for.
+		const configuredMax = members
+			.map(m => m.connection.maxMonitoredItemsPerSubscription)
+			.filter((v): v is number => typeof v === 'number' && v > 0);
+		const reconciledMax = configuredMax.length ? Math.min(...configuredMax) : this.MAX_MONITORED_ITEMS_PER_SUBSCRIPTION;
+		if (new Set(configuredMax).size > 1) {
+			this.logger.warn(
+				`OPC-UA group ${primary.connection.endpointUrl}: members configure different maxMonitoredItemsPerSubscription values (${configuredMax.join(', ')}); using minimum (${reconciledMax})`
+			);
+		}
+
+		const device: OPCUADeviceConfig = {
+			...primary,
+			dataPoints: mergedDataPoints,
+			connection: { ...primary.connection, maxMonitoredItemsPerSubscription: reconciledMax },
+		};
+		return { device, nodeIdToDevice };
+	}
+
+	private buildStableNodeDeviceId(device: OPCUADeviceConfig, dataPoint: OPCUADataPoint): string {
+		const endpointKey = this.normalizeEndpointKey(device.connection.endpointUrl);
+
+		// Prefer the data point's own device identity (device_uuid, then
+		// device_name — see OPCUADataPointSchema) over deriving a scope from
+		// the node ID's path structure. extractNodeScope() assumes node IDs
+		// encode a device folder path (e.g. "ns=2;s=Building/AHU-1/hc_valve"),
+		// which some servers do — but a flat addressing scheme (e.g.
+		// "ns=2;s=tag/94", no folder hierarchy at all) makes every node's
+		// derived scope identical regardless of which device it actually
+		// belongs to, silently merging every device on the endpoint into one
+		// bucket for anomaly buffering/scoring. device_uuid/device_name are
+		// populated per-node at discovery time from the server's own folder
+		// structure (see discovery.ts's folderDeviceName) and stay reliably
+		// distinct per device even when the node ID itself gives no clue.
+		const deviceScope = dataPoint.device_uuid || dataPoint.device_name;
+		if (deviceScope) {
+			return `opcua:${endpointKey}:${deviceScope.toLowerCase()}`;
+		}
+
 		const nodeScope = this.extractNodeScope(dataPoint.nodeId);
 		return `opcua:${endpointKey}:${nodeScope}`;
 	}
@@ -524,7 +662,8 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 	private async createSubscription(
 		deviceName: string,
 		device: OPCUADeviceConfig,
-		sessionWrapper: OPCUASession
+		sessionWrapper: OPCUASession,
+		nodeIdToDevice: Map<string, OPCUADeviceConfig>
 	): Promise<void> {
 		if (!sessionWrapper.session) {
 			throw new Error(`No active session for device: ${deviceName}`);
@@ -652,9 +791,20 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 			group.on('changed', (_monitoredItem: unknown, dataValue: DataValue, index: number) => {
 				const dp = batchDataPoints[index];
 
+				// Resolve the REAL owning device for this node — when `device`
+				// is a pooled composite spanning multiple configured devices
+				// sharing one endpoint (see buildCompositeDevice(), GitHub
+				// issue #11), `deviceName`/`device` above are the composite's
+				// (primary member's), not necessarily this specific node's own
+				// device. nodeIdToDevice always has an entry for every node in
+				// this composite's dataPoints; falls back to the outer device
+				// for the ordinary (ungrouped, or group-of-one) case.
+				const owningDevice = nodeIdToDevice.get(dp.nodeId) ?? device;
+				const owningDeviceName = owningDevice.name;
+
 				// Hard gate: Never emit metadata nodes
 				if (dp.nodeType !== 'metric') {
-					this.logger.warn(`Blocked metadata node emission: ${dp.name}`, { deviceName });
+					this.logger.warn(`Blocked metadata node emission: ${dp.name}`, { deviceName: owningDeviceName });
 					return;
 				}
 
@@ -663,8 +813,8 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 
 				const dataPoint: DeviceDataPoint = {
 					timestamp: new Date().toISOString(),
-					deviceName,
-					deviceId: this.buildStableNodeDeviceId(device, dp),
+					deviceName: owningDeviceName,
+					deviceId: this.buildStableNodeDeviceId(owningDevice, dp),
 					metric: dp.name,
 					value: dataValue.value?.value ?? null,
 					unit: dp.unit || '',
@@ -673,8 +823,8 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 					protocol: 'opcua',  // For enum namespacing
 					nodeType: 'metric', // Always 'metric' at this point (metadata filtered)
 					...(dp.device_uuid && { device_uuid: dp.device_uuid }),
-					...((this.resolvedNodeDisplayNames.has(dp.nodeId) || this.resolvedDeviceNames.has(deviceName)) && {
-						resolvedDisplayName: this.resolvedNodeDisplayNames.get(dp.nodeId) ?? this.resolvedDeviceNames.get(deviceName),
+					...((this.resolvedNodeDisplayNames.has(dp.nodeId) || this.resolvedDeviceNames.has(owningDeviceName)) && {
+						resolvedDisplayName: this.resolvedNodeDisplayNames.get(dp.nodeId) ?? this.resolvedDeviceNames.get(owningDeviceName),
 					}),
 				};
 
@@ -901,6 +1051,101 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
    * @returns OPCUASession object with client and session
    */
 	protected async connectDevice(device: OPCUADeviceConfig): Promise<OPCUASession> {
+		const groupKey = this.computeGroupKey(device);
+		this.deviceGroupKey.set(device.name, groupKey);
+
+		// A sibling device already resolved the shared session for this group —
+		// BaseProtocolAdapter.start() calls connectDevice() once per configured
+		// device, sequentially, so by the time later group members reach here
+		// the first one has already committed a live session for the whole
+		// group. Reuse it instead of opening a second connection to the same
+		// physical server. See GitHub issue #11.
+		const existingGroup = this.groups.get(groupKey);
+		if (existingGroup && !existingGroup.tornDown) {
+			existingGroup.memberDeviceNames.add(device.name);
+			this.clients.set(device.name, existingGroup.client);
+			this.sessions.set(device.name, existingGroup.session);
+			return existingGroup.session;
+		}
+
+		// Coalesce concurrent callers targeting the same physical server+auth
+		// (this adapter's own reconnect path vs base-class poll-failure retry —
+		// see connectInFlight's declaration) onto the single in-flight attempt
+		// instead of each independently building a full client/session/subscription
+		// stack. Keyed by groupKey (not device.name) so this also coalesces two
+		// DIFFERENT device names that share an endpoint — the group-scoped
+		// extension of the original issue-#18 fix. See GitHub issue #11.
+		const inFlight = this.connectInFlight.get(groupKey);
+		if (inFlight) {
+			return inFlight;
+		}
+
+		const attempt = this.connectGroup(groupKey).finally(() => {
+			this.connectInFlight.delete(groupKey);
+		});
+		this.connectInFlight.set(groupKey, attempt);
+		return attempt;
+	}
+
+	/**
+	 * Connects once for every currently-configured, enabled device sharing
+	 * `groupKey`: builds one composite device from their merged dataPoints,
+	 * runs the existing (unchanged) doConnectDevice() against it, then
+	 * registers the resulting client/session under every member's own
+	 * device name. See GitHub issue #11.
+	 */
+	private async connectGroup(groupKey: string): Promise<OPCUASession> {
+		const members = this.getConfiguredGroupMembers(groupKey);
+		const { device: compositeDevice, nodeIdToDevice } = this.buildCompositeDevice(members);
+		const sessionWrapper = await this.doConnectDevice(compositeDevice, nodeIdToDevice);
+		const client = this.clients.get(compositeDevice.name)!;
+
+		const group: OPCUAConnectionGroup = {
+			key: groupKey,
+			memberDeviceNames: new Set(members.map(m => m.name)),
+			compositeDevice,
+			nodeIdToDevice,
+			client,
+			session: sessionWrapper,
+			tornDown: false,
+		};
+		this.groups.set(groupKey, group);
+
+		if (members.length > 1) {
+			this.logger.info(
+				`OPC-UA endpoint ${compositeDevice.connection.endpointUrl} pools ${members.length} configured devices onto one session: ${members.map(m => m.name).join(', ')}. ` +
+				`Note: any Alarms & Conditions events from this server will be attributed to '${compositeDevice.name}' (the group's primary device) — see GitHub issue #11.`
+			);
+		}
+
+		for (const m of members) {
+			this.clients.set(m.name, client);
+			this.sessions.set(m.name, sessionWrapper);
+			this.deviceGroupKey.set(m.name, groupKey);
+		}
+
+		return sessionWrapper;
+	}
+
+	/**
+	 * Removes a group's tracking so the next connectDevice() call for it
+	 * rebuilds a fresh session, WITHOUT gracefully disconnecting — the
+	 * connection is already dead/closing when this is called (from
+	 * attemptReconnect(), right before it reconnects). Does not touch
+	 * connectInFlight: attemptReconnect()'s own subsequent connectDevice()
+	 * call is what (re)populates it. See GitHub issue #11.
+	 */
+	private invalidateGroupForReconnect(groupKey: string): void {
+		const group = this.groups.get(groupKey);
+		if (!group) return;
+		this.groups.delete(groupKey);
+		for (const name of group.memberDeviceNames) {
+			this.clients.delete(name);
+			this.sessions.delete(name);
+		}
+	}
+
+	private async doConnectDevice(device: OPCUADeviceConfig, nodeIdToDevice: Map<string, OPCUADeviceConfig>): Promise<OPCUASession> {
 		// TEMPORARY diagnostics — see diagnostics.ts.
 		this.diagnostics.recordConnectAttempt(device.name, device.connection.endpointUrl, device.connection.useSubscription);
 
@@ -1099,7 +1344,7 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 			// Create subscription if enabled (real-time streaming)
 			if (device.connection.useSubscription && validDataPoints.length > 0) {
 				try {
-					await this.createSubscription(device.name, device, sessionWrapper);
+					await this.createSubscription(device.name, device, sessionWrapper, nodeIdToDevice);
 					this.logger.debug(`Subscription mode enabled for ${device.name} - using real-time streaming`);
 				} catch (error) {
 					this.logger.error(`Failed to create subscription for ${device.name}: ${error}`);
@@ -1278,20 +1523,35 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 			} else {
 				await this.cleanupSession(sessionWrapper, false);
 			}
-      
-			// Create new connection
-			const newSession = await this.connectDevice(device);
-      
-			// Update session wrapper with new connection
-			sessionWrapper.client = newSession.client;
-			sessionWrapper.session = newSession.session;
-			sessionWrapper.subscription = newSession.subscription;
-			sessionWrapper.reconnecting = false;
-      
-			// Reset backoff on successful reconnection
-			sessionWrapper.currentRetryDelay = this.MIN_RETRY_DELAY;
-			sessionWrapper.consecutiveFailures = 0;
-      
+
+			// Invalidate the whole shared-session group (not just this device
+			// name) so the connectDevice() call below rebuilds a genuinely fresh
+			// session for every member — without this, connectDevice()'s own
+			// "a live group already exists" fast path would mistake this now-dead
+			// group entry for a still-live one and return the stale session
+			// without ever reconnecting. See GitHub issue #11.
+			const groupKey = this.deviceGroupKey.get(device.name);
+			if (groupKey) {
+				this.invalidateGroupForReconnect(groupKey);
+			}
+
+			// Create new connection. connectDevice() commits the fresh client/session
+			// into this.clients/this.sessions itself (see commitSession() inside it) —
+			// `sessionWrapper` here (the wrapper whose event triggered this reconnect)
+			// is superseded and intentionally left untouched from this point on.
+			//
+			// This used to copy the new client/session/subscription onto `sessionWrapper`
+			// and reset its `reconnecting` flag back to false. But OPCUADeviceClient.cleanup()
+			// never removes event listeners from the old client/session, so those listeners
+			// (closures still bound to this now-orphaned wrapper) stayed live. Resetting
+			// `reconnecting` re-armed them: any later event on the dead client/session — e.g.
+			// node-opcua's own internal connectionStrategy retry — would pass the
+			// `if (sessionWrapper.reconnecting) return` guard and schedule an independent
+			// reconnect timer that disconnectDevice()/stop() could never find or cancel
+			// (the maps only reference the current wrapper). Leaving `reconnecting` at
+			// true permanently retires this wrapper instead. See GitHub issue #18.
+			await this.connectDevice(device);
+
 			this.logger.debug(`Reconnected successfully to ${device.name}`);
 			this.emit('device-connected', device.name, device.dataPoints);
       
@@ -1374,43 +1634,77 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
    * @param deviceName - Name of device to disconnect
    */
 	protected async disconnectDevice(deviceName: string): Promise<void> {
-		const sessionWrapper = this.sessions.get(deviceName);
-		const runtimeClient = this.clients.get(deviceName);
-		if (!sessionWrapper && !runtimeClient) {
+		const groupKey = this.deviceGroupKey.get(deviceName);
+		const group = groupKey ? this.groups.get(groupKey) : undefined;
+
+		if (!group) {
+			// Never connected, or already fully torn down — nothing to do.
+			// Defensively clears any stray per-device-only entries too.
+			this.clients.delete(deviceName);
+			this.sessions.delete(deviceName);
+			this.deviceGroupKey.delete(deviceName);
 			return;
 		}
 
 		this.logger.debug(`Disconnecting OPC-UA device: ${deviceName}`);
-	
-		// Stop reconnection attempts
-		if (sessionWrapper) {
-			sessionWrapper.reconnecting = false;
-		}
-    
-		try {
-			if (sessionWrapper) {
-				sessionWrapper.reconnecting = false;
-			}
 
-			if (runtimeClient) {
-				await runtimeClient.disconnect();
-			} else if (sessionWrapper) {
-				await this.cleanupSession(sessionWrapper, true);
+		// Synchronous removal — no `await` before this point — so N parallel
+		// disconnectDevice() calls for siblings in the SAME group (BaseProtocolAdapter's
+		// stop() disconnects every device via Promise.all, not sequentially) can't
+		// interleave on this check: each call's Set.delete()+size-check runs to
+		// completion before the event loop can hand control to another call's
+		// continuation. See GitHub issue #11.
+		group.memberDeviceNames.delete(deviceName);
+		this.clients.delete(deviceName);
+		this.sessions.delete(deviceName);
+		this.deviceGroupKey.delete(deviceName);
+		this.resolvedDeviceNames.delete(deviceName);
+		// Clean up per-node display names for this device's own data points —
+		// safe even with a shared session, since this only clears this device's
+		// own cache entries, not anything belonging to sibling group members.
+		const deviceConfig = this.devices.get(deviceName) as OPCUADeviceConfig | undefined;
+		if (deviceConfig) {
+			for (const dp of deviceConfig.dataPoints) {
+				this.resolvedNodeDisplayNames.delete(dp.nodeId);
 			}
-			this.logger.debug(`Disconnected from device: ${deviceName}`);
+		}
+
+		if (group.memberDeviceNames.size > 0) {
+			// Siblings still active on this shared session — leave it up.
+			this.logger.debug(`OPC-UA device ${deviceName} left shared session group (${group.memberDeviceNames.size} member(s) remain)`);
+			return;
+		}
+
+		await this.teardownGroup(group);
+	}
+
+	/**
+	 * Actually tears down a shared session — only once every member device has
+	 * disconnected. Guarded by `tornDown` so concurrent last-member disconnects
+	 * (or a disconnect racing a reconnect's own invalidateGroupForReconnect())
+	 * can't double-terminate the same underlying client/session.
+	 * See GitHub issue #11.
+	 */
+	private async teardownGroup(group: OPCUAConnectionGroup): Promise<void> {
+		if (group.tornDown) {
+			return;
+		}
+		group.tornDown = true;
+		this.groups.delete(group.key);
+
+		// Stop reconnection attempts. `reconnecting=true` is what blocks
+		// scheduleReconnect() (see its guard at the top) — setting it to `false`
+		// here (as this used to) does the opposite of "stop": the close/session_closed
+		// events that client.disconnect() below emits during its own graceful
+		// teardown would then pass the guard and schedule a new reconnect timer
+		// while shutdown is in progress. See GitHub issue #18.
+		group.session.reconnecting = true;
+
+		try {
+			await group.client.disconnect();
+			this.logger.debug(`Disconnected shared OPC-UA session for group: ${group.key}`);
 		} catch (error) {
-			this.logger.error(`Error disconnecting device ${deviceName}: ${error}`);
-		} finally {
-			this.clients.delete(deviceName);
-			this.sessions.delete(deviceName);
-			this.resolvedDeviceNames.delete(deviceName);
-			// Clean up per-node display names for this device's data points
-			const deviceConfig = this.devices.get(deviceName) as OPCUADeviceConfig | undefined;
-			if (deviceConfig) {
-				for (const dp of deviceConfig.dataPoints) {
-					this.resolvedNodeDisplayNames.delete(dp.nodeId);
-				}
-			}
+			this.logger.error(`Error disconnecting OPC-UA group ${group.key}: ${error}`);
 		}
 	}
 
@@ -1570,25 +1864,105 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 	}
 
 	/**
+	 * Finds the logical device — e.g. "AHU-1" — that owns `logicalName`,
+	 * scoped to just that logical device's own data points. Many logical
+	 * devices can live inside ONE configured/connected endpoint (see
+	 * buildCompositeDevice(); DeviceModel.syncFromEndpoint() groups the exact
+	 * same way for the admin UI's Devices grid), so a raw `this.devices.get()`
+	 * lookup by endpoint/config name alone can never find "AHU-1" — it isn't
+	 * a configured endpoint name, only a device_uuid/device_name TAG on
+	 * individual data points. Matches case-insensitively against either
+	 * `device_name` (the friendly display name) or `device_uuid` (the
+	 * identifier column in the Devices grid). Returns the OWNING endpoint's
+	 * config (for client/session lookup) plus ONLY that logical device's own
+	 * data points (never the whole endpoint's merged array) — this is what
+	 * prevents a same-named tag on a DIFFERENT logical device from being
+	 * silently written instead. See GitHub issue #4.
+	 */
+	private findDeviceByLogicalName(logicalName: string): { device: OPCUADeviceConfig; dataPoints: OPCUADataPoint[] } | undefined {
+		const needle = logicalName.trim().toLowerCase();
+		if (!needle || !this.devices) return undefined;
+
+		for (const config of this.devices.values()) {
+			const device = config as OPCUADeviceConfig;
+			const matching = device.dataPoints.filter((dp) =>
+				(dp.device_name && dp.device_name.trim().toLowerCase() === needle) ||
+				(dp.device_uuid && dp.device_uuid.trim().toLowerCase() === needle)
+			);
+			if (matching.length > 0) {
+				return { device, dataPoints: matching };
+			}
+		}
+		return undefined;
+	}
+
+	/**
+	 * Does this adapter recognize `name` as a device — either a configured
+	 * endpoint/connection name, or a logical per-tag device name (see
+	 * findDeviceByLogicalName())? Used by write-dispatcher.ts to resolve
+	 * device ownership for commands before dispatching a write.
+	 */
+	public ownsDeviceName(name: string): boolean {
+		return (this.devices?.has(name) ?? false) || this.findDeviceByLogicalName(name) !== undefined;
+	}
+
+	/**
 	 * Write a value to an OPC-UA node for a given device.
-	 * Target can be either datapoint name or full nodeId.
+	 * `deviceName` may be a configured endpoint/connection name, or a logical
+	 * per-tag device name like "AHU-1" (see findDeviceByLogicalName()).
+	 * `target` can be either a data point name or a full nodeId.
 	 */
 	public async writeNode(
 		deviceName: string,
 		target: string,
-		value: number | boolean | string
+		value: number | boolean | string,
+		logicalIdentifier?: string
 	): Promise<void> {
-		const device = this.devices.get(deviceName) as OPCUADeviceConfig | undefined;
+		let device = this.devices.get(deviceName) as OPCUADeviceConfig | undefined;
+		let scopedDataPoints: OPCUADataPoint[] | undefined;
+
+		// Precise path: the caller (write-dispatcher.ts) already resolved the
+		// exact owning endpoint AND the specific logical device's raw
+		// device_uuid via the `devices` table — scope directly to it, no
+		// name-matching ambiguity possible, even if two DIFFERENT logical
+		// devices on this same endpoint share a display name. See GitHub
+		// issue #4 follow-up.
+		if (device && logicalIdentifier) {
+			const needle = logicalIdentifier.trim().toLowerCase();
+			scopedDataPoints = device.dataPoints.filter((dp) => (dp.device_uuid ?? '').trim().toLowerCase() === needle);
+			if (scopedDataPoints.length === 0) {
+				throw new Error(`Logical device not found on ${deviceName}: ${logicalIdentifier}`);
+			}
+		}
+
+		if (!device) {
+			const logical = this.findDeviceByLogicalName(deviceName);
+			if (logical) {
+				device = logical.device;
+				scopedDataPoints = logical.dataPoints;
+			}
+		}
+
 		if (!device) {
 			throw new Error(`Device not found: ${deviceName}`);
 		}
 
-		const runtimeClient = this.clients.get(deviceName);
+		// Client/session are keyed by the owning endpoint's OWN configured
+		// name (device.name) — never the logical name passed in, which isn't
+		// a key in these maps at all.
+		const runtimeClient = this.clients.get(device.name);
 		if (!runtimeClient?.isConnected()) {
 			throw new Error(`Device ${deviceName} is not connected`);
 		}
 
-		const dataPoint = device.dataPoints.find((dp) => dp.name === target || dp.nodeId === target);
+		// `target` matches the metric `name` (lowercased, prefix-truncated at
+		// the first `_` per discovery.ts), the raw nodeId, or the node's own
+		// unmodified `browseName` as reported by the server (e.g.
+		// "SpaceTemp_device1") — command producers shouldn't need to know
+		// discovery's internal name-shortening convention to write to a point
+		// they can see published or displayed.
+		const candidatePoints = scopedDataPoints ?? device.dataPoints;
+		const dataPoint = candidatePoints.find((dp) => dp.name === target || dp.nodeId === target || dp.browseName === target);
 		if (!dataPoint) {
 			throw new Error(`Node not found on device ${deviceName}: ${target}`);
 		}

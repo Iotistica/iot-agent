@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { message, Modal } from 'ant-design-vue'
-import { CheckCircleOutlined, StopOutlined, DeleteOutlined } from '@ant-design/icons-vue'
+import { CheckCircleOutlined, StopOutlined, DeleteOutlined, CopyOutlined } from '@ant-design/icons-vue'
 import type { TableColumnType } from 'ant-design-vue'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import { client } from '@/api/client'
@@ -51,7 +51,7 @@ const columns: TableColumnType[] = [
   { title: 'Name',       key: 'name',       ellipsis: true },
   { title: 'Protocol',   key: 'protocol',   width: 110 },
   { title: 'Identifier', key: 'identifier', width: 160, ellipsis: true },
-  { title: 'UUID',       key: 'uuid',       width: 120 },
+  { title: 'UUID',       key: 'uuid',       width: 160 },
   { title: 'Last Seen',  key: 'lastSeen',   width: 130 },
   { title: 'Status',     key: 'status',     width: 110 },
 ]
@@ -88,6 +88,18 @@ function deviceStatus(d: Device): { label: string; color: string } {
 
 function shortUuid(uuid: string): string {
   return uuid ? uuid.slice(0, 8) : '—'
+}
+
+// The uuid shown here is the exact `deviceId` value MQTT device-write commands
+// expect (src/commands/types.ts) — copy-to-clipboard avoids users having to
+// select-and-copy out of the truncated/tooltip display by hand.
+async function copyUuid(uuid: string) {
+  try {
+    await navigator.clipboard.writeText(uuid)
+    message.success('Device UUID copied')
+  } catch {
+    message.error('Could not copy to clipboard')
+  }
 }
 
 function identifierLabel(d: Device): string {
@@ -173,6 +185,22 @@ onUnmounted(() => {
     <div class="devices-page">
       <div class="page-header">
         <p class="subtitle">Physical and logical devices discovered through protocol endpoints</p>
+      </div>
+
+      <!-- Protocol filter tabs + table toolbar (same row, consistent with other grid pages) -->
+      <div class="protocol-tabs">
+        <a-radio-group
+          v-model:value="activeProtocol"
+          button-style="solid"
+          size="small"
+        >
+          <a-radio-button value="">All ({{ rows.length }})</a-radio-button>
+          <a-radio-button value="modbus">Modbus ({{ protocolCounts.modbus ?? 0 }})</a-radio-button>
+          <a-radio-button value="opcua">OPC-UA ({{ protocolCounts.opcua ?? 0 }})</a-radio-button>
+          <a-radio-button value="mqtt">MQTT ({{ protocolCounts.mqtt ?? 0 }})</a-radio-button>
+          <a-radio-button value="bacnet">BACnet ({{ protocolCounts.bacnet ?? 0 }})</a-radio-button>
+        </a-radio-group>
+
         <a-space>
           <template v-if="selectedUuids.length > 0">
             <span style="font-size: 13px; color: #666">{{ selectedUuids.length }} selected</span>
@@ -191,21 +219,6 @@ onUnmounted(() => {
           </template>
           <a-button @click="load" :loading="loading">Refresh</a-button>
         </a-space>
-      </div>
-
-      <!-- Protocol filter tabs -->
-      <div class="protocol-tabs">
-        <a-radio-group
-          v-model:value="activeProtocol"
-          button-style="solid"
-          size="small"
-        >
-          <a-radio-button value="">All ({{ rows.length }})</a-radio-button>
-          <a-radio-button value="modbus">Modbus ({{ protocolCounts.modbus ?? 0 }})</a-radio-button>
-          <a-radio-button value="opcua">OPC-UA ({{ protocolCounts.opcua ?? 0 }})</a-radio-button>
-          <a-radio-button value="mqtt">MQTT ({{ protocolCounts.mqtt ?? 0 }})</a-radio-button>
-          <a-radio-button value="bacnet">BACnet ({{ protocolCounts.bacnet ?? 0 }})</a-radio-button>
-        </a-radio-group>
       </div>
 
       <a-table
@@ -237,6 +250,9 @@ onUnmounted(() => {
             <a-tooltip :title="record.uuid">
               <span class="mono-text uuid-chip">{{ shortUuid(record.uuid) }}</span>
             </a-tooltip>
+            <a-button type="text" size="small" class="uuid-copy-btn" @click="copyUuid(record.uuid)">
+              <CopyOutlined />
+            </a-button>
           </template>
 
           <template v-else-if="column.key === 'lastSeen'">
@@ -274,9 +290,6 @@ onUnmounted(() => {
 }
 
 .page-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
   margin-bottom: 20px;
 }
 
@@ -287,6 +300,11 @@ onUnmounted(() => {
 }
 
 .protocol-tabs {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
   margin-bottom: 16px;
 }
 
@@ -306,6 +324,16 @@ onUnmounted(() => {
   border-radius: 4px;
   cursor: default;
   letter-spacing: 0.03em;
+}
+
+.uuid-copy-btn {
+  margin-left: 4px;
+  padding: 0 4px;
+  color: #999;
+}
+
+.uuid-copy-btn:hover {
+  color: #1677ff;
 }
 
 .lastseen {

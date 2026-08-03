@@ -64,3 +64,7 @@ export type { Device as ProtocolDevice } from './device.model';
 // Device operational-state transition history (predictive-maintenance enrichment)
 export { DeviceStateHistoryModel } from './device-state-history.model';
 export type { DeviceStateHistoryRecord } from './device-state-history.model';
+
+// Unit Normalization Service catalog (canonical units + protocol aliases)
+export { UnitDefinitionsModel, UnitAliasesModel } from './unit-catalog.model';
+export type { UnitDefinitionRecord, UnitAliasRecord } from './unit-catalog.model';

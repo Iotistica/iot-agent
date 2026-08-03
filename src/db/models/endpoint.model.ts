@@ -303,7 +303,7 @@ export class EndpointModel {
 	/**
    * Get endpoint by ID
    */
-	private static async getById(id: number): Promise<Endpoint> {
+	static async getById(id: number): Promise<Endpoint> {
 		const device = this.getDb()
 			.prepare(`SELECT * FROM ${this.table} WHERE id = ? LIMIT 1`)
 			.get(id) as unknown as EndpointRow | undefined;

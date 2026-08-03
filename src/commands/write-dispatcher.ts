@@ -2,18 +2,59 @@ import type { AdapterManager } from '../plugins/index.js';
 import { BACnetAdapter } from '../plugins/bacnet/adapter.js';
 import { ModbusAdapter } from '../plugins/modbus/adapter.js';
 import { OPCUAAdapter } from '../plugins/opcua/adapter.js';
+import { DeviceModel } from '../db/models/device.model.js';
+import { EndpointModel } from '../db/models/endpoint.model.js';
 import { CommandError } from './command-errors.js';
 import { CommandErrorCode } from './types.js';
 
+interface WriteTarget {
+	protocol: string;
+	adapter: unknown;
+	/** The owning endpoint/connection's own configured name — this is what adapter write methods key sessions/clients by. */
+	endpointDeviceName: string;
+	/** Raw device_uuid tag, when resolved via the devices table — scopes an OPC-UA write to exactly one logical device, never a same-named one elsewhere. */
+	logicalIdentifier?: string;
+}
+
 /**
- * Resolves a device name to the protocol adapter that currently owns it, by
- * checking each running adapter's device statuses. Devices are provisioned
- * against exactly one protocol, so the first match is authoritative.
+ * Resolves a device identifier to (a) the protocol adapter that owns it and
+ * (b) enough detail for that adapter's write method to target the exact
+ * device, unambiguously.
+ *
+ * Two paths, in order:
+ * 1. PREFERRED — `deviceIdentifier` is the `devices` table's own `uuid`
+ *    column (DB UNIQUE constraint; the same identifier already shown in the
+ *    admin UI's Devices grid and used by PATCH/DELETE /v1/devices/:uuid).
+ *    Looked up via DeviceModel.getByUuid(), unambiguous by construction even
+ *    when two physically different devices share a display name (e.g.
+ *    "AHU-1" configured identically on two different OPC-UA servers).
+ * 2. FALLBACK — the raw configured endpoint/connection name, or (OPC-UA
+ *    only) a friendly per-tag device name via the adapter's own
+ *    ownsDeviceName()/getDeviceStatuses(). Best-effort: can collide across
+ *    endpoints sharing a display name. Kept for convenience in simple
+ *    single-device setups and backward compatibility. See GitHub issue #4.
  */
-function findOwningAdapter(adapterManager: AdapterManager, deviceName: string): { protocol: string; adapter: unknown } | undefined {
+async function resolveWriteTarget(adapterManager: AdapterManager, deviceIdentifier: string): Promise<WriteTarget | undefined> {
+	const deviceRow = await DeviceModel.getByUuid(deviceIdentifier);
+	if (deviceRow) {
+		const endpoint = await EndpointModel.getById(deviceRow.endpoint_id);
+		if (!endpoint) return undefined;
+		const adapter = adapterManager.getAllAdapters().get(deviceRow.protocol);
+		if (!adapter) return undefined;
+		return {
+			protocol: deviceRow.protocol,
+			adapter,
+			endpointDeviceName: endpoint.name,
+			logicalIdentifier: deviceRow.identifier ?? undefined,
+		};
+	}
+
 	for (const [protocol, adapter] of adapterManager.getAllAdapters()) {
-		if (adapter.getDeviceStatuses().some((status) => status.deviceName === deviceName)) {
-			return { protocol, adapter };
+		const owns =
+			(adapter.ownsDeviceName?.(deviceIdentifier) ?? false) ||
+			adapter.getDeviceStatuses().some((status) => status.deviceName === deviceIdentifier);
+		if (owns) {
+			return { protocol, adapter, endpointDeviceName: deviceIdentifier };
 		}
 	}
 	return undefined;
@@ -47,39 +88,40 @@ function classifyWriteError(error: unknown): CommandError {
  */
 export async function dispatchWrite(
 	adapterManager: AdapterManager,
-	deviceName: string,
+	deviceIdentifier: string,
 	pointName: string,
 	value: number | boolean | string,
 ): Promise<void> {
-	const owner = findOwningAdapter(adapterManager, deviceName);
-	if (!owner) {
-		throw new CommandError(CommandErrorCode.nodeNotAllowed, `Device not found: ${deviceName}`);
+	const target = await resolveWriteTarget(adapterManager, deviceIdentifier);
+	if (!target) {
+		throw new CommandError(CommandErrorCode.nodeNotAllowed, `Device not found: ${deviceIdentifier}`);
 	}
+	const { protocol, adapter, endpointDeviceName, logicalIdentifier } = target;
 
 	try {
-		if (owner.protocol === 'modbus' && owner.adapter instanceof ModbusAdapter) {
-			const register = owner.adapter.getRegisterConfig(deviceName, pointName);
+		if (protocol === 'modbus' && adapter instanceof ModbusAdapter) {
+			const register = adapter.getRegisterConfig(endpointDeviceName, pointName);
 			if (!register) {
 				throw new Error(`Register not found: ${pointName}`);
 			}
 			if (!register.writable) {
 				throw new CommandError(CommandErrorCode.nodeNotAllowed, `Register is not writable via commands: ${pointName}`);
 			}
-			await owner.adapter.writeRegister(deviceName, pointName, value);
+			await adapter.writeRegister(endpointDeviceName, pointName, value);
 			return;
 		}
 
-		if (owner.protocol === 'opcua' && owner.adapter instanceof OPCUAAdapter) {
-			await owner.adapter.writeNode(deviceName, pointName, value);
+		if (protocol === 'opcua' && adapter instanceof OPCUAAdapter) {
+			await adapter.writeNode(endpointDeviceName, pointName, value, logicalIdentifier);
 			return;
 		}
 
-		if (owner.protocol === 'bacnet' && owner.adapter instanceof BACnetAdapter) {
-			await owner.adapter.writeProperty(deviceName, pointName, value);
+		if (protocol === 'bacnet' && adapter instanceof BACnetAdapter) {
+			await adapter.writeProperty(endpointDeviceName, pointName, value);
 			return;
 		}
 
-		throw new CommandError(CommandErrorCode.unsupportedCommandType, `Protocol '${owner.protocol}' does not support command writes`);
+		throw new CommandError(CommandErrorCode.unsupportedCommandType, `Protocol '${protocol}' does not support command writes`);
 	} catch (error) {
 		if (error instanceof CommandError) {
 			throw error;

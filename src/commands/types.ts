@@ -3,11 +3,21 @@ import { z } from 'zod';
 /**
  * Generic device-write command, delivered over MQTT.
  *
- * Deliberately protocol-agnostic: `deviceName` is looked up against whichever
+ * Deliberately protocol-agnostic: `deviceUuid` is resolved against whichever
  * adapter (OPC-UA, Modbus, ...) currently owns that device, so producers don't
- * need to know which protocol backs a given device. `pointName` maps to the
- * same per-protocol point identifier already used by each adapter's existing
- * write path (OPC-UA data point `name`/`nodeId`, Modbus register `name`).
+ * need to know which protocol backs a given device. Prefer the `devices`
+ * table's own unique `uuid` (shown — with a copy button — in the admin UI's
+ * Devices grid, used by PATCH/DELETE /v1/devices/:uuid) — unambiguous even
+ * when two physically different devices share a display name (e.g. "AHU-1"
+ * configured identically on two different OPC-UA servers). A raw configured
+ * endpoint name, or (OPC-UA only) a friendly per-tag device name, also works
+ * as a best-effort fallback — see write-dispatcher.ts's resolveWriteTarget().
+ * `pointName` matches whatever name a user would actually see for that point —
+ * not just discovery's internal sanitized identifier — so producers never
+ * need to learn a lowercasing/underscore convention: OPC-UA accepts the data
+ * point's `name`, raw `nodeId`, or unmodified `browseName`; BACnet accepts the
+ * sanitized `name` or the device's own raw `objectName` (e.g. "AHU-1.SF-Run");
+ * Modbus register `name` (user-configured directly, no separate raw form).
  */
 export const WriteCommandSchema = z.object({
 	version: z.literal(1),
@@ -15,7 +25,7 @@ export const WriteCommandSchema = z.object({
 	type: z.literal('device.write'),
 	issuedAt: z.string().datetime({ offset: true }),
 	expiresAt: z.string().datetime({ offset: true }),
-	deviceName: z.string().min(1).max(256),
+	deviceUuid: z.string().min(1).max(256),
 	pointName: z.string().min(1).max(256),
 	value: z.union([z.number(), z.boolean(), z.string().max(4096)]),
 });
@@ -49,7 +59,7 @@ export interface CommandResult {
 	commandId: string;
 	type: 'device.write.result';
 	status: CommandResultStatus;
-	deviceName?: string;
+	deviceUuid?: string;
 	pointName?: string;
 	requestedValue?: number | boolean | string;
 	error?: {

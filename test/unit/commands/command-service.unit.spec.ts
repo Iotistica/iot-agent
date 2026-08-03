@@ -37,7 +37,7 @@ function validCommandBuffer(overrides: Record<string, unknown> = {}): Buffer {
 		type: 'device.write',
 		issuedAt: now.toISOString(),
 		expiresAt: new Date(now.getTime() + 30_000).toISOString(),
-		deviceName: 'plc-1',
+		deviceUuid: 'plc-1',
 		pointName: 'speed',
 		value: 100,
 		...overrides,
@@ -70,7 +70,7 @@ describe('CommandService', () => {
 	});
 
 	it('publishes a rejected result when JSON is valid but fails schema validation, recovering the commandId', async () => {
-		// Valid JSON, but missing required fields (deviceName/pointName/value) — parseCommand
+		// Valid JSON, but missing required fields (deviceUuid/pointName/value) — parseCommand
 		// throws INVALID_SCHEMA, and unlike a JSON syntax error, the commandId is still recoverable.
 		const schemaInvalid = Buffer.from(JSON.stringify({ version: 1, commandId: 'cmd-x', type: 'device.write' }));
 		await service.handleMessage(schemaInvalid, false);

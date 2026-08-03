@@ -42,6 +42,7 @@ export const DESTINATION_COLORS: Record<string, string> = {
   aws: 'orange',
   gcp: 'cyan',
   influxdb: '#22ADF6',
+  timescaledb: '#336791',
   noop: 'default',
 }
 

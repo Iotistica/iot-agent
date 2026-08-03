@@ -113,6 +113,49 @@ function auth(key: string): unknown {
     </a-form-item>
   </template>
 
+  <!-- TimescaleDB / Postgres direct-write destination -->
+  <template v-else-if="type === 'timescaledb'">
+    <a-alert
+      type="info"
+      show-icon
+      message="Writes directly into the readings table"
+      description="Bypasses the cloud pipeline entirely — the agent connects straight to your TimescaleDB/Postgres instance and inserts rows into the same readings table the cloud ingestion service uses."
+      style="margin-bottom: 8px"
+    />
+    <a-form-item label="Host" :name="['config_json', 'host']" :rules="[{ required: true, message: 'Host is required' }]">
+      <a-input :value="(cfg.host as string) ?? ''" placeholder="e.g. timescaledb.internal" @update:value="set('host', $event)" />
+    </a-form-item>
+    <a-form-item label="Port" :name="['config_json', 'port']">
+      <a-input-number :value="(cfg.port as number) ?? 5432" :min="1" :max="65535" style="width: 100%" @update:value="set('port', $event)" />
+    </a-form-item>
+    <a-form-item label="Database" :name="['config_json', 'database']" :rules="[{ required: true, message: 'Database is required' }]">
+      <a-input :value="(cfg.database as string) ?? ''" placeholder="e.g. iotistica" @update:value="set('database', $event)" />
+    </a-form-item>
+    <a-form-item label="User" :name="['config_json', 'user']" :rules="[{ required: true, message: 'User is required' }]">
+      <a-input :value="(cfg.user as string) ?? ''" placeholder="e.g. postgres" @update:value="set('user', $event)" />
+    </a-form-item>
+    <a-form-item label="Password" :name="['config_json', 'password']">
+      <a-input-password :value="(cfg.password as string) ?? ''" autocomplete="new-password" @update:value="set('password', $event)" />
+      <div style="color: #999; font-size: 12px; margin-top: 4px">Leave blank if the server uses trust/peer/mTLS authentication</div>
+    </a-form-item>
+    <a-form-item label="Use SSL" :name="['config_json', 'ssl']">
+      <a-switch :checked="(cfg.ssl as boolean) === true" @change="set('ssl', $event)" />
+    </a-form-item>
+    <a-form-item v-if="cfg.ssl" label="Verify TLS certificate" :name="['config_json', 'rejectUnauthorized']">
+      <a-switch :checked="(cfg.rejectUnauthorized as boolean) !== false" @change="set('rejectUnauthorized', $event)" />
+    </a-form-item>
+    <a-form-item label="Max rows per insert" :name="['config_json', 'maxRowsPerInsert']">
+      <a-input-number
+        :value="(cfg.maxRowsPerInsert as number) ?? 200"
+        :min="1"
+        :max="5000"
+        style="width: 100%"
+        @update:value="set('maxRowsPerInsert', $event)"
+      />
+      <div style="color: #999; font-size: 12px; margin-top: 4px">Rows written per bulk INSERT. Higher values can improve import performance.</div>
+    </a-form-item>
+  </template>
+
   <!-- Azure IoT Hub -->
   <template v-else-if="type === 'azure'">
     <a-form-item label="Hub Hostname" :rules="[{ required: true, message: 'Required' }]">

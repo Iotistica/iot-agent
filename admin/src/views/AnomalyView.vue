@@ -347,23 +347,44 @@ async function ensureEndpointMaps() {
   } catch { /* non-fatal */ }
 }
 
+// Reformats a bare field-name leaf for display as hyphenated lowercase —
+// "rf_speed" -> "rf-speed" — matching Data View/Schema Drift's convention.
+// Kept in sync by hand with drift-labels.ts's prettifyDriftFieldName /
+// device-identity's prettifyFieldName (frontend can't import either).
+function hyphenateField(field: string): string {
+  return field.replace(/_/g, '-')
+}
+
+// Given a metric's raw stored name and its optionally-explicit device name,
+// resolves which device it belongs to (the explicit deviceName field, or a
+// fallback lookup by bare point name — see pointNameToDevice above) and the
+// metric's own leaf name with that device's prefix stripped off the front —
+// the same "field carries the device prefix baked in" pattern schema drift
+// has (see stripFieldDevicePrefix on the backend). This is the one shared
+// implementation for both the Rules grid and the "Add rule" autocomplete —
+// don't reimplement this splitting logic a second time; both need the exact
+// same device/field resolution to display consistently with each other.
+function resolveDeviceAndLeaf(name: string, explicitDeviceName?: string): { device?: string; leaf: string } {
+  const device = explicitDeviceName || pointNameToDevice.value.get(name)
+  if (!device) return { leaf: hyphenateField(name) }
+
+  const prefix = `${device.toLowerCase().replace(/[\s-]+/g, '_')}_`
+  const leaf = name.toLowerCase().startsWith(prefix) ? name.slice(prefix.length) : name
+  return { device, leaf: hyphenateField(leaf) }
+}
+
 // The rule's device, either explicitly recorded (record.deviceName) or
 // recovered via the bare-point-name lookup above.
 function ruleDeviceName(record: AnomalyMetricConfig): string | undefined {
-  return record.deviceName || pointNameToDevice.value.get(record.name)
+  return resolveDeviceAndLeaf(record.name, record.deviceName).device
 }
 
-// Strips the resolved device's own name from the front of the rule name, the
-// same "field carries the device prefix baked in" pattern schema drift has
-// (see stripFieldDevicePrefix on the backend) — so Metric name doesn't repeat
-// what the new Device column already shows. Falls back to the full name
-// unchanged when no device could be resolved, rather than guessing.
+// Strips the resolved device's own name from the front of the rule name so
+// Metric name doesn't repeat what the Device column already shows. Falls
+// back to the full name unchanged (still hyphenated) when no device could
+// be resolved, rather than guessing.
 function ruleMetricLeaf(record: AnomalyMetricConfig): string {
-  const device = ruleDeviceName(record)
-  if (!device) return record.name
-
-  const prefix = `${device.toLowerCase().replace(/[\s-]+/g, '_')}_`
-  return record.name.toLowerCase().startsWith(prefix) ? record.name.slice(prefix.length) : record.name
+  return resolveDeviceAndLeaf(record.name, record.deviceName).leaf
 }
 
 // The metric's own device UUID segment: metrics are named
@@ -386,17 +407,23 @@ function extractDeviceUuid(metric: string): string | undefined {
 // that share a display name (see the Pro schema-drift detector). Strip that
 // suffix and title-case what's left so these read the same as other device
 // labels instead of showing the raw internal identity.
+//
+// Kept in sync by hand with iot-agent/src/db/models/drift-labels.ts's
+// prettifyDriftDeviceId and iot-agent-pro/src/device-identity/index.ts's
+// prettifyDeviceId — this is frontend code that can't import either of
+// those directly, but the formatting rules (in particular: always format,
+// even with no suffix to strip; join with hyphens, not spaces) must match.
+// If you change the rules here, change all three.
 const DRIFT_DEVICE_SUFFIX_RE = /_\d+_[0-9a-f]{8}$/i
 const KNOWN_DEVICE_ACRONYMS = new Set(['ahu', 'vav', 'fcu', 'bms', 'hvac', 'rtu'])
-function prettifyDriftDeviceId(id: string): string | undefined {
+function prettifyDriftDeviceId(id: string): string {
   const stripped = id.replace(DRIFT_DEVICE_SUFFIX_RE, '')
-  if (stripped === id) return undefined // no match — not a schema-drift-style device id
 
   return stripped
     .split('_')
     .filter(Boolean)
     .map((p) => (KNOWN_DEVICE_ACRONYMS.has(p.toLowerCase()) ? p.toUpperCase() : p.charAt(0).toUpperCase() + p.slice(1)))
-    .join(' ')
+    .join('-')
 }
 
 function deviceNameFromMetric(metric: string, fallback: string): string {
@@ -430,7 +457,7 @@ function deviceNameFromMetric(metric: string, fallback: string): string {
 
   if (!fallback || fallback === 'unknown') return '—'
   if (fallback === 'system' || fallback === 'Agent System') return 'System'
-  return prettifyDriftDeviceId(fallback) ?? fallback
+  return prettifyDriftDeviceId(fallback)
 }
 
 // Complement of deviceNameFromMetric(): the metric's own leaf (last two
@@ -452,22 +479,23 @@ function metricLeaf(metric: string, deviceName?: string): string {
     // strip that same device base name from the front of the field here too.
     const deviceBase = deviceName?.replace(DRIFT_DEVICE_SUFFIX_RE, '').toLowerCase()
     if (deviceBase && deviceBase !== deviceName?.toLowerCase() && driftStripped.toLowerCase().startsWith(`${deviceBase}_`)) {
-      return driftStripped.slice(deviceBase.length + 1)
+      return hyphenateField(driftStripped.slice(deviceBase.length + 1))
     }
-    return driftStripped
+    return hyphenateField(driftStripped)
   }
 
   const bare = friendlyLabel(metric)
-  if (bare === metric) return bare // no UUID prefix — not a device-scoped metric, nothing to trim
+  if (bare === metric) return bare // no UUID prefix — not a device-scoped metric (e.g. a system metric like cpu_usage): leave underscored, there's no device-point convention to match here
 
   const parts = bare.split('_')
   const leaf = parts.length > 2 ? parts.slice(-2).join('_') : bare
 
   // Prefer the true protocol-native point name (e.g. "Space-Temp") over the
-  // sanitized leaf, when we have it on file for this exact device+point.
+  // sanitized leaf, when we have it on file for this exact device+point —
+  // it's already in its authentic native format, don't reformat it further.
   const deviceUuid = extractDeviceUuid(metric)
   const rawName = deviceUuid ? pointRawNameByKey.value.get(`${deviceUuid}::${leaf}`) : undefined
-  return rawName || leaf
+  return rawName || hyphenateField(leaf)
 }
 
 async function loadBaselines() {
@@ -800,11 +828,14 @@ const SEASONALITY_OPTIONS = ['none', 'day-night', 'hourly', 'weekly']
 // ── Available metric suggestions ───────────────────────────────────────────
 type MetricSuggestion = {
   name: string
+  deviceId?: string
+  deviceName?: string
   score?: number
   deviceState?: string
   unit?: string
   configured: boolean
   endpointName?: string
+  protocol?: string
 }
 const metricSuggestions = ref<MetricSuggestion[]>([])
 const metricSuggestionsLoading = ref(false)
@@ -852,7 +883,14 @@ const metricAutocompleteOptions = computed(() => {
   for (const s of metricSuggestions.value) {
     const friendly = friendlyLabel(s.name)
     if (!friendly.trim()) continue
-    const key = `${s.endpointName ?? ''}|${friendly}`
+    // deviceId is the backend's own authoritative per-device identity (see
+    // getAvailableAnomalyMetrics/AnomalyDetectionService — the same fix that
+    // stops different devices' same-named metrics from collapsing into one
+    // entry server-side). Prefer it; fall back to protocol+endpointName only
+    // for the rare case it's missing, rather than assuming name is unique.
+    const key = s.deviceId
+      ? `${friendly}::${s.deviceId}`
+      : `${friendly}|${s.protocol ?? ''}|${s.endpointName ?? ''}`
     const existing = seen.get(key)
     if (!existing || (s.score ?? 0) > (existing.score ?? 0)) {
       seen.set(key, s)
@@ -872,13 +910,35 @@ const metricAutocompleteOptions = computed(() => {
     })
     .map(([, s]) => {
       const friendly = friendlyLabel(s.name)
+      // value/label stay the raw friendly string — that's what actually gets
+      // saved as the rule's metric name, and it must keep matching real
+      // incoming data (see resolveDeviceAndLeaf's doc comment). device/leaf
+      // are purely for how the dropdown ROW renders (see the #option
+      // template). Prefer the suggestion's OWN device name (s.deviceName) —
+      // the backend's authoritative per-suggestion identity — over the
+      // shared pointNameToDevice lookup, which can't disambiguate when
+      // multiple devices report the same bare field name (the exact bug
+      // this whole fix is for); only fall back to the lookup when the
+      // suggestion doesn't carry its own device name.
+      const { device, leaf } = resolveDeviceAndLeaf(friendly, s.deviceName)
       return {
         value: friendly,
         label: s.endpointName ? `${friendly} · ${s.endpointName}` : friendly,
+        device,
+        leaf,
+        protocol: s.protocol,
         suggestion: s,
       }
     })
 })
+
+// Saves the resolved device on the rule itself at creation time — the fix
+// belongs here, not as a lookup reconstructed later at display time. A rule
+// created this way never needs pointNameToDevice or any other fallback to
+// show its device correctly; it's just there from the start.
+function onMetricSuggestionSelected(_value: string, option: { device?: string }) {
+  metricForm.value.deviceName = option.device
+}
 
 function blankMetric(): AnomalyMetricConfig {
   return {
@@ -1475,7 +1535,8 @@ onUnmounted(() => {
 
       <!-- ══ RULES ══════════════════════════════════════════════════════════ -->
       <a-tab-pane key="rules" tab="Rules">
-        <a-card size="small" style="margin-bottom: 16px">
+        <!-- Hidden for now (device/metric name resolution needs more work first) — v-if="false", not deleted. -->
+        <a-card v-if="false" size="small" style="margin-bottom: 16px">
           <div class="toolbar">
             <span style="color: #888; font-size: 13px">
               <strong>Noisy Metrics (Bad Actors)</strong> — Metrics ranked by incident frequency, regardless of incident validity.
@@ -2007,13 +2068,22 @@ onUnmounted(() => {
             :filter-option="false"
             allow-clear
             style="width: 100%"
+            @select="onMetricSuggestionSelected"
           >
-            <template #option="{ value: val, suggestion }">
+            <template #option="{ device, leaf, protocol, suggestion }">
               <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px">
-                <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap">{{ val }}</span>
+                <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap">
+                  <template v-if="device"><b>{{ prettifyDriftDeviceId(device) }}</b> · {{ leaf }}</template>
+                  <template v-else>{{ leaf }}</template>
+                </span>
                 <div style="display: flex; align-items: center; gap: 4px; flex-shrink: 0">
+                  <!-- Always shown, never conditional on a name collision — two
+                       different protocols can (and in this fleet do) have devices
+                       with identical display names, so protocol is the only
+                       reliable way to tell two identical-looking rows apart. -->
+                  <a-tag v-if="protocol" style="font-size: 10px; line-height: 16px; padding: 0 4px; margin: 0">{{ protocol }}</a-tag>
                   <span
-                    v-if="suggestion?.endpointName"
+                    v-if="suggestion?.endpointName && suggestion.endpointName.toLowerCase() !== device?.toLowerCase()"
                     style="font-size: 11px; color: #888"
                   >{{ suggestion.endpointName }}</span>
                   <a-tag

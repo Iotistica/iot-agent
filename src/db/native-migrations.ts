@@ -30,6 +30,9 @@ import { migration as addAssets } from './migrations/20260728000000_add_assets.j
 import { migration as addMaintenanceEnergy } from './migrations/20260728010000_add_maintenance_energy.js';
 import { migration as addRecommendationPublishSettings } from './migrations/20260728020000_add_recommendation_publish_settings.js';
 import { migration as renameOpcuaAlarmsToProtocolAlarms } from './migrations/20260728030000_rename_opcua_alarms_to_protocol_alarms.js';
+import { migration as addDeviceIdToObservedMetrics } from './migrations/20260729000000_add_device_id_to_observed_metrics.js';
+import { migration as addUseForCommandsToPublishDestinations } from './migrations/20260802000000_add_use_for_commands_to_publish_destinations.js';
+import { migration as addUnitCatalog } from './migrations/20260803000000_add_unit_catalog.js';
 import type { NativeSqliteMigration } from './migration-types.js';
 
 export const nativeMigrations: NativeSqliteMigration[] = [
@@ -65,4 +68,7 @@ export const nativeMigrations: NativeSqliteMigration[] = [
 	addMaintenanceEnergy,
 	addRecommendationPublishSettings,
 	renameOpcuaAlarmsToProtocolAlarms,
+	addDeviceIdToObservedMetrics,
+	addUseForCommandsToPublishDestinations,
+	addUnitCatalog,
 ];

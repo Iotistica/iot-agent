@@ -10,7 +10,7 @@ function validCommandJson(overrides: Record<string, unknown> = {}): Buffer {
 		type: 'device.write',
 		issuedAt: now.toISOString(),
 		expiresAt: new Date(now.getTime() + 30_000).toISOString(),
-		deviceName: 'plc-1',
+		deviceUuid: 'plc-1',
 		pointName: 'Motor1.SpeedSetpoint',
 		value: 1500,
 		...overrides,

@@ -11,14 +11,18 @@ export interface PublishDestinationRecord {
 	type: DestinationType;
 	config_json?: Record<string, unknown> | null;
 	enabled: boolean;
+	/** Marks this (at most one, mqtt-type) destination as the transport for
+	 *  inbound device-write commands — see src/commands/command-destination.ts. */
+	use_for_commands: boolean;
 	last_error?: string | null;
 	last_error_at?: Date | null;
 	created_at?: Date;
 	updated_at?: Date;
 }
 
-type PublishDestinationRow = Omit<PublishDestinationRecord, 'enabled' | 'config_json' | 'last_error_at' | 'created_at' | 'updated_at'> & {
+type PublishDestinationRow = Omit<PublishDestinationRecord, 'enabled' | 'use_for_commands' | 'config_json' | 'last_error_at' | 'created_at' | 'updated_at'> & {
 	enabled: number;
+	use_for_commands: number;
 	config_json?: string | null;
 	last_error_at?: string | Date | null;
 	created_at?: string | Date;
@@ -76,11 +80,29 @@ export class PublishDestinationsModel {
 		return {
 			...row,
 			enabled: !!row.enabled,
+			use_for_commands: !!row.use_for_commands,
 			config_json: parsedConfig,
 			last_error_at: row.last_error_at ? new Date(row.last_error_at) : null,
 			created_at: row.created_at ? new Date(row.created_at) : undefined,
 			updated_at: row.updated_at ? new Date(row.updated_at) : undefined,
 		};
+	}
+
+	/** The (at most one) mqtt destination flagged as the device-write command transport. */
+	static getCommandDestination(): PublishDestinationRecord | null {
+		const row = this.getDb()
+			.prepare(`SELECT * FROM ${this.table} WHERE use_for_commands = 1 AND enabled = 1 LIMIT 1`)
+			.get() as unknown as PublishDestinationRow | undefined;
+		return this.mapRow(row);
+	}
+
+	/** Only one destination may be flagged at a time — clears the flag on every other row first. */
+	private static clearOtherCommandFlags(exceptId?: number): void {
+		if (exceptId === undefined) {
+			this.getDb().prepare(`UPDATE ${this.table} SET use_for_commands = 0`).run();
+		} else {
+			this.getDb().prepare(`UPDATE ${this.table} SET use_for_commands = 0 WHERE id != ?`).run(exceptId);
+		}
 	}
 
 	static getAll(includeDisabled: boolean = true): PublishDestinationRecord[] {
@@ -104,20 +126,26 @@ export class PublishDestinationsModel {
 		const configStr = input.config_json ? JSON.stringify(input.config_json) : null;
 		const configValue = configStr && this.encryptionEnabled ? encryptData(configStr) : configStr;
 
+		if (input.use_for_commands) {
+			this.clearOtherCommandFlags();
+		}
+
 		const result = this.getDb().prepare(`
 			INSERT INTO ${this.table} (
 				name,
 				type,
 				config_json,
 				enabled,
+				use_for_commands,
 				created_at,
 				updated_at
-			) VALUES (?, ?, ?, ?, ?, ?)
+			) VALUES (?, ?, ?, ?, ?, ?, ?)
 		`).run(
 			input.name,
 			input.type,
 			configValue,
 			input.enabled ? 1 : 0,
+			input.use_for_commands ? 1 : 0,
 			now,
 			now,
 		);
@@ -137,6 +165,12 @@ export class PublishDestinationsModel {
 			payload.config_json = configStr && this.encryptionEnabled ? encryptData(configStr) : configStr;
 		}
 		if (updates.enabled !== undefined) payload.enabled = updates.enabled ? 1 : 0;
+		if (updates.use_for_commands !== undefined) {
+			payload.use_for_commands = updates.use_for_commands ? 1 : 0;
+			if (updates.use_for_commands) {
+				this.clearOtherCommandFlags(id);
+			}
+		}
 		if (updates.last_error !== undefined) payload.last_error = updates.last_error;
 		if (updates.last_error_at !== undefined) {
 			payload.last_error_at = updates.last_error_at ? updates.last_error_at.toISOString() : null;

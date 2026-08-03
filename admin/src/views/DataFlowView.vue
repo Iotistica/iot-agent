@@ -149,7 +149,7 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
 </script>
 
 <template>
-  <AppLayout title="Data View">
+  <AppLayout title="Live View">
 
     <a-alert
       type="info"

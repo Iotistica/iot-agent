@@ -258,7 +258,7 @@ export class SocketServer {
 	sendControl(payload: Record<string, unknown>, topic: string = "generic"): void {
 		if (!this.started || this.subscriptions.size === 0) {
 			// TEMPORARY diagnostic — see issue #17 follow-up investigation.
-			this.logger.warn(`[SCHEMA_DECLARE_DIAG] sendControl dropped: started=${this.started} subscriptions=${this.subscriptions.size} topic=${topic}`);
+			this.logger.debug(`[SCHEMA_DECLARE_DIAG] sendControl dropped: started=${this.started} subscriptions=${this.subscriptions.size} topic=${topic}`);
 			return;
 		}
 
@@ -268,7 +268,7 @@ export class SocketServer {
 
 			const topicSubscribers = this.topicToSockets.get(topic);
 			// TEMPORARY diagnostic — see issue #17 follow-up investigation.
-			this.logger.warn(`[SCHEMA_DECLARE_DIAG] sendControl topic=${topic} topicSubscribers=${topicSubscribers?.size ?? 0} wildcardSockets=${this.wildcardSockets.size}`);
+			this.logger.debug(`[SCHEMA_DECLARE_DIAG] sendControl topic=${topic} topicSubscribers=${topicSubscribers?.size ?? 0} wildcardSockets=${this.wildcardSockets.size}`);
 			if (topicSubscribers) {
 				topicSubscribers.forEach((socket) => {
 					this.sendToSocket(socket, data, topic, sentTo);

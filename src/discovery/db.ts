@@ -237,6 +237,20 @@ export class DiscoveryStore {
 						continue;
 
 					} else {
+						// This branch is reached precisely when discovery sees nothing
+						// different about the endpoint — which means none of the update
+						// paths above ran syncFromEndpoint. If the devices table is
+						// nonetheless missing rows for it (e.g. cleared by a migration,
+						// or never populated due to an earlier bug), no amount of
+						// rediscovery would otherwise ever fix it, since "unchanged" is
+						// exactly the case a static/simulated endpoint keeps hitting.
+						if (existing.id !== undefined) {
+							const existingDeviceRows = await ProtocolDevicesModel.getByEndpointId(existing.id);
+							if (existingDeviceRows.length === 0) {
+								await ProtocolDevicesModel.syncFromEndpoint(existing);
+							}
+						}
+
 						if (configChanged || shouldRatchetEnable) {
 							// Actually persist the merged connection — this branch previously
 							// only logged oldConnection/newConnection for debugging and bumped

@@ -26,6 +26,9 @@ import { type CloudMqttClient } from '../mqtt/manager.js';
 import { MQTT_TOPIC_PATTERNS, agentTopic } from '../mqtt/topics.js';
 import { type StateManager } from '../core/state.js';
 import { isStandaloneMode } from '../utils/env.js';
+import { composeInterceptors } from '../publish/core/interceptor-chain.js';
+import { createUnitNormalizationInterceptor } from '../normalization/index.js';
+import { createDataQualityInterceptor } from '../quality/index.js';
 
 export interface FeatureContext {
   logger: AgentLogger;
@@ -479,18 +482,16 @@ export class FeatureInitializer {
 
 	/**
 	 * Initialize the MQTT device-write command feature (disabled by default via
-	 * COMMANDS_ENABLED — see src/commands/). Requires provisioning since command
-	 * topics are tenant-scoped, same precondition as the Agent Updater above.
+	 * COMMANDS_ENABLED — see src/commands/). Deliberately NOT gated on
+	 * provisioning: commands ride whichever publish destination an admin
+	 * flags `use_for_commands` (see CommandDestination), not the cloud/
+	 * tenant-scoped CloudMqttClient connection — that's the whole point of
+	 * that design, so this works standalone too. createCommandFeature()'s own
+	 * MqttCommandConsumer.start() already no-ops (with a warning) if no
+	 * destination is flagged yet.
 	 */
 	private async initCommandFeature(): Promise<void> {
 		const { logger, deviceInfo } = this.context;
-
-		if (!deviceInfo.provisioned) {
-			logger.debugSync('Command feature skipped — device not yet provisioned', {
-				component: LogComponents.commands,
-			});
-			return;
-		}
 
 		try {
 			this.features.commandFeature = createCommandFeature(logger, deviceInfo.uuid);
@@ -737,6 +738,10 @@ export async function initFeatures(ctx: AgentInitContext): Promise<void> {
 		maintenanceEnergyService: ctx.maintenanceEnergyService,
 		dictionaryManager: ctx.dictionaryManager,
 		pipelineService: ctx.pipelineService,
+		liveDataInterceptor: composeInterceptors(
+			createUnitNormalizationInterceptor({ logger: agentLogger }),
+			createDataQualityInterceptor({ logger: agentLogger }),
+		),
 	};
 
 	const initializer = new FeatureInitializer(featureContext);

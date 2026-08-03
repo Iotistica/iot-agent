@@ -1452,6 +1452,36 @@ router.post('/v1/publish/destinations/test', requireRole('operator'), async (req
 			}
 		}
 
+		if (type === 'timescaledb') {
+			const host = typeof cfg?.host === 'string' ? cfg.host.trim() : '';
+			const database = typeof cfg?.database === 'string' ? cfg.database.trim() : '';
+			const user = typeof cfg?.user === 'string' ? cfg.user.trim() : '';
+
+			if (!host) return res.status(200).json({ ok: false, error: 'Host is required' });
+			if (!database) return res.status(200).json({ ok: false, error: 'Database is required' });
+			if (!user) return res.status(200).json({ ok: false, error: 'User is required' });
+
+			const { Pool } = await import('pg');
+			const pool = new Pool({
+				host,
+				port: typeof cfg?.port === 'number' ? cfg.port : 5432,
+				database,
+				user,
+				password: typeof cfg?.password === 'string' ? cfg.password : undefined,
+				ssl: cfg?.ssl === true ? { rejectUnauthorized: cfg?.rejectUnauthorized !== false } : false,
+				connectionTimeoutMillis: 8000,
+				max: 1,
+			});
+			try {
+				await pool.query('SELECT 1');
+				return res.status(200).json({ ok: true, message: `Connected — ${host}/${database}` });
+			} catch (err: any) {
+				return res.status(200).json({ ok: false, error: err?.message ?? 'Connection failed' });
+			} finally {
+				await pool.end().catch(() => undefined);
+			}
+		}
+
 		if (type === 'mqtt') {
 			const { createConnection } = await import('net');
 			let brokerUrl = typeof cfg?.brokerUrl === 'string' ? cfg.brokerUrl.trim() : '';

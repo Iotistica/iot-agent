@@ -1,7 +1,6 @@
 import { getAdapterManager as getAdapterManagerFromActions } from '../api/actions.js';
 import type { AgentLogger } from '../logging/agent-logger.js';
 import { LogComponents } from '../logging/types.js';
-import { agentTopic } from '../mqtt/topics.js';
 import { CommandDeduplicator } from './command-deduplicator.js';
 import { CommandResultPublisher } from './command-result-publisher.js';
 import { CommandService } from './command-service.js';
@@ -49,16 +48,21 @@ export function createCommandFeature(logger: AgentLogger, deviceUuid: string): C
 		};
 	}
 
-	const commandTopic = agentTopic(deviceUuid, 'cmd', 'write');
-	const resultTopic = agentTopic(deviceUuid, 'cmd', 'result');
+	// Fixed, deviceUuid-scoped topics on whichever destination is flagged
+	// use_for_commands (see CommandDestination) — deliberately NOT the cloud
+	// tenant-scoped agentTopic() convention: commands ride a user-configured
+	// destination (any broker the admin points it at), not the cloud
+	// connection, so there's no tenant/provisioning concept to scope by here.
+	const commandTopic = `${deviceUuid}/cmd/write`;
+	const resultTopic = `${deviceUuid}/cmd/result`;
 
 	const deduplicator = new CommandDeduplicator(config.dedupTtlMs);
-	const resultPublisher = new CommandResultPublisher(resultTopic, logger);
+	const resultPublisher = new CommandResultPublisher(resultTopic, logger, deviceUuid);
 
 	// Resolved lazily (per-call) since AdapterManager isn't constructed until
 	// the device-features init phase, which can run after this feature starts.
 	const commandService = new CommandService(logger, getAdapterManagerFromActions, deduplicator, resultPublisher, config);
-	const consumer = new MqttCommandConsumer(commandTopic, commandService, logger);
+	const consumer = new MqttCommandConsumer(commandTopic, commandService, logger, deviceUuid);
 
 	return {
 		start: () => consumer.start(),

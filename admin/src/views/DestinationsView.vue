@@ -196,6 +196,9 @@ onMounted(async () => {
         <template v-if="column.key === 'type'">
           <a-tag :color="destinationColor(record.type)">{{ record.type }}</a-tag>
           <a-tag v-if="['influxdb','azure','aws','gcp'].includes(record.type)" color="gold" style="font-size:10px;padding:0 4px;height:16px;line-height:16px;border-radius:3px">Pro</a-tag>
+          <a-tooltip v-if="record.use_for_commands" title="This destination receives inbound device-write commands">
+            <a-tag color="blue" style="font-size:10px;padding:0 4px;height:16px;line-height:16px;border-radius:3px">Commands</a-tag>
+          </a-tooltip>
         </template>
 
         <template v-else-if="column.key === 'enabled'">
