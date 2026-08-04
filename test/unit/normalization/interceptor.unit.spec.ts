@@ -31,6 +31,9 @@ describe('unitNormalizationInterceptor', () => {
 			rawValue: 21.5, rawUnit: '°C',
 			value: 21.5, unit: 'degreesCelsius',
 			quantity: 'temperature', normalized: true, converted: false,
+			// Facts-only provenance (no confidence — that's the quality layer's job, see src/quality/confidence-policy.ts).
+			// '°C' is a bacnet-scoped alias here (protocol: 'bacnet' on the message).
+			provenance: { method: 'scoped-alias', sourceSystem: 'bacnet' },
 		});
 	});
 
@@ -85,5 +88,44 @@ describe('unitNormalizationInterceptor', () => {
 		const messages = [{ protocol: 'mqtt', metric: 'x', value: 22.2, unit: 'C' }];
 		const result = interceptor(messages, 'endpoint-1') as any[];
 		expect(result[0].unit).toBe('degreesCelsius');
+	});
+
+	describe('unitValue.provenance is facts-only (no confidence — quality layer\'s responsibility)', () => {
+		it('exact-canonical: rawUnit already a canonical name', () => {
+			const messages = [{ metric: 'x', value: 21.5, unit: 'degreesCelsius' }];
+			const result = interceptor(messages, 'endpoint-1') as any[];
+			expect(result[0].unitValue.provenance).toEqual({ method: 'exact-canonical' });
+		});
+
+		it('scoped-alias: resolved via a protocol-scoped alias', () => {
+			const messages = [{ protocol: 'bacnet', metric: 'x', value: 21.5, unit: '°C' }];
+			const result = interceptor(messages, 'endpoint-1') as any[];
+			expect(result[0].unitValue.provenance).toEqual({ method: 'scoped-alias', sourceSystem: 'bacnet' });
+		});
+
+		it('global-alias: resolved via a global alias, no protocol scoping', () => {
+			const messages = [{ metric: 'x', value: 21.5, unit: 'celsius' }];
+			const result = interceptor(messages, 'endpoint-1') as any[];
+			expect(result[0].unitValue.provenance).toEqual({ method: 'global-alias', sourceSystem: null });
+		});
+
+		it('unresolved: no alias match', () => {
+			const messages = [{ metric: 'x', value: 21.5, unit: 'wibbles' }];
+			const result = interceptor(messages, 'endpoint-1') as any[];
+			expect(result[0].unitValue.provenance).toEqual({ method: 'unresolved' });
+		});
+
+		it('never carries a confidence field, for any resolution path', () => {
+			const messages = [
+				{ metric: 'a', value: 1, unit: 'degreesCelsius' },
+				{ protocol: 'bacnet', metric: 'b', value: 2, unit: '°C' },
+				{ metric: 'c', value: 3, unit: 'celsius' },
+				{ metric: 'd', value: 4, unit: 'wibbles' },
+			];
+			const result = interceptor(messages, 'endpoint-1') as any[];
+			for (const reading of result) {
+				expect(reading.unitValue.provenance).not.toHaveProperty('confidence');
+			}
+		});
 	});
 });
