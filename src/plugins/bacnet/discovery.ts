@@ -160,7 +160,7 @@ const BACNET_POSSIBLY_COMMANDABLE_OBJECT_TYPES = new Set([1, 2, 4, 5, 14, 19]); 
 // 21 of ANSI/ASHRAE 135) as BACnet.enum.EngineeringUnits; invert it once here
 // so a discovered code can be turned back into a readable unit string.
 const BACNET_UNITS_CODE_TO_NAME: Record<number, string> = Object.fromEntries(
-	Object.entries((BACnet as any).enum?.EngineeringUnits ?? {}).map(([name, code]) => [code as number, name])
+	Object.entries((BACnet).enum?.EngineeringUnits ?? {}).map(([name, code]) => [code as number, name])
 );
 
 // Symbols for the units actually likely to show up on HVAC/energy points —

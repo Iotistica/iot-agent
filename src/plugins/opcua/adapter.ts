@@ -1886,8 +1886,8 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 		for (const config of this.devices.values()) {
 			const device = config as OPCUADeviceConfig;
 			const matching = device.dataPoints.filter((dp) =>
-				(dp.device_name && dp.device_name.trim().toLowerCase() === needle) ||
-				(dp.device_uuid && dp.device_uuid.trim().toLowerCase() === needle)
+				(dp.device_name?.trim().toLowerCase() === needle) ||
+				(dp.device_uuid?.trim().toLowerCase() === needle)
 			);
 			if (matching.length > 0) {
 				return { device, dataPoints: matching };
