@@ -58,16 +58,59 @@ export function createPointNameNormalizationInterceptor(opts: { logger?: Logger 
 }
 
 function attachIdentity(reading: ProtocolMessage, endpointNameHint: string, catalog: PointNameCatalog): void {
-	const rawName = reading.metric ?? reading.name;
+	const rawNameCandidate =
+	reading.normalizationName ??
+	reading.metric ??
+	reading.name;
+
+if (
+	typeof rawNameCandidate !== 'string' ||
+	rawNameCandidate.trim().length === 0
+) {
+	return;
+}
+
+const rawName = rawNameCandidate.trim();
 	if (typeof rawName !== 'string' || rawName.length === 0) return;
 
 	const sourceSystem = typeof reading.protocol === 'string' ? reading.protocol : undefined;
 	const deviceKeyRaw = reading.deviceId ?? reading.device_uuid ?? reading.endpoint_uuid;
 	const deviceKey = typeof deviceKeyRaw === 'string' ? deviceKeyRaw : '';
-	const rawDeviceName = typeof reading.deviceName === 'string' ? reading.deviceName : undefined;
+	const rawDeviceNameCandidate =
+	reading.normalizationDeviceName ??
+	reading.resolvedDisplayName ??
+	reading.rawDeviceName ??
+	reading.deviceName;
+
+const rawDeviceName =
+	typeof rawDeviceNameCandidate === 'string' &&
+	rawDeviceNameCandidate.trim().length > 0
+		? rawDeviceNameCandidate.trim()
+		: undefined;
 	// Never fabricated — only carried through if a reading already has it (no
 	// adapter attaches this in Phase 1, plan §1/§2).
 	const sourceAddress = typeof reading.sourceAddress === 'string' ? reading.sourceAddress : undefined;
+
+	console.log(
+	`PointName ${JSON.stringify({
+		protocol: sourceSystem,
+		rawName,
+		rawDeviceName,
+		deviceName: reading.deviceName,
+		resolvedDisplayName: reading.resolvedDisplayName,
+		deviceKey,
+		endpointNameHint,
+		sourceAddress,
+	})}`,
+);
+
+console.log('[PointName input]', {
+	protocol: sourceSystem,
+	normalizationName: reading.normalizationName,
+	metric: reading.metric,
+	rawName,
+	rawDeviceName,
+});
 
 	const identity: PointIdentity = catalog.resolve({
 		sourceSystem,

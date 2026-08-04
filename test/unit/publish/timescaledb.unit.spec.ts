@@ -112,6 +112,7 @@ describe('TimescaleDbPublishPlugin', () => {
 			expect(params[6]).toBe('opcua');
 			expect(JSON.parse(params[7])).toEqual({
 				endpoint_uuid: null, device_uuid: null, device_name: null, ingested_at: expect.any(String),
+				raw_metric_name: 'temp', // no pointIdentity here, so metric_name (and raw_metric_name) both fall back to the raw 'metric' field
 			});
 		});
 
@@ -210,6 +211,45 @@ describe('TimescaleDbPublishPlugin', () => {
 			const [, params] = mockQuery.mock.calls[0];
 			expect(params[4]).toBe('uncertain');
 		});
+
+		it('uses the normalized point name as metric_name when pointIdentity is present, preserving the raw identifier in extra.raw_metric_name', async () => {
+			await plugin.publishBatch([makeItem({
+				messages: [{
+					metric: 'cc-valve',
+					value: 76.9,
+					pointIdentity: { normalizedName: 'cc_valve', provisionalPointId: 'pp-1', rulesVersion: 'pn-rules-v1' },
+				}],
+			})]);
+			const [, params] = mockQuery.mock.calls[0];
+			expect(params[2]).toBe('cc_valve'); // metric_name
+			const extra = JSON.parse(params[7]);
+			expect(extra.raw_metric_name).toBe('cc-valve');
+			expect(extra.provisional_point_id).toBe('pp-1');
+			expect(extra.rules_version).toBe('pn-rules-v1');
+			expect(extra.normalized_name).toBeUndefined(); // no longer duplicated — metric_name already is it
+		});
+
+		it('surfaces the true protocol-reported name (rawObjectName) separately from the sanitized raw_metric_name', async () => {
+			await plugin.publishBatch([makeItem({
+				messages: [{
+					metric: 'zone_a_lamp_fault',
+					value: 1,
+					rawObjectName: 'Zone-A-Lamp-Fault',
+					pointIdentity: { normalizedName: 'dali_gw_l2_zone_a_lamp_fault' },
+				}],
+			})]);
+			const [, params] = mockQuery.mock.calls[0];
+			expect(params[2]).toBe('dali_gw_l2_zone_a_lamp_fault');
+			const extra = JSON.parse(params[7]);
+			expect(extra.raw_metric_name).toBe('zone_a_lamp_fault');
+			expect(extra.raw_object_name).toBe('Zone-A-Lamp-Fault');
+		});
+
+		it('falls back to the raw metric as metric_name when pointIdentity has no normalizedName', async () => {
+			await plugin.publishBatch([makeItem({ messages: [{ metric: 'unresolved-thing', value: 1 }] })]);
+			const [, params] = mockQuery.mock.calls[0];
+			expect(params[2]).toBe('unresolved-thing');
+		});
 	});
 
 	describe('publishBatch — tags payload mapping', () => {
@@ -244,6 +284,19 @@ describe('TimescaleDbPublishPlugin', () => {
 		it('skips tags with non-numeric/non-boolean values and no error', async () => {
 			await plugin.publishBatch([makeItem({ tags: [{ name: 'label', value: 'oops' }] })]);
 			expect(mockQuery).not.toHaveBeenCalled();
+		});
+
+		it('uses tag.name as metric_name (already normalized-preferred by mapTagPayload()) and preserves tag.rawName in extra', async () => {
+			await plugin.publishBatch([makeItem({
+				node: 'device-a',
+				group: 'line1',
+				tags: [{ name: 'cc_valve', rawName: 'cc-valve', provisionalPointId: 'pp-1', value: 76.9 }],
+			})]);
+			const [, params] = mockQuery.mock.calls[0];
+			expect(params[2]).toBe('cc_valve');
+			const extra = JSON.parse(params[7]);
+			expect(extra.raw_metric_name).toBe('cc-valve');
+			expect(extra.provisional_point_id).toBe('pp-1');
 		});
 	});
 

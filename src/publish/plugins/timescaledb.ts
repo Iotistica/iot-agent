@@ -23,9 +23,10 @@ interface TagsPayload {
 	timestamp?: number;
 	node?: string;
 	group?: string;
-	// normalizedName/provisionalPointId are already flat on each tag when the point-name
-	// interceptor ran — see PublishManager.readPointIdentity(), spread into mapTagPayload()'s output.
-	tags?: Array<{ name: string; value: unknown; error?: unknown; normalizedName?: string; provisionalPointId?: string }>;
+	// name is already normalizedName-preferred (falls back to the raw identifier) when the
+	// point-name interceptor ran — see PublishManager.mapTagPayload(). rawName/provisionalPointId
+	// are flat alongside it.
+	tags?: Array<{ name: string; value: unknown; error?: unknown; rawName?: string; provisionalPointId?: string }>;
 }
 
 interface CustomPayload {
@@ -297,14 +298,11 @@ export class TimescaleDbPublishPlugin extends EventEmitter implements IPublishPl
 		this.lastSuccessTime = Date.now();
 	}
 
-	private buildExtra(msg: Record<string, unknown>): Record<string, unknown> {
-		// 'custom' payloads pass messages through verbatim (see PublishManager.buildPayload()),
-		// so pointIdentity/rawObjectName are already present here when the point-name
-		// interceptor ran — surfaced into `extra` additively. `metric_name` deliberately
-		// stays the raw sanitized identifier (unchanged) since it's part of the
-		// UNIQUE(agent_uuid, metric_name, time) constraint and existing dashboards/queries
-		// key off it — normalizing it in place would risk silent dedup collisions and
-		// break existing consumers.
+	// Standardized (see manager.ts's mapTagPayload()): `metric_name` is now the normalized
+	// point name when available, falling back to the raw protocol identifier otherwise —
+	// consistent primary identifier across MQTT/ECP/ML/TimescaleDB. The raw value is never
+	// lost — always carried as extra.raw_metric_name.
+	private buildExtra(msg: Record<string, unknown>, rawMetricName?: string): Record<string, unknown> {
 		const pointIdentity = msg.pointIdentity as PointIdentity | undefined;
 		const rawObjectName = typeof msg.rawObjectName === 'string' ? msg.rawObjectName : undefined;
 
@@ -314,9 +312,11 @@ export class TimescaleDbPublishPlugin extends EventEmitter implements IPublishPl
 			device_name: typeof msg.deviceName === 'string' ? msg.deviceName
 				: (typeof msg.device_name === 'string' ? msg.device_name : null),
 			ingested_at: new Date().toISOString(),
-			...(pointIdentity?.normalizedName && { normalized_name: pointIdentity.normalizedName }),
+			...(rawMetricName && { raw_metric_name: rawMetricName }),
 			...(pointIdentity?.provisionalPointId && { provisional_point_id: pointIdentity.provisionalPointId }),
 			...(pointIdentity?.rulesVersion && { rules_version: pointIdentity.rulesVersion }),
+			// The true, unsanitized protocol-reported name (currently BACnet/OPC-UA), distinct
+			// from raw_metric_name (the adapter-sanitized identifier metric_name used to be).
 			...(rawObjectName && { raw_object_name: rawObjectName }),
 		};
 	}
@@ -349,7 +349,9 @@ export class TimescaleDbPublishPlugin extends EventEmitter implements IPublishPl
 		for (const { reading: msg, wrapperTimestamp } of this.flattenMessages(messages)) {
 			if (msg.nodeType === 'metadata') continue; // mirrors cloud ingestion: metadata nodes aren't stored
 
-			const name = String(msg.metric ?? msg.metric_name ?? msg.nodeName ?? msg.name ?? msg.tag ?? msg.id ?? 'value');
+			const rawName = String(msg.metric ?? msg.metric_name ?? msg.nodeName ?? msg.name ?? msg.tag ?? msg.id ?? 'value');
+			const pointIdentity = msg.pointIdentity as PointIdentity | undefined;
+			const name = pointIdentity?.normalizedName ?? rawName;
 			const rawValue = msg.value ?? msg.rawValue ?? msg.v;
 			const fallbackTime = resolveTimestamp(wrapperTimestamp, batchTime);
 
@@ -361,7 +363,7 @@ export class TimescaleDbPublishPlugin extends EventEmitter implements IPublishPl
 				quality: normalizeQuality(msg.quality),
 				unit: typeof msg.unit === 'string' ? msg.unit : null,
 				protocol,
-				extra: this.buildExtra(msg),
+				extra: this.buildExtra(msg, rawName),
 			});
 		}
 		return rows;
@@ -381,7 +383,7 @@ export class TimescaleDbPublishPlugin extends EventEmitter implements IPublishPl
 			rows.push({
 				time,
 				agent_uuid: this.deviceUuid,
-				metric_name: String(tag.name),
+				metric_name: String(tag.name), // already normalized-preferred, see manager.ts's mapTagPayload()
 				value,
 				quality: 'good',
 				unit: null,
@@ -390,7 +392,7 @@ export class TimescaleDbPublishPlugin extends EventEmitter implements IPublishPl
 					device_name: payload.node ?? null,
 					group: payload.group ?? null,
 					ingested_at: new Date().toISOString(),
-					...(tag.normalizedName && { normalized_name: tag.normalizedName }),
+					...(tag.rawName && { raw_metric_name: tag.rawName }),
 					...(tag.provisionalPointId && { provisional_point_id: tag.provisionalPointId }),
 				},
 			});

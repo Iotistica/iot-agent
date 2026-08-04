@@ -89,6 +89,44 @@ function metricLeaf(metric: string, source: string): string {
   return i > 0 && i < metric.length ? metric.slice(i) : metric
 }
 
+// Mirrors src/point-name/normalize-point-name.ts's stripDeviceNamePrefix() —
+// same token-based canonicalize-then-longest-shared-leading-tokens algorithm,
+// kept consistent across the agent (normalization) and this admin UI (display)
+// since the admin app and the agent backend are separate builds with no shared
+// module to import this from. A naive full-string startsWith() breaks on real
+// data: rawObjectName isn't sanitized like `metric` is (BACnet reports
+// "AHU-1.RF-Run" for device "AHU-1"), and the friendly source name can carry
+// extra suffix text the point's own raw name never had.
+// function canonicalizeForPrefixMatch(s: string): string {
+//   return s.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '')
+// }
+// function stripDevicePrefix(raw: string, source: string): string {
+//   const rawTokens = canonicalizeForPrefixMatch(raw).split('_').filter(Boolean)
+//   const sourceTokens = canonicalizeForPrefixMatch(source).split('_').filter(Boolean)
+//   let shared = 0
+//   while (shared < rawTokens.length && shared < sourceTokens.length && rawTokens[shared] === sourceTokens[shared]) shared++
+//   if (shared === 0 || shared >= rawTokens.length) return raw
+//   return rawTokens.slice(shared).join('_')
+// }
+
+// Compares rawObjectName against the friendly (Source-column) device name, since
+// that's the convention BACnet's own device-prefixed object names follow (e.g.
+// "AHU-1.RF-Run" for the device shown as "AHU-1"), not the raw internal endpointName
+// metricLeaf() compares against.
+interface ProtocolNameRecord {
+  rawObjectName?: string
+  rawPointName?: string
+  metric: string
+}
+
+function displayProtocolName(record: ProtocolNameRecord): string {
+    return (
+        record.rawPointName?.trim() ||
+        record.rawObjectName?.trim() ||
+        record.metric
+    )
+}
+
 function fmtValue(v: unknown): string {
   if (v === null || v === undefined) return '—'
   if (typeof v === 'number') return Number.isInteger(v) ? String(v) : v.toFixed(2)
@@ -168,15 +206,7 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
 <template>
   <AppLayout title="Live View">
 
-    <a-alert
-      type="info"
-      show-icon
-      message="Live view of data moving from Sources through Subscriptions to Destinations"
-      description="Updates every 5 seconds. Shows the last value published per subscription, plus a rolling feed of recent publish activity."
-      style="margin-bottom: 16px"
-    />
-
-    <a-card title="Active Subscriptions" size="small" style="margin-bottom: 16px">
+    <a-card title="Active Subscriptions" size="small" style="margin-bottom: 5px">
       <a-table
         :columns="subscriptionColumns"
         :data-source="subscriptions"
@@ -205,12 +235,12 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
                     <div>Normalized point</div>
                     <div>{{ record.normalizedName }}</div>
                     <div style="margin-top: 6px">Protocol name</div>
-                    <div>{{ record.rawObjectName ?? record.lastMetric }}</div>
+                    <div>{{ displayProtocolName({ rawPointName: record.rawPointName,rawObjectName: record.rawObjectName, metric: record.lastMetric}) }}</div>
                   </template>
                   <div class="point-primary" :title="record.normalizedName">{{ record.normalizedName }}</div>
                 </a-tooltip>
-                <div class="point-secondary" :title="record.rawObjectName ?? record.lastMetric">
-                  Protocol name: {{ record.rawObjectName ?? metricLeaf(record.lastMetric, record.endpointName) }}
+                <div class="point-secondary" :title="record.rawPointName ?? record.rawObjectName ?? record.lastMetric">
+                  Protocol name: {{ displayProtocolName({ rawPointName: record.rawPointName, rawObjectName: record.rawObjectName, metric: record.lastMetric }) }}
                 </div>
               </template>
               <div v-else class="point-primary" :title="record.lastMetric">
@@ -297,12 +327,12 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
                     <div>Normalized point</div>
                     <div>{{ record.normalizedName }}</div>
                     <div style="margin-top: 6px">Protocol name</div>
-                    <div>{{ record.rawObjectName ?? record.metric }}</div>
+                    <div>{{ displayProtocolName({ rawPointName: record.rawPointName, rawObjectName: record.rawObjectName, metric: record.metric}) }}</div>
                   </template>
                   <div class="point-primary" :title="record.normalizedName">{{ record.normalizedName }}</div>
                 </a-tooltip>
-                <div class="point-secondary" :title="record.rawObjectName ?? record.metric">
-                  Protocol name: {{ record.rawObjectName ?? metricLeaf(record.metric, record.endpointName) }}
+                <div class="point-secondary" :title="record.rawPointName ?? record.rawObjectName ?? record.lastMetric">
+                  Protocol name: {{ displayProtocolName({ rawPointName: record.rawPointName, rawObjectName: record.rawObjectName, metric: record.metric }) }}
                 </div>
               </template>
               <div v-else class="point-primary" :title="record.metric">

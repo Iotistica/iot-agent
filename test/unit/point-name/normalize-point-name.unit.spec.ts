@@ -1,4 +1,4 @@
-import { normalizePointName } from '../../../src/point-name/normalize-point-name';
+import { normalizePointName, stripDeviceNamePrefix } from '../../../src/point-name/normalize-point-name';
 
 describe('normalizePointName', () => {
 	it('produces the two worked examples from the plan exactly', () => {
@@ -64,5 +64,55 @@ describe('normalizePointName', () => {
 		expect(normalizePointName('SAT')).toBe('sat');
 		expect(normalizePointName('CHW Valve')).toBe('chw_valve');
 		expect(normalizePointName('OA Damper')).toBe('oa_damper');
+	});
+});
+
+describe('stripDeviceNamePrefix', () => {
+	it('strips a dot-separated device-name prefix (BACnet convention, e.g. bacnet-simulator\'s "{device}.{point}")', () => {
+		expect(stripDeviceNamePrefix('AHU-1.RF-Run', 'AHU-1')).toBe('rf_run');
+	});
+
+	it('strips a hyphen/underscore/space-separated prefix too', () => {
+		expect(stripDeviceNamePrefix('AHU-1-RF-Run', 'AHU-1')).toBe('rf_run');
+		expect(stripDeviceNamePrefix('AHU-1_RF-Run', 'AHU-1')).toBe('rf_run');
+		expect(stripDeviceNamePrefix('AHU-1 RF-Run', 'AHU-1')).toBe('rf_run');
+	});
+
+	it('is case-insensitive', () => {
+		expect(stripDeviceNamePrefix('ahu-1.rf-run', 'AHU-1')).toBe('rf_run');
+	});
+
+	it('handles rawName already sanitized to lowercase/underscore by the adapter before this ever runs (BACnet\'s real shape, not raw mixed-case/dotted text)', () => {
+		// object.name (what actually reaches normalizePointName's input) is
+		// pre-sanitized by discovery.ts to lowercase+underscore — deviceName may
+		// still be mixed-case/hyphenated. Both must canonicalize to the same
+		// tokens for the match to succeed.
+		expect(stripDeviceNamePrefix('ahu_1_rf_run', 'AHU-1')).toBe('rf_run');
+	});
+
+	it('matches only the leading tokens actually shared, ignoring a trailing UUID suffix on deviceName (the enriched device identity, not the bare config name)', () => {
+		// AdapterManager.enrichWithEndpointUuid() appends a UUID-derived suffix to
+		// deviceName before it ever reaches this pipeline (e.g. "vav_f7_a" becomes
+		// "vav_f7_a_2041-d0f6e547") — the point's own raw name never had that
+		// suffix, so matching must stop at the first diverging token, not require
+		// the whole (longer, suffixed) deviceName to match.
+		expect(stripDeviceNamePrefix('vav_f7_a_zone_temp', 'vav_f7_a_2041-d0f6e547')).toBe('zone_temp');
+		expect(stripDeviceNamePrefix('vav_f7_a_damper_pos', 'vav_f7_a_2041-d0f6e547')).toBe('damper_pos');
+	});
+
+	it('is a no-op when rawName shares no leading token with deviceName (e.g. OPC-UA node names)', () => {
+		expect(stripDeviceNamePrefix('cc-valve', 'AHU-1')).toBe('cc-valve');
+	});
+
+	it('is a no-op when deviceName is undefined', () => {
+		expect(stripDeviceNamePrefix('AHU-1.RF-Run', undefined)).toBe('AHU-1.RF-Run');
+	});
+
+	it('strips only the genuinely shared leading token(s) — "AHU-10" and "AHU-1" share the "ahu" token, so that alone is stripped, not treated as a full mismatch', () => {
+		expect(stripDeviceNamePrefix('AHU-10-RF-Run', 'AHU-1')).toBe('10_rf_run');
+	});
+
+	it('is a no-op when rawName equals deviceName exactly (nothing left to strip)', () => {
+		expect(stripDeviceNamePrefix('AHU-1', 'AHU-1')).toBe('AHU-1');
 	});
 });

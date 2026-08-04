@@ -132,6 +132,32 @@ export class BACnetAdapter extends BaseProtocolAdapter {
 		return this.deviceStatuses.get(deviceName);
 	}
 
+	deriveRawPointName(rawObjectName: string,resolvedDisplayName?: string,
+		): string {
+			const raw = rawObjectName.trim();
+
+			if (!raw) return raw;
+
+			if (resolvedDisplayName?.trim()) {
+				const prefix = `${resolvedDisplayName.trim()}.`;
+
+				if (raw.toLowerCase().startsWith(prefix.toLowerCase())) {
+					const pointOnly = raw.slice(prefix.length).trim();
+					return pointOnly || raw;
+				}
+			}
+
+			// Simulator convention: <device>.<point>
+			const dotIndex = raw.indexOf('.');
+
+			if (dotIndex > 0 && dotIndex < raw.length - 1) {
+				const pointOnly = raw.slice(dotIndex + 1).trim();
+				return pointOnly || raw;
+			}
+
+			return raw;
+		}
+
 	/**
    * Get metrics summary for all devices
    */
@@ -371,21 +397,37 @@ export class BACnetAdapter extends BaseProtocolAdapter {
 					lastValuesMap.set(object.name, result.value);
 				}
 
-				dataPoints.push({
-					deviceName,
-					metric: object.name,
-					value: result.value,
-					unit: object.unit,
-					timestamp: new Date().toISOString(),
-					quality: result.quality,
-					qualityCode: result.error,
-					protocol: 'bacnet',
-					...(resolvedDisplayName && { resolvedDisplayName }),
-					// object.name is sanitized (discovery.ts) for use as an identifier; object.objectName
-					// (when discovery captured one) is the true BACnet-reported name, e.g. "Zone-A-Lamp-Fault"
-					// — surfaced for accurate display only (Live View's "Protocol name"), see types.ts.
-					...(object.objectName && { rawObjectName: object.objectName }),
-				});
+				const rawObjectName = object.objectName;
+				const rawPointName = rawObjectName
+					? this.deriveRawPointName(rawObjectName, resolvedDisplayName)
+					: undefined;
+			    
+				const normalizationDeviceName =
+				resolvedDisplayName ??
+				(rawObjectName?.includes('.')
+					? rawObjectName.slice(0, rawObjectName.indexOf('.')).trim()
+					: undefined);
+
+
+			dataPoints.push({
+				deviceName,
+				metric: object.name,
+				value: result.value,
+				unit: object.unit,
+				timestamp: new Date().toISOString(),
+				quality: result.quality,
+				qualityCode: result.error,
+				protocol: 'bacnet',
+				...(resolvedDisplayName && { resolvedDisplayName }),
+				...(rawObjectName && { rawObjectName }),
+				...(rawPointName && { rawPointName }),
+
+				// Point-only input for the shared point-name normalizer.
+				...(rawPointName && { normalizationName: rawPointName }),
+				...(normalizationDeviceName && {
+					normalizationDeviceName,
+				}),
+			});
 			}
 
 			this.lastValues.set(deviceName, lastValuesMap);
@@ -519,4 +561,7 @@ export class BACnetAdapter extends BaseProtocolAdapter {
 			return 'offline';
 		}
 	}
+
+
+	
 }

@@ -22,6 +22,7 @@ export interface DeviceDataPoint {
 	deviceName: string;
 	deviceId?: string;
 	device_uuid?: string;
+	normalizationDeviceName?: string;
 	endpoint_uuid?: string; // UUID from the endpoints table (target state)
 	metric: string; // Generic field name (Modbus register, OPC UA node, SNMP OID)
 	value: number | boolean | string | null; // null when quality is BAD
@@ -40,6 +41,8 @@ export interface DeviceDataPoint {
 	// AdapterManager.enrichWithEndpointUuid()'s device-name computation and must stay
 	// device-scoped for BACnet (and node-scoped is already its own separate concern for OPC-UA).
 	rawObjectName?: string;
+	rawPointName?: string;
+	normalizationName?: string;
 	anomaly_score?: number; // anomaly score (0.0 = normal, 1.0 = max anomaly)
 	anomaly_threshold?: number; // Confidence threshold used for alerting (e.g., 0.7)
 	baseline_samples?: number; // Number of samples in baseline buffer

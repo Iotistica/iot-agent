@@ -1,7 +1,7 @@
 import { PointNameMappingsModel } from '../db/models/index.js';
 import type { PointNameMappingRecord } from '../db/models/index.js';
 import { computeProvisionalPointId, computeShortHash, naturalKey } from './identity.js';
-import { normalizePointName } from './normalize-point-name.js';
+import { buildNormalizedPointName} from './normalize-point-name.js';
 import { CURRENT_POINT_NAME_RULES_VERSION } from './types.js';
 import type { Logger, PointIdentity } from './types.js';
 
@@ -140,7 +140,21 @@ class PointNameCatalog {
 		const key = naturalKey(sourceSystem, endpointName, deviceKey, rawName);
 
 		const existing = this.byNaturalKey.get(key);
-		const mapping = existing ?? this.computeNew(sourceSystem, endpointName, deviceKey, rawName);
+
+		const usableExisting =
+			existing?.rulesVersion === CURRENT_POINT_NAME_RULES_VERSION
+				? existing
+				: undefined;
+
+		const mapping =
+			usableExisting ??
+			this.computeNew(
+				sourceSystem,
+				endpointName,
+				deviceKey,
+				rawName,
+				rawDeviceName,
+			);
 
 		if (!existing) {
 			this.byNaturalKey.set(key, mapping);
@@ -150,8 +164,9 @@ class PointNameCatalog {
 		return this.toPointIdentity(mapping, rawDeviceName, sourceAddress);
 	}
 
-	private computeNew(sourceSystem: string | null, endpointName: string, deviceKey: string, rawName: string): InternalMapping {
-		const base = normalizePointName(rawName);
+	private computeNew(sourceSystem: string | null, endpointName: string, deviceKey: string, rawName: string, rawDeviceName?: string): InternalMapping {
+
+		const base = buildNormalizedPointName(rawDeviceName, rawName);
 		const method: 'algorithmic' | 'unresolved' = base.length > 0 ? 'algorithmic' : 'unresolved';
 
 		if (method === 'algorithmic') this.metrics.algorithmicCount++;

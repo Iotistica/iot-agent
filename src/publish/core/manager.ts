@@ -69,7 +69,12 @@ interface ProtocolMessage extends Record<string, unknown> {
 }
 
 interface TagPayload {
+	// Standardized (see timescaledb.ts): `name` is the normalized point name when
+	// available, falling back to the raw protocol identifier when normalization
+	// hasn't resolved one. The raw identifier is never lost — always also carried
+	// as `rawName`.
 	name: string;
+	rawName?: string;
 	value?: unknown;
 	error?: unknown;
 	type?: 1 | 2 | 3 | 4;
@@ -81,13 +86,13 @@ interface TagPayload {
 	// Never named `pointId` — provisionalPointId is rename-sensitive, not durable
 	// identity (see src/point-name/types.ts's PointIdentity doc comment).
 	provisionalPointId?: string;
-	normalizedName?: string;
 }
 
 type MlDtype = 'bool' | 'int' | 'float' | 'string' | 'error';
 
 interface MlFeaturePayload {
 	name: string;
+	rawName?: string;
 	value: unknown;
 	dtype: MlDtype;
 	quality: 'GOOD' | 'BAD';
@@ -108,7 +113,6 @@ interface MlFeaturePayload {
 	dqUnitConfidence?: number;
 	dqIssueCodes?: string[];
 	provisionalPointId?: string;
-	normalizedName?: string;
 }
 
 interface RuntimeSnapshot {
@@ -760,11 +764,14 @@ export class PublishManager extends EventEmitter {
 		};
 	}
 
-	/** Compact point-identity projection for tag/ml payloads — reads message.pointIdentity
-	 *  (see src/point-name/interceptor.ts) when present. Never carries rawName/sourceAddress/
-	 *  rulesVersion/provenance (including method/resolutionSource/persistenceState) — those
-	 *  stay 'custom'-format-only. Field is provisionalPointId, never pointId — see
-	 *  src/point-name/types.ts's PointIdentity doc comment on why. */
+	/** Compact point-identity projection for the Live View activity-monitor path (see the
+	 *  activityMonitor.record() call site below) — reads message.pointIdentity (see
+	 *  src/point-name/interceptor.ts) when present. Unlike tag/ml payloads (mapTagPayload()/
+	 *  attachMlEnrichment()), Live View's own `metric`/`lastMetric` deliberately stays raw
+	 *  with normalizedName as a separate additive field, so both are kept here. Never carries
+	 *  rawName/sourceAddress/rulesVersion/provenance — those stay 'custom'-format-only. Field
+	 *  is provisionalPointId, never pointId — see src/point-name/types.ts's PointIdentity doc
+	 *  comment on why. */
 	private readPointIdentity(message: ProtocolMessage): { provisionalPointId?: string; normalizedName?: string } {
 		const pointIdentity = message.pointIdentity as PointIdentity | undefined;
 		if (!pointIdentity) return {};
@@ -775,7 +782,7 @@ export class PublishManager extends EventEmitter {
 	}
 
 	private mapTagPayload(message: ProtocolMessage, index: number, payloadFormat: Exclude<PayloadFormat, 'custom'>, filterBadQuality = false): TagPayload | null {
-		const name = String(
+		const rawName = String(
 			message.metric
 			?? message.metric_name
 			?? message.nodeName
@@ -784,10 +791,15 @@ export class PublishManager extends EventEmitter {
 			?? message.id
 			?? `tag_${index}`,
 		);
+		const pointIdentity = message.pointIdentity as PointIdentity | undefined;
+		// Standardized primary identifier (see timescaledb.ts): normalized point name
+		// when available, falling back to the raw protocol identifier otherwise. Never
+		// loses the raw value — always also carried as `rawName`.
+		const name = pointIdentity?.normalizedName ?? rawName;
+		const provisionalPointId = pointIdentity?.provisionalPointId;
 
 		const unitFields = this.readNormalizedUnit(message);
 		const qualityFields = this.readQualityFields(message);
-		const pointIdentityFields = this.readPointIdentity(message);
 
 		const quality = typeof message.quality === 'string' ? message.quality.toUpperCase() : undefined;
 		const hasError = message.error !== undefined
@@ -804,10 +816,11 @@ export class PublishManager extends EventEmitter {
 
 			return {
 				name,
+				rawName,
 				error: message.error ?? message.errorCode ?? message.qualityCode ?? 'READ_ERROR',
 				...unitFields,
 				...qualityFields,
-				...pointIdentityFields,
+				...(provisionalPointId && { provisionalPointId }),
 			};
 		}
 
@@ -819,19 +832,20 @@ export class PublishManager extends EventEmitter {
 
 			return {
 				name,
+				rawName,
 				value,
 				type: this.inferEcpType(value),
 				...unitFields,
 				...qualityFields,
-				...pointIdentityFields,
+				...(provisionalPointId && { provisionalPointId }),
 			};
 		}
 
-		return { name, value, ...unitFields, ...qualityFields, ...pointIdentityFields };
+		return { name, rawName, value, ...unitFields, ...qualityFields, ...(provisionalPointId && { provisionalPointId }) };
 	}
 
 	private mapMlFeaturePayload(message: ProtocolMessage, index: number): MlFeaturePayload {
-		const name = String(
+		const rawName = String(
 			message.metric
 			?? message.metric_name
 			?? message.nodeName
@@ -840,6 +854,8 @@ export class PublishManager extends EventEmitter {
 			?? message.id
 			?? `tag_${index}`,
 		);
+		const pointIdentity = message.pointIdentity as PointIdentity | undefined;
+		const name = pointIdentity?.normalizedName ?? rawName;
 
 		const quality = typeof message.quality === 'string' ? message.quality.toUpperCase() : undefined;
 		const hasError = message.error !== undefined
@@ -850,6 +866,7 @@ export class PublishManager extends EventEmitter {
 		if (hasError) {
 			const feature: MlFeaturePayload = {
 				name,
+				rawName,
 				value: null,
 				dtype: 'error',
 				quality: 'BAD',
@@ -863,6 +880,7 @@ export class PublishManager extends EventEmitter {
 		if (rawValue === null || rawValue === undefined) {
 			const feature: MlFeaturePayload = {
 				name,
+				rawName,
 				value: null,
 				dtype: 'error',
 				quality: 'BAD',
@@ -874,6 +892,7 @@ export class PublishManager extends EventEmitter {
 
 		const feature: MlFeaturePayload = {
 			name,
+			rawName,
 			value: rawValue,
 			dtype: this.inferMlDtype(rawValue),
 			quality: 'GOOD',
@@ -895,7 +914,8 @@ export class PublishManager extends EventEmitter {
 		if (typeof message.state_duration_seconds === 'number') feature.state_duration_seconds = message.state_duration_seconds;
 		Object.assign(feature, this.readNormalizedUnit(message));
 		Object.assign(feature, this.readQualityFields(message));
-		Object.assign(feature, this.readPointIdentity(message));
+		const provisionalPointId = (message.pointIdentity as PointIdentity | undefined)?.provisionalPointId;
+		if (provisionalPointId) feature.provisionalPointId = provisionalPointId;
 	}
 
 	private inferMlDtype(value: unknown): MlDtype {
@@ -1439,6 +1459,21 @@ export class PublishManager extends EventEmitter {
 					// DeviceDataPoint.rawObjectName doc comment), when the adapter captured one
 					// separately from the sanitized `metric` identifier. Display-only.
 					const rawObjectName = typeof record?.rawObjectName === 'string' ? record.rawObjectName : undefined;
+
+					const rawPointName =typeof record?.rawPointName === 'string'? record.rawPointName: undefined;
+
+					if (this.protocol === 'bacnet') {
+		
+					this.logger?.info('BACnet names before ActivityMonitor', {
+						metric,
+						rawObjectName,
+						rawPointName,
+						deviceName: record?.deviceName,
+						sourceName,
+					});
+
+    }
+
 					activityMonitor.record({
 						subscriptionId: binding.subscription.id ?? null,
 						destinationId: binding.publisher.id,
@@ -1454,6 +1489,7 @@ export class PublishManager extends EventEmitter {
 						...pointIdentityFields,
 						...(rulesVersion && { rulesVersion }),
 						...(rawObjectName && { rawObjectName }),
+						...(rawPointName && { rawPointName }),
 					});
 				}
 			}

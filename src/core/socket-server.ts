@@ -812,12 +812,22 @@ export class SocketServer {
 			...(point.endpoint_uuid && { endpoint_uuid: point.endpoint_uuid }),
 			...(point.device_uuid && { device_uuid: point.device_uuid }),
 			...(point.protocol && { protocol: point.protocol }),
+			...(point.resolvedDisplayName && {
+				resolvedDisplayName: point.resolvedDisplayName,
+			}),
 			metric: point.metric,
 			value: point.value,
 			unit: point.unit,
 			quality: point.quality,
 			...(point.qualityCode && { qualityCode: point.qualityCode }),
 			...(point.rawObjectName && { rawObjectName: point.rawObjectName }),
+            ...(point.rawPointName && { rawPointName: point.rawPointName }),
+			...(point.normalizationName && {
+			normalizationName: point.normalizationName,
+			}),
+			...(point.normalizationDeviceName && {
+				normalizationDeviceName: point.normalizationDeviceName,
+			}),
 		}));
 
 		// Return array directly for single reading, or wrapped for batch

@@ -62,4 +62,9 @@ export interface PointIdentity {
 	provenance: PointNameProvenance;
 }
 
-export const CURRENT_POINT_NAME_RULES_VERSION = 'pn-rules-v1';
+// v2: normalizePointName()'s input now has a redundant device-name prefix
+// (e.g. BACnet's "AHU-1.RF-Run") stripped before slugging — see catalog.ts's
+// computeNew() and normalize-point-name.ts's stripDeviceNamePrefix(). Phase 1
+// never auto-regenerates already-locked mappings computed under v1 — this
+// only affects newly-observed points (or a cleared point_name_mappings table).
+export const CURRENT_POINT_NAME_RULES_VERSION = 'pn-rules-v3';
