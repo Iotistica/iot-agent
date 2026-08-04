@@ -1435,6 +1435,10 @@ export class PublishManager extends EventEmitter {
 					// carries rulesVersion into tag/ml payloads — see its doc comment above.
 					const pointIdentityFields = this.readPointIdentity(record);
 					const rulesVersion = (record?.pointIdentity as PointIdentity | undefined)?.rulesVersion;
+					// True protocol-reported name (currently BACnet only — see plugins/types.ts's
+					// DeviceDataPoint.rawObjectName doc comment), when the adapter captured one
+					// separately from the sanitized `metric` identifier. Display-only.
+					const rawObjectName = typeof record?.rawObjectName === 'string' ? record.rawObjectName : undefined;
 					activityMonitor.record({
 						subscriptionId: binding.subscription.id ?? null,
 						destinationId: binding.publisher.id,
@@ -1449,6 +1453,7 @@ export class PublishManager extends EventEmitter {
 						pointCount: records.length,
 						...pointIdentityFields,
 						...(rulesVersion && { rulesVersion }),
+						...(rawObjectName && { rawObjectName }),
 					});
 				}
 			}

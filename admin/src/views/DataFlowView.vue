@@ -52,7 +52,8 @@ const filteredEvents = computed(() => {
     (!sourceQ || friendlySource(e.endpointName).toLowerCase().includes(sourceQ)) &&
     (!metricQ ||
       e.metric.toLowerCase().includes(metricQ) ||
-      (e.normalizedName ?? '').toLowerCase().includes(metricQ)) &&
+      (e.normalizedName ?? '').toLowerCase().includes(metricQ) ||
+      (e.rawObjectName ?? '').toLowerCase().includes(metricQ)) &&
     (!eventProtocolFilter.value || e.protocol.toLowerCase() === eventProtocolFilter.value)
   )
 })
@@ -204,12 +205,12 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
                     <div>Normalized point</div>
                     <div>{{ record.normalizedName }}</div>
                     <div style="margin-top: 6px">Protocol name</div>
-                    <div>{{ record.lastMetric }}</div>
+                    <div>{{ record.rawObjectName ?? record.lastMetric }}</div>
                   </template>
                   <div class="point-primary" :title="record.normalizedName">{{ record.normalizedName }}</div>
                 </a-tooltip>
-                <div class="point-secondary" :title="record.lastMetric">
-                  Protocol name: {{ metricLeaf(record.lastMetric, record.endpointName) }}
+                <div class="point-secondary" :title="record.rawObjectName ?? record.lastMetric">
+                  Protocol name: {{ record.rawObjectName ?? metricLeaf(record.lastMetric, record.endpointName) }}
                 </div>
               </template>
               <div v-else class="point-primary" :title="record.lastMetric">
@@ -296,12 +297,12 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
                     <div>Normalized point</div>
                     <div>{{ record.normalizedName }}</div>
                     <div style="margin-top: 6px">Protocol name</div>
-                    <div>{{ record.metric }}</div>
+                    <div>{{ record.rawObjectName ?? record.metric }}</div>
                   </template>
                   <div class="point-primary" :title="record.normalizedName">{{ record.normalizedName }}</div>
                 </a-tooltip>
-                <div class="point-secondary" :title="record.metric">
-                  Protocol name: {{ metricLeaf(record.metric, record.endpointName) }}
+                <div class="point-secondary" :title="record.rawObjectName ?? record.metric">
+                  Protocol name: {{ record.rawObjectName ?? metricLeaf(record.metric, record.endpointName) }}
                 </div>
               </template>
               <div v-else class="point-primary" :title="record.metric">

@@ -21,6 +21,9 @@ export interface SubscriptionActivity {
   normalizedName?: string
   provisionalPointId?: string
   rulesVersion?: string
+  // True protocol-reported name, when the adapter captured one separately from the
+  // sanitized lastMetric identifier (currently BACnet only). Display-only.
+  rawObjectName?: string
 }
 
 export interface ActivityEvent {
@@ -39,6 +42,7 @@ export interface ActivityEvent {
   normalizedName?: string
   provisionalPointId?: string
   rulesVersion?: string
+  rawObjectName?: string
 }
 
 export const pipelineApi = {

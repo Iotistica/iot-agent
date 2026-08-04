@@ -27,6 +27,8 @@ export interface SubscriptionActivity {
 	normalizedName?: string;
 	provisionalPointId?: string;
 	rulesVersion?: string;
+	/** True protocol-reported name, when the adapter captured one separately from the sanitized metric identifier (currently BACnet only — see plugins/types.ts's DeviceDataPoint.rawObjectName). Display-only. */
+	rawObjectName?: string;
 }
 
 export interface ActivityEvent {
@@ -46,6 +48,8 @@ export interface ActivityEvent {
 	normalizedName?: string;
 	provisionalPointId?: string;
 	rulesVersion?: string;
+	/** True protocol-reported name, when the adapter captured one separately from the sanitized metric identifier (currently BACnet only — see plugins/types.ts's DeviceDataPoint.rawObjectName). Display-only. */
+	rawObjectName?: string;
 }
 
 // One event is now recorded per distinct metric per batch (not one per batch),
@@ -96,6 +100,7 @@ class ActivityMonitor {
 		normalizedName?: string;
 		provisionalPointId?: string;
 		rulesVersion?: string;
+		rawObjectName?: string;
 	}): void {
 		const key = `${params.subscriptionId ?? 'default'}:${params.destinationId}`;
 		const now = new Date().toISOString();
@@ -119,6 +124,7 @@ class ActivityMonitor {
 			normalizedName: params.normalizedName,
 			provisionalPointId: params.provisionalPointId,
 			rulesVersion: params.rulesVersion,
+			rawObjectName: params.rawObjectName,
 		});
 
 		const event: ActivityEvent = {
@@ -137,6 +143,7 @@ class ActivityMonitor {
 			normalizedName: params.normalizedName,
 			provisionalPointId: params.provisionalPointId,
 			rulesVersion: params.rulesVersion,
+			rawObjectName: params.rawObjectName,
 		};
 
 		const protocolKey = params.protocol.toLowerCase();

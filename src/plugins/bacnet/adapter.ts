@@ -381,6 +381,10 @@ export class BACnetAdapter extends BaseProtocolAdapter {
 					qualityCode: result.error,
 					protocol: 'bacnet',
 					...(resolvedDisplayName && { resolvedDisplayName }),
+					// object.name is sanitized (discovery.ts) for use as an identifier; object.objectName
+					// (when discovery captured one) is the true BACnet-reported name, e.g. "Zone-A-Lamp-Fault"
+					// — surfaced for accurate display only (Live View's "Protocol name"), see types.ts.
+					...(object.objectName && { rawObjectName: object.objectName }),
 				});
 			}
 

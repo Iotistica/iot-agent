@@ -32,6 +32,13 @@ export interface DeviceDataPoint {
 	protocol?: string; // Protocol context for enum namespacing (modbus, snmp, opcua, mqtt, bacnet)
 	nodeType?: "metric" | "metadata"; // Node classification (OPC UA only)
 	resolvedDisplayName?: string; // Human-readable name resolved from the protocol server (e.g. OPC-UA DisplayName, SNMP sysName, BACnet objectName, or metadata.displayName config override). Used by AdapterManager as the base of the final unique display name instead of the raw config name.
+	// The true, unsanitized protocol-level object/point name, when the adapter captured
+	// one separately from the sanitized identifier used as `metric` (currently BACnet
+	// only — see bacnet/discovery.ts's objectName preservation). Display-only: never an
+	// identifier/key, never used for MQTT topics or device-name resolution — deliberately
+	// distinct from resolvedDisplayName, which feeds AdapterManager.enrichWithEndpointUuid()'s
+	// device-name computation and must stay device-scoped, not point-scoped, for BACnet.
+	rawObjectName?: string;
 	anomaly_score?: number; // anomaly score (0.0 = normal, 1.0 = max anomaly)
 	anomaly_threshold?: number; // Confidence threshold used for alerting (e.g., 0.7)
 	baseline_samples?: number; // Number of samples in baseline buffer
