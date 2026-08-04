@@ -25,6 +25,7 @@ import { activityMonitor } from './activity-monitor.js';
 import { cleanDriftFieldName, prettifyDriftDeviceId, cleanProtocolPipeName, stripFieldDevicePrefix } from '../../db/models/drift-labels.js';
 import { buildCompactIssueCodes } from '../../quality/index.js';
 import type { DataQuality } from '../../quality/index.js';
+import type { PointIdentity } from '../../point-name/index.js';
 
 // Adaptive batch safety limits (calculated once at module load)
 const MAX_BATCH_MESSAGES = 10000;
@@ -77,6 +78,10 @@ interface TagPayload {
 	dqStatus?: string;
 	dqUnitConfidence?: number;
 	dqIssueCodes?: string[];
+	// Never named `pointId` — provisionalPointId is rename-sensitive, not durable
+	// identity (see src/point-name/types.ts's PointIdentity doc comment).
+	provisionalPointId?: string;
+	normalizedName?: string;
 }
 
 type MlDtype = 'bool' | 'int' | 'float' | 'string' | 'error';
@@ -102,6 +107,8 @@ interface MlFeaturePayload {
 	dqStatus?: string;
 	dqUnitConfidence?: number;
 	dqIssueCodes?: string[];
+	provisionalPointId?: string;
+	normalizedName?: string;
 }
 
 interface RuntimeSnapshot {
@@ -753,6 +760,20 @@ export class PublishManager extends EventEmitter {
 		};
 	}
 
+	/** Compact point-identity projection for tag/ml payloads — reads message.pointIdentity
+	 *  (see src/point-name/interceptor.ts) when present. Never carries rawName/sourceAddress/
+	 *  rulesVersion/provenance (including method/resolutionSource/persistenceState) — those
+	 *  stay 'custom'-format-only. Field is provisionalPointId, never pointId — see
+	 *  src/point-name/types.ts's PointIdentity doc comment on why. */
+	private readPointIdentity(message: ProtocolMessage): { provisionalPointId?: string; normalizedName?: string } {
+		const pointIdentity = message.pointIdentity as PointIdentity | undefined;
+		if (!pointIdentity) return {};
+		return {
+			...(pointIdentity.provisionalPointId && { provisionalPointId: pointIdentity.provisionalPointId }),
+			...(pointIdentity.normalizedName && { normalizedName: pointIdentity.normalizedName }),
+		};
+	}
+
 	private mapTagPayload(message: ProtocolMessage, index: number, payloadFormat: Exclude<PayloadFormat, 'custom'>, filterBadQuality = false): TagPayload | null {
 		const name = String(
 			message.metric
@@ -766,6 +787,7 @@ export class PublishManager extends EventEmitter {
 
 		const unitFields = this.readNormalizedUnit(message);
 		const qualityFields = this.readQualityFields(message);
+		const pointIdentityFields = this.readPointIdentity(message);
 
 		const quality = typeof message.quality === 'string' ? message.quality.toUpperCase() : undefined;
 		const hasError = message.error !== undefined
@@ -785,6 +807,7 @@ export class PublishManager extends EventEmitter {
 				error: message.error ?? message.errorCode ?? message.qualityCode ?? 'READ_ERROR',
 				...unitFields,
 				...qualityFields,
+				...pointIdentityFields,
 			};
 		}
 
@@ -800,10 +823,11 @@ export class PublishManager extends EventEmitter {
 				type: this.inferEcpType(value),
 				...unitFields,
 				...qualityFields,
+				...pointIdentityFields,
 			};
 		}
 
-		return { name, value, ...unitFields, ...qualityFields };
+		return { name, value, ...unitFields, ...qualityFields, ...pointIdentityFields };
 	}
 
 	private mapMlFeaturePayload(message: ProtocolMessage, index: number): MlFeaturePayload {
@@ -871,6 +895,7 @@ export class PublishManager extends EventEmitter {
 		if (typeof message.state_duration_seconds === 'number') feature.state_duration_seconds = message.state_duration_seconds;
 		Object.assign(feature, this.readNormalizedUnit(message));
 		Object.assign(feature, this.readQualityFields(message));
+		Object.assign(feature, this.readPointIdentity(message));
 	}
 
 	private inferMlDtype(value: unknown): MlDtype {
@@ -1404,6 +1429,12 @@ export class PublishManager extends EventEmitter {
 					// an operator nothing about which device a row in the Data Flow page came
 					// from. Falls back to the group name when a reading has no device field.
 					const sourceName = this.readExternalNodeCandidate(record) ?? endpointName;
+					// Reuses the same compact projection mapTagPayload()/attachMlEnrichment() already
+					// use for provisionalPointId/normalizedName. rulesVersion is read separately here
+					// (not via readPointIdentity()) because that helper's contract deliberately never
+					// carries rulesVersion into tag/ml payloads — see its doc comment above.
+					const pointIdentityFields = this.readPointIdentity(record);
+					const rulesVersion = (record?.pointIdentity as PointIdentity | undefined)?.rulesVersion;
 					activityMonitor.record({
 						subscriptionId: binding.subscription.id ?? null,
 						destinationId: binding.publisher.id,
@@ -1416,6 +1447,8 @@ export class PublishManager extends EventEmitter {
 						unit: typeof record?.unit === 'string' ? record.unit : undefined,
 						quality: typeof record?.quality === 'string' ? record.quality : undefined,
 						pointCount: records.length,
+						...pointIdentityFields,
+						...(rulesVersion && { rulesVersion }),
 					});
 				}
 			}

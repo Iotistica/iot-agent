@@ -33,6 +33,7 @@ import { migration as renameOpcuaAlarmsToProtocolAlarms } from './migrations/202
 import { migration as addDeviceIdToObservedMetrics } from './migrations/20260729000000_add_device_id_to_observed_metrics.js';
 import { migration as addUseForCommandsToPublishDestinations } from './migrations/20260802000000_add_use_for_commands_to_publish_destinations.js';
 import { migration as addUnitCatalog } from './migrations/20260803000000_add_unit_catalog.js';
+import { migration as addPointNameMappings } from './migrations/20260804000000_add_point_name_mappings.js';
 import type { NativeSqliteMigration } from './migration-types.js';
 
 export const nativeMigrations: NativeSqliteMigration[] = [
@@ -71,4 +72,5 @@ export const nativeMigrations: NativeSqliteMigration[] = [
 	addDeviceIdToObservedMetrics,
 	addUseForCommandsToPublishDestinations,
 	addUnitCatalog,
+	addPointNameMappings,
 ];

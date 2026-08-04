@@ -23,6 +23,10 @@ export interface SubscriptionActivity {
 	pointCount: number;
 	totalBatches: number;
 	lastPublishTime: string;
+	/** From Point Name Normalization (src/point-name/) — see PublishManager.readPointIdentity(). Additive/optional: absent for readings the interceptor skipped or predating this feature. */
+	normalizedName?: string;
+	provisionalPointId?: string;
+	rulesVersion?: string;
 }
 
 export interface ActivityEvent {
@@ -38,6 +42,10 @@ export interface ActivityEvent {
 	destinationId: number;
 	destinationName: string;
 	pointCount: number;
+	/** From Point Name Normalization (src/point-name/) — see PublishManager.readPointIdentity(). Additive/optional: absent for readings the interceptor skipped or predating this feature. */
+	normalizedName?: string;
+	provisionalPointId?: string;
+	rulesVersion?: string;
 }
 
 // One event is now recorded per distinct metric per batch (not one per batch),
@@ -85,6 +93,9 @@ class ActivityMonitor {
 		unit?: string;
 		quality?: string;
 		pointCount: number;
+		normalizedName?: string;
+		provisionalPointId?: string;
+		rulesVersion?: string;
 	}): void {
 		const key = `${params.subscriptionId ?? 'default'}:${params.destinationId}`;
 		const now = new Date().toISOString();
@@ -105,6 +116,9 @@ class ActivityMonitor {
 			pointCount: params.pointCount,
 			totalBatches: (existing?.totalBatches ?? 0) + 1,
 			lastPublishTime: now,
+			normalizedName: params.normalizedName,
+			provisionalPointId: params.provisionalPointId,
+			rulesVersion: params.rulesVersion,
 		});
 
 		const event: ActivityEvent = {
@@ -120,6 +134,9 @@ class ActivityMonitor {
 			destinationId: params.destinationId,
 			destinationName: params.destinationName,
 			pointCount: params.pointCount,
+			normalizedName: params.normalizedName,
+			provisionalPointId: params.provisionalPointId,
+			rulesVersion: params.rulesVersion,
 		};
 
 		const protocolKey = params.protocol.toLowerCase();

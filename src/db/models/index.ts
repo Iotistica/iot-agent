@@ -68,3 +68,7 @@ export type { DeviceStateHistoryRecord } from './device-state-history.model';
 // Unit Normalization Service catalog (canonical units + protocol aliases)
 export { UnitDefinitionsModel, UnitAliasesModel } from './unit-catalog.model';
 export type { UnitDefinitionRecord, UnitAliasRecord } from './unit-catalog.model';
+
+// Point Name Normalization identity cache (operational, runtime-written — not reference data)
+export { PointNameMappingsModel } from './point-name.model';
+export type { PointNameMappingRecord } from './point-name.model';

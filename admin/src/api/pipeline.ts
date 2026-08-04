@@ -15,6 +15,12 @@ export interface SubscriptionActivity {
   pointCount: number
   totalBatches: number
   lastPublishTime: string
+  // From Point Name Normalization — additive/optional, absent for readings the
+  // interceptor skipped or predating this feature. provisionalPointId/rulesVersion
+  // are carried for future developer tooling; DataFlowView.vue's standard UI only renders normalizedName.
+  normalizedName?: string
+  provisionalPointId?: string
+  rulesVersion?: string
 }
 
 export interface ActivityEvent {
@@ -30,6 +36,9 @@ export interface ActivityEvent {
   destinationId: number
   destinationName: string
   pointCount: number
+  normalizedName?: string
+  provisionalPointId?: string
+  rulesVersion?: string
 }
 
 export const pipelineApi = {

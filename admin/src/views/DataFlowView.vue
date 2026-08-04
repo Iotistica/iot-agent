@@ -50,7 +50,9 @@ const filteredEvents = computed(() => {
   const metricQ = eventMetricFilter.value.trim().toLowerCase()
   return events.value.filter((e) =>
     (!sourceQ || friendlySource(e.endpointName).toLowerCase().includes(sourceQ)) &&
-    (!metricQ || e.metric.toLowerCase().includes(metricQ)) &&
+    (!metricQ ||
+      e.metric.toLowerCase().includes(metricQ) ||
+      (e.normalizedName ?? '').toLowerCase().includes(metricQ)) &&
     (!eventProtocolFilter.value || e.protocol.toLowerCase() === eventProtocolFilter.value)
   )
 })
@@ -118,7 +120,14 @@ const subscriptionColumns: TableColumnType<SubscriptionActivity>[] = [
   { title: 'Protocol', key: 'protocol', width: 100 },
   { title: 'Source', key: 'source', width: 220, ellipsis: true },
   { title: 'Destination', key: 'destination', width: 180, ellipsis: true },
-  { title: 'Last Metric', dataIndex: 'lastMetric', key: 'lastMetric', width: 220, ellipsis: true },
+  {
+    title: 'Point',
+    dataIndex: 'lastMetric',
+    key: 'lastMetric',
+    width: 220,
+    sorter: (a: SubscriptionActivity, b: SubscriptionActivity) =>
+      (a.normalizedName ?? a.lastMetric).localeCompare(b.normalizedName ?? b.lastMetric),
+  },
   { title: 'Last Value', key: 'lastValue', width: 140, ellipsis: true },
   { title: 'Unit', key: 'lastUnit', width: 90, ellipsis: true },
   { title: 'Points', dataIndex: 'pointCount', key: 'pointCount', width: 80 },
@@ -129,7 +138,14 @@ const eventColumns: TableColumnType<ActivityEvent>[] = [
   { title: 'Time', key: 'time', width: 90 },
   { title: 'Protocol', key: 'protocol', width: 100 },
   { title: 'Source', key: 'source', width: 220, ellipsis: true },
-  { title: 'Metric', dataIndex: 'metric', key: 'metric', width: 220, ellipsis: true },
+  {
+    title: 'Point',
+    dataIndex: 'metric',
+    key: 'metric',
+    width: 220,
+    sorter: (a: ActivityEvent, b: ActivityEvent) =>
+      (a.normalizedName ?? a.metric).localeCompare(b.normalizedName ?? b.metric),
+  },
   { title: 'Value', key: 'value', width: 140, ellipsis: true },
   { title: 'Unit', key: 'unit', width: 90, ellipsis: true },
   { title: 'Destination', dataIndex: 'destinationName', key: 'destinationName', width: 160, ellipsis: true },
@@ -181,7 +197,25 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
             <a-tag style="margin-left: 4px">{{ record.destinationType }}</a-tag>
           </template>
           <template v-else-if="column.key === 'lastMetric'">
-            {{ metricLeaf(record.lastMetric, record.endpointName) }}
+            <div class="point-cell">
+              <template v-if="record.normalizedName">
+                <a-tooltip>
+                  <template #title>
+                    <div>Normalized point</div>
+                    <div>{{ record.normalizedName }}</div>
+                    <div style="margin-top: 6px">Protocol name</div>
+                    <div>{{ record.lastMetric }}</div>
+                  </template>
+                  <div class="point-primary" :title="record.normalizedName">{{ record.normalizedName }}</div>
+                </a-tooltip>
+                <div class="point-secondary" :title="record.lastMetric">
+                  Protocol name: {{ metricLeaf(record.lastMetric, record.endpointName) }}
+                </div>
+              </template>
+              <div v-else class="point-primary" :title="record.lastMetric">
+                {{ metricLeaf(record.lastMetric, record.endpointName) }}
+              </div>
+            </div>
           </template>
           <template v-else-if="column.key === 'lastValue'">
             <a-tag v-if="record.lastQuality === 'BAD' && isMissingValue(record.lastValue)" color="red">No Value</a-tag>
@@ -255,7 +289,25 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
             {{ friendlySource(record.endpointName) }}
           </template>
           <template v-else-if="column.key === 'metric'">
-            {{ metricLeaf(record.metric, record.endpointName) }}
+            <div class="point-cell">
+              <template v-if="record.normalizedName">
+                <a-tooltip>
+                  <template #title>
+                    <div>Normalized point</div>
+                    <div>{{ record.normalizedName }}</div>
+                    <div style="margin-top: 6px">Protocol name</div>
+                    <div>{{ record.metric }}</div>
+                  </template>
+                  <div class="point-primary" :title="record.normalizedName">{{ record.normalizedName }}</div>
+                </a-tooltip>
+                <div class="point-secondary" :title="record.metric">
+                  Protocol name: {{ metricLeaf(record.metric, record.endpointName) }}
+                </div>
+              </template>
+              <div v-else class="point-primary" :title="record.metric">
+                {{ metricLeaf(record.metric, record.endpointName) }}
+              </div>
+            </div>
           </template>
           <template v-else-if="column.key === 'value'">
             <a-tag v-if="record.quality === 'BAD' && isMissingValue(record.value)" color="red">No Value</a-tag>
@@ -278,3 +330,24 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
 
   </AppLayout>
 </template>
+
+<style scoped>
+.point-cell {
+  line-height: 1.3;
+}
+.point-primary {
+  font-size: 13px;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.point-secondary {
+  font-size: 11px;
+  color: #666;
+  margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+</style>

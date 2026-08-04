@@ -29,6 +29,7 @@ import { isStandaloneMode } from '../utils/env.js';
 import { composeInterceptors } from '../publish/core/interceptor-chain.js';
 import { createUnitNormalizationInterceptor } from '../normalization/index.js';
 import { createDataQualityInterceptor } from '../quality/index.js';
+import { createPointNameNormalizationInterceptor } from '../point-name/index.js';
 
 export interface FeatureContext {
   logger: AgentLogger;
@@ -739,6 +740,7 @@ export async function initFeatures(ctx: AgentInitContext): Promise<void> {
 		dictionaryManager: ctx.dictionaryManager,
 		pipelineService: ctx.pipelineService,
 		liveDataInterceptor: composeInterceptors(
+			createPointNameNormalizationInterceptor({ logger: agentLogger }),
 			createUnitNormalizationInterceptor({ logger: agentLogger }),
 			createDataQualityInterceptor({ logger: agentLogger }),
 		),
