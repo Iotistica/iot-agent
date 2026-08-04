@@ -826,6 +826,10 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 					...((this.resolvedNodeDisplayNames.has(dp.nodeId) || this.resolvedDeviceNames.has(owningDeviceName)) && {
 						resolvedDisplayName: this.resolvedNodeDisplayNames.get(dp.nodeId) ?? this.resolvedDeviceNames.get(owningDeviceName),
 					}),
+					// dp.name is truncated to the pre-underscore prefix for use as the metric tag
+					// (see discovery.ts); dp.browseName (when discovery captured one) is the true
+					// server-reported name — surfaced for accurate display only, see types.ts.
+					...(dp.browseName && { rawObjectName: dp.browseName }),
 				};
 
 				if (pendingDataPoints.length === 0) {
@@ -1806,6 +1810,7 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 					...((this.resolvedNodeDisplayNames.has(dp.nodeId) || this.resolvedDeviceNames.has(deviceName)) && {
 						resolvedDisplayName: this.resolvedNodeDisplayNames.get(dp.nodeId) ?? this.resolvedDeviceNames.get(deviceName),
 					}),
+					...(dp.browseName && { rawObjectName: dp.browseName }),
 				});
 				continue;
 			}
@@ -1836,6 +1841,7 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 				...((this.resolvedNodeDisplayNames.has(dp.nodeId) || this.resolvedDeviceNames.has(deviceName)) && {
 					resolvedDisplayName: this.resolvedNodeDisplayNames.get(dp.nodeId) ?? this.resolvedDeviceNames.get(deviceName),
 				}),
+				...(dp.browseName && { rawObjectName: dp.browseName }),
 			});
 
 			goodValueCount++;

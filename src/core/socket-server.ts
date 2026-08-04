@@ -817,6 +817,7 @@ export class SocketServer {
 			unit: point.unit,
 			quality: point.quality,
 			...(point.qualityCode && { qualityCode: point.qualityCode }),
+			...(point.rawObjectName && { rawObjectName: point.rawObjectName }),
 		}));
 
 		// Return array directly for single reading, or wrapped for batch

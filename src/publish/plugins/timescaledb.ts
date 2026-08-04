@@ -2,6 +2,7 @@ import { EventEmitter } from 'events';
 import { Pool } from 'pg';
 import type { IPublishPlugin, PublishBatchItem, Logger } from '../core/types.js';
 import { toDeviceUuid } from '../../db/models/device.model.js';
+import type { PointIdentity } from '../../point-name/index.js';
 
 interface TimescaleDbConfig {
 	host: string;
@@ -22,7 +23,9 @@ interface TagsPayload {
 	timestamp?: number;
 	node?: string;
 	group?: string;
-	tags?: Array<{ name: string; value: unknown; error?: unknown }>;
+	// normalizedName/provisionalPointId are already flat on each tag when the point-name
+	// interceptor ran — see PublishManager.readPointIdentity(), spread into mapTagPayload()'s output.
+	tags?: Array<{ name: string; value: unknown; error?: unknown; normalizedName?: string; provisionalPointId?: string }>;
 }
 
 interface CustomPayload {
@@ -295,12 +298,26 @@ export class TimescaleDbPublishPlugin extends EventEmitter implements IPublishPl
 	}
 
 	private buildExtra(msg: Record<string, unknown>): Record<string, unknown> {
+		// 'custom' payloads pass messages through verbatim (see PublishManager.buildPayload()),
+		// so pointIdentity/rawObjectName are already present here when the point-name
+		// interceptor ran — surfaced into `extra` additively. `metric_name` deliberately
+		// stays the raw sanitized identifier (unchanged) since it's part of the
+		// UNIQUE(agent_uuid, metric_name, time) constraint and existing dashboards/queries
+		// key off it — normalizing it in place would risk silent dedup collisions and
+		// break existing consumers.
+		const pointIdentity = msg.pointIdentity as PointIdentity | undefined;
+		const rawObjectName = typeof msg.rawObjectName === 'string' ? msg.rawObjectName : undefined;
+
 		return {
 			endpoint_uuid: pickUuid(msg.endpoint_uuid) ?? pickUuid(msg.endpointUuid) ?? null,
 			device_uuid: resolveDeviceUuid(msg),
 			device_name: typeof msg.deviceName === 'string' ? msg.deviceName
 				: (typeof msg.device_name === 'string' ? msg.device_name : null),
 			ingested_at: new Date().toISOString(),
+			...(pointIdentity?.normalizedName && { normalized_name: pointIdentity.normalizedName }),
+			...(pointIdentity?.provisionalPointId && { provisional_point_id: pointIdentity.provisionalPointId }),
+			...(pointIdentity?.rulesVersion && { rules_version: pointIdentity.rulesVersion }),
+			...(rawObjectName && { raw_object_name: rawObjectName }),
 		};
 	}
 
@@ -373,6 +390,8 @@ export class TimescaleDbPublishPlugin extends EventEmitter implements IPublishPl
 					device_name: payload.node ?? null,
 					group: payload.group ?? null,
 					ingested_at: new Date().toISOString(),
+					...(tag.normalizedName && { normalized_name: tag.normalizedName }),
+					...(tag.provisionalPointId && { provisional_point_id: tag.provisionalPointId }),
 				},
 			});
 		}
