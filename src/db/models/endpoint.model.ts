@@ -315,7 +315,7 @@ export class EndpointModel {
    * Get stale endpoints (not seen in X days)
    * NEVER auto-deletes - just marks for user review
    */
-	static async getStaleDevices(daysThreshold = 7): Promise<Endpoint[]> {
+	static async getStaleDevices(daysThreshold = 1): Promise<Endpoint[]> {
 		const cutoffDate = new Date();
 		cutoffDate.setDate(cutoffDate.getDate() - daysThreshold);
 
