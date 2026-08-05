@@ -63,14 +63,14 @@ function attachIdentity(reading: ProtocolMessage, endpointNameHint: string, cata
 	reading.metric ??
 	reading.name;
 
-if (
-	typeof rawNameCandidate !== 'string' ||
+	if (
+		typeof rawNameCandidate !== 'string' ||
 	rawNameCandidate.trim().length === 0
-) {
-	return;
-}
+	) {
+		return;
+	}
 
-const rawName = rawNameCandidate.trim();
+	const rawName = rawNameCandidate.trim();
 	if (typeof rawName !== 'string' || rawName.length === 0) return;
 
 	const sourceSystem = typeof reading.protocol === 'string' ? reading.protocol : undefined;
@@ -82,7 +82,7 @@ const rawName = rawNameCandidate.trim();
 	reading.rawDeviceName ??
 	reading.deviceName;
 
-const rawDeviceName =
+	const rawDeviceName =
 	typeof rawDeviceNameCandidate === 'string' &&
 	rawDeviceNameCandidate.trim().length > 0
 		? rawDeviceNameCandidate.trim()
@@ -90,27 +90,6 @@ const rawDeviceName =
 	// Never fabricated — only carried through if a reading already has it (no
 	// adapter attaches this in Phase 1, plan §1/§2).
 	const sourceAddress = typeof reading.sourceAddress === 'string' ? reading.sourceAddress : undefined;
-
-	console.log(
-	`PointName ${JSON.stringify({
-		protocol: sourceSystem,
-		rawName,
-		rawDeviceName,
-		deviceName: reading.deviceName,
-		resolvedDisplayName: reading.resolvedDisplayName,
-		deviceKey,
-		endpointNameHint,
-		sourceAddress,
-	})}`,
-);
-
-console.log('[PointName input]', {
-	protocol: sourceSystem,
-	normalizationName: reading.normalizationName,
-	metric: reading.metric,
-	rawName,
-	rawDeviceName,
-});
 
 	const identity: PointIdentity = catalog.resolve({
 		sourceSystem,

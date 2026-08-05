@@ -2200,7 +2200,7 @@ router.get('/v1/schema-drift/baselines', async (req: Request, res: Response, nex
 					rows.push({
 						protocol,
 						device,
-						field: prettifyDriftFieldName(stripFieldDevicePrefix(cleanDriftFieldName(field), deviceId)),
+						field: field,
 						status: 'baseline',
 						dominantType,
 						missingStreak: ds.missingStreakByField?.[field] ?? 0,
@@ -2215,7 +2215,7 @@ router.get('/v1/schema-drift/baselines', async (req: Request, res: Response, nex
 					rows.push({
 						protocol,
 						device,
-						field: prettifyDriftFieldName(stripFieldDevicePrefix(cleanDriftFieldName(field), deviceId)),
+						field: field,
 						status: 'pending',
 						stableBatches,
 						windowSize,

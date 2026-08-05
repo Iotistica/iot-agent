@@ -147,8 +147,8 @@ const PAGE_SIZE = 50
 
 const edgeEventColumns = [
   { title: 'Severity', key: 'severity', width: 100 },
-  { title: 'Metric', key: 'metric', ellipsis: true },
   { title: 'Device', key: 'device_name', width: 160, ellipsis: true },
+  { title: 'Point', key: 'metric', ellipsis: true },
   { title: 'Value', key: 'value', width: 90 },
   { title: 'Score', key: 'score', width: 80 },
   { title: 'Conf', key: 'conf', width: 75 },
@@ -634,7 +634,7 @@ const SCHEMA_DRIFT_PROMOTION_RATIO = 0.6
 const schemaDriftColumns = [
   { title: 'Protocol', dataIndex: 'protocol', key: 'protocol', width: 120, ellipsis: true },
   { title: 'Device', key: 'device', width: 200, ellipsis: true },
-  { title: 'Field', key: 'field', ellipsis: true },
+  { title: 'Point', key: 'field', ellipsis: true },
   { title: 'Status', key: 'status', width: 130 },
   { title: 'Type', key: 'dominantType', width: 90 },
   { title: 'Updated', key: 'updatedAt', width: 160 },
@@ -914,13 +914,9 @@ const metricAutocompleteOptions = computed(() => {
       // saved as the rule's metric name, and it must keep matching real
       // incoming data (see resolveDeviceAndLeaf's doc comment). device/leaf
       // are purely for how the dropdown ROW renders (see the #option
-      // template). Prefer the suggestion's OWN device name (s.deviceName) —
-      // the backend's authoritative per-suggestion identity — over the
-      // shared pointNameToDevice lookup, which can't disambiguate when
-      // multiple devices report the same bare field name (the exact bug
-      // this whole fix is for); only fall back to the lookup when the
-      // suggestion doesn't carry its own device name.
-      const { device, leaf } = resolveDeviceAndLeaf(friendly, s.deviceName)
+      // template), computed with the exact same shared resolver the Rules
+      // grid uses, so the two views agree on what a metric is called.
+      const { device, leaf } = resolveDeviceAndLeaf(friendly)
       return {
         value: friendly,
         label: s.endpointName ? `${friendly} · ${s.endpointName}` : friendly,
@@ -1258,7 +1254,7 @@ onUnmounted(() => {
               <a-tag :color="SEVERITY_TAG_COLOR[record.severity]" :class="record.severity === 'critical' ? 'severity-critical' : ''" style="font-size: 11px; margin: 0">{{ record.severity }}</a-tag>
             </template>
             <template v-else-if="column.key === 'metric'">
-              <span :title="record.metric">{{ metricLeaf(record.metric, record.device_name) }}</span>
+              <span :title="record.metric">{{ record.metric }}</span>
             </template>
             <template v-else-if="column.key === 'device_name'">
               <span style="font-size: 12px">{{ deviceNameFromMetric(record.metric, record.device_name) }}</span>
@@ -1505,7 +1501,7 @@ onUnmounted(() => {
               <span style="font-size: 12px">{{ record.device ?? '—' }}</span>
             </template>
             <template v-else-if="column.key === 'field'">
-              <span :title="record.field" style="font-size: 12px">{{ record.field }}</span>
+              <span :title="record.field" style="font-size: 12px">{{ record.field.replace(DRIFT_FIELD_PREFIX_RE, '') }}</span>
             </template>
             <template v-else-if="column.key === 'status'">
               <a-tag v-if="record.status === 'baseline'" color="green" style="font-size: 10px">Baseline</a-tag>

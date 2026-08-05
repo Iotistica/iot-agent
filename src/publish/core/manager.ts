@@ -609,7 +609,10 @@ export class PublishManager extends EventEmitter {
 				}
 			}
 
-			this.driftAccumulator.push(...messages);
+			const driftMessages =this.projectMessagesForSchemaDrift(messages);
+
+			this.driftAccumulator.push(...driftMessages);
+
 			if (this.driftAccumulator.length > DRIFT_ACCUMULATOR_MAX_MESSAGES) {
 				this.driftAccumulator = this.driftAccumulator.slice(-DRIFT_ACCUMULATOR_MAX_MESSAGES);
 			}
@@ -782,15 +785,7 @@ export class PublishManager extends EventEmitter {
 	}
 
 	private mapTagPayload(message: ProtocolMessage, index: number, payloadFormat: Exclude<PayloadFormat, 'custom'>, filterBadQuality = false): TagPayload | null {
-		const rawName = String(
-			message.metric
-			?? message.metric_name
-			?? message.nodeName
-			?? message.name
-			?? message.tag
-			?? message.id
-			?? `tag_${index}`,
-		);
+		const rawName = this.readRawPointName(message, index);
 		const pointIdentity = message.pointIdentity as PointIdentity | undefined;
 		// Standardized primary identifier (see timescaledb.ts): normalized point name
 		// when available, falling back to the raw protocol identifier otherwise. Never
@@ -845,15 +840,7 @@ export class PublishManager extends EventEmitter {
 	}
 
 	private mapMlFeaturePayload(message: ProtocolMessage, index: number): MlFeaturePayload {
-		const rawName = String(
-			message.metric
-			?? message.metric_name
-			?? message.nodeName
-			?? message.name
-			?? message.tag
-			?? message.id
-			?? `tag_${index}`,
-		);
+		const rawName = this.readRawPointName(message, index);
 		const pointIdentity = message.pointIdentity as PointIdentity | undefined;
 		const name = pointIdentity?.normalizedName ?? rawName;
 
@@ -899,6 +886,20 @@ export class PublishManager extends EventEmitter {
 		};
 		this.attachMlEnrichment(feature, message);
 		return feature;
+	}
+
+	private readRawPointName(message: ProtocolMessage, index: number): string {
+		return String(
+			message.rawPointName
+		?? message.rawObjectName
+		?? message.metric
+		?? message.metric_name
+		?? message.nodeName
+		?? message.name
+		?? message.tag
+		?? message.id
+		?? `tag_${index}`
+		);
 	}
 
 	private attachMlEnrichment(feature: MlFeaturePayload, message: ProtocolMessage): void {
@@ -1462,18 +1463,6 @@ export class PublishManager extends EventEmitter {
 
 					const rawPointName =typeof record?.rawPointName === 'string'? record.rawPointName: undefined;
 
-					if (this.protocol === 'bacnet') {
-		
-					this.logger?.info('BACnet names before ActivityMonitor', {
-						metric,
-						rawObjectName,
-						rawPointName,
-						deviceName: record?.deviceName,
-						sourceName,
-					});
-
-    }
-
 					activityMonitor.record({
 						subscriptionId: binding.subscription.id ?? null,
 						destinationId: binding.publisher.id,
@@ -1658,5 +1647,53 @@ export class PublishManager extends EventEmitter {
 			.filter((topic) => topic.length > 0);
 
 		return normalized.length > 0 ? normalized : ['*'];
+	}
+
+	private projectReadingForSchemaDrift(
+		reading: ProtocolMessage,
+	): ProtocolMessage {
+		const pointIdentity =
+		reading.pointIdentity as PointIdentity | undefined;
+
+		const normalizedName =
+		typeof pointIdentity?.normalizedName === 'string' &&
+		pointIdentity.normalizedName.trim().length > 0
+			? pointIdentity.normalizedName.trim()
+			: undefined;
+
+		const rawMetric =
+		typeof reading.metric === 'string'
+			? reading.metric
+			: typeof reading.name === 'string'
+				? reading.name
+				: undefined;
+
+		return {
+			...reading,
+
+			// Preserve source evidence for diagnostics and future drift reporting.
+			...(rawMetric && { rawMetric }),
+
+			// SchemaDriftDetector continues using its existing `metric` extractor,
+			// but now receives the canonical point name.
+			...(normalizedName && { metric: normalizedName }),
+		};
+	}
+
+	private projectMessagesForSchemaDrift(
+		messages: ProtocolMessage[],
+	): ProtocolMessage[] {
+		return messages.map((message) => {
+			if (Array.isArray(message.readings)) {
+				return {
+					...message,
+					readings: message.readings.map((reading) =>
+						this.projectReadingForSchemaDrift(reading),
+					),
+				};
+			}
+
+			return this.projectReadingForSchemaDrift(message);
+		});
 	}
 }

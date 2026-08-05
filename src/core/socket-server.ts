@@ -821,9 +821,9 @@ export class SocketServer {
 			quality: point.quality,
 			...(point.qualityCode && { qualityCode: point.qualityCode }),
 			...(point.rawObjectName && { rawObjectName: point.rawObjectName }),
-            ...(point.rawPointName && { rawPointName: point.rawPointName }),
+			...(point.rawPointName && { rawPointName: point.rawPointName }),
 			...(point.normalizationName && {
-			normalizationName: point.normalizationName,
+				normalizationName: point.normalizationName,
 			}),
 			...(point.normalizationDeviceName && {
 				normalizationDeviceName: point.normalizationDeviceName,
