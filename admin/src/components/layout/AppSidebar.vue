@@ -140,7 +140,7 @@ function onMenuClick({ key }: { key: string }) {
 
         <a-menu-item key="/mqtt-broker">
           <template #icon><WifiOutlined /></template>
-          MQTT Monitor
+          MQTT
           <a-tag v-if="!proInstalled" class="pro-badge">PRO</a-tag>
         </a-menu-item>
 

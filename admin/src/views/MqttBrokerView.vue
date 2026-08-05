@@ -96,7 +96,7 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
 </script>
 
 <template>
-  <AppLayout title="MQTT Monitor">
+  <AppLayout title="MQTT">
 
     <!-- Pro gate -->
     <a-alert v-if="!proInstalled" type="info" show-icon style="margin-bottom: 16px">

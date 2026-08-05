@@ -829,7 +829,7 @@ function setMemory<K extends keyof NonNullable<NonNullable<AgentSettings['runtim
         </a-tab-pane>
 
         <!-- ══ MQTT MONITOR ═══════════════════════════════════════════════════ -->
-        <a-tab-pane key="mqtt-monitor" tab="MQTT Monitor">
+        <a-tab-pane key="mqtt-monitor" tab="MQTT">
           <p style="margin: 0 0 16px; font-size: 13px; color: #888">
             Connection settings for the local MQTT broker the agent monitors.
             Changes take effect immediately — the monitor reconnects without a restart.
