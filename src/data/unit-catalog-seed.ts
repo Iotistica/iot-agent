@@ -67,6 +67,18 @@ export const UNIT_DEFINITIONS: SeedUnitDefinition[] = [
 	{ canonical_unit: 'kilowatts', quantity: 'power', symbol: 'kW', description: 'Kilowatts', base_unit: 'watts', multiplier: 1000, offset: 0 },
 	{ canonical_unit: 'megawatts', quantity: 'power', symbol: 'MW', description: 'Megawatts', base_unit: 'watts', multiplier: 1000000, offset: 0 },
 
+	// ── Apparent / Reactive Power (distinct quantities from real power —
+	// not convertible to watts by a simple multiplier, that requires power
+	// factor, so each gets its own base unit rather than folding into "power") ──
+	{ canonical_unit: 'kilovoltAmperes', quantity: 'apparentPower', symbol: 'kVA', description: 'Kilovolt-amperes (apparent power)', base_unit: 'kilovoltAmperes', multiplier: 1, offset: 0 },
+	{ canonical_unit: 'kilovoltAmperesReactive', quantity: 'reactivePower', symbol: 'kVAr', description: 'Kilovolt-amperes reactive (reactive power)', base_unit: 'kilovoltAmperesReactive', multiplier: 1, offset: 0 },
+
+	// ── Reactive Energy (base: kilovoltAmpereHoursReactive — the kVArh accumulation of reactive power) ──
+	{ canonical_unit: 'kilovoltAmpereHoursReactive', quantity: 'reactiveEnergy', symbol: 'kVArh', description: 'Kilovolt-ampere-hours reactive (reactive energy)', base_unit: 'kilovoltAmpereHoursReactive', multiplier: 1, offset: 0 },
+
+	// ── Power Factor (dimensionless ratio, its own quantity — not percent) ──
+	{ canonical_unit: 'powerFactor', quantity: 'powerFactor', symbol: 'PF', description: 'Power factor', base_unit: 'powerFactor', multiplier: 1, offset: 0 },
+
 	// ── Energy (base: wattHours) ─────────────────────────────────────────────
 	{ canonical_unit: 'wattHours', quantity: 'energy', symbol: 'Wh', description: 'Watt-hours', base_unit: 'wattHours', multiplier: 1, offset: 0 },
 	{ canonical_unit: 'kilowattHours', quantity: 'energy', symbol: 'kWh', description: 'Kilowatt-hours', base_unit: 'wattHours', multiplier: 1000, offset: 0 },
@@ -160,6 +172,10 @@ export const UNIT_ALIASES: SeedUnitAlias[] = [
 	{ source_system: null, alias: 'Wh', canonical_unit: 'wattHours' },
 	{ source_system: null, alias: 'kWh', canonical_unit: 'kilowattHours' },
 	{ source_system: null, alias: 'kwh', canonical_unit: 'kilowattHours' },
+	{ source_system: null, alias: 'kVA', canonical_unit: 'kilovoltAmperes' },
+	{ source_system: null, alias: 'kVAr', canonical_unit: 'kilovoltAmperesReactive' },
+	{ source_system: null, alias: 'kVArh', canonical_unit: 'kilovoltAmpereHoursReactive' },
+	{ source_system: null, alias: 'PF', canonical_unit: 'powerFactor' },
 
 	{ source_system: null, alias: 'Hz', canonical_unit: 'hertz' },
 	{ source_system: null, alias: 'hertz', canonical_unit: 'hertz' },
@@ -252,6 +268,12 @@ export const UNIT_ALIASES: SeedUnitAlias[] = [
 
 	// ── Modbus (source: user's own spec example — modbus -> "C" -> degreesCelsius) ──
 	{ source_system: 'modbus', alias: 'C', canonical_unit: 'degreesCelsius' },
+	// Single-letter electrical symbols MUST stay scoped here (decision #10) —
+	// same pattern already used for bacnet/mqtt/opcua above. A real PM556x
+	// power-meter profile reports these; they were resolving as unknown for
+	// every Modbus device until this entry.
+	{ source_system: 'modbus', alias: 'V', canonical_unit: 'volts' },
+	{ source_system: 'modbus', alias: 'A', canonical_unit: 'amperes' },
 
 	// ── OPC-UA (source: the server's own standard EngineeringUnits property,
 	// read via readEngineeringUnits() in src/plugins/opcua/adapter.ts and

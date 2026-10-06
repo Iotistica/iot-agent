@@ -635,11 +635,18 @@ watch(schemaDriftQuery, () => {
 })
 
 // Matches SchemaDriftDetector's DEFAULT_OPTIONS.adaptivePromotionBatches/
-// adaptivePromotionRatio — not currently exposed as per-protocol settings, so
-// these are the real thresholds for every source today. Promotion requires
-// BOTH: stableBatches >= BATCHES and presenceRatio >= RATIO.
+// adaptivePromotionMinElapsedMs — the real thresholds for every source
+// unless overridden in the Configuration tab below (not per-protocol).
+// Promotion requires BOTH: stableBatches >= BATCHES and elapsed time since
+// first seen >= MIN_ELAPSED_MS.
 const SCHEMA_DRIFT_PROMOTION_BATCHES = 50
-const SCHEMA_DRIFT_PROMOTION_RATIO = 0.6
+const SCHEMA_DRIFT_PROMOTION_MIN_ELAPSED_MS = 10 * 60 * 1000
+
+function formatElapsed(ms: number): string {
+  if (ms < 60000) return `${Math.round(ms / 1000)}s`
+  if (ms < 3600000) return `${Math.round(ms / 60000)}m`
+  return `${Math.round(ms / 3600000)}h`
+}
 
 const schemaDriftColumns = [
   { title: 'Protocol', dataIndex: 'protocol', key: 'protocol', width: 120, ellipsis: true },
@@ -1055,7 +1062,17 @@ interface DriftOptions {
   // explicit request: every tunable the detector accepts should be user-
   // editable, not just the 7 that happened to get a field first.
   adaptivePromotionBatches?: number
+  /** @deprecated No longer consulted by the detector — see adaptivePromotionMinElapsedMs. */
   adaptivePromotionRatio?: number
+  // Wall-clock replacements for the batch-count-based promotion/retire
+  // criteria above — a device's own observation rate (e.g. an OPC-UA
+  // subscription firing per-node change) can run thousands of batches/min
+  // independent of how often any one field reports, which made the old
+  // ratio/batch-count checks miscalibrated for that kind of source. See
+  // adaptivePromotionMinElapsedMs/adaptiveRetireMs in iot-agent-pro's
+  // DriftDetectorOptions.
+  adaptivePromotionMinElapsedMs?: number
+  adaptiveRetireMs?: number
   minTypeDominanceRatio?: number
   maxTrackedFields?: number
   maxTrackedDevices?: number
@@ -1568,10 +1585,10 @@ onUnmounted(() => {
               <a-tag v-if="record.status === 'baseline'" color="green" style="font-size: 10px">Baseline</a-tag>
               <a-tooltip
                 v-else
-                :title="`Seen ${record.stableBatches} of ${record.windowSize ?? '?'} batches since first appearing (${record.presenceRatio != null ? Math.round(record.presenceRatio * 100) : '?'}% presence). Promotes once occurrence count reaches ${SCHEMA_DRIFT_PROMOTION_BATCHES} AND presence reaches ${Math.round(SCHEMA_DRIFT_PROMOTION_RATIO * 100)}% — a field that's only present some of the time (e.g. an intermittent fault/alarm point) can stay pending indefinitely even past ${SCHEMA_DRIFT_PROMOTION_BATCHES} occurrences.`"
+                :title="`Seen ${record.stableBatches} time(s), first appeared ${record.elapsedMs != null ? formatElapsed(record.elapsedMs) : '?'} ago. Promotes once occurrence count reaches ${SCHEMA_DRIFT_PROMOTION_BATCHES} AND elapsed time reaches ${formatElapsed(SCHEMA_DRIFT_PROMOTION_MIN_ELAPSED_MS)} — a field that appeared once in a burst and hasn't been seen since can stay pending indefinitely even past ${SCHEMA_DRIFT_PROMOTION_BATCHES} occurrences, until it's evicted as stale.`"
               >
                 <a-tag color="blue" style="font-size: 10px">
-                  Pending {{ record.presenceRatio != null ? Math.round(record.presenceRatio * 100) + '%' : `${record.stableBatches}/${SCHEMA_DRIFT_PROMOTION_BATCHES}` }}
+                  Pending {{ record.elapsedMs != null ? formatElapsed(record.elapsedMs) : `${record.stableBatches}/${SCHEMA_DRIFT_PROMOTION_BATCHES}` }}
                 </a-tag>
               </a-tooltip>
             </template>
@@ -1992,13 +2009,25 @@ onUnmounted(() => {
                     </a-col>
                     <a-col :xs="24" :sm="12" :lg="8">
                       <SettingsField
-                        label="Retire threshold"
-                        tooltip="The number of consecutive times a baseline field can be missing before it's removed from the learned schema. This value is intentionally set much higher than the missing-field alert threshold, so a temporary issue—such as a bad reload or a short data gap—won't cause the system to forget a field it has already learned is normally present."
+                        label="Retire threshold (baseline fields)"
+                        tooltip="The number of consecutive times an already-learned baseline field can be missing before it's removed from the learned schema. This value is intentionally set much higher than the missing-field alert threshold, so a temporary issue—such as a bad reload or a short data gap—won't cause the system to forget a field it has already learned is normally present."
                       >
                         <a-input-number
                           :value="globalDrift.adaptiveRetireBatches ?? 250"
                           :min="1" :max="10000"
                           @change="(v: number) => setDrift('adaptiveRetireBatches', v)"
+                        />
+                      </SettingsField>
+                    </a-col>
+                    <a-col :xs="24" :sm="12" :lg="8">
+                      <SettingsField
+                        label="Retire time (new-field candidates)"
+                        tooltip="How long (ms) a not-yet-promoted candidate field can go unobserved before its progress toward promotion is discarded. Wall-clock time, not observation count — on a source that batches very frequently (e.g. an OPC-UA subscription), a count-based threshold could elapse in seconds even for a field that genuinely reports every few minutes, wiping its progress before it ever has a chance to promote. Default 24h."
+                      >
+                        <a-input-number
+                          :value="globalDrift.adaptiveRetireMs ?? 86400000"
+                          :min="60000" :step="3600000"
+                          @change="(v: number) => setDrift('adaptiveRetireMs', v)"
                         />
                       </SettingsField>
                     </a-col>
@@ -2014,7 +2043,7 @@ onUnmounted(() => {
                     <a-col :xs="24" :sm="12" :lg="8">
                       <SettingsField
                         label="Promotion batches"
-                        tooltip="How many times a field not in the original baseline must be observed before it's silently promoted into the baseline and stops being flagged as drift (e.g. a setpoint that only reports on change, not every cycle). Works together with Promotion ratio below."
+                        tooltip="How many times a field not in the original baseline must be observed before it's silently promoted into the baseline and stops being flagged as drift (e.g. a setpoint that only reports on change, not every cycle). Works together with Promotion min elapsed time below — both must be satisfied."
                       >
                         <a-input-number
                           :value="globalDrift.adaptivePromotionBatches ?? 50"
@@ -2025,13 +2054,13 @@ onUnmounted(() => {
                     </a-col>
                     <a-col :xs="24" :sm="12" :lg="8">
                       <SettingsField
-                        label="Promotion ratio"
-                        tooltip="The fraction of observations (since a field was first seen) it must be present in before it qualifies for promotion into the baseline. 0.6 means it must show up at least 60% of the time since it first appeared."
+                        label="Promotion min elapsed time"
+                        tooltip="How long (ms), at minimum, since a candidate field was first seen before it can be promoted into the baseline — alongside Promotion batches above, both must hold. Wall-clock time rather than a fraction of total observations: a field that only reports every few minutes on a fast-batching source (e.g. OPC-UA) can still promote once it's shown up enough times over enough real elapsed time, regardless of how many unrelated batches happened in between. Default 10 minutes."
                       >
                         <a-input-number
-                          :value="globalDrift.adaptivePromotionRatio ?? 0.6"
-                          :min="0" :max="1" :step="0.05" :precision="2"
-                          @change="(v: number) => setDrift('adaptivePromotionRatio', v)"
+                          :value="globalDrift.adaptivePromotionMinElapsedMs ?? 600000"
+                          :min="0" :step="60000"
+                          @change="(v: number) => setDrift('adaptivePromotionMinElapsedMs', v)"
                         />
                       </SettingsField>
                     </a-col>

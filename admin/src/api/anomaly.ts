@@ -37,8 +37,8 @@ export interface SchemaDriftBaselineRow {
   dominantType?: string
   missingStreak?: number
   stableBatches?: number
-  windowSize?: number
-  presenceRatio?: number
+  /** Wall-clock ms since this candidate was first seen — see adaptivePromotionMinElapsedMs. */
+  elapsedMs?: number
   updatedAt: string
 }
 

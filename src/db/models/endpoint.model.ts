@@ -201,8 +201,20 @@ export class EndpointModel {
 		}
     
 		if (existing) {
-			// Update existing device (preserve UUID)
-			return await this.updateByFingerprint(device.fingerprint || existing.fingerprint || '', device) as Endpoint;
+			// Update existing device (preserve UUID). Only key the update on
+			// fingerprint when both sides actually have one — a manually-added
+			// source (e.g. via the register-map editor, no discovery involved)
+			// has none, and falling back to an empty-string fingerprint would
+			// match zero rows (WHERE fingerprint = '' never matches a NULL
+			// column) and silently return null instead of the updated row.
+			// existing.uuid is always present, so it's the reliable fallback key.
+			if (device.fingerprint && existing.fingerprint) {
+				return await this.updateByFingerprint(device.fingerprint, device) as Endpoint;
+			}
+			if (existing.uuid) {
+				return await this.updateByUuid(existing.uuid, device) as Endpoint;
+			}
+			return await this.update(existing.name, device) as Endpoint;
 		} else {
 			// Create new device
 			return await this.create(device);

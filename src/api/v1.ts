@@ -9,6 +9,7 @@ import type { LogFilter } from '../logging/types.js';
 import { PassThrough } from 'stream';
 import * as actions from './actions';
 import { ModbusAdapter } from '../plugins/modbus/adapter.js';
+import { normalizeModbusRegisters } from '../plugins/modbus/types.js';
 import { getMemoryDiagnostics, getRestartPolicyStatus } from '../system/memory.js';
 import {
 	getCpuUsage,
@@ -1286,7 +1287,11 @@ const testConnectionLogger = { debug() {}, info() {}, warn() {}, error() {} };
  */
 router.post('/v1/endpoints/test', requireRole('operator'), async (req: Request, res: Response, next: NextFunction) => {
 	try {
-		const { protocol, connection: conn } = req.body as { protocol?: string; connection?: Record<string, any> };
+		const { protocol, connection: conn, registers: testRegisters } = req.body as {
+			protocol?: string;
+			connection?: Record<string, any>;
+			registers?: any[];
+		};
 		if (!protocol) return res.status(200).json({ ok: false, error: 'protocol is required' });
 		const connection = conn ?? {};
 
@@ -1297,14 +1302,37 @@ router.post('/v1/endpoints/test', requireRole('operator'), async (req: Request, 
 			if (connection.type !== 'rtu' && !host) return res.status(200).json({ ok: false, error: 'Host is required' });
 			if (connection.type === 'rtu' && !serialPort) return res.status(200).json({ ok: false, error: 'Serial port is required' });
 
-			// slaveId/registers aren't collected by the connection-test form —
-			// connect() only opens the transport and sets the client-side slave
-			// ID locally, it never validates either against the device.
-			const device: any = { name: 'connection-test', slaveId: 1, connection, registers: [], pollInterval: 5000, enabled: true };
+			// slaveId defaults to 1 for the plain connectivity test (no registers
+			// supplied); the register-map editor's "Test All" always passes the
+			// real slaveId along with its draft registers.
+			const slaveId = typeof connection.slaveId === 'number' ? connection.slaveId : 1;
+			const registers = normalizeModbusRegisters(Array.isArray(testRegisters) ? testRegisters : []);
+			const device: any = { name: 'connection-test', slaveId, connection, registers, pollInterval: 5000, enabled: true };
 			const client = new ModbusClient(device, testConnectionLogger as any);
 			try {
 				await withTimeout(client.connect(), (connection.timeout as number) || 5000);
-				return res.status(200).json({ ok: true, message: `Connected to ${host || serialPort}` });
+
+				if (registers.length === 0) {
+					return res.status(200).json({ ok: true, message: `Connected to ${host || serialPort}` });
+				}
+
+				// Register-level test: read every draft register in one batched
+				// pass (readAllRegisters() groups contiguous addresses itself) and
+				// report each one's live value or its own read error.
+				const dataPoints = await withTimeout(client.readAllRegisters(), (connection.timeout as number) || 5000);
+				const results = dataPoints.map((dp: any) => ({
+					name: dp.metric,
+					value: dp.value,
+					unit: dp.unit || undefined,
+					quality: dp.quality,
+					error: dp.quality !== 'GOOD' ? (dp.qualityCode ?? 'Read failed') : undefined,
+				}));
+				const allGood = results.every((r) => r.quality === 'GOOD');
+				return res.status(200).json({
+					ok: allGood,
+					message: allGood ? `Read ${results.length} register(s) successfully` : 'Some registers failed to read',
+					results,
+				});
 			} catch (err: any) {
 				return res.status(200).json({ ok: false, error: err?.message ?? 'Connection failed' });
 			} finally {
@@ -2291,8 +2319,7 @@ router.get('/v1/schema-drift/baselines', async (req: Request, res: Response, nex
 			dominantType?: string;
 			missingStreak?: number;
 			stableBatches?: number;
-			windowSize?: number;
-			presenceRatio?: number;
+			elapsedMs?: number;
 			updatedAt: string;
 		}> = [];
 
@@ -2343,8 +2370,14 @@ router.get('/v1/schema-drift/baselines', async (req: Request, res: Response, nex
 				}
 
 				for (const [field, stableBatches] of Object.entries(ds.newFieldCounts ?? {})) {
+					// newFieldFirstSeen is a wall-clock timestamp (ms since epoch),
+					// not a batch index — see SchemaDriftDetector's
+					// adaptivePromotionMinElapsedMs. elapsedMs is "how long this
+					// candidate has been tracked," shown alongside stableBatches
+					// ("how many times it's actually been observed") — promotion
+					// requires both to clear their respective thresholds.
 					const firstSeen = ds.newFieldFirstSeen?.[field];
-					const windowSize = firstSeen != null ? ds.totalBatches - firstSeen + 1 : undefined;
+					const elapsedMs = firstSeen != null ? Date.now() - firstSeen : undefined;
 
 					rows.push({
 						protocol,
@@ -2352,8 +2385,7 @@ router.get('/v1/schema-drift/baselines', async (req: Request, res: Response, nex
 						field: field,
 						status: 'pending',
 						stableBatches,
-						windowSize,
-						presenceRatio: windowSize ? stableBatches / windowSize : undefined,
+						elapsedMs,
 						updatedAt: state.updatedAt ?? '',
 					});
 				}

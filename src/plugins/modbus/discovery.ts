@@ -18,6 +18,20 @@ import { BaseDiscovery } from '../base';
 import { type DiscoveredDevice, type ValidationResult } from '../types';
 import type { ConfigManager } from '../../core/config.js';
 
+/**
+ * Cryptographic fingerprint for a Modbus slave's physical identity (bus +
+ * slave ID). Standalone so endpoint-creation paths outside discovery (e.g.
+ * the register-map editor's POST/PUT /v1/endpoints) can stamp the same
+ * fingerprint a later discovery run will compute — without it, discovery's
+ * existingByFingerprint match in src/discovery/db.ts always misses for a
+ * manually-added endpoint, and a rescan creates a duplicate instead of
+ * recognizing the existing one.
+ */
+export function generateModbusFingerprint(busId: string, slaveId: number, deviceIdValue?: string): string {
+	const identity = deviceIdValue ? `${busId}:${slaveId}:${deviceIdValue}` : `${busId}:${slaveId}`;
+	return createHash('sha256').update(`modbus:${identity}`).digest('hex').substring(0, 32);
+}
+
 export interface ModbusDiscoveryOptions {
   serialPort?: string; // e.g., '/dev/ttyUSB0' or 'COM3'
   tcpHost?: string;    // e.g., '192.168.1.100'
@@ -55,8 +69,7 @@ export class ModbusDiscovery extends BaseDiscovery {
 	}
 
 	generateFingerprint(busId: string, slaveId: number, deviceIdValue?: string): string {
-		const identity = deviceIdValue ? `${busId}:${slaveId}:${deviceIdValue}` : `${busId}:${slaveId}`;
-		return createHash('sha256').update(`modbus:${identity}`).digest('hex').substring(0, 32);
+		return generateModbusFingerprint(busId, slaveId, deviceIdValue);
 	}
 
 	/**

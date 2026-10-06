@@ -90,6 +90,20 @@ onMounted(() => { if (props.protocol === 'bacnet') loadVendors() })
       </a-select>
     </a-form-item>
 
+    <a-form-item
+      label="Slave ID"
+      :name="['connection', 'slaveId']"
+      :rules="[{ required: true, message: 'Slave ID is required' }]"
+    >
+      <a-input-number
+        :value="get('slaveId', 1)"
+        :min="0"
+        :max="247"
+        style="width: 100%"
+        @update:value="set('slaveId', $event)"
+      />
+    </a-form-item>
+
     <template v-if="get('type', 'tcp') === 'tcp'">
       <a-form-item
         label="Host"

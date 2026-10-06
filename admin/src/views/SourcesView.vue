@@ -86,12 +86,6 @@ function qualityMeta(ep: Endpoint): QualityMeta {
   return qualityMap[q ?? 'unknown']
 }
 
-function fmtResponseTime(ms: number | null | undefined): string {
-  if (ms == null) return ''
-  if (ms >= 1000) return `${(ms / 1000).toFixed(1)}s`
-  return `${Math.round(ms)}ms`
-}
-
 function timeSince(ts: string | number | null | undefined): string {
   if (!ts) return ''
   const ms = typeof ts === 'string' ? new Date(ts).getTime() : ts
@@ -443,9 +437,6 @@ onUnmounted(() => {
               <span class="status-label" :style="{ color: qualityMeta(record).color }">
                 {{ qualityMeta(record).label }}
               </span>
-              <span v-if="record.health?.responseTimeMs != null" class="status-rtt">
-                {{ fmtResponseTime(record.health.responseTimeMs) }}
-              </span>
             </div>
           </a-tooltip>
         </template>
@@ -546,12 +537,6 @@ onUnmounted(() => {
 .status-label {
   font-size: 13px;
   font-weight: 500;
-}
-
-.status-rtt {
-  font-size: 11px;
-  color: #888;
-  margin-left: 2px;
 }
 
 .last-seen-cell {

@@ -17,6 +17,7 @@ import { LogComponents } from '../logging/types';
 import type { HealthReport } from '../health/arbiter';
 import { MessageBufferModel } from '../db/models/buffer.model';
 import { PublishDestinationsModel, PublishSubscriptionsModel } from '../db/models/index.js';
+import { generateModbusFingerprint } from '../plugins/modbus/discovery.js';
 import { getDatabasePath } from '../db/db-path';
 import { getDatabase } from '../db/sqlite';
 import { CloudMqttClient } from '../mqtt/manager';
@@ -1107,6 +1108,33 @@ export const getEndpoints = async (protocol?: string) => {
 };
 
 /**
+ * For Modbus, stamp metadata.fingerprint from the connection's physical
+ * identity (host+port+slaveId, or serialPort+slaveId) — the same value
+ * src/discovery/db.ts's existingByFingerprint match expects. Without this,
+ * an endpoint created outside discovery (e.g. via the register-map editor)
+ * has no fingerprint, so a later discovery rescan of the same slave can't
+ * recognize it and creates a duplicate "<name>_slave_<N>" endpoint instead
+ * of updating the existing one. Deterministic from the connection, so it's
+ * safe to recompute (and overwrite any stale value) on every create/update.
+ */
+async function withModbusFingerprint(
+	protocol: string,
+	connection: Record<string, any>,
+	metadata: Record<string, any> | undefined,
+): Promise<Record<string, any> | undefined> {
+	if (protocol !== 'modbus') return metadata;
+
+	const slaveId = connection?.slaveId;
+	const busId = connection?.type === 'rtu'
+		? connection?.serialPort
+		: connection?.host ? `${connection.host}:${connection.port || 502}` : undefined;
+
+	if (slaveId === undefined || !busId) return metadata;
+
+	return { ...metadata, fingerprint: generateModbusFingerprint(busId, slaveId) };
+}
+
+/**
  * Add a new endpoint via target state (persists across cloud sync cycles)
  * Used by: POST /v1/endpoints
  */
@@ -1164,6 +1192,8 @@ export const addEndpoint = async (body: {
 		}
 	}
 
+	const resolvedMetadata = await withModbusFingerprint(body.protocol, resolvedConnection, body.metadata);
+
 	const newEndpoint = {
 		id: uuid,
 		uuid,
@@ -1174,7 +1204,7 @@ export const addEndpoint = async (body: {
 		pollInterval: body.poll_interval ?? 5000,
 		enabled: body.enabled !== false,
 		...(mqttAuth ? { auth: { mqtt: mqttAuth } } : {}),
-		...(body.metadata ? { metadata: body.metadata } : {}),
+		...(resolvedMetadata ? { metadata: resolvedMetadata } : {}),
 		dataPoints: resolvedDataPoints,
 	};
 
@@ -1188,7 +1218,7 @@ export const addEndpoint = async (body: {
 	// that syncs target state → DB runs asynchronously and would otherwise leave the
 	// table empty until the next reconciliation cycle.
 	const { EndpointModel } = await import('../db/models/endpoint.model.js');
-	await EndpointModel.upsert({
+	const savedEndpoint = await EndpointModel.upsert({
 		uuid,
 		fingerprint: body.fingerprint,
 		name: body.name,
@@ -1197,8 +1227,15 @@ export const addEndpoint = async (body: {
 		poll_interval: body.poll_interval ?? 5000,
 		enabled: body.enabled !== false,
 		data_points: resolvedDataPoints.length > 0 ? resolvedDataPoints : undefined,
-		metadata: body.metadata,
+		metadata: resolvedMetadata,
 	});
+
+	// Keep the devices table in step so this source's readings resolve to a
+	// friendly name (not a raw "<name>-<uuid8>" string) in the Live/Dashboard
+	// views immediately — normally only discovery does this (src/discovery/db.ts),
+	// which a manually-added source (e.g. via the register-map editor) never runs.
+	const { ProtocolDevicesModel } = await import('../db/models/index.js');
+	await ProtocolDevicesModel.syncFromEndpoint(savedEndpoint);
 
 	return {
 		uuid,
@@ -1257,6 +1294,17 @@ export const removeEndpoint = async (uuid: string) => {
 	// Remove directly from the endpoints table so GET /v1/endpoints reflects
 	// the deletion immediately, without waiting for the reconciliation cycle.
 	await EndpointModel.deleteByUuid(uuid);
+
+	// Tell the live protocol adapter to drop this device now. Reconciliation's
+	// own reload trigger only fires on a DETECTED DB diff (calculateSteps()),
+	// but the direct delete above already makes DB and target state agree —
+	// so reconcile() never sees a change to react to, and without this call
+	// the adapter instance (e.g. ModbusAdapter) keeps polling and publishing
+	// the removed device indefinitely, using its last-loaded in-memory device
+	// list, until something unrelated happens to trigger a reload.
+	await adapterManager?.reloadAdapterGroup(existing.protocol).catch((err) => {
+		logger?.warn(`Failed to reload ${existing.protocol} adapter after removing endpoint ${uuid}`, err as Error);
+	});
 };
 
 /**
@@ -1298,6 +1346,8 @@ export const replaceEndpoint = async (
 		}
 	}
 
+	const resolvedMetadata = await withModbusFingerprint(body.protocol, resolvedConnection, body.metadata);
+
 	const updatedEndpoint = {
 		id: uuid,
 		uuid,
@@ -1308,7 +1358,7 @@ export const replaceEndpoint = async (
 		pollInterval: body.poll_interval ?? existing.poll_interval,
 		enabled: body.enabled !== undefined ? body.enabled : existing.enabled,
 		...(mqttAuth ? { auth: { mqtt: mqttAuth } } : {}),
-		...(body.metadata ? { metadata: body.metadata } : {}),
+		...(resolvedMetadata ? { metadata: resolvedMetadata } : {}),
 		dataPoints: resolvedDataPoints,
 	};
 
@@ -1322,7 +1372,7 @@ export const replaceEndpoint = async (
 		}
 	});
 
-	await EndpointModel.upsert({
+	const savedEndpoint = await EndpointModel.upsert({
 		uuid,
 		fingerprint: body.fingerprint,
 		name: body.name,
@@ -1331,8 +1381,13 @@ export const replaceEndpoint = async (
 		poll_interval: body.poll_interval ?? existing.poll_interval,
 		enabled: body.enabled !== undefined ? body.enabled : existing.enabled,
 		data_points: resolvedDataPoints.length > 0 ? resolvedDataPoints : undefined,
-		metadata: body.metadata,
+		metadata: resolvedMetadata,
 	});
+
+	// See addEndpoint() — keeps the devices table (and friendly-name resolution
+	// in the Live/Dashboard views) in step with a register-map edit too.
+	const { ProtocolDevicesModel } = await import('../db/models/index.js');
+	await ProtocolDevicesModel.syncFromEndpoint(savedEndpoint);
 
 	return { uuid, name: body.name, protocol: body.protocol, enabled: updatedEndpoint.enabled };
 };

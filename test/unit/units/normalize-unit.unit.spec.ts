@@ -113,6 +113,26 @@ describe('normalizeUnitName', () => {
 		expect(normalizeUnitName('V').normalized).toBe(false);
 		expect(normalizeUnitName('A').normalized).toBe(false);
 	});
+
+	// Confirmed live against a real PM556x power-meter Modbus profile —
+	// same gap as opcua above, just for modbus (bacnet/mqtt/opcua already
+	// had these scoped; modbus only had 'C' until now).
+	it('resolves the newly-added modbus-scoped V/A electrical unit aliases', () => {
+		expect(normalizeUnitName('V', 'modbus').unit).toBe('volts');
+		expect(normalizeUnitName('A', 'modbus').unit).toBe('amperes');
+	});
+
+	it('resolves kVA/kVAr globally for any source system (multi-character, unambiguous — decision #10)', () => {
+		expect(normalizeUnitName('kVA').unit).toBe('kilovoltAmperes');
+		expect(normalizeUnitName('kVAr').unit).toBe('kilovoltAmperesReactive');
+		expect(normalizeUnitName('kVA', 'modbus').unit).toBe('kilovoltAmperes');
+		expect(normalizeUnitName('kVAr', 'modbus').unit).toBe('kilovoltAmperesReactive');
+	});
+
+	it('resolves kVArh (reactive energy) and PF (power factor) globally', () => {
+		expect(normalizeUnitName('kVArh').unit).toBe('kilovoltAmpereHoursReactive');
+		expect(normalizeUnitName('PF').unit).toBe('powerFactor');
+	});
 });
 
 describe('convertUnit', () => {

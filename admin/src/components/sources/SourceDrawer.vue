@@ -5,6 +5,7 @@ import type { FormInstance } from 'ant-design-vue'
 import type { Endpoint, EndpointCreateData } from '@/types'
 import { sourcesApi, type SourceTestResult } from '@/api/sources'
 import SourceConnectionFields from './SourceConnectionFields.vue'
+import ModbusRegisterMapEditor from './ModbusRegisterMapEditor.vue'
 
 const props = defineProps<{
   open: boolean
@@ -63,6 +64,7 @@ watch(
 
 function onProtocolChange() {
   form.value.connection = {}
+  form.value.data_points = undefined
   testResult.value = null
 }
 
@@ -112,7 +114,7 @@ function close() {
   <a-drawer
     :open="open"
     :title="editing ? `Edit — ${editing.name}` : 'New Source'"
-    width="480"
+    :width="form.protocol === 'modbus' ? 820 : 480"
     @close="close"
   >
     <a-form
@@ -172,6 +174,15 @@ function close() {
         show-icon
         style="margin-top: 4px"
       />
+
+      <template v-if="form.protocol === 'modbus'">
+        <a-divider orientation="left" orientation-margin="0">Register Map</a-divider>
+        <ModbusRegisterMapEditor
+          :model-value="form.data_points"
+          :connection="form.connection ?? {}"
+          @update:model-value="form.data_points = $event"
+        />
+      </template>
     </a-form>
 
     <template #footer>

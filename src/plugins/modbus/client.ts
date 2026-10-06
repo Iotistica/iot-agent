@@ -420,7 +420,8 @@ export class ModbusClient implements IProtocolClient<void, DeviceDataPoint[]> {
 							unit: register.unit || '',
 							timestamp: timestamp,
 							quality: 'GOOD',
-							protocol: 'modbus'
+							protocol: 'modbus',
+							...(register.label && { normalizationName: register.label, rawObjectName: register.label }),
 						});
 					} catch (error) {
 						dataPoints.push(this.createBadDataPoint(register, timestamp, error));
@@ -452,7 +453,8 @@ export class ModbusClient implements IProtocolClient<void, DeviceDataPoint[]> {
 								unit: result.register.unit || '',
 								timestamp: timestamp,
 								quality: 'GOOD',
-								protocol: 'modbus'
+								protocol: 'modbus',
+								...(result.register.label && { normalizationName: result.register.label, rawObjectName: result.register.label }),
 							});
 						}
 					} catch (error) {
@@ -769,7 +771,8 @@ export class ModbusClient implements IProtocolClient<void, DeviceDataPoint[]> {
 					unit: register.unit || '',
 					timestamp: timestamp,
 					quality: 'GOOD',
-					protocol: 'modbus'
+					protocol: 'modbus',
+					...(register.label && { normalizationName: register.label, rawObjectName: register.label }),
 				}];
 			} catch (error) {
 				return [this.createBadDataPoint(register, timestamp, error)];
@@ -792,7 +795,8 @@ export class ModbusClient implements IProtocolClient<void, DeviceDataPoint[]> {
 				unit: result.register.unit || '',
 				timestamp: timestamp,
 				quality: 'GOOD',
-				protocol: 'modbus'
+				protocol: 'modbus',
+				...(result.register.label && { normalizationName: result.register.label, rawObjectName: result.register.label }),
 			}));
 		} catch (_error) {
 			// Batch failed - split in half and recurse
@@ -924,7 +928,8 @@ export class ModbusClient implements IProtocolClient<void, DeviceDataPoint[]> {
 			timestamp: timestamp,
 			quality: 'BAD',
 			qualityCode: qualityCode,
-			protocol: 'modbus'
+			protocol: 'modbus',
+			...(register.label && { normalizationName: register.label, rawObjectName: register.label }),
 		};
 	}
   
@@ -1036,7 +1041,8 @@ export class ModbusClient implements IProtocolClient<void, DeviceDataPoint[]> {
 			timestamp: timestamp,
 			quality: 'BAD' as const,
 			qualityCode: qualityCode,
-			protocol: 'modbus'
+			protocol: 'modbus',
+			...(register.label && { normalizationName: register.label, rawObjectName: register.label }),
 		}));
 	}
 

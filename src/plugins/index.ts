@@ -5,7 +5,7 @@
 import { EventEmitter } from "events";
 import { type AgentLogger } from "../logging/agent-logger.js";
 import { ModbusAdapter } from "./modbus/adapter.js";
-import { type ModbusAdapterConfig } from "./modbus/types.js";
+import { type ModbusAdapterConfig, normalizeModbusRegisters } from "./modbus/types.js";
 import { MqttAdapter } from "./mqtt/adapter.js";
 import { type MqttAdapterConfig } from "./mqtt/types.js";
 import { SocketServer } from "../core/socket-server.js";
@@ -597,32 +597,7 @@ export class AdapterManager extends EventEmitter {
 								slaveId: d.connection.slaveId || 1,
 								connection: d.connection as any,
 								pollInterval: d.poll_interval,
-								registers: (d.data_points || []).map((dp: any) => {
-									let functionCode = dp.functionCode;
-									if (!functionCode && dp.type) {
-										const typeMap: Record<string, number> = {
-											coil: 1,
-											discrete: 2,
-											holding: 3,
-											input: 4,
-										};
-										functionCode = typeMap[dp.type.toLowerCase()];
-									}
-									return {
-										...dp,
-										functionCode,
-										dataType: dp.dataType || "float32",
-										count:
-											dp.count ||
-											(dp.dataType === "float32" ||
-											dp.dataType === "int32" ||
-											dp.dataType === "uint32"
-												? 2
-												: 1),
-										scale: dp.scale !== undefined ? dp.scale : 1,
-										offset: dp.offset !== undefined ? dp.offset : 0,
-									};
-								}),
+								registers: normalizeModbusRegisters(d.data_points || []),
 							}) as any,
 					),
 					logging: { level: "info", enableConsole: false, enableFile: false },
@@ -658,32 +633,7 @@ export class AdapterManager extends EventEmitter {
 							slaveId: d.connection.slaveId || 1,
 							connection: d.connection,
 							pollInterval: d.poll_interval,
-							registers: (d.data_points || []).map((dp: any) => {
-								let functionCode = dp.functionCode;
-								if (!functionCode && dp.type) {
-									const typeMap: Record<string, number> = {
-										coil: 1,
-										discrete: 2,
-										holding: 3,
-										input: 4,
-									};
-									functionCode = typeMap[dp.type.toLowerCase()];
-								}
-								return {
-									...dp,
-									functionCode,
-									dataType: dp.dataType || "float32",
-									count:
-										dp.count ||
-										(dp.dataType === "float32" ||
-										dp.dataType === "int32" ||
-										dp.dataType === "uint32"
-											? 2
-											: 1),
-									scale: dp.scale !== undefined ? dp.scale : 1,
-									offset: dp.offset !== undefined ? dp.offset : 0,
-								};
-							}),
+							registers: normalizeModbusRegisters(d.data_points || []),
 						}) as any,
 				),
 				logging: { level: "info", enableConsole: false, enableFile: false },

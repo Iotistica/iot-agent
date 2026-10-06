@@ -81,6 +81,13 @@ describe('unitNormalizationInterceptor', () => {
 		expect(result[0].unit).toBeUndefined();
 	});
 
+	it('treats "---" as "no unit" rather than an unrecognized unit (PM556x\'s own placeholder for status/logic registers)', () => {
+		const messages = [{ metric: 'x', value: 5, unit: '---' }];
+		const result = interceptor(messages, 'endpoint-1') as any[];
+		expect(result[0].unitValue).toBeUndefined();
+		expect(result[0].unit).toBe('---');
+	});
+
 	it('leaves .unit as the original string and quantity undefined for an unresolved unit', () => {
 		const messages = [{ metric: 'x', value: 5, unit: 'wibbles' }];
 		const result = interceptor(messages, 'endpoint-1') as any[];

@@ -304,10 +304,16 @@ export class ModbusAdapter extends BaseProtocolAdapter{
 			// Connect to device
 			await client.connect();
 
-			// Store config displayName if provided (Modbus has no server-side name discovery)
-			if (deviceConfig.displayName?.trim()) {
-				this.resolvedDeviceNames.set(deviceConfig.name, deviceConfig.displayName.trim());
-			}
+			// Store a clean display name for this device's readings — the config
+			// displayName when set (Modbus has no server-side name discovery to
+			// fall back on), otherwise the plain device name. Always set (not only
+			// when displayName is configured) so point-naming always has a clean
+			// name to key off; without this, readings fall through to deviceName,
+			// which by poll time has already been uuid-suffixed by the AdapterManager's
+			// enrichment step (src/plugins/index.ts resolveEnrichedDeviceName) —
+			// producing point names like "modbus_pm556x_2_e0b6e038_max_active_power_total"
+			// instead of "modbus_pm556x_2_max_active_power_total".
+			this.resolvedDeviceNames.set(deviceConfig.name, deviceConfig.displayName?.trim() || deviceConfig.name);
 
 			// Update device status
 			const status = this.deviceStatuses.get(deviceConfig.name)!;
@@ -560,6 +566,7 @@ export class ModbusAdapter extends BaseProtocolAdapter{
 				qualityCode: qualityCode,
 				protocol: 'modbus',
 				...(resolvedDisplayName && { resolvedDisplayName }),
+				...(register.label && { normalizationName: register.label, rawObjectName: register.label }),
 			}));
       
 			if (badDataPoints.length > 0) {

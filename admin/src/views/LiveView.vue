@@ -30,8 +30,14 @@ async function ensureDeviceMap() {
     const { data } = await client.get<{ devices: DeviceRecord[] }>('/v1/devices')
     const map = new Map<string, string>()
     for (const d of data.devices) {
+      // The server builds the pipeline's compound identity from the friendly
+      // name (objectName when set, e.g. BACnet — not the raw internal device
+      // name), so the lookup key has to match that, not d.name.
       const friendly = (d.metadata?.objectName as string | undefined) || d.name
-      map.set(`${d.name}-${d.uuid.slice(0, 8)}`, friendly)
+      map.set(`${friendly}-${d.uuid.slice(0, 8)}`, friendly)
+      // The uuid suffix is sometimes omitted server-side when it would be
+      // redundant with the name — cover that shape too.
+      map.set(friendly, friendly)
     }
     deviceDisplayNameByKey.value = map
   } catch { /* non-fatal — falls back to raw source strings */ }

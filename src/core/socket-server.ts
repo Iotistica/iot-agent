@@ -57,6 +57,23 @@ export class SocketServer {
 	// returned false (kernel buffer full) — value is the pending removal
 	// timeout, cleared if 'drain' fires in time. See sendToSocket().
 	private drainWaiters: Map<net.Socket, NodeJS.Timeout> = new Map();
+	// Retained "device-schema" control messages (topic -> deviceName ->
+	// latest payload), replayed to a client as soon as its subscription
+	// handshake completes — see sendControl() and the handshake handler.
+	// Startup race: an adapter can emit 'device-connected' (which turns into
+	// a device-schema sendControl() call) before PublishManager's own IPC
+	// client has finished subscribing, especially for OPC-UA where one
+	// 'device-connected' event fans out into many per-logical-device
+	// sendControl() calls in a tight loop. Before this, that declaration was
+	// simply dropped (see the sendControl early-return below) and schema
+	// drift never learned that device's fields on a cold start — fields
+	// would individually cross consecutiveMissingThreshold later and fire as
+	// false "missing-field" critical incidents. Keyed by deviceName (not
+	// just topic) so each device's latest declaration replaces any earlier
+	// one — declareDeviceSchema() is idempotent/safe to re-call, so
+	// replaying the same retained message to more than one subscriber, or
+	// more than once, is harmless.
+	private retainedDeviceSchema: Map<string, Map<string, Record<string, unknown>>> = new Map();
 	private config: SocketOutput;
 	private logger: Logger;
 	private started = false;
@@ -266,6 +283,15 @@ export class SocketServer {
 	 * every control message, same as the subscription handshake itself.
 	 */
 	sendControl(payload: Record<string, unknown>, topic: string = "generic"): void {
+		if (payload.__control === "device-schema" && typeof payload.deviceName === "string") {
+			let byDevice = this.retainedDeviceSchema.get(topic);
+			if (!byDevice) {
+				byDevice = new Map();
+				this.retainedDeviceSchema.set(topic, byDevice);
+			}
+			byDevice.set(payload.deviceName, payload);
+		}
+
 		if (!this.started || this.subscriptions.size === 0) {
 			// TEMPORARY diagnostic — see issue #17 follow-up investigation.
 			this.logger.debug(`[SCHEMA_DECLARE_DIAG] sendControl dropped: started=${this.started} subscriptions=${this.subscriptions.size} topic=${topic}`);
@@ -385,6 +411,40 @@ export class SocketServer {
 		}
 
 		return false;
+	}
+
+	/**
+	 * Send every retained device-schema declaration relevant to a socket's
+	 * just-completed subscription — see retainedDeviceSchema's doc comment.
+	 * Called once, right after a handshake completes.
+	 */
+	private replayRetainedDeviceSchema(
+		socket: net.Socket,
+		subscription: ClientSubscription,
+	): void {
+		if (this.retainedDeviceSchema.size === 0) {
+			return;
+		}
+
+		// Empty topics set = wildcard subscriber (subscribed to everything,
+		// see the handshake handler above) — replay every retained topic;
+		// otherwise only the topics this client actually asked for.
+		const topics =
+			subscription.topics.size > 0
+				? subscription.topics
+				: this.retainedDeviceSchema.keys();
+
+		const sentTo = new Set<net.Socket>();
+		for (const topic of topics) {
+			const byDevice = this.retainedDeviceSchema.get(topic);
+			if (!byDevice) {
+				continue;
+			}
+			for (const payload of byDevice.values()) {
+				const data = JSON.stringify(payload) + this.config.delimiter;
+				this.sendToSocket(socket, data, topic, sentTo);
+			}
+		}
 	}
 
 	/**
@@ -516,6 +576,12 @@ export class SocketServer {
 							this.pendingSubscriptions.delete(socket);
 							this.subscriptions.set(socket, subscription);
 						}
+
+						// Replay any device-schema declarations an adapter already sent
+						// before this client finished its handshake (see
+						// retainedDeviceSchema's doc comment) — without this, a client
+						// that subscribes even a few ms late silently misses them.
+						this.replayRetainedDeviceSchema(socket, subscription);
 
 						// Confirm effective subscription/routing back to client
 						try {

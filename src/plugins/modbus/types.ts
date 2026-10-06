@@ -85,6 +85,11 @@ export const ModbusRegisterSchema = z.object({
 	unit: z.string().optional().default(''), // Unit of measurement
 	encoding: z.enum(['ascii', 'utf8', 'utf-8', 'latin1', 'binary']).optional().default('ascii'), // For STRING type
 	description: z.string().optional().default(''),
+	/** Human-readable display label (e.g. "Active Energy Delivered Total") from
+	 * the vendor register map, distinct from `name` (the stable snake_case
+	 * metric key). Used as the point-naming pipeline's raw name when present —
+	 * see normalizationName on DeviceDataPoint in src/plugins/types.ts. */
+	label: z.string().optional(),
 
 	/**
 	 * Explicit allowlist flag for the MQTT command-write path (see src/commands/).
@@ -147,6 +152,39 @@ export const ModbusDeviceSchema = z.object({
 });
 
 export type ModbusDevice = z.infer<typeof ModbusDeviceSchema>;
+
+/**
+ * Derive a register's functionCode/count/scale/offset from the lighter shape
+ * stored in an endpoint's data_points (`{name, address, type, dataType, unit}`)
+ * so neither the DB nor the admin UI has to carry the redundant fields.
+ * Used both at adapter-start time and by the connection-test route's
+ * register-map preview, which must behave identically to a saved device.
+ */
+export function normalizeModbusRegisters(dataPoints: any[]): any[] {
+	const typeMap: Record<string, number> = {
+		coil: ModbusFunctionCode.READ_COILS,
+		discrete: ModbusFunctionCode.READ_DISCRETE_INPUTS,
+		holding: ModbusFunctionCode.READ_HOLDING_REGISTERS,
+		input: ModbusFunctionCode.READ_INPUT_REGISTERS,
+	};
+
+	return (dataPoints || []).map((dp: any) => {
+		let functionCode = dp.functionCode;
+		if (!functionCode && dp.type) {
+			functionCode = typeMap[dp.type.toLowerCase()];
+		}
+		return {
+			...dp,
+			functionCode,
+			dataType: dp.dataType || 'float32',
+			count:
+				dp.count ||
+				(dp.dataType === 'float32' || dp.dataType === 'int32' || dp.dataType === 'uint32' ? 2 : 1),
+			scale: dp.scale !== undefined ? dp.scale : 1,
+			offset: dp.offset !== undefined ? dp.offset : 0,
+		};
+	});
+}
 
 /**
  * Modbus Adapter Configuration Schema

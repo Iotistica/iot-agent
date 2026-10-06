@@ -3,10 +3,19 @@ import type { Endpoint, EndpointCreateData, EndpointUpdateData } from '@/types'
 
 const BASE = '/v1/endpoints'
 
+export interface SourceTestRegisterResult {
+  name: string
+  value: unknown
+  unit?: string
+  quality: string
+  error?: string
+}
+
 export interface SourceTestResult {
   ok: boolean
   message?: string
   error?: string
+  results?: SourceTestRegisterResult[]
 }
 
 export const sourcesApi = {
@@ -16,7 +25,7 @@ export const sourcesApi = {
       .then((r) => r.data.endpoints)
   },
 
-  test(data: { protocol: string; connection: Record<string, unknown> }): Promise<SourceTestResult> {
+  test(data: { protocol: string; connection: Record<string, unknown>; registers?: unknown[] }): Promise<SourceTestResult> {
     return client.post<SourceTestResult>(`${BASE}/test`, data).then((r) => r.data)
   },
 

@@ -46,10 +46,19 @@ export function createUnitNormalizationInterceptor(opts: { logger?: Logger; enab
 	return unitNormalizationInterceptor;
 }
 
+// Raw unit strings that mean "this point has no engineering unit" rather
+// than "an unrecognized unit" -- e.g. PM556x's own register data uses '---'
+// for status/logic registers. Treated identically to a reading with no unit
+// field at all: skip catalog lookup and Normalization Health tracking,
+// rather than inventing an alias mapping it to a canonical unit it doesn't
+// represent.
+const NO_UNIT_PLACEHOLDERS = new Set(['---']);
+
 function normalizeReadingInPlace(reading: ProtocolMessage, protocolHint?: string): void {
 	const rawUnit = reading.unit as string | undefined;
 	const rawValue = reading.value;
 	if (!rawUnit || typeof rawUnit !== 'string' || typeof rawValue !== 'number') return;
+	if (NO_UNIT_PLACEHOLDERS.has(rawUnit.trim())) return;
 
 	const sourceSystem = normalizeSourceSystem((reading.protocol as string | undefined) ?? protocolHint);
 	const result = normalizeUnitName(rawUnit, sourceSystem ?? undefined);
