@@ -885,6 +885,10 @@ const sourceFilterOptions = computed(() => {
   return Array.from(seen.values()).sort((a, b) => a.label.localeCompare(b.label))
 })
 
+function filterSourceOption(input: string, option: { label: string }): boolean {
+  return option.label.toLowerCase().includes(input.toLowerCase())
+}
+
 async function loadMetricSuggestions() {
   metricSuggestionsLoading.value = true
   try {
@@ -2307,7 +2311,7 @@ onUnmounted(() => {
             show-search
             placeholder="Select a source…"
             :options="sourceFilterOptions"
-            :filter-option="(input: string, opt: { label: string }) => opt.label.toLowerCase().includes(input.toLowerCase())"
+            :filter-option="filterSourceOption"
             @change="metricForm.name = ''"
           />
         </a-form-item>
