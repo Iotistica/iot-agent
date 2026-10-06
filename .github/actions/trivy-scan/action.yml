@@ -74,8 +74,16 @@ runs:
           exit 0
         fi
 
-        CRITICAL=$(jq '[.runs[].results[] | select(.level=="error")] | length' "${{ inputs.output-file }}")
-        HIGH=$(jq '[.runs[].results[] | select(.level=="warning")] | length' "${{ inputs.output-file }}")
+        # Trivy's SARIF template sets `level` to "error" for BOTH CRITICAL and
+        # HIGH findings (there's no SARIF level for "high"), so `level` alone
+        # can't distinguish them — select(.level=="error") was silently
+        # counting every HIGH finding as critical too. The true severity is
+        # only recoverable from each rule's own tags (e.g. ["vulnerability",
+        # "security", "HIGH"]), joined back to results via ruleId.
+        SEV_MAP='(.runs[0].tool.driver.rules // [] | map({key: .id, value: ((.properties.tags // []) | map(select(. == "CRITICAL" or . == "HIGH" or . == "MEDIUM" or . == "LOW"))[0] // "UNKNOWN")}) | from_entries)'
+
+        CRITICAL=$(jq "$SEV_MAP as \$sev | [.runs[0].results[]? | (\$sev[.ruleId] // \"UNKNOWN\") | select(. == \"CRITICAL\")] | length" "${{ inputs.output-file }}")
+        HIGH=$(jq "$SEV_MAP as \$sev | [.runs[0].results[]? | (\$sev[.ruleId] // \"UNKNOWN\") | select(. == \"HIGH\")] | length" "${{ inputs.output-file }}")
         TOTAL=$(jq '[.runs[].results[]] | length' "${{ inputs.output-file }}")
 
         echo "critical=$CRITICAL" >> $GITHUB_OUTPUT
@@ -94,13 +102,13 @@ runs:
         echo "## 🚨 Vulnerability Details (Top 20)" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
 
-        jq -r '
+        jq -r --argjson sev "$(jq "$SEV_MAP" "${{ inputs.output-file }}")" '
           .runs[].results[] |
           select(.level != "none") |
           {
             cve: .ruleId,
             message: .message.text,
-            severity: .level
+            severity: ($sev[.ruleId] // "UNKNOWN")
           } |
           {
             cve: .cve,
