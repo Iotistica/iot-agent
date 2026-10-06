@@ -35,6 +35,43 @@ const COMPRESSIONS = [
 ]
 const QUALITIES = ['GOOD', 'BAD', 'UNCERTAIN']
 
+const PUBLISH_INTERVAL_PRESETS = [
+  { label: 'Every update', value: 'none' },
+  { label: '1 second',     value: '1000' },
+  { label: '5 seconds',    value: '5000' },
+  { label: '10 seconds',   value: '10000' },
+  { label: '30 seconds',   value: '30000' },
+  { label: '1 minute',     value: '60000' },
+  { label: 'Custom…',      value: 'custom' },
+]
+const PRESET_MS_VALUES = new Set(['1000', '5000', '10000', '30000', '60000'])
+
+const customIntervalValue = ref<number | undefined>(undefined)
+const customIntervalUnit = ref<'s' | 'm'>('s')
+
+function msToCustomFields(ms: number): { value: number; unit: 's' | 'm' } {
+  return ms > 0 && ms % 60000 === 0
+    ? { value: ms / 60000, unit: 'm' }
+    : { value: ms / 1000, unit: 's' }
+}
+
+function customFieldsToMs(): number | undefined {
+  if (customIntervalValue.value == null || customIntervalValue.value <= 0) return undefined
+  const ms = customIntervalUnit.value === 'm' ? customIntervalValue.value * 60000 : customIntervalValue.value * 1000
+  return Math.round(ms)
+}
+
+function seedCustomIntervalFromMs(ms: number | null | undefined) {
+  if (ms != null && ms > 0) {
+    const fields = msToCustomFields(ms)
+    customIntervalValue.value = fields.value
+    customIntervalUnit.value = fields.unit
+  } else {
+    customIntervalValue.value = 1
+    customIntervalUnit.value = 's'
+  }
+}
+
 const formRef = ref<FormInstance>()
 const saving = ref(false)
 const showAdvanced = ref(false)
@@ -60,6 +97,34 @@ const blankForm = (): SubscriptionFormData => ({
 })
 
 const form = ref<SubscriptionFormData>(blankForm())
+
+// Drives the "Publish interval" select. Reads/writes form.route_json.minIntervalMs directly
+// so the existing submit()/hasRouteConfig logic (r.minIntervalMs != null) keeps working
+// unchanged — "Every update" always writes `undefined`, never `0`, matching blankRoute()'s
+// existing default and avoiding a false-positive hasRouteConfig.
+const publishIntervalPreset = computed<string>({
+  get() {
+    const ms = form.value.route_json?.minIntervalMs
+    if (ms == null || ms <= 0) return 'none'
+    return PRESET_MS_VALUES.has(String(ms)) ? String(ms) : 'custom'
+  },
+  set(preset: string) {
+    if (!form.value.route_json) return
+    if (preset === 'none') {
+      form.value.route_json.minIntervalMs = undefined
+    } else if (preset === 'custom') {
+      seedCustomIntervalFromMs(form.value.route_json.minIntervalMs)
+      form.value.route_json.minIntervalMs = customFieldsToMs()
+    } else {
+      form.value.route_json.minIntervalMs = Number(preset)
+    }
+  },
+})
+
+watch([customIntervalValue, customIntervalUnit], () => {
+  if (publishIntervalPreset.value !== 'custom' || !form.value.route_json) return
+  form.value.route_json.minIntervalMs = customFieldsToMs()
+})
 
 const selectedDestination = computed(() =>
   props.destinations.find((d) => d.id === form.value.publish_destination_id) ?? null,
@@ -120,6 +185,7 @@ watch(
         }
       })
     }
+    seedCustomIntervalFromMs(form.value.route_json?.minIntervalMs)
   },
 )
 
@@ -311,18 +377,31 @@ function close() {
               <a-checkbox v-for="q in QUALITIES" :key="q" :value="q">{{ q }}</a-checkbox>
             </a-checkbox-group>
           </a-form-item>
-          <a-row :gutter="16">
-            <a-col :span="12">
-              <a-form-item label="Min interval (ms)">
-                <a-input-number v-model:value="form.route_json!.minIntervalMs" :min="0" style="width: 100%" placeholder="None" />
-              </a-form-item>
-            </a-col>
-            <a-col :span="12">
-              <a-form-item label="Max points/message">
-                <a-input-number v-model:value="form.route_json!.maxPointsPerMessage" :min="1" style="width: 100%" placeholder="None" />
-              </a-form-item>
-            </a-col>
-          </a-row>
+          <a-form-item
+            label="Publish interval"
+            extra="Minimum time between updates for the same point sent to this subscription."
+          >
+            <a-select v-model:value="publishIntervalPreset" style="width: 100%">
+              <a-select-option v-for="p in PUBLISH_INTERVAL_PRESETS" :key="p.value" :value="p.value">
+                {{ p.label }}
+              </a-select-option>
+            </a-select>
+            <a-space v-if="publishIntervalPreset === 'custom'" :size="8" style="margin-top: 8px">
+              <a-input-number
+                v-model:value="customIntervalValue"
+                :min="0.001"
+                style="width: 140px"
+                placeholder="Value"
+              />
+              <a-select v-model:value="customIntervalUnit" style="width: 120px">
+                <a-select-option value="s">seconds</a-select-option>
+                <a-select-option value="m">minutes</a-select-option>
+              </a-select>
+            </a-space>
+          </a-form-item>
+          <a-form-item label="Max points/message">
+            <a-input-number v-model:value="form.route_json!.maxPointsPerMessage" :min="1" style="width: 100%" placeholder="None" />
+          </a-form-item>
         </a-collapse-panel>
       </a-collapse>
     </a-form>

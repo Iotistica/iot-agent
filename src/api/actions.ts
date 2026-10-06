@@ -1604,6 +1604,13 @@ export const createPublishSubscription = async (body: {
 		throw new Error(`Invalid compression: ${body.compression}. Supported: ${VALID_COMPRESSIONS.join(', ')}`);
 	}
 
+	if (body.route_json?.minIntervalMs !== undefined && body.route_json.minIntervalMs !== null) {
+		const minInterval = body.route_json.minIntervalMs;
+		if (typeof minInterval !== 'number' || !Number.isFinite(minInterval) || minInterval < 0) {
+			throw new Error('route_json.minIntervalMs must be a non-negative number');
+		}
+	}
+
 	if (!TOPIC_OPTIONAL_DESTINATION_TYPES.has(destination.type)) {
 		const destinationTopic = typeof body.route_json?.topic === 'string' ? body.route_json.topic.trim() : '';
 		if (!destinationTopic) {
@@ -1671,6 +1678,13 @@ export const updatePublishSubscription = async (id: number, body: {
 	const VALID_COMPRESSIONS = ['json', 'msgpack', 'json+deflate', 'msgpack+deflate'];
 	if (body.compression != null && !VALID_COMPRESSIONS.includes(body.compression)) {
 		throw new Error(`Invalid compression: ${body.compression}. Supported: ${VALID_COMPRESSIONS.join(', ')}`);
+	}
+
+	if (body.route_json?.minIntervalMs !== undefined && body.route_json.minIntervalMs !== null) {
+		const minInterval = body.route_json.minIntervalMs;
+		if (typeof minInterval !== 'number' || !Number.isFinite(minInterval) || minInterval < 0) {
+			throw new Error('route_json.minIntervalMs must be a non-negative number');
+		}
 	}
 
 	if (!TOPIC_OPTIONAL_DESTINATION_TYPES.has(destination.type)) {

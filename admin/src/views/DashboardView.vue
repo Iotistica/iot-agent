@@ -7,7 +7,7 @@ import SparklineChart from '@/components/SparklineChart.vue'
 import NormalizationHealthDrawer from '@/components/dashboard/NormalizationHealthDrawer.vue'
 import { dashboardApi, type DashboardStats, type NetworkBandwidth, type NormalizationHealth } from '@/api/dashboard'
 import { anomalyApi } from '@/api/anomaly'
-import { pipelineApi } from '@/api/pipeline'
+import { pipelineApi, type PipelineOverview } from '@/api/pipeline'
 import { protocolLabel } from '@/utils/protocol'
 import type { EdgeAnomalyAlert } from '@/types'
 
@@ -127,10 +127,35 @@ const protocolRate     = ref<Record<string, number>>({})
 let previousThroughput: Record<string, number> | null = null
 let previousThroughputAt: number | null = null
 
+// Headline rates (the big number on each protocol card, and the combined
+// Data Overview Throughput tile) are smoothed over a 60s trailing window
+// instead of the raw 3s poll-to-poll diff above. Protocols that publish in
+// bursts (e.g. Modbus/BACnet batching ~30s apart) land on exactly 0 most
+// 3s samples even while genuinely active — confirmed live: raw cumulative
+// counters climbing steadily (modbus/bacnet both incrementing every ~30s)
+// while the instantaneous per-poll rate read 0.0/s almost all the time.
+// Keeps one shared (timestamp, counters-snapshot) history and looks back to
+// the oldest sample still within the window (or the oldest available, if
+// the page hasn't been open that long) — same diff-two-snapshots approach,
+// just over a longer window shared by every protocol plus the combined
+// total. The sparkline history above is intentionally left on the raw
+// instantaneous diff — it's what actually shows the bursty texture; only
+// the headline numbers needed smoothing.
+const THROUGHPUT_WINDOW_MS = 60_000
+const THROUGHPUT_HISTORY_MS = 75_000
+const throughputCounterHistory: { t: number; counters: Record<string, number> }[] = []
+const totalThroughputRate = ref(0)
+
+// Data Overview — Active Points / Active Devices / Good Quality, polled
+// alongside throughput (see pollOverview()).
+const overview = ref<PipelineOverview | null>(null)
+
 async function pollThroughput() {
   try {
     const counters = await pipelineApi.getThroughput()
     const now = Date.now()
+
+    // Sparkline history: raw instantaneous per-poll rate, unchanged.
     if (previousThroughput && previousThroughputAt) {
       const deltaSec = (now - previousThroughputAt) / 1000
       for (const protocol of PROTOCOL_ORDER) {
@@ -139,13 +164,43 @@ async function pollThroughput() {
         // A drop (curr < prev) means the agent restarted and the counter reset —
         // treat that tick as 0 rather than a negative rate.
         const rate = deltaSec > 0 && curr >= prev ? (curr - prev) / deltaSec : 0
-        protocolRate.value[protocol] = rate
         push(protocolHistory.value[protocol], rate)
       }
     }
+
+    // Headline rates: 60s-windowed diff, shared base sample for every
+    // protocol and the combined total.
+    throughputCounterHistory.push({ t: now, counters })
+    while (throughputCounterHistory.length > 1 && now - throughputCounterHistory[0].t > THROUGHPUT_HISTORY_MS) {
+      throughputCounterHistory.shift()
+    }
+    const cutoff = now - THROUGHPUT_WINDOW_MS
+    let base = throughputCounterHistory[0]
+    for (const sample of throughputCounterHistory) {
+      if (sample.t <= cutoff) base = sample
+      else break
+    }
+    const baseDeltaSec = (now - base.t) / 1000
+
+    for (const protocol of PROTOCOL_ORDER) {
+      const baseCount = base.counters[protocol] ?? 0
+      const currCount = counters[protocol] ?? 0
+      protocolRate.value[protocol] = baseDeltaSec > 0 && currCount >= baseCount ? (currCount - baseCount) / baseDeltaSec : 0
+    }
+
+    const total = PROTOCOL_ORDER.reduce((sum, p) => sum + (counters[p] ?? 0), 0)
+    const baseTotal = PROTOCOL_ORDER.reduce((sum, p) => sum + (base.counters[p] ?? 0), 0)
+    totalThroughputRate.value = baseDeltaSec > 0 && total >= baseTotal ? (total - baseTotal) / baseDeltaSec : 0
+
     previousThroughput = counters
     previousThroughputAt = now
   } catch { /* non-fatal — keep showing last known history */ }
+}
+
+async function pollOverview() {
+  try {
+    overview.value = await pipelineApi.getOverview()
+  } catch { /* non-fatal */ }
 }
 
 // Pick the busiest non-loopback interface
@@ -173,6 +228,7 @@ async function poll() {
     loading.value = false
   }
   await pollThroughput()
+  await pollOverview()
 }
 
 let timer: ReturnType<typeof setInterval> | null = null
@@ -226,6 +282,19 @@ function fmtBytesTotal(bytes: number): string {
 
 function fmtRate(v: number): string {
   return v >= 10 ? `${v.toFixed(0)}/s` : `${v.toFixed(1)}/s`
+}
+
+// Compact large counts for the Data Overview row (e.g. 1240 -> "1.24k"). No
+// existing formatter in this app does k/M suffixes (only toLocaleString()
+// thousands-separators and date formatting) — this is new but intentionally tiny.
+function fmtCompact(v: number): string {
+  if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(2)}M`
+  if (v >= 1_000) return `${(v / 1_000).toFixed(2)}k`
+  return v >= 10 ? v.toFixed(0) : v.toFixed(1)
+}
+
+function fmtThroughput(v: number): string {
+  return `${fmtCompact(v)}/s`
 }
 
 function cpuColor(v: number) { return v >= 90 ? '#cf1322' : v >= 70 ? '#fa8c16' : '#52c41a' }
@@ -481,6 +550,41 @@ const netIface   = computed(() => stats.value ? (primaryNet(stats.value.network)
 
         </a-row>
 
+        <!-- ── Row 2a: Data overview ───────────────────────────────────────── -->
+        <div class="section-label">Data Overview</div>
+        <a-row :gutter="16" style="margin-bottom:16px">
+          <a-col :xs="12" :sm="6">
+            <div class="widget">
+              <div class="widget-title">Throughput</div>
+              <div class="widget-value">{{ fmtThroughput(totalThroughputRate) }}</div>
+              <div class="widget-sub">last 60s</div>
+            </div>
+          </a-col>
+          <a-col :xs="12" :sm="6">
+            <div class="widget">
+              <div class="widget-title">Active Points</div>
+              <div class="widget-value">{{ overview ? overview.activePoints.toLocaleString() : '—' }}</div>
+              <div class="widget-sub">last 5m</div>
+            </div>
+          </a-col>
+          <a-col :xs="12" :sm="6">
+            <div class="widget">
+              <div class="widget-title">Active Devices</div>
+              <div class="widget-value">{{ overview ? overview.activeDevices.toLocaleString() : '—' }}</div>
+              <div class="widget-sub">last 5m</div>
+            </div>
+          </a-col>
+          <a-col :xs="12" :sm="6">
+            <div class="widget">
+              <div class="widget-title">Good Quality</div>
+              <div class="widget-value">
+                {{ overview?.goodQualityPct != null ? `${overview.goodQualityPct.toFixed(1)}%` : '—' }}
+              </div>
+              <div class="widget-sub">last 5m</div>
+            </div>
+          </a-col>
+        </a-row>
+
         <!-- ── Row 2b: Data flow by protocol ─────────────────────────────── -->
         <div class="section-label">
           Data Flow by Protocol
@@ -504,7 +608,7 @@ const netIface   = computed(() => stats.value ? (primaryNet(stats.value.network)
                   full-width
                 />
               </div>
-              <div class="widget-sub">points/sec</div>
+              <div class="widget-sub">points/sec · 60s avg</div>
             </div>
           </a-col>
         </a-row>

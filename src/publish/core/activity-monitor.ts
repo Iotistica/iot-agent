@@ -87,6 +87,35 @@ class ActivityMonitor {
 	// time series.
 	private totalPointsByProtocol = new Map<string, number>();
 
+	/**
+	 * Per-point last-seen tracking for the Dashboard's "Data Overview" tiles
+	 * (Active Points / Active Devices). Keyed by protocol+device+metric so the
+	 * same metric name reported by two different devices — or the same device
+	 * name reused across two different protocols — is never conflated into one
+	 * point. Updated once per record() call; repeat calls for the same point
+	 * from multiple destination bindings just refresh the same entry (no
+	 * fan-out over-count, unlike totalPointsByProtocol above — presence doesn't
+	 * care how many times it was refreshed). Self-bounding in practice: grows to
+	 * the number of distinct points ever seen, not unboundedly over time —
+	 * getOverviewStats() below opportunistically evicts anything stale for over
+	 * an hour.
+	 */
+	private lastSeenByPoint = new Map<string, { protocol: string; deviceName: string; lastSeen: number }>();
+
+	// Fixed-size ring for the rolling "Good Quality %" tile — 20 buckets of 15s
+	// = 5 minutes of trailing history, bounded memory instead of retaining every
+	// individual reading. Fed from PublishManager.publishBatch() (see
+	// recordQualitySample() below), NOT from record() above — record() fires
+	// once per (destination × deduped metric), which would both over-count
+	// (multiplied by however many destinations an endpoint has) and under-count
+	// (collapsed to one per metric per batch) relative to true individual
+	// readings, biasing a cross-protocol percentage toward whichever
+	// protocols/endpoints happen to have more destinations or denser batches.
+	private static readonly QUALITY_BUCKET_MS = 15_000;
+	private static readonly QUALITY_BUCKET_COUNT = 20; // 20 * 15s = 5 minutes
+	private qualityBuckets: Array<{ bucketStart: number; good: number; total: number }> =
+		Array.from({ length: ActivityMonitor.QUALITY_BUCKET_COUNT }, () => ({ bucketStart: 0, good: 0, total: 0 }));
+
 	record(params: {
 		subscriptionId: number | null;
 		destinationId: number;
@@ -106,7 +135,8 @@ class ActivityMonitor {
 		rawPointName?: string;
 	}): void {
 		const key = `${params.subscriptionId ?? 'default'}:${params.destinationId}`;
-		const now = new Date().toISOString();
+		const nowDate = new Date();
+		const now = nowDate.toISOString();
 
 		const existing = this.bySubscription.get(key);
 		this.bySubscription.set(key, {
@@ -160,6 +190,12 @@ class ActivityMonitor {
 		this.eventsByProtocol.set(protocolKey, bucket);
 
 		this.totalPointsByProtocol.set(protocolKey, (this.totalPointsByProtocol.get(protocolKey) ?? 0) + 1);
+
+		this.lastSeenByPoint.set(`${protocolKey}:${params.endpointName}:${params.metric}`, {
+			protocol: protocolKey,
+			deviceName: params.endpointName,
+			lastSeen: nowDate.getTime(),
+		});
 	}
 
 	getSubscriptions(): SubscriptionActivity[] {
@@ -183,6 +219,70 @@ class ActivityMonitor {
 	/** Cumulative points recorded per protocol since agent start — never resets or evicts. */
 	getThroughputCounters(): Record<string, number> {
 		return Object.fromEntries(this.totalPointsByProtocol);
+	}
+
+	/**
+	 * Records one individual reading's quality for the rolling "Good Quality %"
+	 * window. Call once per physical reading — see PublishManager.publishBatch(),
+	 * which taps in via the existing collectTagRecords() helper before any
+	 * per-destination fan-out or per-metric dedup.
+	 */
+	recordQualitySample(quality: string | undefined): void {
+		const now = Date.now();
+		const bucketStart = Math.floor(now / ActivityMonitor.QUALITY_BUCKET_MS) * ActivityMonitor.QUALITY_BUCKET_MS;
+		const idx = Math.floor(now / ActivityMonitor.QUALITY_BUCKET_MS) % ActivityMonitor.QUALITY_BUCKET_COUNT;
+		const bucket = this.qualityBuckets[idx];
+		if (bucket.bucketStart !== bucketStart) {
+			// First use of this slot, or it's wrapped around from >1 lap ago — reset.
+			bucket.bucketStart = bucketStart;
+			bucket.good = 0;
+			bucket.total = 0;
+		}
+		bucket.total++;
+		if (quality === 'GOOD') bucket.good++;
+	}
+
+	private getRollingQualityPct(windowMs: number): number | null {
+		const now = Date.now();
+		let good = 0;
+		let total = 0;
+		for (const bucket of this.qualityBuckets) {
+			if (bucket.bucketStart === 0 || now - bucket.bucketStart > windowMs) continue;
+			good += bucket.good;
+			total += bucket.total;
+		}
+		return total > 0 ? (good / total) * 100 : null;
+	}
+
+	/**
+	 * Snapshot for the Dashboard's compact "Data Overview" row. Pure read aside from
+	 * opportunistic eviction of points that haven't reported in over an hour, so a
+	 * decommissioned device/point doesn't linger in lastSeenByPoint forever. Cheap to
+	 * scan at the cardinalities this agent sees (low thousands of distinct points).
+	 */
+	getOverviewStats(windowMs = 5 * 60 * 1000): { activePoints: number; activeDevices: number; goodQualityPct: number | null } {
+		const now = Date.now();
+		const STALE_MS = 60 * 60 * 1000; // 1 hour — bounds memory for decommissioned points
+		let activePoints = 0;
+		const activeDeviceKeys = new Set<string>();
+
+		for (const [key, point] of this.lastSeenByPoint) {
+			const age = now - point.lastSeen;
+			if (age > STALE_MS) {
+				this.lastSeenByPoint.delete(key);
+				continue;
+			}
+			if (age <= windowMs) {
+				activePoints++;
+				activeDeviceKeys.add(`${point.protocol}:${point.deviceName}`);
+			}
+		}
+
+		return {
+			activePoints,
+			activeDevices: activeDeviceKeys.size,
+			goodQualityPct: this.getRollingQualityPct(windowMs),
+		};
 	}
 }
 

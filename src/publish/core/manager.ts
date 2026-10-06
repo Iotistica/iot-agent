@@ -173,6 +173,23 @@ export class PublishManager extends EventEmitter {
 	// Without this, two rapid admin-UI actions can create zombie plugins that escape
 	// the stop-before-start guard and produce a duplicate-clientId kick cycle.
 	private reloadQueue: Promise<void> = Promise.resolve();
+	// Per-(subscription, point) timestamp of the last ADMISSION decision for the optional
+	// "Publish interval" throttle (route_json.minIntervalMs) — reactive, drop-only semantics.
+	// Deliberately named/documented around "admission", not "delivery": this records when a
+	// point was last let through into a binding's outgoing payload, not confirmed successful
+	// delivery to the destination. There is no clean, granular-enough success signal to tie this
+	// to instead — collectRouteEntries()'s caller settles success/failure per PLUGIN CALL (which
+	// can bundle several bindings/subscriptions together), tolerates partial failure as an
+	// overall "Published" outcome, and is bypassed entirely on the offline-queue path — so the
+	// interval this throttle enforces is "time between admission attempts", not a delivery SLA.
+	// Mirrors SocketServer's ClientSubscription.lastSentAt/applyRoutingRules()
+	// (src/core/socket-server.ts) but scoped per point instead of per whole client, and wired
+	// into the real PublishManager delivery path — SocketServer's own minIntervalMs enforcement
+	// is for its unrelated local-IPC tee and never reflects what's stored in
+	// publish_subscriptions.route_json. Keyed by `${subscriptionId}:${sourceName}:${metric}` so
+	// (a) two bindings with different/no throttle settings never collide and (b) two devices
+	// reporting a same-named metric don't collide.
+	private lastAllowedAtByPoint = new Map<string, number>();
 
 	private readonly onConnected = (): void => {
 		if (this.needStop) return;
@@ -492,6 +509,14 @@ export class PublishManager extends EventEmitter {
 		}
 
 		this.bindings = newBindings;
+		// Drop lastAllowedAtByPoint entries for subscriptions that no longer exist, so a
+		// deleted/edited subscription's throttle state doesn't linger forever. Runs only on
+		// reload (admin-UI config changes), already infrequent.
+		const liveSubscriptionIds = new Set(newBindings.map((b) => String(b.subscription.id ?? 'none')));
+		for (const key of this.lastAllowedAtByPoint.keys()) {
+			const subscriptionId = key.slice(0, key.indexOf(':'));
+			if (!liveSubscriptionIds.has(subscriptionId)) this.lastAllowedAtByPoint.delete(key);
+		}
 		const newPlugins = this.getUniquePlugins();
 
 		// Stop removed plugins BEFORE starting new ones so that external MQTT clients
@@ -607,6 +632,14 @@ export class PublishManager extends EventEmitter {
 				} catch (err) {
 					this.logger?.warn(`Live data interceptor failed for endpoint '${name}', continuing with original payload`, err);
 				}
+			}
+
+			// Feed the Dashboard's rolling "Good Quality %" tile — once per individual
+			// reading in this batch, before any per-destination fan-out or per-metric
+			// dedup happen further down in collectRouteEntries(). See ActivityMonitor.
+			// recordQualitySample()'s doc comment for why this can't reuse record().
+			for (const reading of this.collectTagRecords(messages)) {
+				activityMonitor.recordQualitySample(typeof reading?.quality === 'string' ? reading.quality : undefined);
 			}
 
 			const driftMessages =this.projectMessagesForSchemaDrift(messages);
@@ -999,6 +1032,75 @@ export class PublishManager extends EventEmitter {
 
 		const trimmed = value.trim();
 		return trimmed.length > 0 ? trimmed : null;
+	}
+
+	private resolveRecordMetric(record: ProtocolMessage): string {
+		return String(
+			record?.metric ?? record?.metric_name ?? record?.nodeName ?? record?.name ?? record?.tag ?? record?.id ?? '—',
+		);
+	}
+
+	/**
+	 * "Publish interval" (route_json.minIntervalMs) enforcement for ONE destination binding.
+	 * Reactive, drop-only, per-point throttle — mirrors SocketServer's ClientSubscription
+	 * .lastSentAt/applyRoutingRules(), but scoped per (subscription, device, metric) instead of
+	 * per whole client. No pending-value cache or scheduled flush: a throttled point is simply
+	 * omitted from THIS tick's payload for THIS binding; next time it arrives after the interval
+	 * elapses, whatever is current at that moment is admitted — never backfilled or caught up.
+	 *
+	 * "Admitted"/lastAllowedAtByPoint, not "sent"/"delivered": this gates what's INCLUDED in the
+	 * outgoing payload, not confirmed successful delivery — see lastAllowedAtByPoint's doc
+	 * comment for why no clean, granular-enough success signal exists to tie this to instead.
+	 *
+	 * Non-mutating: `messages` and any nested `.readings` are never written in place — the same
+	 * objects are shared with every other binding in this tick's collectRouteEntries() loop and
+	 * were already handed off earlier (anomaly/quality processing, activityMonitor tracking).
+	 */
+	private filterMessagesForPublishInterval(
+		messages: ProtocolMessage[],
+		records: ProtocolMessage[],
+		subscriptionId: number | null,
+		endpointName: string,
+		minIntervalMs: number,
+	): ProtocolMessage[] {
+		const now = Date.now();
+		const allowed = new Set<ProtocolMessage>();
+
+		for (const record of records) {
+			const sourceName = this.readExternalNodeCandidate(record) ?? endpointName;
+			const metric = this.resolveRecordMetric(record);
+			const key = `${subscriptionId ?? 'none'}:${sourceName}:${metric}`;
+			const lastAllowedAt = this.lastAllowedAtByPoint.get(key) ?? 0;
+			if (lastAllowedAt > 0 && now - lastAllowedAt < minIntervalMs) {
+				continue; // too soon since this point was last admitted for THIS subscription — drop
+			}
+			this.lastAllowedAtByPoint.set(key, now);
+			allowed.add(record);
+		}
+
+		if (allowed.size === records.length) {
+			return messages; // nothing throttled this tick — identical to the unthrottled path
+		}
+
+		// Rebuild preserving the original nested shape (rather than returning a flattened leaf
+		// array) — buildPayload()'s 'custom' format embeds `messages` verbatim, including each
+		// wrapper's .readings[]; flattening here would silently change that wire shape for any
+		// 'custom'-format subscription the moment a Publish Interval is set. 'tags'/'ecp'/'ml'
+		// are unaffected either way since buildPayload() re-flattens via collectTagRecords()
+		// internally, which is idempotent on an already-flat array.
+		const rebuilt: ProtocolMessage[] = [];
+		for (const message of messages) {
+			if (Array.isArray(message.readings)) {
+				const keptReadings = message.readings.filter((reading) => allowed.has(reading));
+				if (keptReadings.length === 0) continue;
+				rebuilt.push(
+					keptReadings.length === message.readings.length ? message : { ...message, readings: keptReadings },
+				);
+				continue;
+			}
+			if (allowed.has(message)) rebuilt.push(message);
+		}
+		return rebuilt;
 	}
 
 	private inferEcpType(value: unknown): 1 | 2 | 3 | 4 {
@@ -1402,19 +1504,47 @@ export class PublishManager extends EventEmitter {
 			// specific qualities and 'BAD' is not in that list.
 			const filterBadQuality = qualities.length > 0 && !qualities.includes('BAD');
 			const subscriptionCompression = (binding.subscription.compression ?? null);
-			const cacheKey = subscriptionCompression
-				? `${payloadFormat}::${subscriptionCompression}::fq=${filterBadQuality}`
-				: `${payloadFormat}::global::fq=${filterBadQuality}`;
+
+			// "Publish interval" throttle. `records` is computed eagerly whenever either the
+			// throttle needs it OR the activityMonitor loop below needs it — preserves the
+			// previous lazy-computation cost for the common case where neither applies.
+			const minIntervalMs = typeof route?.minIntervalMs === 'number' && route.minIntervalMs > 0
+				? route.minIntervalMs
+				: 0;
+			const records = (minIntervalMs > 0 || binding.publisher.id !== undefined)
+				? this.collectTagRecords(messages)
+				: [];
+			const effectiveMessages = minIntervalMs > 0
+				? this.filterMessagesForPublishInterval(messages, records, binding.subscription.id ?? null, endpointName, minIntervalMs)
+				: messages;
+
+			// Throttled subscriptions build their payload from a per-binding-filtered subset of
+			// `messages`, so they can never safely share a compressedPayloadCache entry with
+			// another binding — make the key unique to this subscription. The non-throttled
+			// (common) branch is byte-for-byte the pre-existing cacheKey shape, so
+			// cache-sharing/perf for ordinary subscriptions is unaffected.
+			const cacheKey = minIntervalMs > 0
+				? `${payloadFormat}::${subscriptionCompression ?? 'global'}::fq=${filterBadQuality}::sub=${binding.subscription.id ?? 'none'}`
+				: subscriptionCompression
+					? `${payloadFormat}::${subscriptionCompression}::fq=${filterBadQuality}`
+					: `${payloadFormat}::global::fq=${filterBadQuality}`;
 			const overrideOpts = subscriptionCompression ? compressionToOpts(subscriptionCompression) : undefined;
-			const payload = await this.getCompressedPayloadForFormat(
-				payloadFormat,
-				cacheKey,
-				endpointName,
-				messages,
-				compressedPayloadCache,
-				overrideOpts,
-				filterBadQuality,
-			);
+
+			// Every point for this binding currently throttled → send nothing this tick,
+			// mirroring SocketServer.routeAndSendToSocket()'s "filteredPoints.length === 0 →
+			// return" precedent, instead of publishing an empty/near-empty batch.
+			const allThrottledOut = minIntervalMs > 0 && effectiveMessages.length === 0 && messages.length > 0;
+			const payload: string | Buffer | null = allThrottledOut
+				? null
+				: await this.getCompressedPayloadForFormat(
+					payloadFormat,
+					cacheKey,
+					endpointName,
+					effectiveMessages,
+					compressedPayloadCache,
+					overrideOpts,
+					filterBadQuality,
+				);
 
 			this.logger?.debug('Routing batch to destination', {
 				component: 'PublishManager',
@@ -1427,20 +1557,17 @@ export class PublishManager extends EventEmitter {
 				compression: subscriptionCompression ?? 'global',
 				subscriptionId: binding.subscription.id ?? null,
 				messageCount: messages.length,
+				...(minIntervalMs > 0 && { publishIntervalMs: minIntervalMs, throttledOut: allThrottledOut }),
 			});
 
 			if (binding.publisher.id !== undefined) {
-				const records = this.collectTagRecords(messages);
-				// A batch carries every metric the endpoint polled this tick, not just one —
-				// dedupe by metric name (keeping the last reading, same convention as the ECP
-				// payload format) so Recent Activity shows the full spread instead of only
-				// whichever tag happened to be first in the batch.
+				// Deliberately unaffected by the throttle above — Recent Activity reflects
+				// everything this endpoint actually reported for this subscription, regardless
+				// of whether this tick's outgoing payload to the destination was itself
+				// throttled down to nothing.
 				const byMetric = new Map<string, ProtocolMessage>();
 				for (const record of records) {
-					const metric = String(
-						record?.metric ?? record?.metric_name ?? record?.nodeName ?? record?.name ?? record?.tag ?? record?.id ?? '—',
-					);
-					byMetric.set(metric, record);
+					byMetric.set(this.resolveRecordMetric(record), record);
 				}
 				for (const [metric, record] of byMetric) {
 					// Prefer the reading's own device identity (the same field the actual
@@ -1483,16 +1610,18 @@ export class PublishManager extends EventEmitter {
 				}
 			}
 
-			const items = batchesByPlugin.get(binding.plugin) || [];
-			items.push({
-				topic: sourceTopic,
-				payload,
-				options: {
-					qos: 1,
-					destinationTopic,
-				},
-			});
-			batchesByPlugin.set(binding.plugin, items);
+			if (payload !== null) {
+				const items = batchesByPlugin.get(binding.plugin) || [];
+				items.push({
+					topic: sourceTopic,
+					payload,
+					options: {
+						qos: 1,
+						destinationTopic,
+					},
+				});
+				batchesByPlugin.set(binding.plugin, items);
+			}
 		}
 
 		return Array.from(batchesByPlugin.entries());

@@ -2903,6 +2903,13 @@ router.get('/v1/pipeline/throughput', (_req: Request, res: Response) => {
 	res.json({ counters: activityMonitor.getThroughputCounters() });
 });
 
+// Point-in-time snapshot (not a counter to diff) of distinct-point/device activity
+// and quality mix over the trailing window — powers the Dashboard's "Data Overview"
+// tiles. Wrapped under `overview` for consistency with the sibling routes above.
+router.get('/v1/pipeline/overview', (_req: Request, res: Response) => {
+	res.json({ overview: activityMonitor.getOverviewStats() });
+});
+
 // ─── Database Backups ─────────────────────────────────────────────────────────
 
 import {

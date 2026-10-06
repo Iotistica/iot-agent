@@ -47,6 +47,12 @@ export interface ActivityEvent {
   rawPointName?: string
 }
 
+export interface PipelineOverview {
+  activePoints: number
+  activeDevices: number
+  goodQualityPct: number | null
+}
+
 export const pipelineApi = {
   getSubscriptions(): Promise<SubscriptionActivity[]> {
     return client.get<{ subscriptions: SubscriptionActivity[] }>('/v1/pipeline/subscriptions').then(r => r.data.subscriptions)
@@ -57,5 +63,8 @@ export const pipelineApi = {
   },
   getThroughput(): Promise<Record<string, number>> {
     return client.get<{ counters: Record<string, number> }>('/v1/pipeline/throughput').then(r => r.data.counters)
+  },
+  getOverview(): Promise<PipelineOverview> {
+    return client.get<{ overview: PipelineOverview }>('/v1/pipeline/overview').then(r => r.data.overview)
   },
 }
