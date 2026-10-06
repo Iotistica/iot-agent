@@ -476,6 +476,8 @@ export interface AgentSettingsFeatures {
   enableAnomalyDetection?: boolean
   enableDeviceRemoteAccess?: boolean
   enableDevicePublish?: boolean
+  enableUnitNormalization?: boolean
+  enablePointNameNormalization?: boolean
 }
 
 export interface AgentSettingsIntervals {

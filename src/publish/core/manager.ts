@@ -1668,8 +1668,23 @@ export class PublishManager extends EventEmitter {
 				? reading.name
 				: undefined;
 
+		// Strip annotations the live-data interceptor pipeline itself attaches
+		// (unitValue from unit normalization, dataQuality from the quality
+		// interceptor, pointIdentity from point-name normalization -- the
+		// complete, current liveDataInterceptor chain, see src/init/features.ts).
+		// These describe how OUR pipeline processed the reading; they are not
+		// part of the device's own reported schema. Left in, SchemaDriftDetector's
+		// generic key traversal (it walks every object key it doesn't recognize)
+		// picks them up as "new fields" each time one gets attached -- and for a
+		// point whose enrichment only lands occasionally, that can repeat
+		// indefinitely instead of ever settling into the baseline.
+		const deviceReported: ProtocolMessage = { ...reading };
+		delete deviceReported.unitValue;
+		delete deviceReported.dataQuality;
+		delete deviceReported.pointIdentity;
+
 		return {
-			...reading,
+			...deviceReported,
 
 			// Preserve source evidence for diagnostics and future drift reporting.
 			...(rawMetric && { rawMetric }),

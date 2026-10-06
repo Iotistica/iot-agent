@@ -18,7 +18,7 @@ import {
 } from "./types.js";
 import { PluginLoader } from "./plugin-loader.js";
 import { EndpointOutputModel } from "../db/models/endpoint-outputs.model.js";
-import { deviceNameSuffixFor } from "../db/models/device.model.js";
+import { deviceNameSuffixFor, toDeviceUuid } from "../db/models/device.model.js";
 import { EndpointModel } from "../db/models/endpoint.model.js";
 import { DeviceModel } from "../db/models/device.model.js";
 import { encodeIfUuid } from "../mqtt/codec.js";
@@ -58,8 +58,9 @@ export interface AdapterConfig {
 export function groupFieldNamesByOwningDevice(
 	fallbackDeviceName: string,
 	dataPoints: unknown[],
-): Map<string, string[]> {
-	const fieldsByDevice = new Map<string, string[]>();
+	onConflict?: (owner: string, keptUuid: string, ignoredUuid: string) => void,
+): Map<string, { fields: string[]; deviceUuid?: string }> {
+	const fieldsByDevice = new Map<string, { fields: string[]; deviceUuid?: string }>();
 
 	for (const dp of dataPoints) {
 		if (!dp || typeof dp !== "object") continue;
@@ -68,16 +69,104 @@ export function groupFieldNamesByOwningDevice(
 
 		const ownerRaw = (dp as { device_name?: unknown }).device_name;
 		const owner = typeof ownerRaw === "string" && ownerRaw.length > 0 ? ownerRaw : fallbackDeviceName;
+		const deviceUuidRaw = (dp as { device_uuid?: unknown }).device_uuid;
+		const deviceUuid = typeof deviceUuidRaw === "string" && deviceUuidRaw.length > 0 ? deviceUuidRaw : undefined;
 
 		const existing = fieldsByDevice.get(owner);
 		if (existing) {
-			existing.push(fieldName);
+			existing.fields.push(fieldName);
+			if (!existing.deviceUuid && deviceUuid) {
+				existing.deviceUuid = deviceUuid;
+			} else if (existing.deviceUuid && deviceUuid && existing.deviceUuid !== deviceUuid) {
+				// Contradictory source data: two data points claim the same
+				// owning device name but report different device_uuid tags —
+				// should be impossible for well-formed discovery output (one
+				// DeviceUUID marker per device folder), so this is reported
+				// rather than silently resolved either way. First-seen wins
+				// deterministically; the conflict itself is never swallowed.
+				onConflict?.(owner, existing.deviceUuid, deviceUuid);
+			}
 		} else {
-			fieldsByDevice.set(owner, [fieldName]);
+			fieldsByDevice.set(owner, { fields: [fieldName], deviceUuid });
 		}
 	}
 
 	return fieldsByDevice;
+}
+
+/**
+ * Resolves the same enriched display deviceName a reading would get, given
+ * only the raw identity fields (no full DeviceDataPoint needed) — shared by
+ * AdapterManager's live-telemetry enrichment (enrichWithEndpointUuid) and its
+ * schema-declaration path (the device-connected handler), so both land in
+ * the same downstream device bucket for the same physical device. A
+ * standalone, exported function (not a class method) for the same reason
+ * groupFieldNamesByOwningDevice is above it: this is the core identity logic
+ * and needs to be directly unit-testable.
+ *
+ * Returns undefined only when there's neither a source-provided device
+ * identity (sourceDeviceUuid) nor an endpoint UUID on file for this device
+ * name — matching enrichWithEndpointUuid's "leave unchanged" behavior for
+ * that case.
+ */
+export function resolveEnrichedDeviceName(
+	deviceName: string,
+	resolvedDisplayName: string | undefined,
+	sourceDeviceUuid: string | undefined,
+	endpointUuidByName: Map<string, string>,
+): { deviceName: string; endpoint_uuid?: string; device_uuid: string } | undefined {
+	const endpointUuid = endpointUuidByName.get(deviceName);
+
+	// endpointUuidByName is keyed by the shared connection's own name (e.g.
+	// "opcua"), never by an individual logical device's name (e.g.
+	// "Meter-1") — so for a protocol where many physical devices share one
+	// connection/endpoint row, this lookup always misses even when the
+	// reading itself carries a perfectly good source-provided device
+	// identity (sourceDeviceUuid). Only bail out when NEITHER is available
+	// — endpoint-map availability must not gate source-provided identity.
+	if (!endpointUuid && !sourceDeviceUuid) {
+		return undefined;
+	}
+
+	// Prefer source-provided device_uuid, canonicalized through the same
+	// conversion DeviceModel.syncFromEndpoint() uses for the `devices`
+	// table's own uuid column (toDeviceUuid: passes real UUIDs through
+	// unchanged, derives a stable uuidv5 hash from a non-UUID vendor tag) —
+	// so a reading's device_uuid always agrees with that table's uuid for
+	// the same physical device. Falls back to the endpoint's own UUID only
+	// when the reading has no device-level identity of its own.
+	//
+	// endpoint_uuid stays best-effort here (present only when
+	// endpointUuidByName has an entry for this deviceName — always true for
+	// BACnet/Modbus, never true for a multi-device OPC-UA connection).
+	// That's a known, documented gap, not correct final semantics:
+	// device_uuid (the specific device) and endpoint_uuid (the connection it
+	// is reachable through) are two different identities, and for OPC-UA
+	// both are knowable in principle — the connection's own UUID already
+	// exists in EndpointModel, it's just not resolvable from this
+	// function's current inputs (only the logical device's name, not the
+	// connection's). Properly resolving endpoint_uuid independently of this
+	// device-name-keyed map is a follow-up, not something to treat as
+	// already solved here.
+	const device_uuid = sourceDeviceUuid ? toDeviceUuid(sourceDeviceUuid) : endpointUuid!;
+
+	// Build a stable display name suffix with device UUID. deviceNameSuffixFor()
+	// (src/db/models/device.model.ts) truncates real UUIDs to 8 hex chars for
+	// readability but keeps non-UUID human-readable identifiers (e.g. the
+	// OPC UA simulator's "lighting-f10") in full, since truncating those
+	// collides whenever multiple devices share a common prefix — except when
+	// that non-UUID identifier is itself just the display name restated
+	// (e.g. device_uuid "vav-f9c" against display name "VAV-F9-C"), in which
+	// case it adds no disambiguating information and is dropped instead of
+	// producing "VAV-F9-C-vavf9c". Must use the same helper as device.model.ts's
+	// device Name — a mismatch would make it impossible to correlate UI device
+	// rows with their own telemetry.
+	const displayBase = (resolvedDisplayName || deviceName).replace(/^(?:iotistica_){2,}/i, "iotistica_");
+	const uuidSuffix = deviceNameSuffixFor(displayBase, device_uuid);
+	const finalDeviceName =
+		uuidSuffix.length > 0 ? `${displayBase}-${uuidSuffix}` : displayBase;
+
+	return { deviceName: finalDeviceName, endpoint_uuid: endpointUuid, device_uuid };
 }
 
 export class AdapterManager extends EventEmitter {
@@ -113,70 +202,23 @@ export class AdapterManager extends EventEmitter {
 		debug(m: string, ...a: any[]): void;
 	};
 
-	private normalizeDisplayBaseName(value: string): string {
-		return value.replace(/^(?:iotistica_){2,}/i, "iotistica_");
-	}
-
-	/**
-	 * Resolves the same enriched display deviceName a reading would get,
-	 * given only the raw identity fields (no full DeviceDataPoint needed) —
-	 * extracted out of enrichWithEndpointUuid so a non-reading event (e.g.
-	 * "declare this device's configured fields" for schema drift) can be
-	 * enriched identically to real telemetry, landing in the same downstream
-	 * device bucket. Returns undefined when there's no endpoint UUID on file
-	 * for this device name, matching enrichWithEndpointUuid's "leave unchanged"
-	 * behavior for that case.
-	 */
-	private resolveEnrichedDeviceName(
-		deviceName: string,
-		resolvedDisplayName: string | undefined,
-		sourceDeviceUuid: string | undefined,
-		endpointUuidByName: Map<string, string>,
-	): { deviceName: string; endpoint_uuid: string; device_uuid: string } | undefined {
-		const endpointUuid = endpointUuidByName.get(deviceName);
-		if (!endpointUuid) {
-			return undefined;
-		}
-
-		// Prefer source-provided device_uuid; otherwise use endpoint UUID.
-		const device_uuid = sourceDeviceUuid || endpointUuid;
-
-		// Build a stable display name suffix with device UUID. deviceNameSuffixFor()
-		// (src/db/models/device.model.ts) truncates real UUIDs to 8 hex chars for
-		// readability but keeps non-UUID human-readable identifiers (e.g. the
-		// OPC UA simulator's "lighting-f10") in full, since truncating those
-		// collides whenever multiple devices share a common prefix — except when
-		// that non-UUID identifier is itself just the display name restated
-		// (e.g. device_uuid "vav-f9c" against display name "VAV-F9-C"), in which
-		// case it adds no disambiguating information and is dropped instead of
-		// producing "VAV-F9-C-vavf9c". Must use the same helper as device.model.ts's
-		// device Name — a mismatch would make it impossible to correlate UI device
-		// rows with their own telemetry.
-		const displayBase = this.normalizeDisplayBaseName(resolvedDisplayName || deviceName);
-		const uuidSuffix = deviceNameSuffixFor(displayBase, device_uuid);
-		const finalDeviceName =
-			uuidSuffix.length > 0 ? `${displayBase}-${uuidSuffix}` : displayBase;
-
-		this.logger.debug("Built endpoint deviceName", {
-			displayBase,
-			device_uuid,
-			endpointUuid,
-			finalDeviceName,
-		});
-
-		return { deviceName: finalDeviceName, endpoint_uuid: endpointUuid, device_uuid };
-	}
-
 	private enrichWithEndpointUuid(
 		dataPoints: DeviceDataPoint[],
 		endpointUuidByName: Map<string, string>,
 	): DeviceDataPoint[] {
-		if (endpointUuidByName.size === 0 || dataPoints.length === 0) {
+		// Deliberately NOT also gated on endpointUuidByName.size === 0: a
+		// reading can carry its own source-provided device identity
+		// (point.device_uuid) even when the connection-level map is empty —
+		// resolveEnrichedDeviceName() is the single authority on whether
+		// there's enough identity to enrich a reading. Gating here too would
+		// silently disable that source-provided identity, which is exactly
+		// the bug this file was just fixed to stop doing.
+		if (dataPoints.length === 0) {
 			return dataPoints;
 		}
 
 		return dataPoints.map((point) => {
-			const resolved = this.resolveEnrichedDeviceName(
+			const resolved = resolveEnrichedDeviceName(
 				point.deviceName,
 				point.resolvedDisplayName,
 				point.device_uuid,
@@ -281,10 +323,19 @@ export class AdapterManager extends EventEmitter {
 			// declaring the whole flat list under the connection's name, which
 			// would land every logical device's fields in one wrong bucket.
 			if (Array.isArray(dataPoints) && dataPoints.length > 0) {
-				const fieldsByDevice = groupFieldNamesByOwningDevice(name, dataPoints);
+				const fieldsByDevice = groupFieldNamesByOwningDevice(name, dataPoints, (owner, keptUuid, ignoredUuid) => {
+					this.logger.warn(
+						`Conflicting device_uuid tags for owning device "${owner}": keeping "${keptUuid}", ignoring "${ignoredUuid}"`,
+					);
+				});
 
-				for (const [ownerDeviceName, fields] of fieldsByDevice) {
-					const resolved = this.resolveEnrichedDeviceName(ownerDeviceName, undefined, undefined, uuidMap);
+				for (const [ownerDeviceName, { fields, deviceUuid }] of fieldsByDevice) {
+					// Same source-provided identity telemetry uses (see
+					// resolveEnrichedDeviceName/enrichWithEndpointUuid above) — schema
+					// declarations must land in the same downstream device bucket as
+					// the reading data they describe, not a bucket derived from the
+					// connection-level map alone.
+					const resolved = resolveEnrichedDeviceName(ownerDeviceName, undefined, deviceUuid, uuidMap);
 					socket.sendControl(
 						{ __control: "device-schema", protocol, deviceName: resolved?.deviceName ?? ownerDeviceName, fields },
 						protocol,

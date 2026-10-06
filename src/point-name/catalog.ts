@@ -4,6 +4,7 @@ import { computeProvisionalPointId, computeShortHash, naturalKey } from './ident
 import { buildNormalizedPointName} from './normalize-point-name.js';
 import { CURRENT_POINT_NAME_RULES_VERSION } from './types.js';
 import type { Logger, PointIdentity } from './types.js';
+import { normalizeSourceSystem } from '../units/source-system.js';
 
 const MAX_ROWS_PER_FLUSH = 200;
 const MAX_QUEUE_SIZE = 5000;
@@ -135,7 +136,7 @@ class PointNameCatalog {
 		sourceAddress?: string;
 	}): PointIdentity {
 		this.ensureLoaded();
-		const sourceSystem = params.sourceSystem ?? null;
+		const sourceSystem = normalizeSourceSystem(params.sourceSystem);
 		const { endpointName, deviceKey, rawName, rawDeviceName, sourceAddress } = params;
 		const key = naturalKey(sourceSystem, endpointName, deviceKey, rawName);
 
@@ -217,6 +218,8 @@ class PointNameCatalog {
 			provisionalPointId: mapping.provisionalPointId,
 			normalizedName: mapping.normalizedName,
 			rawName: mapping.rawName,
+			deviceKey: mapping.deviceKey,
+			endpointName: mapping.endpointName,
 			...(rawDeviceName && { rawDeviceName }),
 			...(sourceAddress && { sourceAddress }),
 			rulesVersion: mapping.rulesVersion,

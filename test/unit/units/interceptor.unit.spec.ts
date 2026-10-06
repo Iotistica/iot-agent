@@ -13,10 +13,15 @@ jest.mock('../../../src/db/models/index', () => {
 			findExact: (source: string | null, alias: string) => aliases.get(`${source ?? ''}\0${alias}`) ?? null,
 			upsert: (rec: any) => { aliases.set(`${rec.source_system ?? ''}\0${rec.alias}`, rec); return rec; },
 		},
+		CustomUnitAliasesModel: {
+			getAll: () => [],
+			findExact: () => null,
+			upsert: (rec: any) => rec,
+		},
 	};
 });
 
-import { createUnitNormalizationInterceptor } from '../../../src/normalization/interceptor';
+import { createUnitNormalizationInterceptor } from '../../../src/units/interceptor';
 
 describe('unitNormalizationInterceptor', () => {
 	const interceptor = createUnitNormalizationInterceptor();
@@ -127,5 +132,45 @@ describe('unitNormalizationInterceptor', () => {
 				expect(reading.unitValue.provenance).not.toHaveProperty('confidence');
 			}
 		});
+	});
+});
+
+// The on/off toggle (admin Settings → Features → "Unit Normalization",
+// 2026-10-04) — readings must pass through raw and untouched when disabled,
+// and the live .setEnabled() mechanism is what src/init/core.ts's
+// 'features-changed' handler depends on to toggle this without a restart.
+describe('unitNormalizationInterceptor — enabled/disabled toggle', () => {
+	it('with no enabled option (existing default), behaves exactly as enabled — unchanged from before this feature', () => {
+		const interceptor = createUnitNormalizationInterceptor();
+		const messages = [{ protocol: 'bacnet', metric: 'x', value: 21.5, unit: '°C' }];
+		const result = interceptor(messages, 'endpoint-1') as any[];
+		expect(result[0].unit).toBe('degreesCelsius');
+		expect(result[0].unitValue).toBeDefined();
+	});
+
+	it('constructed with enabled: false leaves the reading raw and untouched — no catalog lookup, no unitValue', () => {
+		const interceptor = createUnitNormalizationInterceptor({ enabled: false });
+		const messages = [{ protocol: 'bacnet', metric: 'x', value: 21.5, unit: '°C' }];
+		const result = interceptor(messages, 'endpoint-1') as any[];
+		expect(result[0].unit).toBe('°C'); // untouched, not normalized to degreesCelsius
+		expect(result[0].unitValue).toBeUndefined();
+	});
+
+	it('.setEnabled(false) on an already-built interceptor disables it live', () => {
+		const interceptor = createUnitNormalizationInterceptor({ enabled: true });
+		interceptor.setEnabled(false);
+		const messages = [{ protocol: 'bacnet', metric: 'x', value: 21.5, unit: '°C' }];
+		const result = interceptor(messages, 'endpoint-1') as any[];
+		expect(result[0].unit).toBe('°C');
+		expect(result[0].unitValue).toBeUndefined();
+	});
+
+	it('.setEnabled(true) re-enables an interceptor that was constructed/toggled disabled', () => {
+		const interceptor = createUnitNormalizationInterceptor({ enabled: false });
+		interceptor.setEnabled(true);
+		const messages = [{ protocol: 'bacnet', metric: 'x', value: 21.5, unit: '°C' }];
+		const result = interceptor(messages, 'endpoint-1') as any[];
+		expect(result[0].unit).toBe('degreesCelsius');
+		expect(result[0].unitValue).toBeDefined();
 	});
 });

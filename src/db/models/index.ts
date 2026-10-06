@@ -69,6 +69,11 @@ export type { DeviceStateHistoryRecord } from './device-state-history.model';
 export { UnitDefinitionsModel, UnitAliasesModel } from './unit-catalog.model';
 export type { UnitDefinitionRecord, UnitAliasRecord } from './unit-catalog.model';
 
+// Admin-created unit aliases (the dashboard "Resolve unit" action) — separate
+// from the built-in, reseeded-on-startup unit_aliases table above.
+export { CustomUnitAliasesModel } from './custom-unit-aliases.model';
+export type { CustomUnitAliasRecord } from './custom-unit-aliases.model';
+
 // Point Name Normalization identity cache (operational, runtime-written — not reference data)
 export { PointNameMappingsModel } from './point-name.model';
 export type { PointNameMappingRecord } from './point-name.model';

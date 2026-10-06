@@ -1727,7 +1727,14 @@ export const getAvailableAnomalyMetrics = async (): Promise<
 		}
 	>();
 
-	// Load endpoints up front — used both to annotate live metrics and as DP fallback.
+	// Load endpoints and devices up front — used to annotate live metrics with
+	// a human-readable name (see below). Two separate lookups, not a fallback
+	// chain: a reading's deviceId is either the owning ENDPOINT's own uuid
+	// (BACnet/Modbus — resolveEnrichedDeviceName in src/plugins/index.ts uses
+	// the endpoint's uuid directly when a reading carries no device-level
+	// identity of its own) or a real per-DEVICE uuid from the `devices` table
+	// (OPC-UA, where one endpoint can span many physical devices) — each
+	// entry's deviceId only ever matches one of the two, by construction.
 	let endpoints: any[] = [];
 	const endpointById = new Map<string, string>();
 	try {
@@ -1741,6 +1748,15 @@ export const getAvailableAnomalyMetrics = async (): Promise<
 			try { meta = typeof ep.metadata === 'string' ? JSON.parse(ep.metadata) : ep.metadata; } catch { /* ignore */ }
 			const displayName: string = (meta?.objectName as string | undefined) || String(ep.name ?? uuid);
 			endpointById.set(uuid, displayName);
+		}
+	} catch {
+		// non-fatal
+	}
+	const deviceById = new Map<string, string>();
+	try {
+		const { DeviceModel } = await import('../db/models/device.model.js');
+		for (const d of await DeviceModel.getAll()) {
+			if (d.uuid) deviceById.set(d.uuid.toLowerCase(), d.name);
 		}
 	} catch {
 		// non-fatal
@@ -1781,62 +1797,39 @@ export const getAvailableAnomalyMetrics = async (): Promise<
 		}
 	}
 
-	// Annotate live metrics with endpoint name by matching any UUID in the canonical
-	// name against the endpoints table (canonical format: {ep_uuid}_{metric_name}).
-	const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
+	// Annotate live metrics with a human-readable name via deviceId.
+	// AnomalyFeed now records metrics under their normalized name (no
+	// embedded UUID — see src/publish/anomaly/feed.ts) paired with the
+	// metric's real per-device UUID as deviceId, so that's the reliable join
+	// key; the metric name itself never carries one to scan for.
+	//
+	// Check endpointById first, not deviceById: for a 1:1 protocol (BACnet/
+	// Modbus/MQTT) a device's own uuid in the `devices` table is literally
+	// the SAME value as its endpoint's uuid (DeviceModel.syncFromEndpoint()
+	// sets it to endpoint.uuid for these), so both maps have an entry for
+	// the same key — and endpointById's name is the richer one (prefers the
+	// discovery-captured objectName, e.g. "RTU-1 Controller", over the raw
+	// sanitized config name devices.name stores, e.g. "rtu_1_controller_1001").
+	// deviceById is only actually needed — and only ever matches — for a
+	// multi-device endpoint (OPC-UA), where a device's own uuid is genuinely
+	// distinct from its parent endpoint's uuid and endpointById has no entry
+	// for it at all.
 	for (const entry of results.values()) {
-		const uuids = entry.name.match(UUID_RE);
-		if (uuids) {
-			for (const uuid of uuids) {
-				const epName = endpointById.get(uuid.toLowerCase());
-				if (epName) {
-					entry.endpointName = epName;
-					break;
-				}
-			}
-		}
+		if (!entry.deviceId) continue;
+		const key = entry.deviceId.toLowerCase();
+		const name = endpointById.get(key) ?? deviceById.get(key);
+		if (name) entry.endpointName = name;
 	}
 
-	// 2. Supplement with data-point names from configured endpoints.
-	//    Endpoint metrics may not yet be in the live catalog (agent hasn't warmed up,
-	//    or the anomaly feed isn't wired for that protocol yet).
-	for (const ep of endpoints) {
-		const dataPoints: any[] = Array.isArray(ep.data_points) ? ep.data_points : [];
-		const uuid = ep.uuid ? String(ep.uuid).toLowerCase() : undefined;
-		const epDisplayName = uuid ? (endpointById.get(uuid) ?? ep.name) : ep.name;
-		for (const dp of dataPoints) {
-			const dpName: unknown = dp.name ?? dp.key ?? dp.tag ?? dp.label;
-			if (typeof dpName !== 'string' || !dpName.trim()) continue;
-			const name = dpName.trim();
-			// Best-effort per-device identifier for a data point that hasn't
-			// reported live yet — a data point's own device_uuid/device_name
-			// (per-node, e.g. distinguishing OPC-UA's AHU-1 from AHU-8 sharing
-			// a bare field name) takes priority over the endpoint's own
-			// identity, which is only meaningful for genuinely single-device
-			// sources. Doesn't need to byte-match the live buffer key format
-			// (see AnomalyDetectionService.recordMetricObservation) — once
-			// this metric is actually observed, that entry takes over.
-			const deviceId: string | undefined = dp.device_uuid || dp.device_name || uuid || ep.name || undefined;
-			const key = anomalyMetricResultKey(name, deviceId);
-			if (!results.has(key)) {
-				results.set(key, {
-					name,
-					deviceId,
-					// The data point's own human-readable device name (e.g. "AHU-1")
-					// when it has one — distinct from deviceId above, which is a
-					// technical identity key, not necessarily display-friendly.
-					// Only source 3 (here) has this available directly; sources 1/2
-					// don't carry a friendly name yet, so this is left undefined
-					// there rather than guessed.
-					deviceName: typeof dp.device_name === 'string' ? dp.device_name : undefined,
-					source: 'live',
-					configured: configuredNames.has(name),
-					endpointName: epDisplayName ?? undefined,
-					protocol: typeof ep.protocol === 'string' ? ep.protocol : undefined,
-				});
-			}
-		}
-	}
+	// No fallback source for configured-but-never-observed data points: a
+	// point that has never actually flowed through the live pipeline has no
+	// real normalized name on record anywhere (normalization only runs on
+	// live readings, src/point-name/interceptor.ts) — showing it under its
+	// raw, un-normalized config name would be exactly the kind of invented
+	// placeholder identity this catalog must not produce. If a configured
+	// point has no entry here, that's the honest state: it hasn't reported
+	// live data (yet, or possibly ever), and the UI's existing "No metrics
+	// flowing yet — enter a name manually" empty state already covers it.
 
 	return Array.from(results.values()).sort((a, b) => a.name.localeCompare(b.name) || (a.deviceId ?? '').localeCompare(b.deviceId ?? ''));
 };

@@ -7,6 +7,30 @@ import { parsePayload, coerceType } from "./payload.js";
 import { EndpointModel } from "../../db/models/endpoint.model.js";
 import { DeviceModel } from "../../db/models/device.model.js";
 import { MqttBrokerClient } from "./client.js";
+import { convertUnit } from "../../units/convert-unit.js";
+import { getNormalizationHealthTracker } from "../../units/normalization-health-tracker.js";
+
+// MQTT's own short-code canonical vocabulary (set by canonicalizeUnit()
+// below) translated to the shared catalog's canonical unit names
+// (src/data/unit-catalog-seed.ts), used only at the boundary where
+// convertUnitValue() calls into the shared conversion implementation. MQTT
+// keeps its own per-metric "target unit" config and short-code vocabulary —
+// no other protocol has an equivalent config surface yet (see
+// convert-unit.ts's own cross-reference comment) — only the arithmetic is
+// shared, to remove the duplicated conversion formulas/constants that used
+// to live here. Any *new* unit support should be added to the shared
+// catalog, not a new entry in canonicalizeUnit() below.
+const MQTT_UNIT_TO_CANONICAL: Record<string, string> = {
+	C: "degreesCelsius",
+	F: "degreesFahrenheit",
+	K: "kelvin",
+	Pa: "pascals",
+	kPa: "kilopascals",
+	bar: "bars",
+	mbar: "millibars",
+	psi: "psi",
+	atm: "atmospheres",
+};
 
 /**
  * MQTT Adapter
@@ -39,6 +63,11 @@ export class MqttAdapter extends BaseProtocolAdapter {
 	private processingEmitQueue = false;
 	private droppedMessageCount = 0;
 	private reconnectAttemptCount = 0;
+
+	protected getProtocolName(): string {
+		return 'mqtt';
+	}
+
 	private compiledMetrics = new Map<
 		string,
 		Array<MqttMetricConfig & { path: string[] }>
@@ -799,98 +828,12 @@ export class MqttAdapter extends BaseProtocolAdapter {
 		}
 	}
 
-	private resolveUnitDimension(
-		unit: string,
-	): "temperature" | "pressure" | undefined {
-		switch (unit) {
-			case "C":
-			case "F":
-			case "K":
-				return "temperature";
-			case "Pa":
-			case "kPa":
-			case "bar":
-			case "mbar":
-			case "psi":
-			case "atm":
-				return "pressure";
-			default:
-				return undefined;
-		}
-	}
-
-	private convertToBaseUnit(
-		value: number,
-		unit: string,
-		dimension: "temperature" | "pressure",
-	): number {
-		if (dimension === "temperature") {
-			switch (unit) {
-				case "K":
-					return value;
-				case "C":
-					return value + 273.15;
-				case "F":
-					return ((value - 32) * 5) / 9 + 273.15;
-			}
-		}
-
-		if (dimension === "pressure") {
-			switch (unit) {
-				case "Pa":
-					return value;
-				case "kPa":
-					return value * 1000;
-				case "bar":
-					return value * 100000;
-				case "mbar":
-					return value * 100;
-				case "psi":
-					return value * 6894.757293168;
-				case "atm":
-					return value * 101325;
-			}
-		}
-
-		throw new Error(`Unsupported unit conversion source: ${unit}`);
-	}
-
-	private convertFromBaseUnit(
-		value: number,
-		unit: string,
-		dimension: "temperature" | "pressure",
-	): number {
-		if (dimension === "temperature") {
-			switch (unit) {
-				case "K":
-					return value;
-				case "C":
-					return value - 273.15;
-				case "F":
-					return ((value - 273.15) * 9) / 5 + 32;
-			}
-		}
-
-		if (dimension === "pressure") {
-			switch (unit) {
-				case "Pa":
-					return value;
-				case "kPa":
-					return value / 1000;
-				case "bar":
-					return value / 100000;
-				case "mbar":
-					return value / 100;
-				case "psi":
-					return value / 6894.757293168;
-				case "atm":
-					return value / 101325;
-			}
-		}
-
-		throw new Error(`Unsupported unit conversion target: ${unit}`);
-	}
-
+	// Conversion arithmetic itself lives in src/units/convert-unit.ts
+	// (shared across all protocols); this just translates MQTT's short codes
+	// to that module's canonical names at the boundary and preserves this
+	// method's existing throw-on-unsupported-pair contract, so
+	// normalizeMetricValue()'s existing catch/fallback-to-raw-value behavior
+	// is unaffected.
 	private convertUnitValue(
 		value: number,
 		fromUnit: string,
@@ -900,15 +843,19 @@ export class MqttAdapter extends BaseProtocolAdapter {
 			return value;
 		}
 
-		const fromDimension = this.resolveUnitDimension(fromUnit);
-		const toDimension = this.resolveUnitDimension(toUnit);
+		const fromCanonical = MQTT_UNIT_TO_CANONICAL[fromUnit];
+		const toCanonical = MQTT_UNIT_TO_CANONICAL[toUnit];
 
-		if (!fromDimension || !toDimension || fromDimension !== toDimension) {
+		if (!fromCanonical || !toCanonical) {
 			throw new Error(`Unsupported unit conversion: ${fromUnit} -> ${toUnit}`);
 		}
 
-		const baseValue = this.convertToBaseUnit(value, fromUnit, fromDimension);
-		return this.convertFromBaseUnit(baseValue, toUnit, toDimension);
+		const result = convertUnit(value, fromCanonical, toCanonical);
+		if (!result.converted) {
+			throw new Error(result.warning ?? `Unsupported unit conversion: ${fromUnit} -> ${toUnit}`);
+		}
+
+		return result.value;
 	}
 
 	private normalizePrecision(
@@ -970,6 +917,16 @@ export class MqttAdapter extends BaseProtocolAdapter {
 					unit: normalizedCanonical,
 				};
 			} catch (error) {
+				try {
+					getNormalizationHealthTracker().recordConversionFailure(
+						normalizedIncoming ?? "unknown",
+						normalizedCanonical,
+						"mqtt",
+					);
+				} catch {
+					/* best-effort */
+				}
+
 				this.logger.warn("Unknown unit conversion, storing raw value", {
 					from: normalizedIncoming,
 					to: normalizedCanonical,
@@ -1022,6 +979,7 @@ export class MqttAdapter extends BaseProtocolAdapter {
 			timestamp: now,
 			quality: retain ? "UNCERTAIN" : "GOOD",
 			...(retain && { qualityCode: "RETAINED_MESSAGE" }),
+			protocol: 'mqtt',
 		};
 	}
 
@@ -1331,6 +1289,7 @@ export class MqttAdapter extends BaseProtocolAdapter {
 				timestamp: new Date().toISOString(),
 				quality: "BAD",
 				qualityCode: "PARSE_ERROR",
+				protocol: "mqtt",
 			};
 
 			this.enqueueData([dataPoint], topic);

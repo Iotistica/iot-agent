@@ -59,15 +59,33 @@ export async function loadInfluxDbDestination(): Promise<{ InfluxDbPublishPlugin
 	return tryLoad('destinations/influxdb')
 }
 
+// @iotistica/agent-pro is "type": "module" with subpath-only exports (no "."
+// root export, no "require" condition) — require.resolve() on the bare
+// package name always throws ERR_PACKAGE_PATH_NOT_EXPORTED even when the
+// package is installed and perfectly loadable, because every loadX() helper
+// above uses dynamic import() instead. Detect presence the same way: a real
+// dynamic import of a stable subpath, cached after the first check.
+let proInstalledCache: boolean | null = null
+
+/** Primes the Pro-install cache. Call once during early startup (before the
+ *  Device API starts accepting requests) so isProInstalled() never serves a
+ *  false negative while detection is still in flight. */
+export async function primeProInstalled(): Promise<boolean> {
+	if (proInstalledCache === null) {
+		proInstalledCache = (await tryLoad('shell')) !== null
+	}
+	return proInstalledCache
+}
+
 /** Returns true when the Pro package is resolvable in the current node_modules.
- *  Set PRO_FORCE=true to bypass the check (dev/testing only). */
+ *  Set PRO_FORCE=true to bypass the check (dev/testing only). Reflects the
+ *  cache populated by primeProInstalled(); returns false if that hasn't run
+ *  yet, and kicks off detection in the background so later calls are correct. */
 export function isProInstalled(): boolean {
 	if (process.env.PRO_FORCE === 'true') return true
-	try {
-		// eslint-disable-next-line @typescript-eslint/no-require-imports
-		require.resolve(PRO_PKG)
-		return true
-	} catch {
+	if (proInstalledCache === null) {
+		void primeProInstalled()
 		return false
 	}
+	return proInstalledCache
 }

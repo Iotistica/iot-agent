@@ -29,6 +29,10 @@ export class ModbusAdapter extends BaseProtocolAdapter{
 	private deviceMetrics: Map<string, DeviceMetrics> = new Map(); // Time-series metrics
 	private pollLoopRunning = false;
 
+	protected getProtocolName(): string {
+		return 'modbus';
+	}
+
 	// Human-readable display names from device config (Modbus has no server-side name discovery).
 	// Populated from device.displayName if set; otherwise the entry is absent (fall back to device.name).
 	private resolvedDeviceNames: Map<string, string> = new Map();
@@ -554,6 +558,7 @@ export class ModbusAdapter extends BaseProtocolAdapter{
 				timestamp: timestamp,
 				quality: 'BAD' as const,
 				qualityCode: qualityCode,
+				protocol: 'modbus',
 				...(resolvedDisplayName && { resolvedDisplayName }),
 			}));
       

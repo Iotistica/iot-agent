@@ -44,10 +44,44 @@ async function startCpuSampler() {
 startCpuSampler();
 
 let anomalyService: any | undefined;
+let systemMetricsSamplerTimer: NodeJS.Timeout | undefined;
 
-/** Configure anomaly feed integration for system metrics. */
-export function configureAnomalyFeed(service: any | undefined): void {
+/**
+ * Configure anomaly feed integration for system metrics, and (re)start an
+ * independent periodic sampler so cpu_usage/memory_percent anomaly buffers
+ * keep accumulating on their own.
+ *
+ * getSystemMetrics() already feeds the anomaly service when called (see its
+ * own "Feed anomaly detection when configured" block below) — but its only
+ * *recurring* caller before this fix was src/sync/state-reporter.ts, part of
+ * the cloud state-reporting cycle. src/init/sync.ts returns immediately in
+ * STANDALONE mode, before that cycle is ever set up, so system metrics were
+ * sampled once at boot and never again in standalone deployments — the
+ * buffer just sits stuck at 1-2 samples forever, confirmed live (unrelated
+ * to any of this session's display fixes; a pre-existing gap those fixes
+ * just made visible instead of hiding behind a confusing raw metric name).
+ *
+ * Re-uses the cloud flow's own reportIntervalMs default (60s) so standalone
+ * and cloud-connected deployments sample at the same cadence rather than
+ * introducing a second, different interval. Self-cleans on every call (not
+ * just the first) so repeated reinitialization — e.g. a Settings-triggered
+ * features-changed event re-running initAnomalyDetection() — can't leak a
+ * duplicate timer each time.
+ */
+export function configureAnomalyFeed(service: any | undefined, intervalMs = 60_000): void {
 	anomalyService = service;
+
+	if (systemMetricsSamplerTimer) {
+		clearInterval(systemMetricsSamplerTimer);
+		systemMetricsSamplerTimer = undefined;
+	}
+
+	if (service) {
+		systemMetricsSamplerTimer = setInterval(() => {
+			getSystemMetrics().catch(() => { /* best-effort — matches getSystemMetrics' own internal safe() fallback pattern */ });
+		}, intervalMs);
+		systemMetricsSamplerTimer.unref?.();
+	}
 }
 
 export interface ProcessInfo {

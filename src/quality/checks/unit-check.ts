@@ -1,4 +1,4 @@
-import type { UnitValue } from '../../normalization/types.js';
+import type { UnitValue } from '../../units/types.js';
 import type { QualityCheck } from '../types.js';
 import { RULE_IDS } from '../rule-ids.js';
 import { assessUnitConfidence } from '../confidence-policy.js';

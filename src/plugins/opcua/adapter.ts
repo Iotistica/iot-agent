@@ -77,6 +77,51 @@ import {
 } from './types.js';
 import { OPCUADeviceClient, type OPCUASession } from './client.js';
 import { OpcuaStartupDiagnostics } from './diagnostics.js';
+import { looksLikeEngineeringUnit, normalizeForUnitNameCompare } from './discovery.js';
+
+/**
+ * Resolves a candidate unit from a node's raw Description-attribute text,
+ * reusing discovery.ts's looksLikeEngineeringUnit() plausibility check
+ * rather than re-deriving it — this adapter can hit the exact same "server
+ * defaults an unset Description to the node's own display name" bug class
+ * discovery.ts already guards against (confirmed live: "Power-Factor",
+ * "CH-1-COP", "CH-2-COP", "Active-Alarms", "write-test" — all configured
+ * with no unit at all, surfacing as their own node name).
+ *
+ * Handles two Description shapes:
+ *   - a bare unit string (e.g. "kPa") — accepted directly if plausible.
+ *   - a composite sentence (e.g. "Temperature in °C") — the text after
+ *     "in " is extracted and independently validated.
+ *
+ * A description that's self-referential as a WHOLE (equals the node's own
+ * name, even when it happens to contain the substring " in ") is rejected
+ * outright before any extraction is attempted — otherwise a self-referential
+ * composite-looking name (e.g. a node literally named "Flow in Pipe" whose
+ * Description defaults to that same text) could slip a meaningless fragment
+ * ("Pipe") through the "in X" extraction, since the extracted fragment alone
+ * no longer equals the full node name and would otherwise pass the
+ * plausibility check on its own.
+ */
+export function resolveUnitFromDescription(descriptionText: string, nodeName: string): string | undefined {
+	const trimmed = descriptionText.trim();
+	if (!trimmed) return undefined;
+
+	if (normalizeForUnitNameCompare(trimmed) === normalizeForUnitNameCompare(nodeName)) {
+		return undefined;
+	}
+
+	if (looksLikeEngineeringUnit(trimmed, nodeName)) {
+		return trimmed;
+	}
+
+	const inUnitMatch = trimmed.match(/\bin\s+([^\s,]+(?:\/[^\s,]+)?)/i);
+	const candidate = inUnitMatch?.[1];
+	if (candidate && looksLikeEngineeringUnit(candidate, nodeName)) {
+		return candidate;
+	}
+
+	return undefined;
+}
 
 /**
  * One physical OPC-UA server session, shared by every configured device
@@ -430,11 +475,11 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 			const browsePathResults = await session.translateBrowsePath(browsePaths);
 
 			const propertyNodeIds: string[] = [];
-			const ownerNodeIds: string[] = [];
+			const ownerDataPoints: OPCUADataPoint[] = [];
 			browsePathResults.forEach((result: BrowsePathResult, i: number) => {
 				if (result.statusCode.isGood() && result.targets && result.targets.length > 0) {
 					propertyNodeIds.push(result.targets[0].targetId.toString());
-					ownerNodeIds.push(candidates[i].nodeId);
+					ownerDataPoints.push(candidates[i]);
 				}
 			});
 			if (propertyNodeIds.length === 0) return units;
@@ -448,9 +493,17 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 				const euInfo = result.value?.value as { displayName?: { text?: string } | string } | undefined;
 				const displayName = euInfo?.displayName;
 				const symbol = typeof displayName === 'string' ? displayName : displayName?.text;
-				if (symbol) {
-					units.set(ownerNodeIds[i], symbol);
-				}
+				if (!symbol) return;
+
+				// Same plausibility guard as the Description fallback below — a
+				// server/library that defaults an unset EngineeringUnits.displayName
+				// to the node's own name is the same bug class, just on the
+				// "authoritative" property instead of Description.
+				const dp = ownerDataPoints[i];
+				const nodeName = dp.browseName ?? dp.name;
+				if (!looksLikeEngineeringUnit(symbol, nodeName)) return;
+
+				units.set(dp.nodeId, symbol);
 			});
 		} catch (error) {
 			this.logger.debug(`EngineeringUnits lookup failed for ${deviceName}, falling back to Description parsing`, {
@@ -546,12 +599,15 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 			} else if (!dp.unit && descriptionResult.statusCode.isGood()) {
 				const description = descriptionResult.value?.value?.text || descriptionResult.value?.value;
 				if (description && typeof description === 'string') {
-					// Extract unit from description - supports both simple and composite units
-					// Pattern matches: "in {unit}" or "{unit}" at end of string
-					// Examples: "Temperature in °C", "Flow in L/min", "Vibration in mm/s"
-					const inUnitMatch = description.match(/\bin\s+([^\s,]+(?:\/[^\s,]+)?)/i);
-					if (inUnitMatch) {
-						(dp as any).unit = inUnitMatch[1];
+					// Supports both a bare unit ("kPa") and a composite sentence
+					// ("Temperature in °C", "Flow in L/min") — see
+					// resolveUnitFromDescription()'s own doc comment for why the
+					// self-referential case (description equals the node's own
+					// name) is rejected outright before any extraction, even when
+					// the name itself happens to contain " in ".
+					const resolvedUnit = resolveUnitFromDescription(description, dp.browseName ?? dp.name);
+					if (resolvedUnit) {
+						(dp as any).unit = resolvedUnit;
 					}
 				}
 			}
@@ -1806,6 +1862,7 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 					quality,
 					qualityCode,
 					nodeType: 'metric',
+					protocol: 'opcua',
 					...(dp.device_uuid && { device_uuid: dp.device_uuid }),
 					...((this.resolvedNodeDisplayNames.has(dp.nodeId) || this.resolvedDeviceNames.has(deviceName)) && {
 						resolvedDisplayName: this.resolvedNodeDisplayNames.get(dp.nodeId) ?? this.resolvedDeviceNames.get(deviceName),
@@ -1837,6 +1894,7 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 				unit: dp.unit || '',
 				quality: 'GOOD' as const,
 				nodeType: 'metric',
+				protocol: 'opcua',
 				...(dp.device_uuid && { device_uuid: dp.device_uuid }),
 				...((this.resolvedNodeDisplayNames.has(dp.nodeId) || this.resolvedDeviceNames.has(deviceName)) && {
 					resolvedDisplayName: this.resolvedNodeDisplayNames.get(dp.nodeId) ?? this.resolvedDeviceNames.get(deviceName),

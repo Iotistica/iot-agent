@@ -20,7 +20,6 @@ import {
   WifiOutlined,
   ApiOutlined,
   ClusterOutlined,
-  DeploymentUnitOutlined,
   DatabaseOutlined,
   CodeOutlined,
   NodeIndexOutlined,
@@ -28,14 +27,12 @@ import {
   MenuUnfoldOutlined,
 } from '@ant-design/icons-vue'
 import IotisticaLogo from '@/components/IotisticaLogo.vue'
-import { useProStatus } from '@/composables/useProStatus'
 import { useSidebar } from '@/composables/useSidebar'
 import { useAuth } from '@/composables/useAuth'
 
 const route = useRoute()
 const router = useRouter()
 
-const { proInstalled } = useProStatus()
 const { collapsed, toggle } = useSidebar()
 const { hasRole } = useAuth()
 
@@ -72,7 +69,7 @@ function onMenuClick({ key }: { key: string }) {
         <IotisticaLogo :size="24" />
         <template v-if="!collapsed">
           <span class="logo-title">Iotistica</span>
-          <a-tag v-if="proInstalled" class="pro-badge">PRO</a-tag>
+          <a-tag class="pro-badge">PRO</a-tag>
         </template>
       </div>
     </div>
@@ -116,15 +113,11 @@ function onMenuClick({ key }: { key: string }) {
           Devices
         </a-menu-item>
 
-        <a-menu-item key="/assets">
-          <template #icon><DeploymentUnitOutlined /></template>
-          Assets
-        </a-menu-item>
+        <!-- Assets hidden for now — route still works, just not linked from the sidebar. -->
 
         <a-menu-item key="/discovery-rules">
           <template #icon><RadarChartOutlined /></template>
           Discovery
-          <a-tag v-if="!proInstalled" class="pro-badge">PRO</a-tag>
         </a-menu-item>
 
         <a-menu-item key="/applications">
@@ -135,13 +128,11 @@ function onMenuClick({ key }: { key: string }) {
         <a-menu-item key="/anomaly">
           <template #icon><FundOutlined /></template>
           Analytics
-          <a-tag v-if="!proInstalled" class="pro-badge">PRO</a-tag>
         </a-menu-item>
 
         <a-menu-item key="/mqtt-broker">
           <template #icon><WifiOutlined /></template>
           MQTT
-          <a-tag v-if="!proInstalled" class="pro-badge">PRO</a-tag>
         </a-menu-item>
 
         <a-menu-item key="/terminal">
@@ -213,7 +204,6 @@ function onMenuClick({ key }: { key: string }) {
         <a-menu-item key="/support">
           <template #icon><CustomerServiceOutlined /></template>
           Support
-          <a-tag v-if="!proInstalled" class="pro-badge">PRO</a-tag>
         </a-menu-item>
       </a-menu>
     </div>

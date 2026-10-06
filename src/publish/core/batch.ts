@@ -93,6 +93,23 @@ export class MessageBatcher extends EventEmitter {
 		this._firstMessageTime = Date.now();
 	}
 
+	/**
+	 * Clears the raw socket read buffer — call when the underlying connection
+	 * drops (not on every reset()), so a partial frame left over from the old
+	 * connection can never be silently concatenated with bytes from a new one
+	 * after reconnect. Without this, a connection dropped mid-message (e.g.
+	 * the IPC server's backpressure handling destroying the socket) leaves
+	 * its partial bytes sitting in readBuffer; the next complete message
+	 * after reconnect then gets prefixed with that stale fragment and fails
+	 * to parse as JSON. Distinct from reset() (parsed-message batch state
+	 * only) since clearing readBuffer mid-stream on a still-healthy
+	 * connection would wrongly discard a frame that's simply still arriving
+	 * in pieces.
+	 */
+	resetReadBuffer(): void {
+		this.readBuffer = Buffer.alloc(0);
+	}
+
 
 	private isPlainDelimiter(pattern: string): boolean {
 		// Fast-path only literal delimiters with no regex metacharacters.

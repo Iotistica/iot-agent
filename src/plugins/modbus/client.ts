@@ -923,7 +923,8 @@ export class ModbusClient implements IProtocolClient<void, DeviceDataPoint[]> {
 			unit: register.unit || '',
 			timestamp: timestamp,
 			quality: 'BAD',
-			qualityCode: qualityCode
+			qualityCode: qualityCode,
+			protocol: 'modbus'
 		};
 	}
   
@@ -1034,7 +1035,8 @@ export class ModbusClient implements IProtocolClient<void, DeviceDataPoint[]> {
 			unit: register.unit || '',
 			timestamp: timestamp,
 			quality: 'BAD' as const,
-			qualityCode: qualityCode
+			qualityCode: qualityCode,
+			protocol: 'modbus'
 		}));
 	}
 

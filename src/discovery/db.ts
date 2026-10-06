@@ -114,7 +114,16 @@ export class DiscoveryStore {
 					const profileChanged = existingProfile !== newProfile;
 					// Don't overwrite existing populated data_points with an empty validation result
 					const wouldClearDataPoints = (existing.data_points?.length ?? 0) > 0 && (device.dataPoints?.length ?? 0) === 0;
-					const dataPointsChanged = !wouldClearDataPoints && JSON.stringify(existing.data_points) !== JSON.stringify(device.dataPoints);
+					// Structural identity only — excludes presentValue (BACnet) and other live
+					// readings, which fluctuate on every scan and would otherwise make this
+					// comparison true on every single discovery run, forcing an unnecessary
+					// endpoint update + full protocol-adapter reload every time (observed:
+					// recurring ~20min OPC-UA resubscription bursts caused by BACnet's own
+					// present-value drift, 2026-10-05).
+					const stripVolatile = (points?: any[]) =>
+						(points || []).map(({ presentValue, ...rest }) => rest);
+					const dataPointsChanged = !wouldClearDataPoints &&
+						JSON.stringify(stripVolatile(existing.data_points)) !== JSON.stringify(stripVolatile(device.dataPoints));
 					const validationChanged = device.validated && !existing.metadata?.validated;
 					// One-way ratchet: a rule with auto_enable on turns an already-known
 					// device on if it wasn't already — a rule WITHOUT auto_enable never

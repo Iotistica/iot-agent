@@ -111,3 +111,41 @@ describe('pointNameNormalizationInterceptor', () => {
 		expect((goodMessage as any).pointIdentity).toBeDefined();
 	});
 });
+
+// The on/off toggle (admin Settings → Features → "Point-Name Normalization",
+// 2026-10-04) — readings must pass through raw and untouched when disabled,
+// and the live .setEnabled() mechanism is what src/init/core.ts's
+// 'features-changed' handler depends on to toggle this without a restart.
+describe('pointNameNormalizationInterceptor — enabled/disabled toggle', () => {
+	it('with no enabled option (existing default), behaves exactly as enabled — unchanged from before this feature', () => {
+		const interceptor = createPointNameNormalizationInterceptor();
+		const messages = [{ protocol: 'bacnet', metric: 'AHU-1 SAT', value: 21.5 }];
+		const result = interceptor(messages, 'endpoint-1') as any[];
+		expect(result[0].pointIdentity).toBeDefined();
+	});
+
+	it('constructed with enabled: false leaves the reading untouched — no identity resolution, no pointIdentity', () => {
+		const interceptor = createPointNameNormalizationInterceptor({ enabled: false });
+		const messages = [{ protocol: 'bacnet', metric: 'AHU-1 SAT', value: 21.5 }];
+		const result = interceptor(messages, 'endpoint-1') as any[];
+		expect(result[0].pointIdentity).toBeUndefined();
+		expect(result[0].metric).toBe('AHU-1 SAT');
+	});
+
+	it('.setEnabled(false) on an already-built interceptor disables it live', () => {
+		const interceptor = createPointNameNormalizationInterceptor({ enabled: true });
+		interceptor.setEnabled(false);
+		const messages = [{ protocol: 'bacnet', metric: 'AHU-1 SAT', value: 21.5 }];
+		const result = interceptor(messages, 'endpoint-1') as any[];
+		expect(result[0].pointIdentity).toBeUndefined();
+	});
+
+	it('.setEnabled(true) re-enables an interceptor that was constructed/toggled disabled', () => {
+		const interceptor = createPointNameNormalizationInterceptor({ enabled: false });
+		interceptor.setEnabled(true);
+		const messages = [{ protocol: 'bacnet', metric: 'AHU-1 SAT', value: 21.5 }];
+		const result = interceptor(messages, 'endpoint-1') as any[];
+		expect(result[0].pointIdentity).toBeDefined();
+		expect(result[0].pointIdentity.normalizedName).toBe('ahu_1_sat');
+	});
+});

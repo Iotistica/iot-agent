@@ -1,0 +1,19 @@
+services:
+  agent:
+    build: .
+    container_name: iotistica-agent
+    restart: unless-stopped
+    ports:
+      - "48481:48484"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./data:/data
+    environment:
+      STANDALONE: "true"
+      API_SECURITY_MODE: "LOCAL_NETWORK"
+    networks:
+      - iotistica-net
+
+networks:
+  iotistica-net:
+    external: true

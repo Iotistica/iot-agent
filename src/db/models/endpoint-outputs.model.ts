@@ -27,6 +27,28 @@ export interface DriftOptions {
    * Defaults to ['missing-field', 'type-drift'] when unset.
    */
   alertOnDriftTypes?: ('new-field' | 'missing-field' | 'type-drift' | 'rename-candidate')[];
+  /** Observations a non-baseline field needs (with sufficient presence ratio, see adaptivePromotionRatio) before it's silently promoted into the baseline and stops being flagged. Defaults to 50. */
+  adaptivePromotionBatches?: number;
+  /** Required presence ratio (since first seen) for adaptivePromotionBatches promotion to fire. Defaults to 0.6. */
+  adaptivePromotionRatio?: number;
+  /** Fraction of a field's observations a value type must represent to be its "expected" type — prevents one bad payload from widening accepted types. Defaults to 0.15. */
+  minTypeDominanceRatio?: number;
+  /** Max distinct fields tracked per device. Defaults to 1000. */
+  maxTrackedFields?: number;
+  /** Max distinct device identities tracked per endpoint. Defaults to 2000. */
+  maxTrackedDevices?: number;
+  /** Max nesting depth the schema extractor recurses into a payload. Defaults to 5. */
+  maxTraversalDepth?: number;
+  /** Max fields processed from a single observation/batch. Defaults to 500. */
+  maxFieldsPerBatch?: number;
+  /** Max missing/new field pairs compared per side when searching for rename candidates. Defaults to 20. */
+  maxRenameCandidates?: number;
+  /** Field names longer than this are skipped during rename-candidate (Levenshtein) comparison. Defaults to 64. */
+  maxRenameFieldLength?: number;
+  /** How many example field names to include in each drift log line. Defaults to 10. */
+  logSampleSize?: number;
+  /** Run the full drift check only every Nth batch after baseline is established (1 = every batch). Defaults to 1. */
+  checkIntervalBatches?: number;
 }
 
 export interface DeviceEndpointOutput {

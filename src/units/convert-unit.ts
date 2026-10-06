@@ -13,6 +13,19 @@ export interface ConvertUnitResult {
  * resolution here — that's normalizeUnitName()'s job). Uses the base-unit
  * hub model: source -> base -> target, via each definition's own
  * multiplier/offset (base_value = value * multiplier + offset).
+ *
+ * This has no production callers from the live interceptor chain — numeric
+ * conversion only ever runs when explicitly requested (normalizeUnit()'s
+ * `targetUnit` option), and nothing in the live pipeline passes one yet;
+ * there's no "preferred unit" config surface for most protocols. MQTT is
+ * the one exception: its adapter (src/plugins/mqtt/adapter.ts,
+ * convertUnitValue()) has its own per-metric "target unit" config and calls
+ * this function directly (translating its own short unit codes to this
+ * module's canonical names first) — that's a deliberate, narrow use of this
+ * shared implementation, not evidence it should be wired into the generic
+ * interceptor. Any *new* unit needed by MQTT (or anywhere else) should be
+ * added to the shared catalog (src/data/unit-catalog-seed.ts), not a new
+ * protocol-local conversion table.
  */
 export function convertUnit(value: number, fromUnit: string, toUnit: string): ConvertUnitResult {
 	if (fromUnit === toUnit) {

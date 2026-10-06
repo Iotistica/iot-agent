@@ -4,7 +4,8 @@ import { useRouter } from 'vue-router'
 import type { TableColumnType } from 'ant-design-vue'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import SparklineChart from '@/components/SparklineChart.vue'
-import { dashboardApi, type DashboardStats, type NetworkBandwidth } from '@/api/dashboard'
+import NormalizationHealthDrawer from '@/components/dashboard/NormalizationHealthDrawer.vue'
+import { dashboardApi, type DashboardStats, type NetworkBandwidth, type NormalizationHealth } from '@/api/dashboard'
 import { anomalyApi } from '@/api/anomaly'
 import { pipelineApi } from '@/api/pipeline'
 import { protocolLabel } from '@/utils/protocol'
@@ -39,6 +40,20 @@ const error = ref(false)
 const incidentStats = ref<{ open: number; active: number; resolved: number; total: number } | null>(null)
 const recentAlerts  = ref<EdgeAnomalyAlert[]>([])
 const alertsTotal   = ref(0)
+
+const normalizationHealth = ref<NormalizationHealth | null>(null)
+const normalizationDrawerOpen = ref(false)
+const normalizationUnitColumns: TableColumnType<{ label: string; protocol: string | null; count: number; lastSeen: string }>[] = [
+  { title: 'Unit', dataIndex: 'label', key: 'label', ellipsis: true },
+  { title: 'Protocol', key: 'protocol', width: 100 },
+  { title: 'Count', dataIndex: 'count', key: 'count', width: 70, align: 'right' },
+]
+
+async function loadNormalizationHealth() {
+  try {
+    normalizationHealth.value = await dashboardApi.getNormalizationHealth()
+  } catch { /* non-fatal */ }
+}
 
 const SEVERITY_TAG_COLOR: Record<string, string> = { critical: 'red', warning: 'orange', info: 'blue' }
 const GUID_ANYWHERE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}_/gi
@@ -162,16 +177,20 @@ async function poll() {
 
 let timer: ReturnType<typeof setInterval> | null = null
 let alertTimer: ReturnType<typeof setInterval> | null = null
+let normalizationHealthTimer: ReturnType<typeof setInterval> | null = null
 onMounted(() => {
   poll()
   timer = setInterval(poll, POLL_MS)
   anomalyApi.getEdgeIncidentStats().then((s) => { incidentStats.value = s }).catch(() => {})
   loadAlerts()
   alertTimer = setInterval(loadAlerts, 30_000)
+  loadNormalizationHealth()
+  normalizationHealthTimer = setInterval(loadNormalizationHealth, 30_000)
 })
 onUnmounted(() => {
   if (timer) clearInterval(timer)
   if (alertTimer) clearInterval(alertTimer)
+  if (normalizationHealthTimer) clearInterval(normalizationHealthTimer)
 })
 
 // ── Formatters ────────────────────────────────────────────────────────────────
@@ -303,6 +322,52 @@ const netIface   = computed(() => stats.value ? (primaryNet(stats.value.network)
               </template>
               <template v-else-if="column.key === 'time'">
                 <span style="font-size:11px; color:#bbb">{{ fmtRelTime(record.created_at) }}</span>
+              </template>
+            </template>
+          </a-table>
+        </div>
+      </template>
+
+      <!-- ── Normalization health ─────────────────────────────────────────────── -->
+      <template v-if="normalizationHealth">
+        <div class="section-label">
+          Normalization Health
+          <span class="section-link" @click="normalizationDrawerOpen = true">View details →</span>
+        </div>
+        <a-row :gutter="16" style="margin-bottom:12px">
+          <a-col :xs="12" :sm="6">
+            <div class="widget">
+              <div class="widget-title">Unknown Units</div>
+              <div class="widget-value" :style="{ color: normalizationHealth.unknownUnits.count > 0 ? '#fa8c16' : '#52c41a' }">
+                {{ normalizationHealth.unknownUnits.count }}
+              </div>
+              <div class="widget-sub">distinct units not recognized</div>
+            </div>
+          </a-col>
+          <a-col :xs="12" :sm="6">
+            <div class="widget">
+              <div class="widget-title">Conversion Failures</div>
+              <div class="widget-value" :style="{ color: normalizationHealth.conversionFailures.count > 0 ? '#fa8c16' : '#52c41a' }">
+                {{ normalizationHealth.conversionFailures.count }}
+              </div>
+              <div class="widget-sub">distinct unsupported conversions</div>
+            </div>
+          </a-col>
+        </a-row>
+        <div v-if="normalizationHealth.unknownUnits.items.length > 0" class="widget" style="margin-bottom:16px; padding:0; overflow:hidden">
+          <a-table
+            :columns="normalizationUnitColumns"
+            :data-source="normalizationHealth.unknownUnits.items.slice(0, 5)"
+            :pagination="false"
+            row-key="label"
+            size="small"
+          >
+            <template #bodyCell="{ column, record }">
+              <template v-if="column.key === 'label'">
+                <span :title="record.label" style="font-size:13px">{{ record.label }}</span>
+              </template>
+              <template v-else-if="column.key === 'protocol'">
+                <span style="font-size:12px; color:#888">{{ record.protocol ?? '—' }}</span>
               </template>
             </template>
           </a-table>
@@ -541,6 +606,8 @@ const netIface   = computed(() => stats.value ? (primaryNet(stats.value.network)
 
       </template>
     </a-spin>
+
+    <NormalizationHealthDrawer v-model:open="normalizationDrawerOpen" :data="normalizationHealth" @resolved="loadNormalizationHealth" />
   </AppLayout>
 </template>
 

@@ -21,9 +21,10 @@ const FLUSH_INTERVAL_MS = 5000;
  * via a periodic flush — never a synchronous DB call from this function's own
  * call stack.
  */
-export function createPointNameNormalizationInterceptor(opts: { logger?: Logger } = {}) {
+export function createPointNameNormalizationInterceptor(opts: { logger?: Logger; enabled?: boolean } = {}) {
 	const catalog = getPointNameCatalog();
 	catalog.init(opts.logger);
+	let enabled = opts.enabled ?? true;
 
 	const flushTimer = setInterval(() => catalog.flush(), FLUSH_INTERVAL_MS);
 	flushTimer.unref?.();
@@ -32,10 +33,14 @@ export function createPointNameNormalizationInterceptor(opts: { logger?: Logger 
 	process.once('SIGTERM', shutdownFlush);
 	process.once('SIGINT', shutdownFlush);
 
-	return function pointNameNormalizationInterceptor(
+	function pointNameNormalizationInterceptor(
 		messages: ProtocolMessage[],
 		endpointName: string,
 	): ProtocolMessage[] {
+		// Disabled: pass every reading through raw and untouched — no identity
+		// resolution, no pointIdentity attached.
+		if (!enabled) return messages;
+
 		for (const message of messages) {
 			try {
 				if (Array.isArray(message.readings)) {
@@ -54,7 +59,13 @@ export function createPointNameNormalizationInterceptor(opts: { logger?: Logger 
 			}
 		}
 		return messages;
+	}
+
+	pointNameNormalizationInterceptor.setEnabled = (value: boolean): void => {
+		enabled = value;
 	};
+
+	return pointNameNormalizationInterceptor;
 }
 
 function attachIdentity(reading: ProtocolMessage, endpointNameHint: string, catalog: PointNameCatalog): void {
@@ -74,7 +85,14 @@ function attachIdentity(reading: ProtocolMessage, endpointNameHint: string, cata
 	if (typeof rawName !== 'string' || rawName.length === 0) return;
 
 	const sourceSystem = typeof reading.protocol === 'string' ? reading.protocol : undefined;
-	const deviceKeyRaw = reading.deviceId ?? reading.device_uuid ?? reading.endpoint_uuid;
+	// device_uuid/endpoint_uuid are the standardized identity AdapterManager's
+	// enrichment stamps onto every reading (src/plugins/index.ts) — reliable
+	// per-physical-device UUIDs for every protocol as of the fix there.
+	// deviceId is each adapter's own ad-hoc, pre-enrichment identity scheme
+	// (e.g. OPC-UA's composite "protocol:host:port:device" string) — kept only
+	// as a last-resort fallback for the rare case enrichment found no identity
+	// at all, not preferred over the standardized value when both exist.
+	const deviceKeyRaw = reading.device_uuid ?? reading.endpoint_uuid ?? reading.deviceId;
 	const deviceKey = typeof deviceKeyRaw === 'string' ? deviceKeyRaw : '';
 	const rawDeviceNameCandidate =
 	reading.normalizationDeviceName ??

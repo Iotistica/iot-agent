@@ -117,6 +117,8 @@ export interface FeatureToggles {
 	enableAnomalyDetection: boolean;
 	enableDeviceJobs: boolean;
 	enableDeviceRemoteAccess: boolean;
+	enableUnitNormalization: boolean;
+	enablePointNameNormalization: boolean;
 }
 
 export interface PublishConfig {
@@ -633,6 +635,8 @@ export class ConfigManager extends EventEmitter {
 			enableAnomalyDetection: cloud?.enableAnomalyDetection ?? false,
 			enableDeviceJobs: cloud?.enableDeviceJobs ?? true,
 			enableDeviceRemoteAccess: cloud?.enableDeviceRemoteAccess ?? true,
+			enableUnitNormalization: cloud?.enableUnitNormalization ?? true,
+			enablePointNameNormalization: cloud?.enablePointNameNormalization ?? true,
 		};
 	}
 

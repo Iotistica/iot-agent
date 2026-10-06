@@ -1,7 +1,7 @@
 /**
  * Static seed dataset for the Unit Normalization Service catalog.
  * Follows the same convention as app-templates.ts: plain exported arrays,
- * no DB import here. src/normalization/catalog.ts's seedUnitCatalog() upserts
+ * no DB import here. src/units/catalog.ts's seedUnitCatalog() upserts
  * these into unit_definitions/unit_aliases on every startup (reference data,
  * immutable at runtime — see plan decision #3).
  *
@@ -46,7 +46,9 @@ export const UNIT_DEFINITIONS: SeedUnitDefinition[] = [
 	{ canonical_unit: 'pascals', quantity: 'pressure', symbol: 'Pa', description: 'Pascals', base_unit: 'pascals', multiplier: 1, offset: 0 },
 	{ canonical_unit: 'kilopascals', quantity: 'pressure', symbol: 'kPa', description: 'Kilopascals', base_unit: 'pascals', multiplier: 1000, offset: 0 },
 	{ canonical_unit: 'bars', quantity: 'pressure', symbol: 'bar', description: 'Bars', base_unit: 'pascals', multiplier: 100000, offset: 0 },
-	{ canonical_unit: 'psi', quantity: 'pressure', symbol: 'psi', description: 'Pounds per square inch', base_unit: 'pascals', multiplier: 6894.76, offset: 0 },
+	{ canonical_unit: 'psi', quantity: 'pressure', symbol: 'psi', description: 'Pounds per square inch', base_unit: 'pascals', multiplier: 6894.757293168, offset: 0 },
+	{ canonical_unit: 'millibars', quantity: 'pressure', symbol: 'mbar', description: 'Millibars', base_unit: 'pascals', multiplier: 100, offset: 0 },
+	{ canonical_unit: 'atmospheres', quantity: 'pressure', symbol: 'atm', description: 'Standard atmospheres', base_unit: 'pascals', multiplier: 101325, offset: 0 },
 
 	// ── Airflow (base: litersPerSecond) ─────────────────────────────────────
 	{ canonical_unit: 'litersPerSecond', quantity: 'airflow', symbol: 'L/s', description: 'Liters per second', base_unit: 'litersPerSecond', multiplier: 1, offset: 0 },
@@ -129,6 +131,12 @@ export const UNIT_ALIASES: SeedUnitAlias[] = [
 	{ source_system: null, alias: 'bars', canonical_unit: 'bars' },
 	{ source_system: null, alias: 'psi', canonical_unit: 'psi' },
 	{ source_system: null, alias: 'PSI', canonical_unit: 'psi' },
+	{ source_system: null, alias: 'mbar', canonical_unit: 'millibars' },
+	{ source_system: null, alias: 'millibar', canonical_unit: 'millibars' },
+	{ source_system: null, alias: 'millibars', canonical_unit: 'millibars' },
+	{ source_system: null, alias: 'atm', canonical_unit: 'atmospheres' },
+	{ source_system: null, alias: 'atmosphere', canonical_unit: 'atmospheres' },
+	{ source_system: null, alias: 'atmospheres', canonical_unit: 'atmospheres' },
 
 	{ source_system: null, alias: 'CFM', canonical_unit: 'cubicFeetPerMinute' },
 	{ source_system: null, alias: 'cfm', canonical_unit: 'cubicFeetPerMinute' },
@@ -244,12 +252,23 @@ export const UNIT_ALIASES: SeedUnitAlias[] = [
 
 	// ── Modbus (source: user's own spec example — modbus -> "C" -> degreesCelsius) ──
 	{ source_system: 'modbus', alias: 'C', canonical_unit: 'degreesCelsius' },
+
+	// ── OPC-UA (source: the server's own standard EngineeringUnits property,
+	// read via readEngineeringUnits() in src/plugins/opcua/adapter.ts and
+	// discovery.ts — real EUInformation.displayName.text symbols, e.g. "V"
+	// for Voltage-L1, confirmed against a live simulator profile). Only the
+	// handful of single-character electrical symbols that decision #10
+	// requires scoping (never global) — unlike BACnet/MQTT, OPC-UA had no
+	// scoped aliases at all until this entry, so these two common ones were
+	// resolving as unknown units for every OPC-UA device reporting them.
+	{ source_system: 'opcua', alias: 'V', canonical_unit: 'volts' },
+	{ source_system: 'opcua', alias: 'A', canonical_unit: 'amperes' },
 ];
 
 // ─────────────────────────────────────────────────────────────────────────
 // Seed-data self-consistency validation — pure, static, no DB. Run both as a
-// unit test (test/unit/normalization/unit-catalog-seed.unit.spec.ts) and as
-// a startup assertion in seedUnitCatalog() (src/normalization/catalog.ts):
+// unit test (test/unit/units/unit-catalog-seed.unit.spec.ts) and as
+// a startup assertion in seedUnitCatalog() (src/units/catalog.ts):
 // a failure here is a shipped-code bug, not a runtime data problem.
 // ─────────────────────────────────────────────────────────────────────────
 
@@ -319,24 +338,53 @@ export function validateUnitCatalogSeed(
 	// constraint, asserted here too so a broken seed fails fast in CI).
 	const seenPairs = new Set<string>();
 	for (const alias of aliases) {
-		const key = `${alias.source_system ?? ' '}${alias.alias}`;
+		const key = `${alias.source_system ?? ' '}${alias.alias}`;
 		if (seenPairs.has(key)) {
 			errors.push(`Duplicate alias pair: source_system=${alias.source_system ?? 'null'}, alias="${alias.alias}"`);
 		}
 		seenPairs.add(key);
 	}
 
-	// No two global aliases share the same alias string with different canonical units (ambiguity).
+	// No two global aliases share the same normalized alias string with
+	// different canonical units (ambiguity). Grouped by trim().toLowerCase()
+	// to match UnitCatalog.reload()/resolveAlias()'s own runtime key
+	// construction exactly (src/units/catalog.ts) — this check used
+	// to group by the raw, case-sensitive alias string, which meant a
+	// case-variant pair pointing at *different* canonical units (e.g. "KW"
+	// added later alongside the existing "kw") would pass validation clean
+	// while the runtime catalog silently folded both into one Map key,
+	// last-write-wins, with no warning anywhere. Every case-variant pair in
+	// the real shipped seed today points at the same canonical unit, so this
+	// fix doesn't change the real seed's validation result — it only changes
+	// what gets caught for a future conflicting addition.
 	const globalAliasTargets = new Map<string, Set<string>>();
 	for (const alias of aliases) {
 		if (alias.source_system !== null) continue;
-		const targets = globalAliasTargets.get(alias.alias) ?? new Set<string>();
+		const key = alias.alias.trim().toLowerCase();
+		const targets = globalAliasTargets.get(key) ?? new Set<string>();
 		targets.add(alias.canonical_unit);
-		globalAliasTargets.set(alias.alias, targets);
+		globalAliasTargets.set(key, targets);
 	}
-	for (const [aliasStr, targets] of globalAliasTargets) {
+	for (const [aliasKey, targets] of globalAliasTargets) {
 		if (targets.size > 1) {
-			errors.push(`Ambiguous global alias "${aliasStr}" maps to multiple canonical units: ${[...targets].join(', ')}`);
+			errors.push(`Ambiguous global alias "${aliasKey}" maps to multiple canonical units: ${[...targets].join(', ')}`);
+		}
+	}
+
+	// Same check, scoped: no two aliases under the same source_system share
+	// the same normalized alias string with different canonical units.
+	const scopedAliasTargets = new Map<string, Set<string>>();
+	for (const alias of aliases) {
+		if (alias.source_system === null) continue;
+		const key = `${alias.source_system}\0${alias.alias.trim().toLowerCase()}`;
+		const targets = scopedAliasTargets.get(key) ?? new Set<string>();
+		targets.add(alias.canonical_unit);
+		scopedAliasTargets.set(key, targets);
+	}
+	for (const [key, targets] of scopedAliasTargets) {
+		if (targets.size > 1) {
+			const [sourceSystem, aliasKey] = key.split('\0');
+			errors.push(`Ambiguous scoped alias "${aliasKey}" (source_system=${sourceSystem}) maps to multiple canonical units: ${[...targets].join(', ')}`);
 		}
 	}
 

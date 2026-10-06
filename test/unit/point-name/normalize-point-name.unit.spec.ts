@@ -1,4 +1,4 @@
-import { normalizePointName, stripDeviceNamePrefix } from '../../../src/point-name/normalize-point-name';
+import { normalizePointName, buildNormalizedPointName } from '../../../src/point-name/normalize-point-name';
 
 describe('normalizePointName', () => {
 	it('produces the two worked examples from the plan exactly', () => {
@@ -58,61 +58,68 @@ describe('normalizePointName', () => {
 		}
 	});
 
-	it('does not perform any token/abbreviation expansion in Phase 1 (step 10 is an unconditional no-op)', () => {
-		// Ambiguous/ common HVAC abbreviations pass through unchanged — no scoped
-		// or fuzzy resolution, per plan §6.
-		expect(normalizePointName('SAT')).toBe('sat');
-		expect(normalizePointName('CHW Valve')).toBe('chw_valve');
-		expect(normalizePointName('OA Damper')).toBe('oa_damper');
+	it('does not perform any semantic/abbreviation expansion — ambiguous abbreviations stay exactly as syntactically normalized', () => {
+		// Design principle: normalize representation, not meaning. This agent
+		// is general IoT/industrial infrastructure, not HVAC-specific — "PV"
+		// must never become "process_value", "SAT" must never become
+		// "supply_air_temp", etc. No scoped or fuzzy resolution exists
+		// anywhere in this pipeline (confirmed 2026-10-03).
+		const ambiguousAbbreviations = ['PV', 'SP', 'DP', 'SV', 'AI', 'AO', 'DI', 'DO', 'SAT', 'SA', 'RA', 'OA', 'CHW Valve', 'OA Damper'];
+		for (const input of ambiguousAbbreviations) {
+			const expected = input.toLowerCase().replace(/[\s\-./:()&+]/g, '_');
+			expect(normalizePointName(input)).toBe(expected);
+		}
+	});
+
+	it('is idempotent — normalizing an already-normalized string returns it unchanged', () => {
+		const inputs = ['AHU-Test Filter DP Alarm', 'VAV-101 Zone Temp', 'Motor Speed', 'Line 1 Pressure', 'Pump 01 Status'];
+		for (const input of inputs) {
+			const once = normalizePointName(input);
+			expect(normalizePointName(once)).toBe(once);
+		}
 	});
 });
 
-describe('stripDeviceNamePrefix', () => {
-	it('strips a dot-separated device-name prefix (BACnet convention, e.g. bacnet-simulator\'s "{device}.{point}")', () => {
-		expect(stripDeviceNamePrefix('AHU-1.RF-Run', 'AHU-1')).toBe('rf_run');
+describe('domain-neutral formatting convergence', () => {
+	// This agent is general IoT/industrial infrastructure (BACnet/MQTT/
+	// OPC-UA/Modbus across HVAC, process, utility, and other domains), not
+	// HVAC-specific — these cases deliberately avoid any domain vocabulary.
+	const cases: Array<{ variants: string[]; expected: string }> = [
+		{ variants: ['Motor Speed', 'motor-speed', 'MOTOR_SPEED', 'motor_speed'], expected: 'motor_speed' },
+		{ variants: ['Line 1 Pressure', 'line-1-pressure', 'LINE_1_PRESSURE'], expected: 'line_1_pressure' },
+		{ variants: ['Tank Level', 'tank-level', 'TANK_LEVEL'], expected: 'tank_level' },
+		{ variants: ['Pump 01 Status', 'pump-01-status', 'PUMP_01_STATUS'], expected: 'pump_01_status' },
+	];
+
+	it.each(cases)('every variant of "$expected" converges to the same normalized name', ({ variants, expected }) => {
+		for (const variant of variants) {
+			expect(normalizePointName(variant)).toBe(expected);
+		}
+	});
+});
+
+describe('buildNormalizedPointName (device+point composition)', () => {
+	it('combines device and point names with a single underscore join', () => {
+		expect(buildNormalizedPointName('AHU-Test', 'Zone Temp')).toBe('ahu_test_zone_temp');
 	});
 
-	it('strips a hyphen/underscore/space-separated prefix too', () => {
-		expect(stripDeviceNamePrefix('AHU-1-RF-Run', 'AHU-1')).toBe('rf_run');
-		expect(stripDeviceNamePrefix('AHU-1_RF-Run', 'AHU-1')).toBe('rf_run');
-		expect(stripDeviceNamePrefix('AHU-1 RF-Run', 'AHU-1')).toBe('rf_run');
+	it('omits the device prefix only when it is already a complete, redundant leading token in the point name', () => {
+		expect(buildNormalizedPointName('AHU-Test', 'AHU-Test Zone Temp')).toBe('ahu_test_zone_temp');
 	});
 
-	it('is case-insensitive', () => {
-		expect(stripDeviceNamePrefix('ahu-1.rf-run', 'AHU-1')).toBe('rf_run');
+	it('does not treat a partial/non-token-boundary match as redundant — combines in full', () => {
+		expect(buildNormalizedPointName('AHU-Test', 'AHU Zone Temp')).toBe('ahu_test_ahu_zone_temp');
 	});
 
-	it('handles rawName already sanitized to lowercase/underscore by the adapter before this ever runs (BACnet\'s real shape, not raw mixed-case/dotted text)', () => {
-		// object.name (what actually reaches normalizePointName's input) is
-		// pre-sanitized by discovery.ts to lowercase+underscore — deviceName may
-		// still be mixed-case/hyphenated. Both must canonicalize to the same
-		// tokens for the match to succeed.
-		expect(stripDeviceNamePrefix('ahu_1_rf_run', 'AHU-1')).toBe('rf_run');
+	it('a domain-neutral composition example', () => {
+		expect(buildNormalizedPointName('Pump 01', 'Status')).toBe('pump_01_status');
 	});
 
-	it('matches only the leading tokens actually shared, ignoring a trailing UUID suffix on deviceName (the enriched device identity, not the bare config name)', () => {
-		// AdapterManager.enrichWithEndpointUuid() appends a UUID-derived suffix to
-		// deviceName before it ever reaches this pipeline (e.g. "vav_f7_a" becomes
-		// "vav_f7_a_2041-d0f6e547") — the point's own raw name never had that
-		// suffix, so matching must stop at the first diverging token, not require
-		// the whole (longer, suffixed) deviceName to match.
-		expect(stripDeviceNamePrefix('vav_f7_a_zone_temp', 'vav_f7_a_2041-d0f6e547')).toBe('zone_temp');
-		expect(stripDeviceNamePrefix('vav_f7_a_damper_pos', 'vav_f7_a_2041-d0f6e547')).toBe('damper_pos');
+	it('is a no-op combination when no device name is supplied', () => {
+		expect(buildNormalizedPointName(undefined, 'Zone Temp')).toBe('zone_temp');
 	});
 
-	it('is a no-op when rawName shares no leading token with deviceName (e.g. OPC-UA node names)', () => {
-		expect(stripDeviceNamePrefix('cc-valve', 'AHU-1')).toBe('cc-valve');
-	});
-
-	it('is a no-op when deviceName is undefined', () => {
-		expect(stripDeviceNamePrefix('AHU-1.RF-Run', undefined)).toBe('AHU-1.RF-Run');
-	});
-
-	it('strips only the genuinely shared leading token(s) — "AHU-10" and "AHU-1" share the "ahu" token, so that alone is stripped, not treated as a full mismatch', () => {
-		expect(stripDeviceNamePrefix('AHU-10-RF-Run', 'AHU-1')).toBe('10_rf_run');
-	});
-
-	it('is a no-op when rawName equals deviceName exactly (nothing left to strip)', () => {
-		expect(stripDeviceNamePrefix('AHU-1', 'AHU-1')).toBe('AHU-1');
+	it('returns an empty string when both device and point normalize to empty', () => {
+		expect(buildNormalizedPointName('---', '   ')).toBe('');
 	});
 });

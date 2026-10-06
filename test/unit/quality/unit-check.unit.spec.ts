@@ -1,6 +1,6 @@
 import { unitCheck } from '../../../src/quality/checks/unit-check';
 import { assessUnitConfidence } from '../../../src/quality/confidence-policy';
-import type { UnitProvenance } from '../../../src/normalization/types';
+import type { UnitProvenance } from '../../../src/units/types';
 
 function readingWith(provenance: UnitProvenance) {
 	return { unitValue: { rawValue: 1, rawUnit: 'x', value: 1, unit: 'degreesCelsius', normalized: provenance.method !== 'unresolved', converted: false, provenance } };

@@ -1,4 +1,4 @@
-import type { UnitProvenance } from '../normalization/types.js';
+import type { UnitProvenance } from '../units/types.js';
 
 const UNIT_PROVENANCE_CONFIDENCE: Record<UnitProvenance['method'], number> = {
 	'exact-canonical': 1.00,
@@ -10,7 +10,7 @@ const UNIT_PROVENANCE_CONFIDENCE: Record<UnitProvenance['method'], number> = {
 /**
  * Applies quality policy to normalization's provenance facts — an assessment,
  * not a passive lookup. The single source of truth for unit confidence:
- * normalization stays deterministic/fact-only (src/normalization/), this
+ * normalization stays deterministic/fact-only (src/units/), this
  * policy can change independently across releases without touching it.
  *
  * Future dimensions (pointName, semantics) add their own assess*Confidence()

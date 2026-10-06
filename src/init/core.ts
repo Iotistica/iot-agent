@@ -1,11 +1,15 @@
 import { initDatabase } from './database.js';
 import { LogComponents } from '../logging/types.js';
+import { primeProInstalled } from '../pro/loader.js';
 import type { AgentInitContext } from './context.js';
 
 export async function initCore(ctx: AgentInitContext): Promise<void> {
 	await initDatabase(ctx);
 	await initializeStateReconciler(ctx);
 	setupConfigEventListeners(ctx);
+	// Prime before the Device API (phase "infra") starts accepting requests,
+	// so isProInstalled() never serves a false negative to GET /v1/device.
+	await primeProInstalled();
 }
 
 export async function initializeStateReconciler(ctx: AgentInitContext): Promise<void> {
@@ -129,6 +133,22 @@ export function setupConfigEventListeners(ctx: AgentInitContext): void {
 					);
 				}
 			}
+		}
+
+		if (change.old.enableUnitNormalization !== change.new.enableUnitNormalization) {
+			const enabled = change.new.enableUnitNormalization ?? true;
+			logger?.infoSync(`${enabled ? 'Enabling' : 'Disabling'} unit normalization (dynamically toggled)`, {
+				component: LogComponents.agent
+			});
+			ctx.normalizationToggles?.setUnitNormalizationEnabled(enabled);
+		}
+
+		if (change.old.enablePointNameNormalization !== change.new.enablePointNameNormalization) {
+			const enabled = change.new.enablePointNameNormalization ?? true;
+			logger?.infoSync(`${enabled ? 'Enabling' : 'Disabling'} point-name normalization (dynamically toggled)`, {
+				component: LogComponents.agent
+			});
+			ctx.normalizationToggles?.setPointNameNormalizationEnabled(enabled);
 		}
 	});
 

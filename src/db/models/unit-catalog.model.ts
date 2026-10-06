@@ -33,7 +33,7 @@ function mapDefinitionRow(row: UnitDefinitionRow | undefined): UnitDefinitionRec
 /**
  * Canonical engineering units. Reference data — reseeded from
  * src/data/unit-catalog-seed.ts on every startup via seedUnitCatalog()
- * (src/normalization/catalog.ts). No delete(): no runtime mutation path
+ * (src/units/catalog.ts). No delete(): no runtime mutation path
  * beyond the startup reseed.
  */
 export class UnitDefinitionsModel {

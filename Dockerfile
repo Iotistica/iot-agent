@@ -192,7 +192,7 @@ EXPOSE 48484
 # override the default (e.g. docker-compose.agents.yml sets 48481) don't get
 # marked unhealthy while actually running fine on their configured port.
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
-  CMD curl -f http://localhost:${DEVICE_API_PORT:-48484}/health || exit 1
+  CMD curl -f http://localhost:${DEVICE_API_PORT:-48484}/ping || exit 1
 
 # Use tini as init process for proper signal handling
 ENTRYPOINT ["/sbin/tini", "--", "/app/docker-entrypoint.sh"]

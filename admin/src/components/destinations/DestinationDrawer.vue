@@ -202,8 +202,7 @@ function close() {
             </a-tooltip>
             <template v-else>
               {{ t }}
-              <a-tag v-if="PRO_DESTINATION_TYPES.has(t)" color="gold" style="font-size:10px;padding:0 4px;height:16px;line-height:16px;margin-left:4px;border-radius:3px">Pro</a-tag>
-              <a-tag v-else-if="DEMO_DESTINATION_TYPES.has(t)" color="purple" style="font-size:10px;padding:0 4px;height:16px;line-height:16px;margin-left:4px;border-radius:3px">Demo</a-tag>
+              <a-tag v-if="DEMO_DESTINATION_TYPES.has(t)" color="purple" style="font-size:10px;padding:0 4px;height:16px;line-height:16px;margin-left:4px;border-radius:3px">Demo</a-tag>
             </template>
           </a-select-option>
         </a-select>

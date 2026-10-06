@@ -234,13 +234,13 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
                   <template #title>
                     <div>Normalized point</div>
                     <div>{{ record.normalizedName }}</div>
-                    <div style="margin-top: 6px">Protocol name</div>
+                    <div style="margin-top: 6px">Original name</div>
                     <div>{{ displayProtocolName({ rawPointName: record.rawPointName,rawObjectName: record.rawObjectName, metric: record.lastMetric}) }}</div>
                   </template>
                   <div class="point-primary" :title="record.normalizedName">{{ record.normalizedName }}</div>
                 </a-tooltip>
                 <div class="point-secondary" :title="record.rawPointName ?? record.rawObjectName ?? record.lastMetric">
-                  Protocol name: {{ displayProtocolName({ rawPointName: record.rawPointName, rawObjectName: record.rawObjectName, metric: record.lastMetric }) }}
+                  Original name: {{ displayProtocolName({ rawPointName: record.rawPointName, rawObjectName: record.rawObjectName, metric: record.lastMetric }) }}
                 </div>
               </template>
               <div v-else class="point-primary" :title="record.lastMetric">
@@ -326,13 +326,13 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
                   <template #title>
                     <div>Normalized point</div>
                     <div>{{ record.normalizedName }}</div>
-                    <div style="margin-top: 6px">Protocol name</div>
+                    <div style="margin-top: 6px">Original name</div>
                     <div>{{ displayProtocolName({ rawPointName: record.rawPointName, rawObjectName: record.rawObjectName, metric: record.metric}) }}</div>
                   </template>
                   <div class="point-primary" :title="record.normalizedName">{{ record.normalizedName }}</div>
                 </a-tooltip>
                 <div class="point-secondary" :title="record.rawPointName ?? record.rawObjectName ?? record.lastMetric">
-                  Protocol name: {{ displayProtocolName({ rawPointName: record.rawPointName, rawObjectName: record.rawObjectName, metric: record.metric }) }}
+                  Original name: {{ displayProtocolName({ rawPointName: record.rawPointName, rawObjectName: record.rawObjectName, metric: record.metric }) }}
                 </div>
               </template>
               <div v-else class="point-primary" :title="record.metric">

@@ -53,14 +53,23 @@ export class SocketServer {
 	private pendingSubscriptions: Set<net.Socket> = new Set(); // Sockets waiting for subscription handshake
 	private topicToSockets: Map<string, Set<net.Socket>> = new Map();
 	private wildcardSockets: Set<net.Socket> = new Set();
-	private slowClients: Map<net.Socket, number> = new Map(); // Track consecutive backpressure events per socket
+	// Sockets currently waiting for a kernel 'drain' event after a write()
+	// returned false (kernel buffer full) — value is the pending removal
+	// timeout, cleared if 'drain' fires in time. See sendToSocket().
+	private drainWaiters: Map<net.Socket, NodeJS.Timeout> = new Map();
 	private config: SocketOutput;
 	private logger: Logger;
 	private started = false;
 	private isWindowsNamedPipe: boolean;
 	private readonly MAX_CLIENTS = 10;
 	private readonly SUBSCRIPTION_TIMEOUT_MS = 5000;
-	private readonly BACKPRESSURE_THRESHOLD = 3; // Allow 3 consecutive failures before removal
+	// How long a socket may sit backpressured (write() returning false) before
+	// it's treated as genuinely stuck rather than just absorbing a large write.
+	// A single OPC-UA batch can be ~1MB — far bigger than a typical kernel
+	// socket buffer — so write() legitimately returns false for a healthy,
+	// actively-draining client; only a client that never drains at all within
+	// this window is actually a problem.
+	private readonly DRAIN_TIMEOUT_MS = 5000;
 	private readonly MAX_POINTS_PER_MESSAGE_LIMIT = 1000;
 	private readonly MAX_MIN_INTERVAL_MS = 60_000;
 
@@ -161,7 +170,8 @@ export class SocketServer {
 			this.pendingSubscriptions.clear();
 			this.topicToSockets.clear();
 			this.wildcardSockets.clear();
-			this.slowClients.clear();
+			for (const timeout of this.drainWaiters.values()) clearTimeout(timeout);
+			this.drainWaiters.clear();
 
 			// Close server
 			await new Promise<void>((resolve) => {
@@ -311,14 +321,20 @@ export class SocketServer {
 	}
 
 	/**
-	 * Send data to a single socket with graceful backpressure handling
-	 * Tracks consecutive failures and gradually escalates warnings
-	 * 
-	 * Backpressure handling:
-	 * - Attempt 1: WARN - likely transient
-	 * - Attempt 2: WARN - monitor
-	 * - Attempt 3: ERROR - client degraded, consider sampling
-	 * - Attempt 4+: Remove client
+	 * Send data to a single socket with correct backpressure handling.
+	 *
+	 * socket.write() returning false means the kernel's write buffer is full
+	 * — Node has still queued the data internally and will deliver it once
+	 * the buffer drains. That's normal, expected behavior for a large payload
+	 * (a single OPC-UA batch can be ~1MB), not a sign of a bad client. The
+	 * previous version counted every such return as a "failure" and
+	 * destroyed the socket after 4 of them — which discards whatever was
+	 * still queued mid-write, corrupting the message for the client (see the
+	 * "JSON parse failed for 'opcua-pipe'" investigation this fixes).
+	 *
+	 * Correct handling: wait for the kernel's own 'drain' event. Only a
+	 * socket that doesn't drain within DRAIN_TIMEOUT_MS — genuinely stuck,
+	 * not just absorbing a big write — gets removed.
 	 */
 	private sendToSocket(
 		socket: net.Socket,
@@ -330,33 +346,34 @@ export class SocketServer {
 			const flushed = socket.write(data);
 
 			if (!flushed) {
-				// Backpressure detected: kernel buffer full
-				const failureCount = (this.slowClients.get(socket) ?? 0) + 1;
-				this.slowClients.set(socket, failureCount);
-
-				if (failureCount >= this.BACKPRESSURE_THRESHOLD + 1) {
-					// Persistent backpressure after threshold: remove client
-					this.logger.error(
-						`Removing IPC client (persistent backpressure: ${failureCount} consecutive failures for topic: ${topic})`,
-						{ reason: "backpressure_threshold_exceeded" },
-					);
-					this.removeClient(socket);
-				} else if (failureCount === this.BACKPRESSURE_THRESHOLD) {
-					// Escalate to error log on 3rd failure
-					this.logger.error(
-						`IPC client degraded (backpressure failure #${failureCount} for topic: ${topic}) - will be removed if continues`,
-						{ reason: "backpressure_escalation" },
-					);
-				} else {
-					// Initial warnings on 1st-2nd failures
-					this.logger.warn(
-						`IPC client slow (backpressure failure #${failureCount} for topic: ${topic}) - transient kernel buffer pressure`,
+				// Already waiting on a previous backpressured write for this
+				// socket — don't stack a second timer/listener on top of it.
+				if (!this.drainWaiters.has(socket)) {
+					this.logger.debug(
+						`IPC client backpressured (topic: ${topic}) — waiting for kernel buffer to drain`,
 						{ reason: "kernel_buffer_full" },
 					);
+
+					const timeout = setTimeout(() => {
+						this.drainWaiters.delete(socket);
+						this.logger.error(
+							`Removing IPC client (did not drain within ${this.DRAIN_TIMEOUT_MS}ms for topic: ${topic})`,
+							{ reason: "drain_timeout_exceeded" },
+						);
+						this.removeClient(socket);
+					}, this.DRAIN_TIMEOUT_MS);
+					timeout.unref?.();
+					this.drainWaiters.set(socket, timeout);
+
+					socket.once("drain", () => {
+						const pending = this.drainWaiters.get(socket);
+						if (pending) {
+							clearTimeout(pending);
+							this.drainWaiters.delete(socket);
+						}
+					});
 				}
 			} else {
-				// Send succeeded: reset failure counter
-				this.slowClients.delete(socket);
 				sentTo.add(socket);
 				return true;
 			}
@@ -584,8 +601,12 @@ export class SocketServer {
 	 * Handles both active subscriptions and pending handshakes
 	 */
 	private removeClient(socket: net.Socket): void {
-		// Clean up backpressure tracking
-		this.slowClients.delete(socket);
+		// Clean up any pending drain-wait timer for this socket.
+		const pendingDrain = this.drainWaiters.get(socket);
+		if (pendingDrain) {
+			clearTimeout(pendingDrain);
+			this.drainWaiters.delete(socket);
+		}
 
 		// Check if socket is still in pending handshake
 		if (this.pendingSubscriptions.has(socket)) {

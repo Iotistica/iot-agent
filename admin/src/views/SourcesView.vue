@@ -7,9 +7,15 @@ import AppLayout from '@/components/layout/AppLayout.vue'
 import { useAuth } from '@/composables/useAuth'
 import SourceDrawer from '@/components/sources/SourceDrawer.vue'
 import DiscoveryDrawer from '@/components/discovery/DiscoveryDrawer.vue'
-import type { Endpoint, EndpointCommunicationQuality, EndpointCreateData } from '@/types'
+import DiscoveryRuleDrawer, { type DiscoveryRulePrefill } from '@/components/discovery/DiscoveryRuleDrawer.vue'
+import type { Endpoint, EndpointCommunicationQuality, EndpointCreateData, DiscoveryRule } from '@/types'
 import { sourcesApi } from '@/api/sources'
+import { discoveryRulesApi } from '@/api/discovery'
 import { protocolColor, protocolLabel } from '@/utils/protocol'
+
+// Protocols with a real discovery plugin — matches DiscoveryRuleDrawer.vue's
+// own hasParamFields list (no snmp plugin exists in this codebase).
+const DISCOVERABLE_PROTOCOLS = new Set(['bacnet', 'modbus', 'opcua', 'mqtt'])
 
 const { hasRole } = useAuth()
 
@@ -21,6 +27,9 @@ const drawerOpen = ref(false)
 const discoveryOpen = ref(false)
 const editing = ref<Endpoint | null>(null)
 const prefill = ref<EndpointCreateData | null>(null)
+const rules = ref<DiscoveryRule[]>([])
+const createRuleOpen = ref(false)
+const createRulePrefill = ref<DiscoveryRulePrefill | null>(null)
 const selectedUuids = ref<string[]>([])
 const deleting = ref(false)
 const deletingAll = ref(false)
@@ -51,7 +60,8 @@ const protocolCounts = computed(() => {
 const columns: TableColumnType<Endpoint>[] = [
   { title: 'Name', dataIndex: 'name', key: 'name', ellipsis: true },
   { title: 'Protocol', key: 'protocol', width: 110 },
-  { title: 'Status', key: 'status', width: 160 },
+  { title: 'Status', key: 'status', width: 130 },
+  { title: 'Last Seen', key: 'last_seen', width: 100 },
   { title: 'Connection', key: 'connection', ellipsis: true },
   { title: 'Enabled', key: 'enabled', width: 90 },
   { title: 'Poll', key: 'poll_interval', width: 80 },
@@ -129,6 +139,71 @@ function connSummary(ep: Endpoint): string {
   return JSON.stringify(c).slice(0, 40)
 }
 
+// ── Discovery rule coverage ──────────────────────────────────────────────────
+// "Does an enabled rule already cover this source" isn't uniform across
+// protocols — verified by reading each plugin's discover(): opcua/mqtt only
+// ever rescan the target named in the rule's own params_json, so coverage
+// must be target-matched; modbus's discover() never reads its own options at
+// all (always sweeps every configured modbus endpoint via getDiscoveryTargets),
+// and bacnet's discoveryTargets is a network/broadcast reach rather than a
+// single-device address (one target already found multiple distinct devices
+// live) — both are genuinely protocol-level, not a simplification.
+function ruleCoversSource(rule: DiscoveryRule, ep: Endpoint): boolean {
+  if (!rule.enabled || rule.protocol !== ep.protocol) return false
+  if (ep.protocol === 'modbus' || ep.protocol === 'bacnet') return true
+
+  const params = rule.params_json ?? {}
+  if (ep.protocol === 'opcua') {
+    const urls = (params as Record<string, unknown>).discoveryUrls
+    const endpointUrl = String(ep.connection?.endpointUrl ?? '')
+    return !!endpointUrl && Array.isArray(urls) && urls.some((u) => String(u) === endpointUrl)
+  }
+  if (ep.protocol === 'mqtt') {
+    const brokerUrl = (params as Record<string, unknown>).brokerUrl
+    const host = ep.connection?.host ?? ep.connection?.url
+    return !!host && !!brokerUrl && String(brokerUrl).includes(String(host))
+  }
+  return false
+}
+
+function showCreateRuleAction(ep: Endpoint): boolean {
+  return DISCOVERABLE_PROTOCOLS.has(ep.protocol) && !rules.value.some((r) => ruleCoversSource(r, ep))
+}
+
+function deriveRulePrefillFromSource(ep: Endpoint): DiscoveryRulePrefill {
+  const c = ep.connection
+  const params: Record<string, any> = {}
+
+  if (ep.protocol === 'opcua') {
+    if (c.endpointUrl) params.discoveryUrls = [String(c.endpointUrl)]
+    if (c.securityMode) params.securityMode = c.securityMode
+    if (c.securityPolicy) params.securityPolicy = c.securityPolicy
+    if (c.certificateTrustMode) params.certificateTrustMode = c.certificateTrustMode
+    if (c.username) params.username = c.username
+    if (c.password) params.password = c.password
+  } else if (ep.protocol === 'bacnet') {
+    const ip = c.ipAddress ?? c.host
+    if (ip) params.discoveryTargets = [String(ip)]
+  } else if (ep.protocol === 'modbus') {
+    if (c.type !== 'rtu') {
+      if (c.host) params.tcpHost = String(c.host)
+      if (c.port) params.tcpPort = c.port
+    }
+    if (typeof c.slaveId === 'number') params.slaveIdRange = [c.slaveId, c.slaveId]
+  } else if (ep.protocol === 'mqtt') {
+    const host = c.host ?? c.url
+    if (host) params.brokerUrl = `mqtt://${String(host)}${c.port ? ':' + c.port : ''}`
+    if (c.topic) params.topics = [String(c.topic)]
+  }
+
+  return { name: `${ep.protocol} rule — ${ep.name}`, protocol: ep.protocol, params }
+}
+
+function openCreateRuleFromSource(ep: Endpoint) {
+  createRulePrefill.value = deriveRulePrefillFromSource(ep)
+  createRuleOpen.value = true
+}
+
 // ── Data loading ──────────────────────────────────────────────────────────────
 
 async function load(showLoader = true) {
@@ -141,6 +216,16 @@ async function load(showLoader = true) {
     error.value = e?.message ?? 'Failed to load sources'
   } finally {
     loading.value = false
+  }
+}
+
+async function loadRules() {
+  try {
+    rules.value = await discoveryRulesApi.getAll()
+  } catch {
+    // Non-fatal: the "Create discovery rule from source" action just won't
+    // appear correctly until the next successful load — sources themselves
+    // still work fine.
   }
 }
 
@@ -250,6 +335,7 @@ watch(discoveryOpen, (isOpen) => { if (!isOpen) load() })
 
 onMounted(() => {
   load()
+  loadRules()
   refreshTimer = setInterval(() => load(false), 10_000)
 })
 
@@ -362,9 +448,10 @@ onUnmounted(() => {
               </span>
             </div>
           </a-tooltip>
-          <div v-if="record.health?.lastSeen" class="status-lastseen">
-            {{ timeSince(record.health.lastSeen) }}
-          </div>
+        </template>
+
+        <template v-else-if="column.key === 'last_seen'">
+          <span class="last-seen-cell">{{ record.health?.lastSeen ? timeSince(record.health.lastSeen) : '—' }}</span>
         </template>
 
         <template v-else-if="column.key === 'connection'">
@@ -385,6 +472,11 @@ onUnmounted(() => {
 
         <template v-else-if="column.key === 'actions'">
           <a-space>
+            <a-tooltip v-if="hasRole('operator') && showCreateRuleAction(record)" title="Create discovery rule from this source">
+              <a-button size="small" @click="openCreateRuleFromSource(record)">
+                <template #icon><RadarChartOutlined /></template>
+              </a-button>
+            </a-tooltip>
             <a-button size="small" @click="openEdit(record)">
               <template #icon><EditOutlined /></template>
             </a-button>
@@ -406,6 +498,13 @@ onUnmounted(() => {
     <DiscoveryDrawer
       v-model:open="discoveryOpen"
       @saved="load"
+    />
+
+    <DiscoveryRuleDrawer
+      v-model:open="createRuleOpen"
+      :editing="null"
+      :prefill="createRulePrefill"
+      @saved="() => { loadRules(); load(false) }"
     />
   </AppLayout>
 </template>
@@ -455,10 +554,8 @@ onUnmounted(() => {
   margin-left: 2px;
 }
 
-.status-lastseen {
-  font-size: 11px;
+.last-seen-cell {
+  font-size: 12px;
   color: #666;
-  margin-top: 2px;
-  padding-left: 14px;
 }
 </style>

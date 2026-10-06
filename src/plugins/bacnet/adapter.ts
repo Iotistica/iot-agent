@@ -26,6 +26,10 @@ export class BACnetAdapter extends BaseProtocolAdapter {
 	private clients: Map<string, BACnetClient> = new Map();
 	private pollLoopRunning = false;
 
+	protected getProtocolName(): string {
+		return 'bacnet';
+	}
+
 	// Human-readable names resolved from BACnet Device objectName at init time.
 	// Priority: device.displayName (config override) > BACnet objectName property > (unset)
 	private resolvedDeviceNames: Map<string, string> = new Map();

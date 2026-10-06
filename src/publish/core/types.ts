@@ -19,6 +19,19 @@ export const DriftOptionsSchema = z.object({
 	consecutiveMissingThreshold: z.number().int().min(1).optional(),
 	alertCooldownMs: z.number().min(0).optional(),
 	minFieldPresenceRatio: z.number().min(0).max(1).optional(),
+	adaptiveRetireBatches: z.number().int().min(1).optional(),
+	alertOnDriftTypes: z.array(z.enum(['new-field', 'missing-field', 'type-drift', 'rename-candidate'])).optional(),
+	adaptivePromotionBatches: z.number().int().min(1).optional(),
+	adaptivePromotionRatio: z.number().min(0).max(1).optional(),
+	minTypeDominanceRatio: z.number().min(0).max(1).optional(),
+	maxTrackedFields: z.number().int().min(1).optional(),
+	maxTrackedDevices: z.number().int().min(1).optional(),
+	maxTraversalDepth: z.number().int().min(1).optional(),
+	maxFieldsPerBatch: z.number().int().min(1).optional(),
+	maxRenameCandidates: z.number().int().min(1).optional(),
+	maxRenameFieldLength: z.number().int().min(1).optional(),
+	logSampleSize: z.number().int().min(0).optional(),
+	checkIntervalBatches: z.number().int().min(1).optional(),
 }).optional();
 
 export type DriftOptions = z.infer<typeof DriftOptionsSchema>;

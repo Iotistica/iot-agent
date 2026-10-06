@@ -1263,6 +1263,140 @@ router.get('/v1/adapters/:protocol/metrics', async (req: Request, res: Response,
 	}
 });
 
+/** Rejects with a timeout error if `promise` doesn't settle within `ms`. */
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+	return new Promise<T>((resolve, reject) => {
+		const timer = setTimeout(() => reject(new Error('Connection timed out')), ms);
+		promise.then(
+			(v) => { clearTimeout(timer); resolve(v); },
+			(e) => { clearTimeout(timer); reject(e); }
+		);
+	});
+}
+
+// Silent logger for ad-hoc test-connection clients — these are one-shot,
+// outside the normal adapter lifecycle, and the API response already carries
+// the result, so routing debug/info noise through AgentLogger isn't useful.
+const testConnectionLogger = { debug() {}, info() {}, warn() {}, error() {} };
+
+/**
+ * POST /v1/endpoints/test
+ * Test connectivity for a source/endpoint config without saving it.
+ * Body: { protocol, connection }
+ */
+router.post('/v1/endpoints/test', requireRole('operator'), async (req: Request, res: Response, next: NextFunction) => {
+	try {
+		const { protocol, connection: conn } = req.body as { protocol?: string; connection?: Record<string, any> };
+		if (!protocol) return res.status(200).json({ ok: false, error: 'protocol is required' });
+		const connection = conn ?? {};
+
+		if (protocol === 'modbus') {
+			const { ModbusClient } = await import('../plugins/modbus/client.js');
+			const host = typeof connection.host === 'string' ? connection.host.trim() : '';
+			const serialPort = typeof connection.serialPort === 'string' ? connection.serialPort.trim() : '';
+			if (connection.type !== 'rtu' && !host) return res.status(200).json({ ok: false, error: 'Host is required' });
+			if (connection.type === 'rtu' && !serialPort) return res.status(200).json({ ok: false, error: 'Serial port is required' });
+
+			// slaveId/registers aren't collected by the connection-test form —
+			// connect() only opens the transport and sets the client-side slave
+			// ID locally, it never validates either against the device.
+			const device: any = { name: 'connection-test', slaveId: 1, connection, registers: [], pollInterval: 5000, enabled: true };
+			const client = new ModbusClient(device, testConnectionLogger as any);
+			try {
+				await withTimeout(client.connect(), (connection.timeout as number) || 5000);
+				return res.status(200).json({ ok: true, message: `Connected to ${host || serialPort}` });
+			} catch (err: any) {
+				return res.status(200).json({ ok: false, error: err?.message ?? 'Connection failed' });
+			} finally {
+				await client.disconnect().catch(() => undefined);
+			}
+		}
+
+		if (protocol === 'opcua') {
+			const { OPCUADeviceClient } = await import('../plugins/opcua/client.js');
+			const endpointUrl = typeof connection.endpointUrl === 'string' ? connection.endpointUrl.trim() : '';
+			if (!endpointUrl) return res.status(200).json({ ok: false, error: 'Endpoint URL is required' });
+
+			const device: any = { name: 'connection-test', protocol: 'opcua', enabled: true, pollInterval: 5000, connection, dataPoints: [] };
+			const client = new OPCUADeviceClient(device, testConnectionLogger as any);
+			try {
+				await withTimeout(client.connect(), 10000);
+				return res.status(200).json({ ok: true, message: `Connected to ${endpointUrl}` });
+			} catch (err: any) {
+				return res.status(200).json({ ok: false, error: err?.message ?? 'Connection failed' });
+			} finally {
+				await client.disconnect().catch(() => undefined);
+			}
+		}
+
+		if (protocol === 'bacnet') {
+			const { BACnetClient } = await import('../plugins/bacnet/client.js');
+			const ipAddress = typeof connection.ipAddress === 'string' ? connection.ipAddress.trim() : '';
+			const deviceInstance = typeof connection.deviceInstance === 'number' ? connection.deviceInstance : undefined;
+			if (!ipAddress) return res.status(200).json({ ok: false, error: 'IP address is required' });
+			if (deviceInstance === undefined) return res.status(200).json({ ok: false, error: 'Device instance is required' });
+
+			const device: any = {
+				name: 'connection-test',
+				ipAddress,
+				port: (connection.port as number) || 47808,
+				deviceInstance,
+				objects: [],
+				connectionTimeoutMs: 5000,
+			};
+			const client = new BACnetClient(device, 0, testConnectionLogger as any);
+			try {
+				// connect() only opens the local UDP socket — it doesn't actually
+				// contact the device, so readDeviceName() (a real ReadProperty
+				// round-trip) is the only part of this that proves reachability.
+				await client.connect();
+				const name = await withTimeout(client.readDeviceName(), 6000);
+				if (name === null) {
+					return res.status(200).json({ ok: false, error: 'No response from device — check IP, port, and device instance' });
+				}
+				return res.status(200).json({ ok: true, message: `Connected — device reports "${name}"` });
+			} catch (err: any) {
+				return res.status(200).json({ ok: false, error: err?.message ?? 'Connection failed' });
+			} finally {
+				await client.disconnect().catch(() => undefined);
+			}
+		}
+
+		if (protocol === 'mqtt') {
+			const mqttLib = await import('mqtt');
+			const host = typeof connection.host === 'string' ? connection.host.trim() : '';
+			if (!host) return res.status(200).json({ ok: false, error: 'Broker host is required' });
+			const port = typeof connection.port === 'number' ? connection.port : 1883;
+			const url = /^mqtts?:\/\//.test(host) ? host : `mqtt://${host}:${port}`;
+
+			const mqttClient = mqttLib.connect(url, {
+				username: (connection.username as string) || undefined,
+				password: (connection.password as string) || undefined,
+				connectTimeout: 5000,
+				reconnectPeriod: 0,
+			});
+			try {
+				await withTimeout(
+					new Promise<void>((resolve, reject) => {
+						mqttClient.once('connect', () => resolve());
+						mqttClient.once('error', (err) => reject(err));
+					}),
+					6000
+				);
+				return res.status(200).json({ ok: true, message: `Connected to ${host}:${port}` });
+			} catch (err: any) {
+				return res.status(200).json({ ok: false, error: err?.message ?? 'Connection failed' });
+			} finally {
+				mqttClient.end(true);
+			}
+		}
+
+		return res.status(200).json({ ok: false, error: `Connection test not supported for protocol "${protocol}"` });
+	} catch (error) {
+		next(error);
+	}
+});
+
 /**
  * GET /v1/endpoints
  * Get all configured device endpoints/devices
@@ -2321,6 +2455,109 @@ router.get('/v1/dashboard/stats', async (_req: Request, res: Response, next: Nex
 			hostname,
 			network,
 		});
+	} catch (error) {
+		next(error);
+	}
+});
+
+/**
+ * GET /v1/normalization-health
+ * Counts of unit-normalization problems since the agent last started —
+ * unresolved unit names and failed unit conversions (see
+ * src/units/normalization-health-tracker.ts). In-memory only, resets on
+ * restart; readings that hit either problem still process/publish normally,
+ * this is purely a visibility surface for the admin Dashboard.
+ */
+router.get('/v1/normalization-health', async (_req: Request, res: Response, next: NextFunction) => {
+	try {
+		const { getNormalizationHealthTracker } = await import('../units/normalization-health-tracker.js');
+		return res.status(200).json(getNormalizationHealthTracker().getSummary());
+	} catch (error) {
+		next(error);
+	}
+});
+
+/**
+ * GET /v1/units/canonical
+ * The catalog's canonical units, for the admin "Resolve unit" picker.
+ * Read-only — no endpoint to create units/dimensions/conversions in v1.
+ */
+router.get('/v1/units/canonical', async (_req: Request, res: Response, next: NextFunction) => {
+	try {
+		const { UnitDefinitionsModel } = await import('../db/models/index.js');
+		const units = UnitDefinitionsModel.getAll().map(({ canonical_unit, quantity, symbol, description }) => ({
+			canonical_unit,
+			quantity,
+			symbol,
+			description,
+		}));
+		return res.status(200).json(units);
+	} catch (error) {
+		next(error);
+	}
+});
+
+/**
+ * GET /v1/units/custom-aliases
+ * Admin-created unit mappings (src/db/models/custom-unit-aliases.model.ts) —
+ * the "Resolve unit" dashboard action's output. Separate from the built-in,
+ * read-only catalog at GET /v1/units/canonical. Powers the admin Settings
+ * "Units" tab's Custom Unit Mappings list.
+ */
+router.get('/v1/units/custom-aliases', async (_req: Request, res: Response, next: NextFunction) => {
+	try {
+		const { CustomUnitAliasesModel } = await import('../db/models/index.js');
+		return res.status(200).json(CustomUnitAliasesModel.getAll());
+	} catch (error) {
+		next(error);
+	}
+});
+
+/**
+ * POST /v1/normalization-health/resolve-unit
+ * Maps a raw/unknown unit string to an existing canonical unit, so future
+ * readings using it normalize automatically. Stored in custom_unit_aliases —
+ * a separate, admin-owned table (src/db/models/custom-unit-aliases.model.ts)
+ * that the built-in catalog's startup reseed never touches. A custom mapping
+ * may only ever resolve a *currently unknown* alias: it can never override an
+ * existing built-in alias for the same source-system scope (409 below).
+ */
+router.post('/v1/normalization-health/resolve-unit', requireRole('operator'), async (req: Request, res: Response, next: NextFunction) => {
+	try {
+		const { rawUnit, sourceSystem, canonicalUnit } = req.body as {
+			rawUnit?: string;
+			sourceSystem?: string | null;
+			canonicalUnit?: string;
+		};
+
+		if (typeof rawUnit !== 'string' || !rawUnit.trim() || typeof canonicalUnit !== 'string' || !canonicalUnit.trim()) {
+			return res.status(400).json({ error: 'rawUnit and canonicalUnit are required' });
+		}
+
+		const { UnitDefinitionsModel, CustomUnitAliasesModel } = await import('../db/models/index.js');
+		const { getUnitCatalog } = await import('../units/catalog.js');
+		const { getNormalizationHealthTracker } = await import('../units/normalization-health-tracker.js');
+		const { normalizeSourceSystem } = await import('../units/source-system.js');
+
+		if (!UnitDefinitionsModel.getByCanonicalUnit(canonicalUnit)) {
+			return res.status(400).json({ error: `"${canonicalUnit}" is not a known canonical unit` });
+		}
+
+		const normalizedSourceSystem = normalizeSourceSystem(sourceSystem);
+		if (!normalizedSourceSystem && rawUnit.trim().length === 1) {
+			return res.status(400).json({ error: 'A single-character alias must be scoped to a source system, not global' });
+		}
+
+		const catalog = getUnitCatalog();
+		if (catalog.resolvesViaBuiltIn(rawUnit, normalizedSourceSystem)) {
+			return res.status(409).json({ error: `"${rawUnit}" already resolves via the built-in catalog — it cannot be overridden` });
+		}
+
+		CustomUnitAliasesModel.upsert({ source_system: normalizedSourceSystem, alias: rawUnit, canonical_unit: canonicalUnit });
+		catalog.reload();
+		getNormalizationHealthTracker().clearUnknownUnit(rawUnit, normalizedSourceSystem);
+
+		return res.status(200).json(getNormalizationHealthTracker().getSummary());
 	} catch (error) {
 		next(error);
 	}

@@ -369,16 +369,35 @@ function getAdaptiveSurvivorThreshold(): number {
 // Survivor leak guardrails to reduce false positives during startup/warm-up:
 // - Require minimum retained growth above noise floor
 // - Require minimum uptime before classifying as a persistent survivor leak
-const MIN_SURVIVOR_RETAINED_MB = 5; // Must retain at least 5MB above floor
-const MIN_SURVIVOR_UPTIME_SECONDS = 15 * 60; // 15 minutes
+//
+// Both widened 2026-10-05 after a live incident: with markFatal() now actually
+// triggering a restart outside systemd (see src/app.ts's markFatalAndRecover()),
+// this agent was restarting every 15-25 minutes, continuously, for hours.
+// Captured ~17 real "survivor-leak"/"js-object-retention" firings in production:
+// uptime at trigger ranged 12-39 minutes (not a fixed warmup window), but
+// survivorRetainedMB was consistently 5.0-7.9 MB — landing right at the old 5MB
+// floor every time. That's the signature of several subsystems each doing a
+// legitimate one-time cache fill during startup (unit catalog, point-name
+// catalog, schema-drift per-device baselines, one anomaly-detection buffer per
+// configured metric, etc.), not an unbounded leak — confirmed by every boot
+// that survived past ~40 minutes settling to survivorRetainedMB: 0 and
+// leakPattern: "stable" on its own. A genuine unbounded leak would blow past a
+// 15MB floor too, just later — this isn't disabling detection, it's correcting
+// the noise floor for this app's real legitimate footprint.
+const MIN_SURVIVOR_RETAINED_MB = 15; // Must retain at least 15MB above floor
+const MIN_SURVIVOR_UPTIME_SECONDS = 30 * 60; // 30 minutes
 
 // Minimum uptime before the heap growth rate alone can trigger a healthcheck failure.
-// V8 JIT-compiles hot paths and lazy-loads modules in the first ~5 minutes, which
-// creates a transient heap slope that looks identical to a real leak over the narrow
-// 5-minute regression window.  10 minutes gives the runtime enough time to reach a
-// stable allocation rate before we start treating growth as a problem.
-// The survivor-leak check (15 min) will still catch real leaks after its window opens.
-const MIN_HEAP_RATE_UPTIME_SECONDS = 10 * 60; // 10 minutes
+// V8 JIT-compiles hot paths and lazy-loads modules in the first several minutes,
+// which creates a transient heap slope that looks identical to a real leak over
+// the narrow 5-minute regression window. Widened alongside the survivor-leak
+// guardrails above (see that comment) — the two "js-object-retention" firings in
+// the same incident both landed at 12-15 minutes uptime, the same cache-warming
+// pattern just caught by this check instead because MIN_SURVIVOR_UPTIME_SECONDS
+// hadn't opened yet. 20 minutes gives the runtime enough time to reach a stable
+// allocation rate before growth is treated as a problem; the survivor-leak check
+// (30 min, the stronger signal) still catches real leaks after its own window opens.
+const MIN_HEAP_RATE_UPTIME_SECONDS = 20 * 60; // 20 minutes
 
 /**
  * Calculate adaptive survivor monotonic tolerance

@@ -1,4 +1,4 @@
-/** Minimal logger shape — mirrors src/normalization/types.ts's Logger. */
+/** Minimal logger shape — mirrors src/units/types.ts's Logger. */
 export interface Logger {
 	debug(message: string, ...args: any[]): void;
 	info(message: string, ...args: any[]): void;
@@ -46,6 +46,19 @@ export interface PointIdentity {
 	normalizedName: string;
 	/** Verbatim message.metric/message.name pre-normalization. */
 	rawName: string;
+	/**
+	 * The same per-device identity used as part of this mapping's natural key
+	 * (sourceSystem + endpointName + deviceKey + rawName) — reading.deviceId
+	 * ?? reading.device_uuid ?? reading.endpoint_uuid at resolution time, or
+	 * '' if none were present. Downstream consumers that need a per-device
+	 * identity (e.g. anomaly detection's observed-metrics catalog) must read
+	 * this rather than re-deriving their own candidate list — a single
+	 * normalized source of device identity, not one implementation per
+	 * consumer.
+	 */
+	deviceKey: string;
+	/** The endpoint this reading was published through, as passed to the interceptor. */
+	endpointName: string;
 	/** Copy of message.deviceName when present. */
 	rawDeviceName?: string;
 	/** Populated ONLY if already present on the incoming reading — never fabricated (no adapter attaches this in Phase 1). */

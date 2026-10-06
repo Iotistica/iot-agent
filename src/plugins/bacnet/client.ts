@@ -159,8 +159,11 @@ export class BACnetClient implements IProtocolClient<BACnetObject[], Map<string,
 							resolve(null);
 							return;
 						}
-						// bacstack returns objectName as a CharacterString in values[0].value[0].value
-						const name = value?.values?.[0]?.value?.[0]?.value;
+						// bacstack wraps decoded values as [{ value, type }], sometimes with
+						// an extra nested array level depending on the property — same
+						// unwrap as the main data-read path below.
+						const rawValue = value?.values?.[0]?.value;
+						const name = Array.isArray(rawValue) && rawValue.length > 0 ? rawValue[0]?.value : rawValue;
 						resolve(typeof name === 'string' && name.trim() ? name.trim() : null);
 					}
 				);

@@ -48,4 +48,8 @@ export interface AgentInitContext {
 	backupScheduler?: BackupScheduler;
 	dictionaryManager?: DictionaryManager;
 	liveDataInterceptor?: (messages: any[], endpointName: string) => Promise<any[]> | any[];
+	normalizationToggles?: {
+		setUnitNormalizationEnabled: (enabled: boolean) => void;
+		setPointNameNormalizationEnabled: (enabled: boolean) => void;
+	};
 }

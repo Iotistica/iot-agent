@@ -67,7 +67,7 @@ health.registerSubsystem('memory', async () => {
 			operation: 'memoryHealth',
 			action: 'markFatal'
 		});
-		health.markFatal('memory-health-failed');
+		markFatalAndRecover('memory-health-failed');
 	}
 	return ok;
 }, {
@@ -177,12 +177,16 @@ const stopWatchdog = startWatchdog(() => {
 let shuttingDown = false;
 
 // Graceful shutdown handler
-async function gracefulShutdown(signal: string) {
+// exitCode distinguishes an operator-requested stop (0, the default — what
+// every signal handler below uses) from a self-triggered fatal recovery
+// (non-zero — see markFatalAndRecover()), so `docker inspect`/exit-code
+// monitoring can tell the two apart after the fact.
+async function gracefulShutdown(signal: string, exitCode = 0) {
 	if (shuttingDown) {
 		console.log(`Already shutting down, ignoring ${signal}`);
 		return;
 	}
-	
+
 	shuttingDown = true;
 	console.log(`\n${signal} received. Starting graceful shutdown...`);
 
@@ -205,12 +209,54 @@ async function gracefulShutdown(signal: string) {
 		// Stop the agent (closes Device API, MQTT, etc.)
 		await agent.stop();
 		clearTimeout(shutdownTimeout);
-		process.exit(0);
+		process.exit(exitCode);
 	} catch (error) {
 		clearTimeout(shutdownTimeout);
 		console.error('Error during shutdown:', error);
 		process.exit(1);
 	}
+}
+
+/**
+ * True when running under systemd with watchdog support (NOTIFY_SOCKET set
+ * — see src/system/watchdog.ts's own identical check). When true, marking
+ * health fatal and withholding the watchdog ping is the correct, safer-
+ * than-self-exit recovery path: systemd notices the silence and restarts
+ * the unit cleanly (see markFatal()'s doc comment in src/health/arbiter.ts
+ * for why that's preferred over calling process.exit() directly).
+ *
+ * Outside systemd — Docker/tini, bare `node`, CI, etc. — nothing is ever
+ * listening for that withheld ping (startWatchdog() itself no-ops without
+ * NOTIFY_SOCKET), so marking fatal alone is a silent, permanent dead end:
+ * the process stays up, forever reporting unhealthy, with no path back to
+ * healthy. There the process has to exit itself so the container runtime's
+ * own restart policy (e.g. docker-compose's `restart: unless-stopped`) can
+ * bring up a fresh one.
+ */
+function hasSystemdWatchdog(): boolean {
+	return !!process.env.NOTIFY_SOCKET;
+}
+
+/**
+ * Marks health fatal and, only when there's no systemd watchdog to rely on,
+ * triggers the same graceful-shutdown path SIGTERM uses. Centralizes the
+ * "how do we actually recover from fatal" decision here so the call sites
+ * below stay a single line each, regardless of which environment they end
+ * up running in.
+ */
+function markFatalAndRecover(reason: string): void {
+	health.markFatal(reason);
+
+	if (hasSystemdWatchdog()) {
+		return; // Existing behavior: withhold the watchdog ping, let systemd restart us.
+	}
+
+	agent.agentLogger?.errorSync(
+		'No systemd watchdog available — exiting so the container runtime can restart the process',
+		undefined,
+		{ component: 'main', operation: 'markFatalAndRecover', reason }
+	);
+	void gracefulShutdown(`fatal:${reason}`, 1);
 }
 
 // Register signal handlers for graceful shutdown
@@ -220,7 +266,6 @@ process.on('SIGQUIT', () => gracefulShutdown('SIGQUIT'));
 process.on('SIGHUP', () => gracefulShutdown('SIGHUP'));
 
 // Handle unhandled promise rejections
-// DO NOT immediately shutdown - let systemd restart us via watchdog
 process.on('unhandledRejection', (reason, promise) => {
 	const errorMsg = reason instanceof Error ? reason.message : String(reason);
 	const stack = reason instanceof Error ? reason.stack : undefined;
@@ -234,16 +279,13 @@ process.on('unhandledRejection', (reason, promise) => {
 		promise: String(promise)
 	});
 	
-	// Mark health as fatal - watchdog will withhold pings → systemd restarts us
-	// This is SAFER than process.exit() because:
-	// - systemd handles restart cleanly
-	// - No racing shutdown logic
-	// - Restart reason is observable in logs
-	// - No risk of half-alive process
-	health.markFatal(`unhandledRejection: ${errorMsg}`);
-	
-	// Do NOT call gracefulShutdown or process.exit here
-	// Let systemd restart us after WatchdogSec timeout
+	// Mark health as fatal. Under systemd, the watchdog withholds pings and
+	// systemd restarts us cleanly (safer than calling process.exit() directly
+	// here — no racing shutdown logic, no risk of a half-alive process).
+	// Without a systemd watchdog (Docker/tini, etc.), markFatalAndRecover()
+	// falls back to the same graceful-shutdown path SIGTERM uses, so the
+	// container runtime's own restart policy can bring up a fresh process.
+	markFatalAndRecover(`unhandledRejection: ${errorMsg}`);
 });
 
 // Handle uncaught exceptions
@@ -256,10 +298,10 @@ process.on('uncaughtException', (error) => {
 		stack: error.stack
 	});
 	
-	// Mark health as fatal - systemd will restart us
-	health.markFatal(`uncaughtException: ${error.message}`);
-	
-	// Do NOT call process.exit here - let systemd restart us
+	// Mark health as fatal — see the unhandledRejection handler above for why
+	// markFatalAndRecover() (not a direct process.exit()) is the right call
+	// both under systemd and under Docker/tini.
+	markFatalAndRecover(`uncaughtException: ${error.message}`);
 });
 
 // Start the device agent

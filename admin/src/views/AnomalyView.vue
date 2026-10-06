@@ -182,7 +182,7 @@ const resolvingId = ref<string | null>(null)
 
 const edgeIncidentColumns = [
   { title: 'Severity', key: 'severity', width: 95 },
-  { title: 'Metric', key: 'metric', ellipsis: true },
+  { title: 'Point', key: 'metric', ellipsis: true },
   { title: 'Device', key: 'device_name', width: 160, ellipsis: true },
   { title: 'Status', key: 'status', width: 90 },
   { title: 'Events', dataIndex: 'event_count', key: 'event_count', width: 70 },
@@ -250,7 +250,7 @@ const edgeAlertsPage = ref(1)
 
 const edgeAlertColumns = [
   { title: 'Severity', key: 'severity', width: 100 },
-  { title: 'Metric', key: 'metric', ellipsis: true },
+  { title: 'Point', key: 'metric', ellipsis: true },
   { title: 'Device', key: 'device_name', width: 160, ellipsis: true },
   { title: 'Score', key: 'score', width: 80 },
   { title: 'Message', dataIndex: 'message', key: 'message', width: 500 },
@@ -293,7 +293,7 @@ watch(baselinesMetric, () => {
 })
 
 const baselineColumns = [
-  { title: 'Metric', key: 'metric', ellipsis: true },
+  { title: 'Point', key: 'metric', ellipsis: true },
   { title: 'Device', key: 'device_id', width: 160, ellipsis: true },
   { title: 'State', dataIndex: 'device_state', key: 'device_state', width: 100 },
   { title: 'Slot', dataIndex: 'time_slot', key: 'time_slot', width: 55 },
@@ -307,6 +307,11 @@ const baselineColumns = [
 
 // Maps endpoint UUID → display name (for events/incidents/alerts/baselines metric prefix lookup)
 const endpointsByUuid = ref<Map<string, string>>(new Map())
+// Maps an endpoint's raw/sanitized config name (e.g. "rtu_1_controller_1001")
+// → the same nice display name endpointsByUuid resolves — events/incidents/
+// alerts record a reading's raw adapter-reported deviceName tag, not its
+// uuid, so this is the lookup deviceDisplayName() needs for those.
+const displayNameByRawName = ref<Map<string, string>>(new Map())
 // Maps "endpointUuid::sanitizedPointName" → the raw protocol-native point name
 // (BACnet objectName / OPC-UA browseName, e.g. "Space-Temp") as reported by the
 // device, for tables that show the point name and would otherwise only have the
@@ -324,11 +329,13 @@ async function ensureEndpointMaps() {
   try {
     const eps = await sourcesApi.getAll()
     const byUuid = new Map<string, string>()
+    const byRawName = new Map<string, string>()
     const rawNameByKey = new Map<string, string>()
     const deviceByPointName = new Map<string, string>()
     for (const ep of eps) {
       const displayName = (ep.metadata?.objectName as string | undefined) || ep.name
       byUuid.set(ep.uuid, displayName)
+      byRawName.set(ep.name, displayName)
 
       for (const dp of (ep.data_points ?? []) as Array<Record<string, unknown>>) {
         const sanitizedName = dp?.name
@@ -341,7 +348,27 @@ async function ensureEndpointMaps() {
         }
       }
     }
+
+    // Protocols that fan out one endpoint into several physical devices
+    // (OPC-UA by device_uuid tag, Modbus by slaveId) record each device as
+    // its own row in the `devices` table with its own uuid, distinct from
+    // the owning endpoint's uuid — e.g. endpoint "opcua" (070cc992-...) owns
+    // device "BMS-Gateway" (2adb15f8-...). Baselines/events key off that
+    // device uuid, not the endpoint uuid, so it needs its own lookup here
+    // too. Endpoint entries are set first above and never overwritten below
+    // (devices are a fallback), matching getAvailableAnomalyMetrics()'s
+    // endpointById-before-deviceById precedence on the backend — BACnet's
+    // device uuid equals its endpoint uuid, and the endpoint's name is the
+    // nicer, discovery-captured one.
+    try {
+      const { data } = await apiClient.get<{ devices: Array<{ uuid: string; name: string }> }>('/v1/devices')
+      for (const dev of data.devices ?? []) {
+        if (!byUuid.has(dev.uuid)) byUuid.set(dev.uuid, dev.name)
+      }
+    } catch { /* non-fatal — device-uuid lookups just fall through to raw */ }
+
     endpointsByUuid.value = byUuid
+    displayNameByRawName.value = byRawName
     pointRawNameByKey.value = rawNameByKey
     pointNameToDevice.value = deviceByPointName
   } catch { /* non-fatal */ }
@@ -373,102 +400,85 @@ function resolveDeviceAndLeaf(name: string, explicitDeviceName?: string): { devi
   return { device, leaf: hyphenateField(leaf) }
 }
 
-// The rule's device, either explicitly recorded (record.deviceName) or
-// recovered via the bare-point-name lookup above.
+// The agent's own self-monitoring metrics — the only two system-sourced
+// (device-less) rules the product ships today (src/system/metrics.ts /
+// iot-agent-pro's anomaly defaults). Rules for these never carry a
+// deviceName (there's no endpoint/device to attach one to), which the
+// grid used to show as a bare "—" — indistinguishable from a genuinely
+// unresolved device — instead of "System", the same sentinel
+// Events/Incidents/Alerts/Baselines already show for them.
+const SYSTEM_METRIC_NAMES = new Set(['cpu_usage', 'memory_percent'])
+
+// The rule's device, either explicitly recorded (record.deviceName),
+// recovered via the bare-point-name lookup above, or "System" for a known
+// system-sourced metric with no device to attach.
 function ruleDeviceName(record: AnomalyMetricConfig): string | undefined {
-  return resolveDeviceAndLeaf(record.name, record.deviceName).device
+  const device = resolveDeviceAndLeaf(record.name, record.deviceName).device
+  if (device) return device
+  return SYSTEM_METRIC_NAMES.has(record.name) ? 'System' : undefined
 }
 
-// Strips the resolved device's own name from the front of the rule name so
-// Metric name doesn't repeat what the Device column already shows. Falls
-// back to the full name unchanged (still hyphenated) when no device could
-// be resolved, rather than guessing.
-function ruleMetricLeaf(record: AnomalyMetricConfig): string {
-  return resolveDeviceAndLeaf(record.name, record.deviceName).leaf
+// Schema-drift device identifiers (e.g. "bms_gateway_5000_bc814573") carry a
+// "_{instance}_{8-hex-id}" suffix appended for fleet-wide uniqueness (see the
+// Pro schema-drift detector) — metricLeaf() below still needs to strip this
+// when comparing a field name against its device base name.
+const DRIFT_DEVICE_SUFFIX_RE = /_\d+_[0-9a-f]{8}$/i
+
+// Resolves a device identity (either a real UUID, as anomaly baselines record
+// it, or a raw/sanitized adapter config name, as anomaly events/incidents/
+// alerts record it — see AnomalyFeed's tags.deviceName) to the nice,
+// discovery-captured display name (e.g. "RTU-1 Controller"). Both
+// endpointsByUuid and displayNameByRawName come from the same
+// ensureEndpointMaps() call, so this never needs to guess at a
+// reconstruction — just look the value up directly, or fall back to it
+// unchanged if it's something we don't have a name on file for.
+function deviceDisplayName(idOrName: string | undefined): string {
+  if (!idOrName || idOrName === 'unknown') return '—'
+  // System/agent-level metrics (cpu_usage, memory_percent — collected via a
+  // separate path this session's AnomalyFeed/normalization work never
+  // touched) report a sentinel device identity rather than a real endpoint —
+  // seen as "system-endpoint" and "Agent System" depending on call site; "startsWith"
+  // rather than an exact match so any of these variants still resolve.
+  if (idOrName.toLowerCase().startsWith('system')) return 'System'
+  return endpointsByUuid.value.get(idOrName)
+    ?? displayNameByRawName.value.get(idOrName)
+    ?? idOrName
+}
+
+// Tag color for a baseline row's canonical device state (CanonicalDeviceState
+// in iot-agent-pro: 'running' | 'idle' | 'fault' | 'unknown').
+function deviceStateColor(state: string | undefined): string {
+  switch (state) {
+    case 'running': return 'green'
+    case 'idle': return 'default'
+    case 'fault': return 'red'
+    default: return 'default'
+  }
 }
 
 // The metric's own device UUID segment: metrics are named
 // "{agentUuid}_{deviceUuid}_{bare_metric}" — the LAST UUID segment is the
 // device's own endpoint UUID (the first is the agent-wide UUID, constant
-// across every metric and never a useful lookup key on its own).
+// across every metric and never a useful lookup key on its own). Only
+// metricLeaf() below still needs this — live metrics no longer carry an
+// embedded UUID (see deviceDisplayName()'s own comment), but this function
+// otherwise only serves the hidden ("Noisy Metrics" / Bad Actors) table.
 function extractDeviceUuid(metric: string): string | undefined {
   const uuidMatches = [...metric.matchAll(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})_/gi)]
   return uuidMatches.at(-1)?.[1]
 }
 
-// Resolve device display name from metric name.
-// For endpoint metrics (UUID-prefixed), the device name is the first segment(s) of the
-// bare metric after stripping the UUID: "pioneer_gold_1_coil_temp" → "Pioneer Gold 1".
-// We identify the device segment by finding where the last known single-word metric
-// suffix starts, using the heuristic that device names come before the last two segments.
-// Schema-drift device identifiers (e.g. "bms_gateway_5000_bc814573") are
-// resolveDeviceId()'s normalized form of the raw BACnet device name, with
-// "_{instance}_{8-hex-id}" appended for fleet-wide uniqueness across devices
-// that share a display name (see the Pro schema-drift detector). Strip that
-// suffix and title-case what's left so these read the same as other device
-// labels instead of showing the raw internal identity.
-//
-// Kept in sync by hand with iot-agent/src/db/models/drift-labels.ts's
-// prettifyDriftDeviceId and iot-agent-pro/src/device-identity/index.ts's
-// prettifyDeviceId — this is frontend code that can't import either of
-// those directly, but the formatting rules (in particular: always format,
-// even with no suffix to strip; join with hyphens, not spaces) must match.
-// If you change the rules here, change all three.
-const DRIFT_DEVICE_SUFFIX_RE = /_\d+_[0-9a-f]{8}$/i
-const KNOWN_DEVICE_ACRONYMS = new Set(['ahu', 'vav', 'fcu', 'bms', 'hvac', 'rtu'])
-function prettifyDriftDeviceId(id: string): string {
-  const stripped = id.replace(DRIFT_DEVICE_SUFFIX_RE, '')
-
-  return stripped
-    .split('_')
-    .filter(Boolean)
-    .map((p) => (KNOWN_DEVICE_ACRONYMS.has(p.toLowerCase()) ? p.toUpperCase() : p.charAt(0).toUpperCase() + p.slice(1)))
-    .join('-')
-}
-
-function deviceNameFromMetric(metric: string, fallback: string): string {
-  if (!metric) return fallback || '—'
-
-  // Strip UUID prefix to get bare metric name
-  const bare = metric.replace(UUID_PREFIX_RE, '')
-
-  // If the bare name changed (i.e., there was a UUID prefix), it's an endpoint metric,
-  // named "{agentUuid}_{deviceUuid}_{bare_metric}". Prefer the real device name
-  // captured at discovery time (exact casing/format, e.g. "RTU-1") over a guessed
-  // reconstruction — the LAST UUID segment is the device's own endpoint UUID, which
-  // is what endpointsByUuid is keyed by (the first is the agent-wide UUID, constant
-  // across every metric and never a useful lookup key on its own).
-  if (bare !== metric) {
-    const deviceUuid = extractDeviceUuid(metric)
-    const sourceName = deviceUuid ? endpointsByUuid.value.get(deviceUuid) : undefined
-    if (sourceName) return sourceName
-
-    // Fallback: reconstruct a best-guess label from the metric's own segments
-    // (e.g. "pioneer_gold_1_coil_temp" → "Pioneer Gold 1") when there's no real
-    // device metadata to fall back on — everything except the last two
-    // underscore-separated tokens (the metric leaf, e.g. "coil_temp").
-    const parts = bare.split('_')
-    if (parts.length > 2) {
-      const deviceParts = parts.slice(0, parts.length - 2)
-      const label = deviceParts.map(p => p.charAt(0).toUpperCase() + p.slice(1)).join(' ')
-      if (label) return label
-    }
-  }
-
-  if (!fallback || fallback === 'unknown') return '—'
-  if (fallback === 'system' || fallback === 'Agent System') return 'System'
-  return prettifyDriftDeviceId(fallback)
-}
-
-// Complement of deviceNameFromMetric(): the metric's own leaf (last two
-// underscore-separated segments, e.g. "space_temp") with the embedded device
-// prefix stripped — for tables that already show a separate Device column, so
-// the metric name doesn't redundantly repeat "rtu_1" that's shown right next to it.
-// Schema-drift-originated metrics carry the detector's internal "reading:"/"key:"
-// namespace tag (see SchemaDriftDetector.extractSchema) instead of a UUID prefix —
-// strip that too so these rows read the same as the Schema Drift grid's Field column.
+// Schema-drift-originated metrics carry the detector's internal
+// "reading:"/"key:" namespace tag (see SchemaDriftDetector.extractSchema)
+// instead of a UUID prefix — also used directly by the Schema Drift grid's
+// own Field column, not just metricLeaf() below.
 const DRIFT_FIELD_PREFIX_RE = /^(reading|key):/
 
+// Used only by the hidden ("Noisy Metrics" / Bad Actors) table in the Rules
+// tab (v-if="false" — "device/metric name resolution needs more work
+// first"). Every other tab shows the metric name verbatim now (see
+// deviceDisplayName() above) — this leaf-stripping/hyphenating heuristic
+// predates that and is left as-is here since this table isn't user-visible.
 function metricLeaf(metric: string, deviceName?: string): string {
   const driftStripped = metric.replace(DRIFT_FIELD_PREFIX_RE, '')
   if (driftStripped !== metric) {
@@ -839,6 +849,34 @@ type MetricSuggestion = {
 }
 const metricSuggestions = ref<MetricSuggestion[]>([])
 const metricSuggestionsLoading = ref(false)
+const sourceFilter = ref<string | undefined>(undefined)
+
+// A suggestion's endpointName isn't always available — it's resolved
+// server-side via a UUID match against the endpoints table (actions.ts),
+// which only works for protocols whose live device identity is itself a UUID
+// (true for BACnet's device_uuid, not for e.g. OPC-UA's composite
+// "opcua:host:port:device" identity). Falling back to protocol keeps the
+// Source filter honest rather than fabricating a per-device name we don't
+// have: it groups those entries by the real protocol instead of hiding them.
+function sourceKey(s: MetricSuggestion): string | undefined {
+  return s.endpointName ?? s.protocol
+}
+
+// Distinct sources present in the current metric suggestions, for the
+// "Source" filter — built from suggestions rather than a separate sources
+// fetch so only sources that actually have metrics flowing show up.
+const sourceFilterOptions = computed(() => {
+  const seen = new Map<string, { value: string; label: string }>()
+  for (const s of metricSuggestions.value) {
+    const key = sourceKey(s)
+    if (!key || seen.has(key)) continue
+    seen.set(key, {
+      value: key,
+      label: s.endpointName && s.protocol ? `${s.endpointName} (${s.protocol})` : key,
+    })
+  }
+  return Array.from(seen.values()).sort((a, b) => a.label.localeCompare(b.label))
+})
 
 async function loadMetricSuggestions() {
   metricSuggestionsLoading.value = true
@@ -879,18 +917,22 @@ function canonicalBareMetricName(name: string): string {
 const metricAutocompleteOptions = computed(() => {
   const q = metricForm.value.name.toLowerCase()
 
+  // Group strictly by (name, deviceId) — the same identity the backend's
+  // observed-metrics catalog uses (anomalyMetricResultKey in actions.ts).
+  // AnomalyFeed now sources both the normalized name and the device identity
+  // from the single point-name catalog (src/point-name/), with no fabricated
+  // pseudo-ids — so this key is always correct and unique per real device.
+  // No UUID-preference heuristic needed: two entries sharing this key really
+  // are the same metric; two entries with the same name but different
+  // deviceId (e.g. 8 distinct OPC-UA meters that all happen to report a
+  // point literally named "active-power-kw") are genuinely different devices
+  // and must stay separate rows, not collapse into one.
   const seen = new Map<string, MetricSuggestion>()
   for (const s of metricSuggestions.value) {
+    if (sourceFilter.value && sourceKey(s) !== sourceFilter.value) continue
     const friendly = friendlyLabel(s.name)
     if (!friendly.trim()) continue
-    // deviceId is the backend's own authoritative per-device identity (see
-    // getAvailableAnomalyMetrics/AnomalyDetectionService — the same fix that
-    // stops different devices' same-named metrics from collapsing into one
-    // entry server-side). Prefer it; fall back to protocol+endpointName only
-    // for the rare case it's missing, rather than assuming name is unique.
-    const key = s.deviceId
-      ? `${friendly}::${s.deviceId}`
-      : `${friendly}|${s.protocol ?? ''}|${s.endpointName ?? ''}`
+    const key = `${friendly}::${s.deviceId ?? ''}`
     const existing = seen.get(key)
     if (!existing || (s.score ?? 0) > (existing.score ?? 0)) {
       seen.set(key, s)
@@ -910,30 +952,24 @@ const metricAutocompleteOptions = computed(() => {
     })
     .map(([, s]) => {
       const friendly = friendlyLabel(s.name)
-      // value/label stay the raw friendly string — that's what actually gets
-      // saved as the rule's metric name, and it must keep matching real
-      // incoming data (see resolveDeviceAndLeaf's doc comment). device/leaf
-      // are purely for how the dropdown ROW renders (see the #option
-      // template), computed with the exact same shared resolver the Rules
-      // grid uses, so the two views agree on what a metric is called.
-      const { device, leaf } = resolveDeviceAndLeaf(friendly)
+      // value/label — and what the #option template shows as the primary
+      // name — stay the verbatim normalized name, same as Live View's bold
+      // point name (admin/src/views/LiveView.vue). No device-prefix
+      // splitting or hyphenating here anymore: that was a different,
+      // invented display convention that didn't match Live View, and for a
+      // metric name whose device prefix isn't actually separable (most of
+      // them), it was actively misleading.
       return {
         value: friendly,
         label: s.endpointName ? `${friendly} · ${s.endpointName}` : friendly,
-        device,
-        leaf,
         protocol: s.protocol,
         suggestion: s,
       }
     })
 })
 
-// Saves the resolved device on the rule itself at creation time — the fix
-// belongs here, not as a lookup reconstructed later at display time. A rule
-// created this way never needs pointNameToDevice or any other fallback to
-// show its device correctly; it's just there from the start.
-function onMetricSuggestionSelected(_value: string, option: { device?: string }) {
-  metricForm.value.deviceName = option.device
+function onMetricSuggestionSelected(_value: string, option: { suggestion?: MetricSuggestion }) {
+  metricForm.value.deviceName = option.suggestion?.deviceName ?? option.suggestion?.endpointName
 }
 
 function blankMetric(): AnomalyMetricConfig {
@@ -950,7 +986,7 @@ function blankMetric(): AnomalyMetricConfig {
 }
 
 const metricColumns: TableColumnType<AnomalyMetricConfig>[] = [
-  { title: 'Metric name', key: 'name', ellipsis: true },
+  { title: 'Point name', key: 'name', ellipsis: true },
   { title: 'Device', key: 'device', width: 160, ellipsis: true },
   { title: 'Methods', key: 'methods', ellipsis: true },
   { title: 'Threshold', dataIndex: 'threshold', key: 'threshold', width: 100 },
@@ -1014,6 +1050,21 @@ interface DriftOptions {
   minFieldPresenceRatio?: number
   adaptiveRetireBatches?: number
   alertOnDriftTypes?: DriftAlertType[]
+  // The remaining fields of iot-agent-pro's DriftDetectorOptions — previously
+  // hardcoded to its defaults with no config surface at all. Exposed here per
+  // explicit request: every tunable the detector accepts should be user-
+  // editable, not just the 7 that happened to get a field first.
+  adaptivePromotionBatches?: number
+  adaptivePromotionRatio?: number
+  minTypeDominanceRatio?: number
+  maxTrackedFields?: number
+  maxTrackedDevices?: number
+  maxTraversalDepth?: number
+  maxFieldsPerBatch?: number
+  maxRenameCandidates?: number
+  maxRenameFieldLength?: number
+  logSampleSize?: number
+  checkIntervalBatches?: number
 }
 
 const DRIFT_ALERT_TYPE_OPTIONS: { value: DriftAlertType; label: string; hint: string }[] = [
@@ -1083,6 +1134,7 @@ function openAddMetric() {
   metricForm.value = blankMetric()
   expectedMin.value = null
   expectedMax.value = null
+  sourceFilter.value = undefined
   metricDrawerOpen.value = true
   loadMetricSuggestions()
 }
@@ -1092,14 +1144,23 @@ function openEditMetric(metric: AnomalyMetricConfig, idx: number) {
   metricForm.value = { ...metric, name: friendlyLabel(metric.name), methods: [...metric.methods] }
   expectedMin.value = metric.expectedRange?.[0] ?? null
   expectedMax.value = metric.expectedRange?.[1] ?? null
+  sourceFilter.value = undefined
   metricDrawerOpen.value = true
   loadMetricSuggestions()
 }
 
 async function saveMetric() {
   if (!config.value) return
+  // Source isn't part of the saved rule (sourceFilter is a UI-only filter),
+  // so this only applies when creating a new rule — an existing rule being
+  // edited has no source to re-pick (sourceFilter resets to undefined on
+  // open, see openEditMetric()).
+  if (editingMetricIdx.value === null && !sourceFilter.value) {
+    message.error('Source is required')
+    return
+  }
   if (!metricForm.value.name.trim()) {
-    message.error('Metric name is required')
+    message.error('Point name is required')
     return
   }
   if (metricForm.value.methods.includes('expected_range')) {
@@ -1254,10 +1315,10 @@ onUnmounted(() => {
               <a-tag :color="SEVERITY_TAG_COLOR[record.severity]" :class="record.severity === 'critical' ? 'severity-critical' : ''" style="font-size: 11px; margin: 0">{{ record.severity }}</a-tag>
             </template>
             <template v-else-if="column.key === 'metric'">
-              <span :title="record.metric">{{ record.metric }}</span>
+              <span :title="record.metric">{{ friendlyLabel(record.metric) }}</span>
             </template>
             <template v-else-if="column.key === 'device_name'">
-              <span style="font-size: 12px">{{ deviceNameFromMetric(record.metric, record.device_name) }}</span>
+              <span style="font-size: 12px">{{ deviceDisplayName(record.device_name) }}</span>
             </template>
             <template v-else-if="column.key === 'value'">
               <span style="font-variant-numeric: tabular-nums">{{ fmtNum(record.observed_value, 3) }}</span>
@@ -1313,10 +1374,10 @@ onUnmounted(() => {
               <a-tag :color="SEVERITY_TAG_COLOR[record.severity]" :class="record.severity === 'critical' ? 'severity-critical' : ''" style="font-size: 11px; margin: 0">{{ record.severity }}</a-tag>
             </template>
             <template v-else-if="column.key === 'metric'">
-              <span :title="record.metric">{{ metricLeaf(record.metric, record.device_name) }}</span>
+              <span :title="record.metric">{{ friendlyLabel(record.metric) }}</span>
             </template>
             <template v-else-if="column.key === 'device_name'">
-              <span style="font-size: 12px">{{ deviceNameFromMetric(record.metric, record.device_name) }}</span>
+              <span style="font-size: 12px">{{ deviceDisplayName(record.device_name) }}</span>
             </template>
             <template v-else-if="column.key === 'status'">
               <a-tag :color="INCIDENT_STATUS_COLOR[record.status]" style="font-size: 11px">{{ record.status }}</a-tag>
@@ -1367,10 +1428,10 @@ onUnmounted(() => {
               <a-tag :color="SEVERITY_TAG_COLOR[record.severity]" :class="record.severity === 'critical' ? 'severity-critical' : ''" style="font-size: 11px; margin: 0">{{ record.severity }}</a-tag>
             </template>
             <template v-else-if="column.key === 'metric'">
-              <span :title="record.metric">{{ metricLeaf(record.metric, record.device_name) }}</span>
+              <span :title="record.metric">{{ friendlyLabel(record.metric) }}</span>
             </template>
             <template v-else-if="column.key === 'device_name'">
-              <span style="font-size: 12px">{{ deviceNameFromMetric(record.metric, record.device_name) }}</span>
+              <span style="font-size: 12px">{{ deviceDisplayName(record.device_name) }}</span>
             </template>
             <template v-else-if="column.key === 'score'">
               <span style="font-variant-numeric: tabular-nums; font-size: 12px">{{ fmtNum(record.max_anomaly_score, 3) }}</span>
@@ -1417,10 +1478,10 @@ onUnmounted(() => {
         >
           <template #bodyCell="{ column, record }">
             <template v-if="column.key === 'metric'">
-              <span :title="record.metric" style="font-size: 12px">{{ metricLeaf(record.metric) }}</span>
+              <span :title="record.metric" style="font-size: 12px">{{ friendlyLabel(record.metric) }}</span>
             </template>
             <template v-else-if="column.key === 'device_id'">
-              <span :title="record.device_id" style="font-size: 12px">{{ deviceNameFromMetric(record.metric, record.device_id) }}</span>
+              <span :title="record.device_id" style="font-size: 12px">{{ deviceDisplayName(record.device_id) }}</span>
             </template>
             <template v-else-if="column.key === 'device_state'">
               <a-tooltip
@@ -1430,7 +1491,7 @@ onUnmounted(() => {
                 <a-tag color="orange" style="font-size: 10px">Warming up</a-tag>
               </a-tooltip>
               <a-tag v-else-if="record.pendingWindowSize" color="blue" style="font-size: 10px">Collecting</a-tag>
-              <span v-else style="font-size: 12px">{{ record.device_state }}</span>
+              <a-tag v-else :color="deviceStateColor(record.device_state)" style="font-size: 10px">{{ record.device_state }}</a-tag>
             </template>
             <template v-else-if="column.key === 'time_slot'">
               <span style="font-size: 12px">{{ record.isSynthetic ? '—' : record.time_slot }}</span>
@@ -1555,7 +1616,7 @@ onUnmounted(() => {
               <template #default="{ record }">{{ metricLeaf(record.metric, record.device_name) }}</template>
             </a-table-column>
             <a-table-column key="device_name" title="Device" data-index="device_name">
-              <template #default="{ record }">{{ deviceNameFromMetric(record.metric, record.device_name) }}</template>
+              <template #default="{ record }">{{ deviceDisplayName(record.device_name) }}</template>
             </a-table-column>
             <a-table-column key="incident_count" title="Incidents" data-index="incident_count" :width="90" />
             <a-table-column key="total_events" title="Total Events" data-index="total_events" :width="110" />
@@ -1609,7 +1670,7 @@ onUnmounted(() => {
             >
               <template #bodyCell="{ column, record, index }">
                 <template v-if="column.key === 'name'">
-                  <span :title="record.name" style="font-size: 12px">{{ ruleMetricLeaf(record) }}</span>
+                  <span :title="record.name" style="font-size: 12px">{{ friendlyLabel(record.name) }}</span>
                 </template>
                 <template v-else-if="column.key === 'device'">
                   <span style="font-size: 12px">{{ ruleDeviceName(record) || '—' }}</span>
@@ -1943,6 +2004,156 @@ onUnmounted(() => {
                     </a-col>
                   </a-row>
 
+                  <div class="drift-subheading">
+                    Sensitivity &amp; promotion
+                    <a-tooltip title="How a field that wasn't in the original baseline eventually stops being flagged once it's proven to be a normal, stable part of the schema (not just a one-off), and how confidently a field's value type must repeat before a different type is treated as real drift.">
+                      <QuestionCircleOutlined class="drift-alert-on__info" />
+                    </a-tooltip>
+                  </div>
+                  <a-row :gutter="[20, 20]">
+                    <a-col :xs="24" :sm="12" :lg="8">
+                      <SettingsField
+                        label="Promotion batches"
+                        tooltip="How many times a field not in the original baseline must be observed before it's silently promoted into the baseline and stops being flagged as drift (e.g. a setpoint that only reports on change, not every cycle). Works together with Promotion ratio below."
+                      >
+                        <a-input-number
+                          :value="globalDrift.adaptivePromotionBatches ?? 50"
+                          :min="1" :max="10000"
+                          @change="(v: number) => setDrift('adaptivePromotionBatches', v)"
+                        />
+                      </SettingsField>
+                    </a-col>
+                    <a-col :xs="24" :sm="12" :lg="8">
+                      <SettingsField
+                        label="Promotion ratio"
+                        tooltip="The fraction of observations (since a field was first seen) it must be present in before it qualifies for promotion into the baseline. 0.6 means it must show up at least 60% of the time since it first appeared."
+                      >
+                        <a-input-number
+                          :value="globalDrift.adaptivePromotionRatio ?? 0.6"
+                          :min="0" :max="1" :step="0.05" :precision="2"
+                          @change="(v: number) => setDrift('adaptivePromotionRatio', v)"
+                        />
+                      </SettingsField>
+                    </a-col>
+                    <a-col :xs="24" :sm="12" :lg="8">
+                      <SettingsField
+                        label="Min type dominance ratio"
+                        tooltip="The fraction of a field's observations a value type must represent to be considered its expected type. Prevents one bad or unusual payload from permanently widening what's accepted as normal for that field."
+                      >
+                        <a-input-number
+                          :value="globalDrift.minTypeDominanceRatio ?? 0.15"
+                          :min="0" :max="1" :step="0.01" :precision="2"
+                          @change="(v: number) => setDrift('minTypeDominanceRatio', v)"
+                        />
+                      </SettingsField>
+                    </a-col>
+                  </a-row>
+
+                  <div class="drift-subheading">
+                    Performance &amp; limits
+                    <a-tooltip title="Safety caps that bound how much memory and CPU schema-drift tracking can use on a busy endpoint. The defaults are generous — only lower these on resource-constrained deployments, or raise them if a single endpoint legitimately has more devices/fields than the caps allow.">
+                      <QuestionCircleOutlined class="drift-alert-on__info" />
+                    </a-tooltip>
+                  </div>
+                  <a-row :gutter="[20, 20]">
+                    <a-col :xs="24" :sm="12" :lg="8">
+                      <SettingsField
+                        label="Check interval (batches)"
+                        tooltip="Once the baseline is established, run the full drift check only every Nth batch instead of every batch. 1 = every batch (default). Raise this to reduce CPU use on very high-frequency endpoints; warmup always checks every batch regardless of this setting."
+                      >
+                        <a-input-number
+                          :value="globalDrift.checkIntervalBatches ?? 1"
+                          :min="1" :max="1000"
+                          @change="(v: number) => setDrift('checkIntervalBatches', v)"
+                        />
+                      </SettingsField>
+                    </a-col>
+                    <a-col :xs="24" :sm="12" :lg="8">
+                      <SettingsField
+                        label="Max tracked fields"
+                        tooltip="Upper bound on how many distinct fields are tracked per device. Prevents a device with a runaway/malformed payload from growing its schema without limit."
+                      >
+                        <a-input-number
+                          :value="globalDrift.maxTrackedFields ?? 1000"
+                          :min="1" :max="100000"
+                          @change="(v: number) => setDrift('maxTrackedFields', v)"
+                        />
+                      </SettingsField>
+                    </a-col>
+                    <a-col :xs="24" :sm="12" :lg="8">
+                      <SettingsField
+                        label="Max tracked devices"
+                        tooltip="Upper bound on how many distinct device identities are tracked per endpoint. Bounds memory on a shared/multiplexed endpoint (e.g. a BACnet pipe with many devices) against a misbehaving upstream generating unique names per message."
+                      >
+                        <a-input-number
+                          :value="globalDrift.maxTrackedDevices ?? 2000"
+                          :min="1" :max="100000"
+                          @change="(v: number) => setDrift('maxTrackedDevices', v)"
+                        />
+                      </SettingsField>
+                    </a-col>
+                    <a-col :xs="24" :sm="12" :lg="8">
+                      <SettingsField
+                        label="Max fields per batch"
+                        tooltip="Upper bound on how many fields are processed from a single observation/batch. A safety cap, not a normal operating limit."
+                      >
+                        <a-input-number
+                          :value="globalDrift.maxFieldsPerBatch ?? 500"
+                          :min="1" :max="100000"
+                          @change="(v: number) => setDrift('maxFieldsPerBatch', v)"
+                        />
+                      </SettingsField>
+                    </a-col>
+                    <a-col :xs="24" :sm="12" :lg="8">
+                      <SettingsField
+                        label="Max traversal depth"
+                        tooltip="How many levels deep into a nested payload the schema extractor will recurse when looking for fields."
+                      >
+                        <a-input-number
+                          :value="globalDrift.maxTraversalDepth ?? 5"
+                          :min="1" :max="20"
+                          @change="(v: number) => setDrift('maxTraversalDepth', v)"
+                        />
+                      </SettingsField>
+                    </a-col>
+                    <a-col :xs="24" :sm="12" :lg="8">
+                      <SettingsField
+                        label="Max rename candidates"
+                        tooltip="Upper bound on how many missing/new field pairs are compared per side when looking for a rename (a missing field and a new field that look like the same field, renamed). Higher values catch more rename pairs on devices with many simultaneous field changes, at more CPU cost."
+                      >
+                        <a-input-number
+                          :value="globalDrift.maxRenameCandidates ?? 20"
+                          :min="1" :max="1000"
+                          @change="(v: number) => setDrift('maxRenameCandidates', v)"
+                        />
+                      </SettingsField>
+                    </a-col>
+                    <a-col :xs="24" :sm="12" :lg="8">
+                      <SettingsField
+                        label="Max rename field length"
+                        tooltip="Field names longer than this are skipped during rename-candidate detection (the similarity comparison gets expensive on long strings). Shorter field names are always checked."
+                      >
+                        <a-input-number
+                          :value="globalDrift.maxRenameFieldLength ?? 64"
+                          :min="1" :max="500"
+                          @change="(v: number) => setDrift('maxRenameFieldLength', v)"
+                        />
+                      </SettingsField>
+                    </a-col>
+                    <a-col :xs="24" :sm="12" :lg="8">
+                      <SettingsField
+                        label="Log sample size"
+                        tooltip="How many example field names to include in each drift log line (e.g. 'sampleAdditiveFields'). Purely cosmetic — doesn't affect detection, only log verbosity."
+                      >
+                        <a-input-number
+                          :value="globalDrift.logSampleSize ?? 10"
+                          :min="0" :max="100"
+                          @change="(v: number) => setDrift('logSampleSize', v)"
+                        />
+                      </SettingsField>
+                    </a-col>
+                  </a-row>
+
                   <div class="drift-alert-on">
                     <div class="drift-alert-on__label">
                       Alert on
@@ -1999,7 +2210,7 @@ onUnmounted(() => {
     >
       <p v-if="resolveModalIncident" style="margin-bottom: 16px">
         Mark "{{ friendlyLabel(resolveModalIncident.metric) }}" on
-        {{ deviceNameFromMetric(resolveModalIncident.metric, resolveModalIncident.device_name) }} as resolved.
+        {{ deviceDisplayName(resolveModalIncident.device_name) }} as resolved.
       </p>
       <a-form layout="vertical">
         <a-form-item label="Reason" required>
@@ -2056,38 +2267,48 @@ onUnmounted(() => {
       </template>
 
       <a-form layout="vertical">
-        <a-form-item label="Metric name" required>
+        <a-form-item
+          label="Source"
+          :required="editingMetricIdx === null"
+          :extra="editingMetricIdx === null ? 'Pick a source to choose a point from — only sources with live metrics are listed.' : 'Narrows the metric list below to one source.'"
+        >
+          <a-select
+            v-model:value="sourceFilter"
+            allow-clear
+            show-search
+            placeholder="Select a source…"
+            :options="sourceFilterOptions"
+            :filter-option="(input: string, opt: { label: string }) => opt.label.toLowerCase().includes(input.toLowerCase())"
+            @change="metricForm.name = ''"
+          />
+        </a-form-item>
+
+        <a-form-item label="Point name" required>
           <a-auto-complete
             v-model:value="metricForm.name"
             :options="metricAutocompleteOptions"
+            :disabled="editingMetricIdx === null && !sourceFilter"
             placeholder="e.g. cpu_usage, temperature"
             :filter-option="false"
             allow-clear
             style="width: 100%"
             @select="onMetricSuggestionSelected"
           >
-            <template #option="{ device, leaf, protocol, suggestion }">
+            <template #option="{ value, suggestion }">
               <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px">
-                <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap">
-                  <template v-if="device"><b>{{ prettifyDriftDeviceId(device) }}</b> · {{ leaf }}</template>
-                  <template v-else>{{ leaf }}</template>
-                </span>
-                <div style="display: flex; align-items: center; gap: 4px; flex-shrink: 0">
-                  <!-- Always shown, never conditional on a name collision — two
-                       different protocols can (and in this fleet do) have devices
-                       with identical display names, so protocol is the only
-                       reliable way to tell two identical-looking rows apart. -->
-                  <a-tag v-if="protocol" style="font-size: 10px; line-height: 16px; padding: 0 4px; margin: 0">{{ protocol }}</a-tag>
-                  <span
-                    v-if="suggestion?.endpointName && suggestion.endpointName.toLowerCase() !== device?.toLowerCase()"
-                    style="font-size: 11px; color: #888"
-                  >{{ suggestion.endpointName }}</span>
-                  <a-tag
-                    v-if="suggestion?.configured"
-                    color="purple"
-                    style="font-size: 10px; line-height: 16px; padding: 0 4px; margin: 0"
-                  >configured</a-tag>
-                </div>
+                <!-- Verbatim normalized name, same convention as Live View's
+                     bold point name (LiveView.vue's point-primary) — no
+                     device-prefix splitting or hyphenating, this is exactly
+                     the string that gets saved as the rule's metric name. -->
+                <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap">{{ value }}</span>
+                <!-- No protocol tag / device name here — the Source filter
+                     above already identifies both; repeating them on every
+                     row was redundant. -->
+                <a-tag
+                  v-if="suggestion?.configured"
+                  color="purple"
+                  style="font-size: 10px; line-height: 16px; padding: 0 4px; margin: 0; flex-shrink: 0"
+                >configured</a-tag>
               </div>
             </template>
           </a-auto-complete>
@@ -2101,9 +2322,15 @@ onUnmounted(() => {
           </div>
         </a-form-item>
 
-        <a-form-item label="Device name (optional)" extra="Scopes this rule to a specific device. Leave empty to match all.">
-          <a-input v-model:value="metricForm.deviceName" placeholder="e.g. BACnet-Controller-1" />
-        </a-form-item>
+        <!-- No separate "Device name" field: metricForm.deviceName is still
+             set in the background by onMetricSuggestionSelected() when a
+             dropdown suggestion is picked (it scopes the saved rule to one
+             device vs. matching the point name across all devices — still
+             meaningful for metrics whose name isn't already device-specific,
+             e.g. system metrics like cpu_usage). Redundant to show as its
+             own editable field for the common case: picking a point already
+             implies its device, and with normalized names the device is
+             usually baked into the point name itself. -->
 
         <a-form-item label="Seasonality">
           <a-select v-model:value="metricForm.seasonality" style="width: 160px">
@@ -2348,6 +2575,12 @@ onUnmounted(() => {
 .drift-enabled-toggle__label {
   font-size: 12.5px;
   color: #767676;
+}
+
+.drift-subheading {
+  font-size: 13px;
+  font-weight: 600;
+  margin: 20px 0 4px;
 }
 
 .drift-alert-on {

@@ -1,6 +1,7 @@
 import type { Protocol } from "../../plugins/protocol.js";
 import { extractRawDeviceState } from "./device-state.js";
 import type { Logger } from "../core/types.js";
+import type { PointIdentity } from "../../point-name/types.js";
 
 /**
  * Walks each batch message, extracts every numeric field, and feeds them to the
@@ -121,6 +122,24 @@ export class AnomalyFeed {
 			if (typeof c === "number" && Number.isFinite(c)) return String(c);
 		}
 		return undefined;
+	}
+
+	/**
+	 * Reads the identity the point-name normalization interceptor already
+	 * attached to this reading (src/point-name/interceptor.ts, earlier in the
+	 * same publish flush) — the single normalized source of both the metric
+	 * name and the per-device identity, the same one Live View's display
+	 * reads from. Returns undefined (never a fabricated identity) when either
+	 * piece is missing: a reading with no pointIdentity means the interceptor
+	 * didn't run for it; a pointIdentity with an empty deviceKey means it ran
+	 * but found no device identity (reading.deviceId / device_uuid /
+	 * endpoint_uuid) to key off. Both are real upstream gaps for the caller
+	 * to surface, not paper over here.
+	 */
+	private readPointIdentity(reading: unknown): PointIdentity | undefined {
+		const pointIdentity = (reading as { pointIdentity?: PointIdentity })?.pointIdentity;
+		if (!pointIdentity?.normalizedName || !pointIdentity.deviceKey) return undefined;
+		return pointIdentity;
 	}
 
 	private dispatchToAnomaly(
@@ -255,10 +274,6 @@ export class AnomalyFeed {
 		const readingDeviceName: string = data.deviceName;
 		const payloadDeviceUuid: string | undefined =
 			data.device_uuid || data.deviceUuid;
-		const resolvedDeviceId = this.resolveDeviceId(
-			data.deviceId,
-			data.device_id,
-		);
 		const fieldName: string = data.metric || data.name;
 		const value = this.toFiniteNumber(data.value);
 		const quality: string = data.quality || "GOOD";
@@ -274,28 +289,22 @@ export class AnomalyFeed {
 			return;
 		}
 
-		const effectiveDeviceId =
-			resolvedDeviceId || `endpoint:${parentDeviceName}`;
-		if (!resolvedDeviceId && !payloadDeviceUuid) {
+		const pointIdentity = this.readPointIdentity(data);
+		if (!pointIdentity) {
 			this.logger?.warn(
-				"No explicit deviceId in payload; using fallback identity",
+				"Skipping reading: no normalized point identity with a device key (point-name interceptor did not tag this reading, or found no device identity on it)",
 				{
 					device: parentDeviceName,
 					protocol: this.protocol,
-					metricName: fieldName,
+					fieldName,
 					deviceName: readingDeviceName,
-					fallbackDeviceId: effectiveDeviceId,
-					reason: "reading_object_missing_device_id",
+					reason: "reading_object_missing_point_identity",
 				},
 			);
+			return;
 		}
 
-		const metricKey = this.buildMetricKey(
-			payloadDeviceUuid || readingDeviceName,
-			parentDeviceName,
-			fieldName,
-		);
-		this.dispatchToAnomaly(metricKey, {
+		this.dispatchToAnomaly(pointIdentity.normalizedName, {
 			source: "endpoint",
 			protocol: this.protocol,
 			rawDeviceState:
@@ -307,7 +316,7 @@ export class AnomalyFeed {
 			unit: data.unit || "",
 			timestamp: timestampMs,
 			quality: quality === "GOOD" || quality === "Good" ? "GOOD" : "BAD",
-			deviceId: effectiveDeviceId,
+			deviceId: pointIdentity.deviceKey,
 			tags: {
 				endpointId: parentDeviceName,
 				...(payloadDeviceUuid && { deviceUuid: payloadDeviceUuid }),
@@ -329,10 +338,6 @@ export class AnomalyFeed {
 			const readingDeviceName: string = reading.deviceName || parentDeviceName;
 			const payloadDeviceUuid: string | undefined =
 				reading.device_uuid || reading.deviceUuid;
-			const resolvedDeviceId = this.resolveDeviceId(
-				reading.deviceId,
-				reading.device_id,
-			);
 			// metric (standard) > registerName (Modbus) > name (legacy)
 			const fieldName: string | undefined =
 				reading.metric || reading.registerName || reading.name;
@@ -352,28 +357,27 @@ export class AnomalyFeed {
 				continue;
 			}
 
-			const effectiveDeviceId =
-				resolvedDeviceId || `endpoint:${parentDeviceName}`;
-			if (!resolvedDeviceId && !payloadDeviceUuid) {
+			// The interceptor tags every element of a readings[] array
+			// individually (src/point-name/interceptor.ts), so this reading
+			// carries its own pointIdentity the same as a single reading object
+			// does — see readPointIdentity()'s doc comment for what "missing"
+			// means here.
+			const pointIdentity = this.readPointIdentity(reading);
+			if (!pointIdentity) {
 				this.logger?.warn(
-					"No explicit deviceId in payload; using fallback identity",
+					"Skipping reading: no normalized point identity with a device key (point-name interceptor did not tag this reading, or found no device identity on it)",
 					{
 						device: parentDeviceName,
 						protocol: this.protocol,
-						metricName: fieldName,
+						fieldName,
 						deviceName: readingDeviceName,
-						fallbackDeviceId: effectiveDeviceId,
-						reason: "readings_array_missing_device_id",
+						reason: "readings_array_missing_point_identity",
 					},
 				);
+				continue;
 			}
 
-			const metricKey = this.buildMetricKey(
-				payloadDeviceUuid || readingDeviceName,
-				parentDeviceName,
-				fieldName,
-			);
-			this.dispatchToAnomaly(metricKey, {
+			this.dispatchToAnomaly(pointIdentity.normalizedName, {
 				source: "endpoint",
 				protocol: this.protocol,
 				rawDeviceState:
@@ -385,7 +389,7 @@ export class AnomalyFeed {
 				unit: reading.unit || "",
 				timestamp: timestampMs,
 				quality: quality === "GOOD" || quality === "Good" ? "GOOD" : "BAD",
-				deviceId: effectiveDeviceId,
+				deviceId: pointIdentity.deviceKey,
 				tags: {
 					endpointId: parentDeviceName,
 					...(payloadDeviceUuid && { deviceUuid: payloadDeviceUuid }),
@@ -442,31 +446,36 @@ export class AnomalyFeed {
 			typeof data.deviceId === "string" ? data.deviceId : undefined,
 			typeof data.device_id === "string" ? data.device_id : undefined,
 		);
-		const effectiveDeviceId = resolvedDeviceId || `endpoint:${deviceName}`;
+		const effectiveDeviceId = resolvedDeviceId || payloadDeviceUuid;
 
 		for (const [key, value] of Object.entries(data)) {
 			const num = this.toFiniteNumber(value);
 			if (num !== undefined) {
 				const metricName = prefix ? `${prefix}_${key}` : key;
+
+				if (!effectiveDeviceId) {
+					this.logger?.warn(
+						"Skipping reading: no real device identity on payload (neither deviceId nor device_uuid)",
+						{
+							device: deviceName,
+							protocol: this.protocol,
+							field: metricName,
+							reason: "nested_numeric_missing_device_id",
+						},
+					);
+					continue;
+				}
+
+				// No point-name interceptor coverage for arbitrary nested
+				// multi-field objects (it tags the containing reading once, not
+				// per nested key) — buildMetricKey() stays the naming scheme
+				// here, not a fallback, the only one that ever applied to this
+				// shape.
 				const metricKey = this.buildMetricKey(
 					payloadDeviceUuid,
 					deviceName,
 					metricName,
 				);
-
-				if (!resolvedDeviceId) {
-					this.logger?.warn(
-						"No explicit deviceId in payload; using fallback identity",
-						{
-							device: deviceName,
-							protocol: this.protocol,
-							metricKey,
-							field: metricName,
-							fallbackDeviceId: effectiveDeviceId,
-							reason: "nested_numeric_missing_device_id",
-						},
-					);
-				}
 
 				this.dispatchToAnomaly(metricKey, {
 					source: "endpoint",

@@ -111,10 +111,7 @@ function resultSummary(rule: DiscoveryRule): string {
   const r = rule.last_result_json
   if (!r) return '—'
   if (r.error) return `Error: ${r.error.slice(0, 40)}`
-  const parts = [`found ${r.found}`]
-  if (r.saved > 0) parts.push(`${r.saved} auto-added`)
-  if (r.skipped > 0) parts.push(`${r.skipped} skipped`)
-  return parts.join(' · ')
+  return `${r.found}`
 }
 
 // silent=true (used by the background auto-refresh poll) skips toggling

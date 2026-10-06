@@ -5,7 +5,7 @@ import { AnomalyIncidentModel } from '../db/models/anomaly-incident.model.js';
 import type { ResolutionReason } from '../db/models/anomaly-incident.model.js';
 import { AnomalyAlertModel } from '../db/models/anomaly-alert.model.js';
 import { requireRole } from './middleware/roles.js';
-import { prettifyDriftDeviceId, prettifyDriftFieldName } from '../db/models/drift-labels.js';
+import { prettifyDriftDeviceId } from '../db/models/drift-labels.js';
 
 export const anomalyRouter = express.Router();
 
@@ -24,20 +24,47 @@ export function stripMetricUuidPrefix(metric: string): string {
 	return metric.replace(SYSTEM_METRIC_UUID_PREFIX_RE, '');
 }
 
+// A device_name reaching the anomaly pipeline (via AnomalyFeed's
+// tags.deviceName) is usually already the nicely-formatted display name
+// AdapterManager.enrichWithEndpointUuid() produces — e.g. "RTU-1
+// Controller" — with its own disambiguation suffix appended
+// (deviceNameSuffixFor(), src/db/models/device.model.ts): "-{8 hex chars}"
+// for a real UUID-sourced device_uuid. That suffix exists to keep two
+// same-named devices from colliding in telemetry/schema payloads — the
+// anomaly system already scopes a device unambiguously by its own
+// device_uuid/agentUuid internally, so repeating it in a human-facing
+// column is pure noise (same reasoning prettifyDriftDeviceId already
+// applies to schema-drift's own, differently-shaped suffix). Strip only
+// the clearly-UUID-derived form (exactly 8 trailing hex chars) — a
+// non-UUID suffix (e.g. an OPC-UA simulator's own identifier) is kept, the
+// same selectivity deviceNameSuffixFor() itself uses.
+const DEVICE_UUID_SUFFIX_RE = /-[0-9a-f]{8}$/i;
+function stripDeviceUuidSuffix(deviceName: string): string {
+	return deviceName.replace(DEVICE_UUID_SUFFIX_RE, '');
+}
+
 // device_name/metric are stored as whatever raw identifiers the anomaly
 // pipeline resolved at ingest time (resolveDeviceId in iot-agent-pro's
-// anomaly/metric-router.ts for device_name; manager.ts's stripFieldDevicePrefix
-// call for schema-drift-sourced metric names) — left untouched here rather
-// than renormalized, since changing either would split a device/metric's
-// existing history across two different stored keys. This only reformats
-// them for display, the same treatment the Schema Drift grid gets from
-// prettifyDriftDeviceId/prettifyDriftFieldName — so a device and its metrics
-// read the same way in both places without touching stored data.
+// anomaly/metric-router.ts for device_name; the point-name normalization
+// pipeline's normalizedName for metric) — left untouched here rather than
+// renormalized, since changing either would split a device/metric's existing
+// history across two different stored keys. device_name still gets the same
+// display reformatting the Schema Drift grid uses (prettifyDriftDeviceId),
+// plus the UUID-suffix strip above first (a different suffix shape than
+// schema-drift's own, so prettifyDriftDeviceId alone doesn't touch it).
+//
+// metric does NOT get that treatment (prettifyDriftFieldName, which swaps
+// "_" for "-") — unlike schema-drift's own field identifiers, an anomaly
+// metric's stored value IS already the normalized point name the rest of
+// the product shows verbatim (Baselines, Add Rule, Live View), underscored.
+// Hyphenating it here just for this one surface was the exact
+// Events/Incidents/Alerts-vs-Baselines inconsistency reported live — only
+// the legitimate UUID-prefix strip (system metrics) stays.
 function withPrettyDeviceName<T extends { device_name: string; metric?: string }>(record: T): T {
 	return {
 		...record,
-		device_name: prettifyDriftDeviceId(record.device_name),
-		...(record.metric !== undefined ? { metric: prettifyDriftFieldName(stripMetricUuidPrefix(record.metric)) } : {}),
+		device_name: prettifyDriftDeviceId(stripDeviceUuidSuffix(record.device_name)),
+		...(record.metric !== undefined ? { metric: stripMetricUuidPrefix(record.metric) } : {}),
 	};
 }
 

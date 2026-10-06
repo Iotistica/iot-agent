@@ -41,7 +41,7 @@ export interface DataQuality {
 export const CURRENT_RULES_VERSION = 'dq-rules-v1';
 export const CURRENT_ENGINE_VERSION = '1.0.0';
 
-/** Minimal logger shape — matches src/normalization/types.ts's Logger, kept local so src/quality/ has no cross-module dependency for it. */
+/** Minimal logger shape — matches src/units/types.ts's Logger, kept local so src/quality/ has no cross-module dependency for it. */
 export interface Logger {
 	debug(message: string, ...args: any[]): void;
 	info(message: string, ...args: any[]): void;

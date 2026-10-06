@@ -155,7 +155,13 @@ export async function configureAnomalyFeed(ctx: AgentInitContext): Promise<void>
 	});
 
 	const { configureAnomalyFeed: configureSystemMetrics, getSystemMetrics } = await import('../system/metrics.js');
-	configureSystemMetrics(ctx.anomalyService);
+	// Same cadence the cloud-connected reporting cycle already samples
+	// system metrics at (src/sync/state-reporter.ts) — reused here so
+	// configureSystemMetrics()'s own independent sampler (standalone mode's
+	// only trigger for this, see its doc comment) behaves consistently
+	// whether or not cloud sync is active, not a second, different interval.
+	const { reportIntervalMs } = ctx.configManager!.getIntervalConfig();
+	configureSystemMetrics(ctx.anomalyService, reportIntervalMs);
 
 	ctx.featureInitializer?.setAnomalyService?.(ctx.anomalyService);
 	ctx.featureInitializer?.getFeatures()?.devicePublish?.setAnomalyService?.(ctx.anomalyService);

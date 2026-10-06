@@ -41,6 +41,32 @@ export interface OPCUABrowseTreeNode {
 	children: OPCUABrowseTreeNode[];
 }
 
+// Real unit symbols (°C, kPa, L/min, %, V, A...) are short and never contain
+// whitespace. The Description-attribute fallback below only runs when a
+// node exposes no standard EngineeringUnits property — and some OPC-UA
+// server libraries (confirmed against a live simulator; see
+// src/data/unit-catalog-seed.ts's opcua section) default an unset
+// Description to the node's own display name, which would otherwise get
+// silently captured here as a bogus "unit" (observed live: points named
+// "Power-Factor"/"CH-1-COP"/"CH-2-COP", all configured with no unit at
+// all, showing up as their own name). Deliberately conservative — reject
+// anything that's just the node's own name restated, or that doesn't look
+// unit-shaped at all, rather than guess at what a "real" unit might be.
+const MAX_PLAUSIBLE_UNIT_LENGTH = 12;
+
+export function normalizeForUnitNameCompare(s: string): string {
+	return s.toLowerCase().replace(/[\s\-_]+/g, '');
+}
+
+export function looksLikeEngineeringUnit(description: string, nodeName: string): boolean {
+	const trimmed = description.trim();
+	if (!trimmed) return false;
+	if (/\s/.test(trimmed)) return false;
+	if (trimmed.length > MAX_PLAUSIBLE_UNIT_LENGTH) return false;
+	if (normalizeForUnitNameCompare(trimmed) === normalizeForUnitNameCompare(nodeName)) return false;
+	return true;
+}
+
 export class OPCUADiscovery extends BaseDiscovery {
 	private configManager?: ConfigManager;
 
@@ -579,12 +605,15 @@ export class OPCUADiscovery extends BaseDiscovery {
 									const actualNodeClass = nodeClass.value.value;
 
 									if (actualNodeClass === 2) {
-										// Extract semantic metric name from browseName prefix (OPC UA standard)
-										// Format: "Temperature_device1" → metric: "temperature"
-										// If no underscore, use full browseName in lowercase
-										const metricName = nodeName.includes('_')
-											? nodeName.split('_')[0].toLowerCase()
-											: nodeName.toLowerCase();
+										// Lowercase the full browseName — no truncation. This used to
+										// keep only the text before the first underscore (e.g.
+										// "Temperature_device1" -> "temperature"), silently discarding
+										// everything after it before the real point-name normalizer
+										// (src/point-name/normalize-point-name.ts) ever got a chance to
+										// handle it properly. The untruncated raw name is what should
+										// reach that normalizer — browseName itself is preserved
+										// separately below for display regardless.
+										const metricName = nodeName.toLowerCase();
 
 										const accessLevel = Number(accessLevelResult?.value?.value ?? 0);
 										const userAccessLevel = Number(userAccessLevelResult?.value?.value ?? accessLevel);
@@ -595,7 +624,7 @@ export class OPCUADiscovery extends BaseDiscovery {
 										// implementing the full EngineeringUnits/EUInformation structure.
 										const descriptionText = (descriptionResult?.value?.value as { text?: string } | undefined)?.text;
 										const unit = (await readEngineeringUnits(childNodeId))
-											?? (typeof descriptionText === 'string' && descriptionText.trim() ? descriptionText.trim() : undefined);
+											?? (typeof descriptionText === 'string' && looksLikeEngineeringUnit(descriptionText, nodeName) ? descriptionText.trim() : undefined);
 
 										dataPoints.push({
 											nodeId: childNodeId,

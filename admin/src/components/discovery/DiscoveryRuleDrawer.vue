@@ -15,9 +15,16 @@ const INTERVAL_PRESETS = [
   { label: '24 hours', value: 86400 },
 ]
 
+export interface DiscoveryRulePrefill {
+  name: string
+  protocol: string
+  params: Record<string, any>
+}
+
 const props = defineProps<{
   open: boolean
   editing: DiscoveryRule | null
+  prefill?: DiscoveryRulePrefill | null
 }>()
 
 const emit = defineEmits<{
@@ -160,6 +167,10 @@ watch(
       // The flush:'sync' protocol watcher has already reset the param fields
       // for this protocol. Now repopulate from the saved data.
       parseParamsInto(props.editing.protocol, props.editing.params_json)
+    } else if (props.prefill) {
+      form.value = { ...blankForm(), name: props.prefill.name, protocol: props.prefill.protocol }
+      // flush:'sync' protocol watcher above already reset params for this protocol.
+      parseParamsInto(props.prefill.protocol, props.prefill.params)
     } else {
       form.value = blankForm()
       resetProtocolParams('bacnet')

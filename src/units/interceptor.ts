@@ -1,6 +1,7 @@
 import { normalizeUnitName, deriveProvenance } from './normalize-unit-name.js';
 import type { Logger, UnitValue } from './types.js';
 import { getUnitCatalog } from './catalog.js';
+import { normalizeSourceSystem } from './source-system.js';
 
 interface ProtocolMessage extends Record<string, unknown> {
 	readings?: ProtocolMessage[];
@@ -14,13 +15,18 @@ interface ProtocolMessage extends Record<string, unknown> {
  * already uses: a message with `.readings: [...]` (wrapper) vs. a flat
  * single-reading object, mutated in place.
  */
-export function createUnitNormalizationInterceptor(opts: { logger?: Logger } = {}) {
+export function createUnitNormalizationInterceptor(opts: { logger?: Logger; enabled?: boolean } = {}) {
 	getUnitCatalog().init(opts.logger);
+	let enabled = opts.enabled ?? true;
 
-	return function unitNormalizationInterceptor(
+	function unitNormalizationInterceptor(
 		messages: ProtocolMessage[],
 		_endpointName: string,
 	): ProtocolMessage[] {
+		// Disabled: pass every reading through raw and untouched — no catalog
+		// lookup, no unitValue attached, no Normalization Health tracking.
+		if (!enabled) return messages;
+
 		for (const message of messages) {
 			if (Array.isArray(message.readings)) {
 				for (const reading of message.readings) {
@@ -31,7 +37,13 @@ export function createUnitNormalizationInterceptor(opts: { logger?: Logger } = {
 			normalizeReadingInPlace(message, message.protocol as string | undefined);
 		}
 		return messages;
+	}
+
+	unitNormalizationInterceptor.setEnabled = (value: boolean): void => {
+		enabled = value;
 	};
+
+	return unitNormalizationInterceptor;
 }
 
 function normalizeReadingInPlace(reading: ProtocolMessage, protocolHint?: string): void {
@@ -39,8 +51,8 @@ function normalizeReadingInPlace(reading: ProtocolMessage, protocolHint?: string
 	const rawValue = reading.value;
 	if (!rawUnit || typeof rawUnit !== 'string' || typeof rawValue !== 'number') return;
 
-	const sourceSystem = (reading.protocol as string | undefined) ?? protocolHint;
-	const result = normalizeUnitName(rawUnit, sourceSystem);
+	const sourceSystem = normalizeSourceSystem((reading.protocol as string | undefined) ?? protocolHint);
+	const result = normalizeUnitName(rawUnit, sourceSystem ?? undefined);
 
 	const unitValue: UnitValue = {
 		rawValue,

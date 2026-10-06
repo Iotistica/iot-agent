@@ -123,6 +123,41 @@ describe('unit catalog seed data', () => {
 			expect(errors.some((e) => /Ambiguous/.test(e))).toBe(false);
 		});
 
+		// Regression coverage for the validation/runtime normalization mismatch
+		// fix: UnitCatalog.reload()/resolveAlias() (src/units/catalog.ts)
+		// fold every alias through trim().toLowerCase() into one Map key, so a
+		// case-variant pair pointing at *different* canonical units is a real
+		// runtime collision (silent, last-write-wins) even though the two alias
+		// strings are not literally identical. The validator must catch this —
+		// it used to group by the raw, case-sensitive string and would have
+		// missed exactly this case.
+		it('flags a case-variant global alias pair that maps to different canonical units (the fixed mismatch)', () => {
+			const aliases: SeedUnitAlias[] = [
+				{ source_system: null, alias: 'foobar', canonical_unit: 'degreesCelsius' },
+				{ source_system: null, alias: 'FOOBAR', canonical_unit: 'degreesFahrenheit' },
+			];
+			const errors = validateUnitCatalogSeed(goodDefs, aliases);
+			expect(errors.some((e) => /Ambiguous global alias "foobar"/.test(e))).toBe(true);
+		});
+
+		it('flags a case-variant scoped alias pair that maps to different canonical units', () => {
+			const aliases: SeedUnitAlias[] = [
+				{ source_system: 'mqtt', alias: 'foobar', canonical_unit: 'degreesCelsius' },
+				{ source_system: 'mqtt', alias: 'FOOBAR', canonical_unit: 'degreesFahrenheit' },
+			];
+			const errors = validateUnitCatalogSeed(goodDefs, aliases);
+			expect(errors.some((e) => /Ambiguous scoped alias "foobar" \(source_system=mqtt\)/.test(e))).toBe(true);
+		});
+
+		it('does not flag a case-variant pair that maps to the SAME canonical unit (today\'s real seed shape, e.g. "kW"/"kw") — neither as ambiguous nor as a duplicate pair', () => {
+			const aliases: SeedUnitAlias[] = [
+				{ source_system: null, alias: 'FooBar', canonical_unit: 'degreesCelsius' },
+				{ source_system: null, alias: 'foobar', canonical_unit: 'degreesCelsius' },
+			];
+			const errors = validateUnitCatalogSeed(goodDefs, aliases);
+			expect(errors).toEqual([]);
+		});
+
 		it('passes clean data with no errors', () => {
 			expect(validateUnitCatalogSeed(goodDefs, [{ source_system: null, alias: 'celsius', canonical_unit: 'degreesCelsius' }])).toEqual([]);
 		});

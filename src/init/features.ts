@@ -27,7 +27,7 @@ import { MQTT_TOPIC_PATTERNS, agentTopic } from '../mqtt/topics.js';
 import { type StateManager } from '../core/state.js';
 import { isStandaloneMode } from '../utils/env.js';
 import { composeInterceptors } from '../publish/core/interceptor-chain.js';
-import { createUnitNormalizationInterceptor } from '../normalization/index.js';
+import { createUnitNormalizationInterceptor } from '../units/index.js';
 import { createDataQualityInterceptor } from '../quality/index.js';
 import { createPointNameNormalizationInterceptor } from '../point-name/index.js';
 
@@ -722,6 +722,24 @@ export async function initFeatures(ctx: AgentInitContext): Promise<void> {
 
 	const targetState = ctx.stateReconciler!.getTargetState();
 
+	// Named locals (not inlined into composeInterceptors() below) so their
+	// .setEnabled can be captured for live toggling — see
+	// setupConfigEventListeners()'s enableUnitNormalization/
+	// enablePointNameNormalization handling in src/init/core.ts.
+	const pointNameNormalizationInterceptor = createPointNameNormalizationInterceptor({
+		logger: agentLogger,
+		enabled: ctx.configManager!.getFeatures().enablePointNameNormalization,
+	});
+	const unitNormalizationInterceptor = createUnitNormalizationInterceptor({
+		logger: agentLogger,
+		enabled: ctx.configManager!.getFeatures().enableUnitNormalization,
+	});
+
+	ctx.normalizationToggles = {
+		setUnitNormalizationEnabled: unitNormalizationInterceptor.setEnabled,
+		setPointNameNormalizationEnabled: pointNameNormalizationInterceptor.setEnabled,
+	};
+
 	const featureContext: FeatureContext = {
 		logger: agentLogger,
 		deviceInfo: ctx.agentInfo!,
@@ -740,8 +758,8 @@ export async function initFeatures(ctx: AgentInitContext): Promise<void> {
 		dictionaryManager: ctx.dictionaryManager,
 		pipelineService: ctx.pipelineService,
 		liveDataInterceptor: composeInterceptors(
-			createPointNameNormalizationInterceptor({ logger: agentLogger }),
-			createUnitNormalizationInterceptor({ logger: agentLogger }),
+			pointNameNormalizationInterceptor,
+			unitNormalizationInterceptor,
 			createDataQualityInterceptor({ logger: agentLogger }),
 		),
 	};

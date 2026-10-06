@@ -3,7 +3,7 @@ import { ref, watch } from 'vue'
 import { message } from 'ant-design-vue'
 import type { FormInstance } from 'ant-design-vue'
 import type { Endpoint, EndpointCreateData } from '@/types'
-import { sourcesApi } from '@/api/sources'
+import { sourcesApi, type SourceTestResult } from '@/api/sources'
 import SourceConnectionFields from './SourceConnectionFields.vue'
 
 const props = defineProps<{
@@ -21,6 +21,8 @@ const PROTOCOLS = ['modbus', 'opcua', 'mqtt', 'bacnet']
 
 const formRef = ref<FormInstance>()
 const saving = ref(false)
+const testing = ref(false)
+const testResult = ref<SourceTestResult | null>(null)
 
 const form = ref<EndpointCreateData>({
   name: '',
@@ -34,6 +36,7 @@ watch(
   () => props.open,
   (open) => {
     if (!open) return
+    testResult.value = null
     if (props.editing) {
       form.value = {
         name: props.editing.name,
@@ -60,6 +63,23 @@ watch(
 
 function onProtocolChange() {
   form.value.connection = {}
+  testResult.value = null
+}
+
+async function testConnection() {
+  testResult.value = null
+  testing.value = true
+  try {
+    testResult.value = await sourcesApi.test({
+      protocol: form.value.protocol,
+      connection: form.value.connection ?? {},
+    })
+  } catch (err: unknown) {
+    const e = err as { message?: string }
+    testResult.value = { ok: false, error: e?.message ?? 'Test failed' }
+  } finally {
+    testing.value = false
+  }
 }
 
 async function submit() {
@@ -144,14 +164,25 @@ function close() {
           </a-form-item>
         </a-col>
       </a-row>
+
+      <a-alert
+        v-if="testResult"
+        :type="testResult.ok ? 'success' : 'error'"
+        :message="testResult.ok ? testResult.message : testResult.error"
+        show-icon
+        style="margin-top: 4px"
+      />
     </a-form>
 
     <template #footer>
-      <a-space>
-        <a-button @click="close">Cancel</a-button>
-        <a-button type="primary" :loading="saving" @click="submit">
-          {{ editing ? 'Save' : 'Add Source' }}
-        </a-button>
+      <a-space style="width: 100%; justify-content: space-between">
+        <a-button :loading="testing" @click="testConnection">Test Connection</a-button>
+        <a-space>
+          <a-button @click="close">Cancel</a-button>
+          <a-button type="primary" :loading="saving" @click="submit">
+            {{ editing ? 'Save' : 'Add Source' }}
+          </a-button>
+        </a-space>
       </a-space>
     </template>
   </a-drawer>

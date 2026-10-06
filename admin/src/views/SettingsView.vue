@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { message } from 'ant-design-vue'
-import { SaveOutlined, ReloadOutlined, LinkOutlined, CheckCircleOutlined, WifiOutlined } from '@ant-design/icons-vue'
+import type { TableColumnType } from 'ant-design-vue'
+import { SaveOutlined, ReloadOutlined, LinkOutlined, CheckCircleOutlined, WifiOutlined, EditOutlined } from '@ant-design/icons-vue'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import { useAuth } from '@/composables/useAuth'
 import { settingsApi } from '@/api/settings'
@@ -10,11 +11,12 @@ import { client as apiClient } from '@/api/client'
 import { dockerConfigApi } from '@/api/containers'
 import type { DockerConfig } from '@/api/containers'
 import type { AgentSettings } from '@/types'
+import { dashboardApi, type CanonicalUnit, type CustomUnitAlias } from '@/api/dashboard'
 
 const route = useRoute()
 const { hasRole } = useAuth()
 
-const VALID_TABS = ['agent', 'features', 'logging', 'intervals', 'docker', 'mqtt-monitor']
+const VALID_TABS = ['agent', 'features', 'logging', 'intervals', 'docker', 'mqtt-monitor', 'units']
 const activeTab = ref(
   typeof route.query.tab === 'string' && VALID_TABS.includes(route.query.tab) ? route.query.tab : 'agent'
 )
@@ -29,7 +31,7 @@ const settings = ref<AgentSettings>({})
 // Deep clone for "discard changes" reset
 let lastSaved: AgentSettings = {}
 
-onMounted(() => { load(); loadDockerConfig() })
+onMounted(() => { load(); loadDockerConfig(); loadCustomAliases() })
 
 async function load() {
   loading.value = true
@@ -247,6 +249,86 @@ async function testMqttConnection() {
   }
 }
 
+// ── Units: custom unit mappings ─────────────────────────────────────────────
+// Admin-created unit aliases (the Dashboard's Normalization Health "Resolve"
+// action) — view/edit only here, reusing that same backend infrastructure
+// (custom_unit_aliases table, POST /v1/normalization-health/resolve-unit).
+// No create/delete in v1 — creating happens via Resolve on the Dashboard.
+
+const customAliasColumns: TableColumnType<CustomUnitAlias>[] = [
+  { title: 'Alias', dataIndex: 'alias', key: 'alias', ellipsis: true },
+  { title: 'Protocol / Source System', key: 'source_system', width: 180 },
+  { title: 'Canonical Unit', dataIndex: 'canonical_unit', key: 'canonical_unit', width: 180 },
+  { title: 'Actions', key: 'actions', width: 90 },
+]
+
+const customAliases = ref<CustomUnitAlias[]>([])
+const customAliasesLoading = ref(false)
+
+async function loadCustomAliases() {
+  customAliasesLoading.value = true
+  try {
+    customAliases.value = await dashboardApi.getCustomUnitAliases()
+  } catch (e: any) {
+    message.error(e?.message ?? 'Failed to load custom unit mappings')
+  } finally {
+    customAliasesLoading.value = false
+  }
+}
+
+const canonicalUnits = ref<CanonicalUnit[]>([])
+const canonicalUnitsLoaded = ref(false)
+const canonicalUnitOptions = computed(() =>
+  canonicalUnits.value.map((u) => ({
+    value: u.canonical_unit,
+    label: u.symbol ? `${u.canonical_unit} (${u.symbol})` : u.canonical_unit,
+  })),
+)
+
+function ensureCanonicalUnitsLoaded() {
+  if (canonicalUnitsLoaded.value) return
+  dashboardApi.getCanonicalUnits()
+    .then((units) => {
+      canonicalUnits.value = units
+      canonicalUnitsLoaded.value = true
+    })
+    .catch(() => {
+      /* the picker will just show no options; not fatal */
+    })
+}
+
+const editAliasModalOpen = ref(false)
+const editAliasTarget = ref<CustomUnitAlias | null>(null)
+const editAliasCanonicalUnit = ref<string | undefined>(undefined)
+const editAliasSaving = ref(false)
+
+function openEditAlias(row: CustomUnitAlias) {
+  ensureCanonicalUnitsLoaded()
+  editAliasTarget.value = row
+  editAliasCanonicalUnit.value = row.canonical_unit
+  editAliasModalOpen.value = true
+}
+
+function closeEditAlias() {
+  editAliasModalOpen.value = false
+  editAliasTarget.value = null
+}
+
+async function submitEditAlias() {
+  if (!editAliasTarget.value || !editAliasCanonicalUnit.value) return
+  editAliasSaving.value = true
+  try {
+    await dashboardApi.resolveUnknownUnit(editAliasTarget.value.alias, editAliasTarget.value.source_system, editAliasCanonicalUnit.value)
+    message.success(`"${editAliasTarget.value.alias}" now maps to ${editAliasCanonicalUnit.value}`)
+    closeEditAlias()
+    await loadCustomAliases()
+  } catch (err: any) {
+    message.error(err?.message ?? 'Failed to update mapping')
+  } finally {
+    editAliasSaving.value = false
+  }
+}
+
 function setLogging<K extends keyof NonNullable<AgentSettings['logging']>>(
   key: K,
   val: NonNullable<AgentSettings['logging']>[K],
@@ -438,7 +520,7 @@ function setMemory<K extends keyof NonNullable<NonNullable<AgentSettings['runtim
             <a-space direction="vertical" style="width: 100%">
               <div class="toggle-row">
                 <div>
-                  <div class="toggle-label">Metrics Publishing</div>
+                  <div class="toggle-label">Data Publishing</div>
                   <div class="toggle-desc">Automatically publish device data to MQTT broker</div>
                 </div>
                 <a-switch
@@ -477,6 +559,28 @@ function setMemory<K extends keyof NonNullable<NonNullable<AgentSettings['runtim
                 <a-switch
                   :checked="settings.features?.enableDeviceJobs ?? true"
                   @change="(v: boolean) => setFeature('enableDeviceJobs', v)"
+                />
+              </div>
+              <a-divider style="margin: 8px 0" />
+              <div class="toggle-row">
+                <div>
+                  <div class="toggle-label">Unit Normalization</div>
+                  <div class="toggle-desc">Resolve raw unit strings to canonical units and track unknown units</div>
+                </div>
+                <a-switch
+                  :checked="settings.features?.enableUnitNormalization ?? true"
+                  @change="(v: boolean) => setFeature('enableUnitNormalization', v)"
+                />
+              </div>
+              <a-divider style="margin: 8px 0" />
+              <div class="toggle-row">
+                <div>
+                  <div class="toggle-label">Point-Name Normalization</div>
+                  <div class="toggle-desc">Resolve raw point/tag names to canonical, deduplicated identities</div>
+                </div>
+                <a-switch
+                  :checked="settings.features?.enablePointNameNormalization ?? true"
+                  @change="(v: boolean) => setFeature('enablePointNameNormalization', v)"
                 />
               </div>
             </a-space>
@@ -907,8 +1011,78 @@ function setMemory<K extends keyof NonNullable<NonNullable<AgentSettings['runtim
           </div>
         </a-tab-pane>
 
+        <a-tab-pane key="units" tab="Units">
+          <p style="margin: 0 0 16px; font-size: 13px; color: #888">
+            Admin-created unit mappings — created via the "Resolve" action on the
+            Dashboard's Normalization Health section when an incoming reading uses
+            a unit the built-in catalog doesn't recognize. You can re-map an
+            existing mapping to a different canonical unit here; to add a new one,
+            resolve it from the Dashboard.
+          </p>
+
+          <a-table
+            :columns="customAliasColumns"
+            :data-source="customAliases"
+            :loading="customAliasesLoading"
+            :pagination="{ pageSize: 20, size: 'small' }"
+            row-key="id"
+            size="small"
+          >
+            <template #bodyCell="{ column, record }">
+              <template v-if="column.key === 'source_system'">
+                <span style="font-size: 13px; color: #555">{{ record.source_system ?? '— (global)' }}</span>
+              </template>
+              <template v-else-if="column.key === 'actions'">
+                <a-button size="small" @click="openEditAlias(record)">
+                  <template #icon><EditOutlined /></template>
+                </a-button>
+              </template>
+            </template>
+            <template #emptyText>
+              <div style="padding: 32px 0; text-align: center; color: #888">
+                No custom unit mappings yet. Resolve an unknown unit from the Dashboard's
+                Normalization Health section to create one.
+              </div>
+            </template>
+          </a-table>
+        </a-tab-pane>
+
       </a-tabs>
     </a-spin>
+
+    <a-modal
+      :open="editAliasModalOpen"
+      title="Edit unit mapping"
+      :confirm-loading="editAliasSaving"
+      ok-text="Save mapping"
+      :ok-button-props="{ disabled: !editAliasCanonicalUnit }"
+      @ok="submitEditAlias"
+      @cancel="closeEditAlias"
+    >
+      <p style="margin-bottom: 16px; color: #888">
+        Re-map this alias to a different canonical unit. Future readings using it
+        will normalize to the new unit immediately.
+      </p>
+      <div style="margin-bottom: 12px">
+        <div style="font-size: 12px; color: #888">Alias</div>
+        <div><code>{{ editAliasTarget?.alias }}</code></div>
+      </div>
+      <div style="margin-bottom: 16px">
+        <div style="font-size: 12px; color: #888">Protocol / Source System</div>
+        <div>{{ editAliasTarget?.source_system ?? '— (global)' }}</div>
+      </div>
+      <div>
+        <div style="font-size: 12px; color: #888; margin-bottom: 4px">Canonical unit</div>
+        <a-select
+          v-model:value="editAliasCanonicalUnit"
+          show-search
+          placeholder="Select a canonical unit"
+          style="width: 100%"
+          :options="canonicalUnitOptions"
+          :filter-option="(input: string, option: any) => option.label.toLowerCase().includes(input.toLowerCase())"
+        />
+      </div>
+    </a-modal>
   </AppLayout>
 </template>
 

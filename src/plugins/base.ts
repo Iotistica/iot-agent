@@ -279,7 +279,8 @@ export abstract class BaseProtocolAdapter extends EventEmitter implements IProto
 			unit: dataPoint.unit || '',
 			timestamp,
 			quality: 'BAD' as const,
-			qualityCode
+			qualityCode,
+			protocol: this.getProtocolName(),
 		}));
 	}
 

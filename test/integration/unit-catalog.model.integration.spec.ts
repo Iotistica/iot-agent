@@ -10,7 +10,8 @@ describe('Unit Normalization Service catalog (integration)', () => {
 	let dbPath: string;
 	let UnitDefinitionsModel: typeof import('../../src/db/models/unit-catalog.model').UnitDefinitionsModel;
 	let UnitAliasesModel: typeof import('../../src/db/models/unit-catalog.model').UnitAliasesModel;
-	let seedUnitCatalog: typeof import('../../src/normalization/catalog').seedUnitCatalog;
+	let CustomUnitAliasesModel: typeof import('../../src/db/models/custom-unit-aliases.model').CustomUnitAliasesModel;
+	let seedUnitCatalog: typeof import('../../src/units/catalog').seedUnitCatalog;
 	let closeDatabase: () => void;
 
 	beforeAll(() => {
@@ -26,7 +27,8 @@ describe('Unit Normalization Service catalog (integration)', () => {
 
 		UnitDefinitionsModel = require('../../src/db/models/unit-catalog.model').UnitDefinitionsModel;
 		UnitAliasesModel = require('../../src/db/models/unit-catalog.model').UnitAliasesModel;
-		seedUnitCatalog = require('../../src/normalization/catalog').seedUnitCatalog;
+		CustomUnitAliasesModel = require('../../src/db/models/custom-unit-aliases.model').CustomUnitAliasesModel;
+		seedUnitCatalog = require('../../src/units/catalog').seedUnitCatalog;
 	});
 
 	afterAll(() => {
@@ -86,6 +88,43 @@ describe('Unit Normalization Service catalog (integration)', () => {
 
 		it('a true UNIQUE(source_system, alias) duplicate insert is surfaced as a clean, non-throwing update via upsert()', () => {
 			expect(() => UnitAliasesModel.upsert({ source_system: 'testsys', alias: 'testAliasGlobal', canonical_unit: 'testUnitX' })).not.toThrow();
+		});
+	});
+
+	describe('CustomUnitAliasesModel', () => {
+		it('upserts a global custom alias and finds it via findExact(null, alias)', () => {
+			CustomUnitAliasesModel.upsert({ source_system: null, alias: 'testCustomAliasGlobal', canonical_unit: 'testUnitX' });
+			const found = CustomUnitAliasesModel.findExact(null, 'testCustomAliasGlobal');
+			expect(found).toMatchObject({ source_system: null, alias: 'testCustomAliasGlobal', canonical_unit: 'testUnitX' });
+		});
+
+		it('a scoped custom alias with the same text as a global one is a distinct row (NULL-safe uniqueness)', () => {
+			CustomUnitAliasesModel.upsert({ source_system: 'testsys', alias: 'testCustomAliasGlobal', canonical_unit: 'testUnitX' });
+			const scoped = CustomUnitAliasesModel.findExact('testsys', 'testCustomAliasGlobal');
+			const global = CustomUnitAliasesModel.findExact(null, 'testCustomAliasGlobal');
+			expect(scoped).not.toBeNull();
+			expect(global).not.toBeNull();
+			expect(scoped!.id).not.toBe(global!.id);
+		});
+
+		it('upsert on an existing (source_system, alias) pair updates rather than duplicating (NULL-safe)', () => {
+			CustomUnitAliasesModel.upsert({ source_system: null, alias: 'testCustomAliasGlobal', canonical_unit: 'testUnitX' });
+			CustomUnitAliasesModel.upsert({ source_system: null, alias: 'testCustomAliasGlobal', canonical_unit: 'testUnitX' });
+			const all = CustomUnitAliasesModel.getAll().filter((a) => a.source_system === null && a.alias === 'testCustomAliasGlobal');
+			expect(all).toHaveLength(1);
+		});
+
+		it('re-resolving an existing custom alias to a different canonical unit updates in place (correcting a mistake)', () => {
+			CustomUnitAliasesModel.upsert({ source_system: 'testsys', alias: 'testCustomAliasGlobal', canonical_unit: 'testUnitX' });
+			const found = CustomUnitAliasesModel.findExact('testsys', 'testCustomAliasGlobal');
+			expect(found).toMatchObject({ canonical_unit: 'testUnitX' });
+		});
+
+		it('is a table entirely separate from unit_aliases — seeding/reseeding the built-in catalog never touches custom rows', () => {
+			const before = CustomUnitAliasesModel.getAll().length;
+			expect(() => seedUnitCatalog()).not.toThrow();
+			const after = CustomUnitAliasesModel.getAll().length;
+			expect(after).toBe(before);
 		});
 	});
 
