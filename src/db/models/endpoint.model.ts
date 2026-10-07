@@ -42,10 +42,10 @@ type EndpointRow = Omit<Endpoint, 'enabled' | 'connection' | 'data_points' | 'me
  * collision leak through as a raw SQL error.
  */
 export class DuplicateEndpointConnectionError extends Error {
-  constructor(public readonly existing: Endpoint) {
-    super(`An enabled endpoint already serves this connection: "${existing.name}" (uuid ${existing.uuid})`);
-    this.name = 'DuplicateEndpointConnectionError';
-  }
+	constructor(public readonly existing: Endpoint) {
+		super(`An enabled endpoint already serves this connection: "${existing.name}" (uuid ${existing.uuid})`);
+		this.name = 'DuplicateEndpointConnectionError';
+	}
 }
 
 export class EndpointModel {
