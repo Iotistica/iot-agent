@@ -3,20 +3,27 @@ import { ref, computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { message } from 'ant-design-vue'
 import type { TableColumnType } from 'ant-design-vue'
-import { SaveOutlined, ReloadOutlined, LinkOutlined, CheckCircleOutlined, WifiOutlined, EditOutlined } from '@ant-design/icons-vue'
+import {
+  SaveOutlined, ReloadOutlined, LinkOutlined, CheckCircleOutlined, WifiOutlined, EditOutlined,
+  SafetyCertificateOutlined, BellOutlined, DatabaseOutlined, BranchesOutlined, QuestionCircleOutlined,
+} from '@ant-design/icons-vue'
 import AppLayout from '@/components/layout/AppLayout.vue'
+import SettingsSection from '@/components/settings/SettingsSection.vue'
+import SettingsField from '@/components/settings/SettingsField.vue'
 import { useAuth } from '@/composables/useAuth'
 import { settingsApi } from '@/api/settings'
 import { client as apiClient } from '@/api/client'
 import { dockerConfigApi } from '@/api/containers'
 import type { DockerConfig } from '@/api/containers'
-import type { AgentSettings } from '@/types'
+import type { AgentSettings, AnomalyConfig, Destination } from '@/types'
 import { dashboardApi, type CanonicalUnit, type CustomUnitAlias } from '@/api/dashboard'
+import { anomalyApi, type DriftOptions, type DriftAlertType } from '@/api/anomaly'
+import { destinationsApi } from '@/api/destinations'
 
 const route = useRoute()
 const { hasRole } = useAuth()
 
-const VALID_TABS = ['agent', 'features', 'logging', 'intervals', 'docker', 'mqtt-monitor', 'units']
+const VALID_TABS = ['agent', 'features', 'logging', 'intervals', 'docker', 'mqtt-monitor', 'units', 'alerts']
 const activeTab = ref(
   typeof route.query.tab === 'string' && VALID_TABS.includes(route.query.tab) ? route.query.tab : 'agent'
 )
@@ -31,7 +38,7 @@ const settings = ref<AgentSettings>({})
 // Deep clone for "discard changes" reset
 let lastSaved: AgentSettings = {}
 
-onMounted(() => { load(); loadDockerConfig(); loadCustomAliases() })
+onMounted(() => { load(); loadDockerConfig(); loadCustomAliases(); loadAlertConfig(); loadAlertDrift() })
 
 async function load() {
   loading.value = true
@@ -356,6 +363,179 @@ function setMemory<K extends keyof NonNullable<NonNullable<AgentSettings['runtim
 ) {
   ensureRuntime()
   settings.value.runtime!.memory![key] = val
+}
+
+// ── Alerts (anomaly detection + schema drift) config ─────────────────────────
+const alertConfig = ref<AnomalyConfig | null>(null)
+const alertConfigLoading = ref(false)
+const alertConfigSaving = ref(false)
+const alertMqttDestinations = ref<Destination[]>([])
+
+async function loadAlertConfig() {
+  alertConfigLoading.value = true
+  try {
+    const [cfg, dests] = await Promise.all([
+      anomalyApi.getConfig(),
+      destinationsApi.getAll(),
+    ])
+    alertConfig.value = cfg
+    alertMqttDestinations.value = dests.filter((d) => d.type === 'mqtt')
+  } catch {
+    // non-fatal
+  } finally {
+    alertConfigLoading.value = false
+  }
+}
+
+function resetAlertDetectionDefaults() {
+  if (!alertConfig.value) return
+  alertConfig.value.sensitivity = 5
+  alertConfig.value.warmupPeriodMs = 900_000
+  alertConfig.value.alerts.minConfidence = 0.7
+  alertConfig.value.alerts.cooldownMs = 300_000
+  alertConfig.value.alerts.maxQueueSize = 1000
+}
+
+// ── Schema Drift settings ────────────────────────────────────────────────────
+const DRIFT_ALERT_TYPE_OPTIONS: { value: DriftAlertType; label: string; hint: string }[] = [
+  { value: 'missing-field', label: 'Missing field', hint: 'A field stopped appearing — usually real breakage.' },
+  { value: 'type-drift', label: 'Type drift', hint: "A field's value type changed unexpectedly — usually real breakage." },
+  { value: 'new-field', label: 'New field', hint: 'A field appeared that wasn’t in the learned baseline — often just normal growth.' },
+  { value: 'rename-candidate', label: 'Rename candidate', hint: 'A missing field and a new field look like they might be the same field renamed.' },
+]
+const DEFAULT_ALERT_DRIFT_TYPES: DriftAlertType[] = ['missing-field', 'type-drift']
+
+const globalDrift = ref<DriftOptions>({})
+const driftLoading = ref(false)
+const showAdvancedDrift = ref(false)
+
+async function loadAlertDrift() {
+  driftLoading.value = true
+  try {
+    const { outputs } = await anomalyApi.getProtocolOutputs()
+    const withDrift = outputs.find((o) => o.drift_options)
+    globalDrift.value = withDrift?.drift_options ?? {}
+  } catch {
+    // non-fatal
+  } finally {
+    driftLoading.value = false
+  }
+}
+
+function setDrift<K extends keyof DriftOptions>(key: K, val: DriftOptions[K]) {
+  globalDrift.value[key] = val
+}
+
+// ── Sensitivity presets ──────────────────────────────────────────────────────
+type SensitivityLevel = 'low' | 'standard' | 'high'
+
+type SensitivityFields = Required<Pick<DriftOptions,
+  'consecutiveMissingThreshold' | 'minFieldPresenceRatio' | 'adaptivePromotionBatches' |
+  'adaptivePromotionMinElapsedMs' | 'minTypeDominanceRatio'
+>>
+
+const SENSITIVITY_PRESETS: Record<SensitivityLevel, SensitivityFields> = {
+  low: {
+    consecutiveMissingThreshold: 30,
+    minFieldPresenceRatio: 0.2,
+    adaptivePromotionBatches: 20,
+    adaptivePromotionMinElapsedMs: 300_000,
+    minTypeDominanceRatio: 0.1,
+  },
+  standard: {
+    consecutiveMissingThreshold: 10,
+    minFieldPresenceRatio: 0.5,
+    adaptivePromotionBatches: 50,
+    adaptivePromotionMinElapsedMs: 600_000,
+    minTypeDominanceRatio: 0.15,
+  },
+  high: {
+    consecutiveMissingThreshold: 3,
+    minFieldPresenceRatio: 0.8,
+    adaptivePromotionBatches: 100,
+    adaptivePromotionMinElapsedMs: 1_800_000,
+    minTypeDominanceRatio: 0.25,
+  },
+}
+
+const SENSITIVITY_LEVELS: SensitivityLevel[] = ['low', 'standard', 'high']
+
+const selectedSensitivity = computed<SensitivityLevel | 'custom'>(() => {
+  for (const level of SENSITIVITY_LEVELS) {
+    const preset = SENSITIVITY_PRESETS[level]
+    const matches = (Object.keys(preset) as Array<keyof SensitivityFields>).every(
+      (key) => (globalDrift.value[key] ?? SENSITIVITY_PRESETS.standard[key]) === preset[key],
+    )
+    if (matches) return level
+  }
+  return 'custom'
+})
+
+function setSensitivityPreset(level: SensitivityLevel) {
+  const preset = SENSITIVITY_PRESETS[level]
+  for (const key of Object.keys(preset) as Array<keyof SensitivityFields>) {
+    setDrift(key, preset[key])
+  }
+}
+
+const ADVANCED_DRIFT_DEFAULTS: DriftOptions = {
+  warmupBatches: 20,
+  adaptiveRetireBatches: 250,
+  adaptiveRetireMs: 86_400_000,
+  maxTrackedFields: 1000,
+  maxTrackedDevices: 2000,
+  maxFieldsPerBatch: 500,
+  maxTraversalDepth: 5,
+  maxRenameCandidates: 20,
+  maxRenameFieldLength: 64,
+  logSampleSize: 10,
+  checkIntervalBatches: 1,
+}
+
+function restoreAdvancedDriftDefaults() {
+  for (const [key, value] of Object.entries(ADVANCED_DRIFT_DEFAULTS)) {
+    setDrift(key as keyof DriftOptions, value)
+  }
+  message.success('Advanced settings restored to recommended defaults')
+}
+
+const ALERT_FREQUENCY_OPTIONS: { value: number; label: string }[] = [
+  { value: 5 * 60_000, label: '5 minutes' },
+  { value: 15 * 60_000, label: '15 minutes' },
+  { value: 30 * 60_000, label: '30 minutes' },
+  { value: 60 * 60_000, label: '1 hour' },
+  { value: 6 * 60 * 60_000, label: '6 hours' },
+  { value: 24 * 60 * 60_000, label: '24 hours' },
+]
+
+function fmtCustomCooldown(ms: number): string {
+  const minutes = Math.round(ms / 60_000)
+  return minutes < 60 ? `${minutes}m` : `${(minutes / 60).toFixed(minutes % 60 === 0 ? 0 : 1)}h`
+}
+
+const alertFrequencyOptions = computed(() => {
+  const current = globalDrift.value.alertCooldownMs ?? 1_800_000
+  if (ALERT_FREQUENCY_OPTIONS.some((o) => o.value === current)) return ALERT_FREQUENCY_OPTIONS
+  return [...ALERT_FREQUENCY_OPTIONS, { value: current, label: `Custom (${fmtCustomCooldown(current)})` }]
+})
+
+async function saveAllAlertConfig() {
+  alertConfigSaving.value = true
+  try {
+    const tasks: Promise<unknown>[] = [
+      anomalyApi.updateDrift(globalDrift.value),
+    ]
+    if (alertConfig.value) {
+      tasks.push(anomalyApi.updateConfig(alertConfig.value).then((c) => { alertConfig.value = c }))
+    }
+    await Promise.all(tasks)
+    message.success('Configuration saved')
+  } catch (err: unknown) {
+    const e = err as { message?: string }
+    message.error(e?.message ?? 'Save failed')
+  } finally {
+    alertConfigSaving.value = false
+  }
 }
 </script>
 
@@ -1047,6 +1227,544 @@ function setMemory<K extends keyof NonNullable<NonNullable<AgentSettings['runtim
           </a-table>
         </a-tab-pane>
 
+        <!-- ══ ALERTS ════════════════════════════════════════════════════════ -->
+        <a-tab-pane key="alerts" tab="Alerts">
+          <a-spin :spinning="alertConfigLoading">
+            <template v-if="alertConfig">
+              <div class="settings-page">
+                <a-alert
+                  type="info"
+                  show-icon
+                  message="Anomaly detection is enabled or disabled in Settings → Features."
+                  style="margin-bottom: 20px"
+                />
+
+                <!-- Detection settings -->
+                <SettingsSection
+                  title="Anomaly detection settings"
+                  subtitle="Configure how anomalies are detected and scored."
+                >
+                  <template #icon><SafetyCertificateOutlined /></template>
+
+                  <a-row :gutter="[20, 20]">
+                    <a-col :xs="24" :sm="12" :lg="8">
+                      <SettingsField label="Sensitivity (1–10)" tooltip="Higher sensitivity flags smaller deviations as anomalies.">
+                        <div class="sensitivity-control">
+                          <div class="sensitivity-control__row">
+                            <a-slider
+                              v-model:value="alertConfig.sensitivity"
+                              :min="1"
+                              :max="10"
+                              style="flex: 1"
+                            />
+                            <a-input-number v-model:value="alertConfig.sensitivity" :min="1" :max="10" style="width: 64px" />
+                          </div>
+                          <div class="sensitivity-control__scale">
+                            <span>1 · Low</span>
+                            <span>10 · High</span>
+                          </div>
+                        </div>
+                      </SettingsField>
+                    </a-col>
+                    <a-col :xs="24" :sm="12" :lg="8">
+                      <SettingsField
+                        label="Warm-up period (ms)"
+                        tooltip="Time to collect baseline data before detection starts."
+                        helper="Time to collect baseline data before detection starts."
+                      >
+                        <a-input-number v-model:value="alertConfig.warmupPeriodMs" :min="0" :step="60000" placeholder="900000" />
+                      </SettingsField>
+                    </a-col>
+                    <a-col :xs="24" :sm="12" :lg="8">
+                      <SettingsField
+                        label="Min confidence"
+                        tooltip="Minimum confidence score to consider an anomaly."
+                        helper="Minimum confidence score to consider an anomaly."
+                      >
+                        <a-input-number v-model:value="alertConfig.alerts.minConfidence" :min="0" :max="1" :step="0.05" />
+                      </SettingsField>
+                    </a-col>
+                    <a-col :xs="24" :sm="12" :lg="8">
+                      <SettingsField
+                        label="Cooldown (ms)"
+                        tooltip="Minimum time between anomaly detections."
+                        helper="Minimum time between anomaly detections."
+                      >
+                        <a-input-number v-model:value="alertConfig.alerts.cooldownMs" :min="0" :step="60000" />
+                      </SettingsField>
+                    </a-col>
+                    <a-col :xs="24" :sm="12" :lg="8">
+                      <SettingsField
+                        label="Max queue size"
+                        tooltip="Maximum number of items in the anomaly queue."
+                        helper="Maximum number of items in the anomaly queue."
+                      >
+                        <a-input-number v-model:value="alertConfig.alerts.maxQueueSize" :min="1" />
+                      </SettingsField>
+                    </a-col>
+                  </a-row>
+                </SettingsSection>
+
+                <!-- Alert routing -->
+                <SettingsSection
+                  title="Alert routing"
+                  subtitle="Configure how and where alerts are delivered."
+                >
+                  <template #icon><BellOutlined /></template>
+
+                  <a-row :gutter="[20, 20]">
+                    <a-col :xs="24" :sm="12" :lg="8">
+                      <SettingsField label="Enable MQTT alerts">
+                        <a-switch v-model:checked="alertConfig.alerts.mqtt" />
+                      </SettingsField>
+                    </a-col>
+                    <a-col :xs="24" :sm="12" :lg="8">
+                      <SettingsField
+                        label="MQTT destination"
+                        tooltip="Local broker from the Destinations page (standalone mode)."
+                        helper="Local broker from the Destinations page (standalone mode)."
+                      >
+                        <a-select
+                          :value="alertConfig.alerts.alertDestinationId"
+                          allow-clear
+                          :disabled="!alertConfig.alerts.mqtt"
+                          placeholder="None (use cloud MQTT)"
+                          @change="(v: number | null) => { alertConfig!.alerts.alertDestinationId = v ?? undefined }"
+                        >
+                          <a-select-option v-for="d in alertMqttDestinations" :key="d.id" :value="d.id">
+                            {{ d.name }}
+                          </a-select-option>
+                        </a-select>
+                      </SettingsField>
+                    </a-col>
+                    <a-col :xs="24" :sm="12" :lg="8">
+                      <SettingsField
+                        label="Alert topic"
+                        tooltip="Topic to publish to when a destination is selected."
+                        helper="Topic to publish to when a destination is selected."
+                      >
+                        <a-input
+                          :value="alertConfig.alerts.alertTopic ?? ''"
+                          :disabled="!alertConfig.alerts.mqtt"
+                          placeholder="iotistica/alerts/anomaly"
+                          @change="(e: Event) => { alertConfig!.alerts.alertTopic = (e.target as HTMLInputElement).value || undefined }"
+                        />
+                      </SettingsField>
+                    </a-col>
+                  </a-row>
+                </SettingsSection>
+
+                <!-- Storage & retention -->
+                <SettingsSection
+                  title="Storage & retention"
+                  subtitle="Configure how long data is kept."
+                >
+                  <template #icon><DatabaseOutlined /></template>
+
+                  <a-row :gutter="[20, 20]">
+                    <a-col :xs="24" :sm="12" :lg="8">
+                      <SettingsField label="Baseline retention (days)" helper="How long baselines are kept.">
+                        <a-input-number
+                          :value="alertConfig.storage?.retention"
+                          :min="1"
+                          @change="(v: number) => { if (!alertConfig!.storage) alertConfig!.storage = { retention: v }; else alertConfig!.storage.retention = v }"
+                        />
+                      </SettingsField>
+                    </a-col>
+                    <a-col :xs="24" :sm="12" :lg="8">
+                      <SettingsField label="Baseline max age (days)" helper="Maximum age of baselines used for detection.">
+                        <a-input-number
+                          :value="alertConfig.storage?.baselineMaxAgeDays"
+                          :min="1"
+                          placeholder="7"
+                          @change="(v: number) => { if (!alertConfig!.storage) alertConfig!.storage = { retention: 30, baselineMaxAgeDays: v }; else alertConfig!.storage.baselineMaxAgeDays = v }"
+                        />
+                      </SettingsField>
+                    </a-col>
+                    <a-col :xs="24" :sm="12" :lg="8">
+                      <SettingsField label="Min samples for baseline" helper="Minimum samples required to create a baseline.">
+                        <a-input-number
+                          :value="alertConfig.storage?.minSamples"
+                          :min="1"
+                          placeholder="5"
+                          @change="(v: number) => { if (!alertConfig!.storage) alertConfig!.storage = { retention: 30, minSamples: v }; else alertConfig!.storage.minSamples = v }"
+                        />
+                      </SettingsField>
+                    </a-col>
+                    <a-col :xs="24" :sm="12" :lg="8">
+                      <SettingsField label="Event retention (days)" helper="How long events are kept.">
+                        <a-input-number
+                          :value="alertConfig.storage?.eventRetentionDays"
+                          :min="1"
+                          :placeholder="String(alertConfig.storage?.retention ?? 30)"
+                          @change="(v: number) => { if (!alertConfig!.storage) alertConfig!.storage = { retention: 30, eventRetentionDays: v }; else alertConfig!.storage.eventRetentionDays = v }"
+                        />
+                      </SettingsField>
+                    </a-col>
+                    <a-col :xs="24" :sm="12" :lg="8">
+                      <SettingsField label="Incident retention (days)" helper="How long incidents are kept.">
+                        <a-input-number
+                          :value="alertConfig.storage?.incidentRetentionDays"
+                          :min="1"
+                          :placeholder="String(alertConfig.storage?.retention ?? 30)"
+                          @change="(v: number) => { if (!alertConfig!.storage) alertConfig!.storage = { retention: 30, incidentRetentionDays: v }; else alertConfig!.storage.incidentRetentionDays = v }"
+                        />
+                      </SettingsField>
+                    </a-col>
+                    <a-col :xs="24" :sm="12" :lg="8">
+                      <SettingsField label="Alert retention (days)" helper="How long alerts are kept.">
+                        <a-input-number
+                          :value="alertConfig.storage?.alertRetentionDays"
+                          :min="1"
+                          :placeholder="String(alertConfig.storage?.retention ?? 30)"
+                          @change="(v: number) => { if (!alertConfig!.storage) alertConfig!.storage = { retention: 30, alertRetentionDays: v }; else alertConfig!.storage.alertRetentionDays = v }"
+                        />
+                      </SettingsField>
+                    </a-col>
+                  </a-row>
+
+                  <a-alert
+                    type="info"
+                    show-icon
+                    message="Retention settings control how long data is kept. Items are automatically pruned based on age, regardless of whether they are open/active."
+                    class="settings-page__notice"
+                  />
+                </SettingsSection>
+
+                <!-- Schema drift settings -->
+                <SettingsSection
+                  title="Schema drift"
+                  subtitle="Controls how the agent detects unexpected changes in the fields it publishes. Changes apply immediately."
+                >
+                  <template #icon><BranchesOutlined /></template>
+                  <template #extra>
+                    <div class="drift-enabled-toggle">
+                      <span class="drift-enabled-toggle__label">Enabled</span>
+                      <a-switch
+                        :checked="globalDrift.enabled !== false"
+                        size="small"
+                        @change="(v: boolean) => setDrift('enabled', v)"
+                      />
+                    </div>
+                  </template>
+
+                  <a-spin :spinning="driftLoading">
+                    <a-row :gutter="[20, 20]">
+                      <a-col :xs="24" :sm="12" :lg="8">
+                        <SettingsField
+                          label="Detection sensitivity"
+                          tooltip="How readily the agent flags a device's fields as changed. Low tolerates fields that only report occasionally (e.g. a Boolean alarm/fault point with a long toggle period) — fewer alerts. High flags sooner, at the cost of more false positives on genuinely variable sources. Standard is the recommended default."
+                        >
+                          <a-radio-group
+                            button-style="solid"
+                            :value="selectedSensitivity === 'custom' ? undefined : selectedSensitivity"
+                            @change="(e: any) => setSensitivityPreset(e.target.value)"
+                          >
+                            <a-radio-button value="low">Low</a-radio-button>
+                            <a-radio-button value="standard">Standard</a-radio-button>
+                            <a-radio-button value="high">High</a-radio-button>
+                          </a-radio-group>
+                          <div v-if="selectedSensitivity === 'custom'" class="drift-sensitivity-custom">
+                            Custom — advanced settings have been hand-tuned away from a preset
+                          </div>
+                        </SettingsField>
+                      </a-col>
+                      <a-col :xs="24" :sm="12" :lg="8">
+                        <SettingsField
+                          label="Alert frequency"
+                          tooltip="Minimum time between repeat alerts for the same field on the same device. Prevents a single ongoing drift from spamming repeated alerts."
+                        >
+                          <a-select
+                            :value="globalDrift.alertCooldownMs ?? 1800000"
+                            style="width: 100%; max-width: 220px"
+                            @change="(v: number) => setDrift('alertCooldownMs', v)"
+                          >
+                            <a-select-option v-for="opt in alertFrequencyOptions" :key="opt.value" :value="opt.value">
+                              {{ opt.label }}
+                            </a-select-option>
+                          </a-select>
+                        </SettingsField>
+                      </a-col>
+                    </a-row>
+
+                    <div class="drift-alert-on">
+                      <div class="drift-alert-on__label">
+                        Alert on
+                        <a-tooltip title="Every drift type is always logged and shows up in the Schema Drift baseline history regardless of this setting — this only controls which ones also raise an alert (Events/Incidents/Alerts, same pipeline anomalies use).">
+                          <QuestionCircleOutlined class="drift-alert-on__info" />
+                        </a-tooltip>
+                      </div>
+                      <a-checkbox-group
+                        :value="globalDrift.alertOnDriftTypes ?? DEFAULT_ALERT_DRIFT_TYPES"
+                        class="drift-alert-on__group"
+                        @change="(v: DriftAlertType[]) => setDrift('alertOnDriftTypes', v)"
+                      >
+                        <a-checkbox v-for="opt in DRIFT_ALERT_TYPE_OPTIONS" :key="opt.value" :value="opt.value">
+                          {{ opt.label }}
+                          <a-tooltip :title="opt.hint">
+                            <QuestionCircleOutlined class="drift-alert-on__info drift-alert-on__info--sm" />
+                          </a-tooltip>
+                        </a-checkbox>
+                      </a-checkbox-group>
+                    </div>
+
+                    <a-collapse v-model:active-key="showAdvancedDrift" :bordered="false" ghost class="drift-advanced-collapse">
+                      <a-collapse-panel key="advanced" header="Advanced settings">
+                    <a-row :gutter="[20, 20]">
+                      <a-col :xs="24" :sm="12" :lg="8">
+                        <SettingsField
+                          label="Warmup batches"
+                          tooltip="How many times a device must be observed before its baseline is learned. Counted per device — a device that reports rarely just takes longer in wall-clock time to finish warmup, not more attempts."
+                        >
+                          <a-input-number
+                            :value="globalDrift.warmupBatches ?? 20"
+                            :min="1" :max="500"
+                            @change="(v: number) => setDrift('warmupBatches', v)"
+                          />
+                        </SettingsField>
+                      </a-col>
+                      <a-col :xs="24" :sm="12" :lg="8">
+                        <SettingsField
+                          label="Missing threshold"
+                          tooltip="How many consecutive times a device must be observed without a previously-known field before it's flagged as removed (critical severity). Higher values tolerate more occasional gaps before alerting."
+                        >
+                          <a-input-number
+                            :value="globalDrift.consecutiveMissingThreshold ?? 10"
+                            :min="1" :max="1000"
+                            @change="(v: number) => setDrift('consecutiveMissingThreshold', v)"
+                          />
+                        </SettingsField>
+                      </a-col>
+                      <a-col :xs="24" :sm="12" :lg="8">
+                        <SettingsField
+                          label="Alert cooldown (ms)"
+                          tooltip="Minimum time between repeat alerts for the same field on the same device. Prevents a single ongoing drift from spamming repeated alerts. In milliseconds — 1800000 = 30 minutes."
+                        >
+                          <a-input-number
+                            :value="globalDrift.alertCooldownMs ?? 1800000"
+                            :min="0" :step="60000"
+                            @change="(v: number) => setDrift('alertCooldownMs', v)"
+                          />
+                        </SettingsField>
+                      </a-col>
+                      <a-col :xs="24" :sm="12" :lg="8">
+                        <SettingsField
+                          label="Min presence ratio"
+                          tooltip="During warmup, the fraction of a device's observations a field must appear in to be included in its baseline. 0.5 means a field must be present at least half the time to count — filters out fields that only show up sporadically."
+                        >
+                          <a-input-number
+                            :value="globalDrift.minFieldPresenceRatio ?? 0.5"
+                            :min="0" :max="1" :step="0.05" :precision="2"
+                            @change="(v: number) => setDrift('minFieldPresenceRatio', v)"
+                          />
+                        </SettingsField>
+                      </a-col>
+                      <a-col :xs="24" :sm="12" :lg="8">
+                        <SettingsField
+                          label="Retire threshold (baseline fields)"
+                          tooltip="The number of consecutive times an already-learned baseline field can be missing before it's removed from the learned schema. This value is intentionally set much higher than the missing-field alert threshold, so a temporary issue—such as a bad reload or a short data gap—won't cause the system to forget a field it has already learned is normally present."
+                        >
+                          <a-input-number
+                            :value="globalDrift.adaptiveRetireBatches ?? 250"
+                            :min="1" :max="10000"
+                            @change="(v: number) => setDrift('adaptiveRetireBatches', v)"
+                          />
+                        </SettingsField>
+                      </a-col>
+                      <a-col :xs="24" :sm="12" :lg="8">
+                        <SettingsField
+                          label="Retire time (new-field candidates)"
+                          tooltip="How long (ms) a not-yet-promoted candidate field can go unobserved before its progress toward promotion is discarded. Wall-clock time, not observation count — on a source that batches very frequently (e.g. an OPC-UA subscription), a count-based threshold could elapse in seconds even for a field that genuinely reports every few minutes, wiping its progress before it ever has a chance to promote. Default 24h."
+                        >
+                          <a-input-number
+                            :value="globalDrift.adaptiveRetireMs ?? 86400000"
+                            :min="60000" :step="3600000"
+                            @change="(v: number) => setDrift('adaptiveRetireMs', v)"
+                          />
+                        </SettingsField>
+                      </a-col>
+                    </a-row>
+
+                    <div class="drift-subheading">
+                      Sensitivity &amp; promotion
+                      <a-tooltip title="How a field that wasn't in the original baseline eventually stops being flagged once it's proven to be a normal, stable part of the schema (not just a one-off), and how confidently a field's value type must repeat before a different type is treated as real drift.">
+                        <QuestionCircleOutlined class="drift-alert-on__info" />
+                      </a-tooltip>
+                    </div>
+                    <a-row :gutter="[20, 20]">
+                      <a-col :xs="24" :sm="12" :lg="8">
+                        <SettingsField
+                          label="Promotion batches"
+                          tooltip="How many times a field not in the original baseline must be observed before it's silently promoted into the baseline and stops being flagged as drift (e.g. a setpoint that only reports on change, not every cycle). Works together with Promotion min elapsed time below — both must be satisfied."
+                        >
+                          <a-input-number
+                            :value="globalDrift.adaptivePromotionBatches ?? 50"
+                            :min="1" :max="10000"
+                            @change="(v: number) => setDrift('adaptivePromotionBatches', v)"
+                          />
+                        </SettingsField>
+                      </a-col>
+                      <a-col :xs="24" :sm="12" :lg="8">
+                        <SettingsField
+                          label="Promotion min elapsed time"
+                          tooltip="How long (ms), at minimum, since a candidate field was first seen before it can be promoted into the baseline — alongside Promotion batches above, both must hold. Wall-clock time rather than a fraction of total observations: a field that only reports every few minutes on a fast-batching source (e.g. OPC-UA) can still promote once it's shown up enough times over enough real elapsed time, regardless of how many unrelated batches happened in between. Default 10 minutes."
+                        >
+                          <a-input-number
+                            :value="globalDrift.adaptivePromotionMinElapsedMs ?? 600000"
+                            :min="0" :step="60000"
+                            @change="(v: number) => setDrift('adaptivePromotionMinElapsedMs', v)"
+                          />
+                        </SettingsField>
+                      </a-col>
+                      <a-col :xs="24" :sm="12" :lg="8">
+                        <SettingsField
+                          label="Min type dominance ratio"
+                          tooltip="The fraction of a field's observations a value type must represent to be considered its expected type. Prevents one bad or unusual payload from permanently widening what's accepted as normal for that field."
+                        >
+                          <a-input-number
+                            :value="globalDrift.minTypeDominanceRatio ?? 0.15"
+                            :min="0" :max="1" :step="0.01" :precision="2"
+                            @change="(v: number) => setDrift('minTypeDominanceRatio', v)"
+                          />
+                        </SettingsField>
+                      </a-col>
+                    </a-row>
+
+                    <div class="drift-subheading">
+                      Performance &amp; limits
+                      <a-tooltip title="Safety caps that bound how much memory and CPU schema-drift tracking can use on a busy endpoint. The defaults are generous — only lower these on resource-constrained deployments, or raise them if a single endpoint legitimately has more devices/fields than the caps allow.">
+                        <QuestionCircleOutlined class="drift-alert-on__info" />
+                      </a-tooltip>
+                    </div>
+                    <a-row :gutter="[20, 20]">
+                      <a-col :xs="24" :sm="12" :lg="8">
+                        <SettingsField
+                          label="Check interval (batches)"
+                          tooltip="Once the baseline is established, run the full drift check only every Nth batch instead of every batch. 1 = every batch (default). Raise this to reduce CPU use on very high-frequency endpoints; warmup always checks every batch regardless of this setting."
+                        >
+                          <a-input-number
+                            :value="globalDrift.checkIntervalBatches ?? 1"
+                            :min="1" :max="1000"
+                            @change="(v: number) => setDrift('checkIntervalBatches', v)"
+                          />
+                        </SettingsField>
+                      </a-col>
+                      <a-col :xs="24" :sm="12" :lg="8">
+                        <SettingsField
+                          label="Max tracked fields"
+                          tooltip="Upper bound on how many distinct fields are tracked per device. Prevents a device with a runaway/malformed payload from growing its schema without limit."
+                        >
+                          <a-input-number
+                            :value="globalDrift.maxTrackedFields ?? 1000"
+                            :min="1" :max="100000"
+                            @change="(v: number) => setDrift('maxTrackedFields', v)"
+                          />
+                        </SettingsField>
+                      </a-col>
+                      <a-col :xs="24" :sm="12" :lg="8">
+                        <SettingsField
+                          label="Max tracked devices"
+                          tooltip="Upper bound on how many distinct device identities are tracked per endpoint. Bounds memory on a shared/multiplexed endpoint (e.g. a BACnet pipe with many devices) against a misbehaving upstream generating unique names per message."
+                        >
+                          <a-input-number
+                            :value="globalDrift.maxTrackedDevices ?? 2000"
+                            :min="1" :max="100000"
+                            @change="(v: number) => setDrift('maxTrackedDevices', v)"
+                          />
+                        </SettingsField>
+                      </a-col>
+                      <a-col :xs="24" :sm="12" :lg="8">
+                        <SettingsField
+                          label="Max fields per batch"
+                          tooltip="Upper bound on how many fields are processed from a single observation/batch. A safety cap, not a normal operating limit."
+                        >
+                          <a-input-number
+                            :value="globalDrift.maxFieldsPerBatch ?? 500"
+                            :min="1" :max="100000"
+                            @change="(v: number) => setDrift('maxFieldsPerBatch', v)"
+                          />
+                        </SettingsField>
+                      </a-col>
+                      <a-col :xs="24" :sm="12" :lg="8">
+                        <SettingsField
+                          label="Max traversal depth"
+                          tooltip="How many levels deep into a nested payload the schema extractor will recurse when looking for fields."
+                        >
+                          <a-input-number
+                            :value="globalDrift.maxTraversalDepth ?? 5"
+                            :min="1" :max="20"
+                            @change="(v: number) => setDrift('maxTraversalDepth', v)"
+                          />
+                        </SettingsField>
+                      </a-col>
+                      <a-col :xs="24" :sm="12" :lg="8">
+                        <SettingsField
+                          label="Max rename candidates"
+                          tooltip="Upper bound on how many missing/new field pairs are compared per side when looking for a rename (a missing field and a new field that look like the same field, renamed). Higher values catch more rename pairs on devices with many simultaneous field changes, at more CPU cost."
+                        >
+                          <a-input-number
+                            :value="globalDrift.maxRenameCandidates ?? 20"
+                            :min="1" :max="1000"
+                            @change="(v: number) => setDrift('maxRenameCandidates', v)"
+                          />
+                        </SettingsField>
+                      </a-col>
+                      <a-col :xs="24" :sm="12" :lg="8">
+                        <SettingsField
+                          label="Max rename field length"
+                          tooltip="Field names longer than this are skipped during rename-candidate detection (the similarity comparison gets expensive on long strings). Shorter field names are always checked."
+                        >
+                          <a-input-number
+                            :value="globalDrift.maxRenameFieldLength ?? 64"
+                            :min="1" :max="500"
+                            @change="(v: number) => setDrift('maxRenameFieldLength', v)"
+                          />
+                        </SettingsField>
+                      </a-col>
+                      <a-col :xs="24" :sm="12" :lg="8">
+                        <SettingsField
+                          label="Log sample size"
+                          tooltip="How many example field names to include in each drift log line (e.g. 'sampleAdditiveFields'). Purely cosmetic — doesn't affect detection, only log verbosity."
+                        >
+                          <a-input-number
+                            :value="globalDrift.logSampleSize ?? 10"
+                            :min="0" :max="100"
+                            @change="(v: number) => setDrift('logSampleSize', v)"
+                          />
+                        </SettingsField>
+                      </a-col>
+                    </a-row>
+
+                        <div class="drift-advanced-actions">
+                          <a-button size="small" @click="restoreAdvancedDriftDefaults">
+                            <template #icon><ReloadOutlined /></template>
+                            Restore advanced defaults
+                          </a-button>
+                        </div>
+                      </a-collapse-panel>
+                    </a-collapse>
+                  </a-spin>
+                </SettingsSection>
+
+                <div v-if="hasRole('operator')" class="settings-page__actions">
+                  <a-button @click="resetAlertDetectionDefaults">
+                    <template #icon><ReloadOutlined /></template>
+                    Reset to default
+                  </a-button>
+                  <a-button type="primary" :loading="alertConfigSaving" @click="saveAllAlertConfig">
+                    <template #icon><SaveOutlined /></template>
+                    Save configuration
+                  </a-button>
+                </div>
+              </div>
+            </template>
+
+            <div v-else-if="!alertConfigLoading" style="color: #888; padding: 48px 0; text-align: center">
+              Configuration not available.
+            </div>
+          </a-spin>
+        </a-tab-pane>
+
       </a-tabs>
     </a-spin>
 
@@ -1109,5 +1827,119 @@ function setMemory<K extends keyof NonNullable<NonNullable<AgentSettings['runtim
   justify-content: flex-end;
   gap: 8px;
   padding-top: 16px;
+}
+
+.settings-page {
+  max-width: 1440px;
+  margin: 0;
+}
+
+.settings-page__notice {
+  margin-top: 20px;
+}
+
+.settings-page__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-top: 4px;
+  padding-top: 16px;
+  border-top: 1px solid rgba(5, 5, 5, 0.06);
+}
+
+.sensitivity-control {
+  width: 100%;
+  max-width: 320px;
+}
+
+.sensitivity-control__row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+}
+
+.sensitivity-control__scale {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12.5px;
+  color: #767676;
+  margin-top: 5px;
+  line-height: 1.5;
+}
+
+.drift-enabled-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.drift-enabled-toggle__label {
+  font-size: 12.5px;
+  color: #767676;
+}
+
+.drift-subheading {
+  font-size: 13px;
+  font-weight: 600;
+  margin: 20px 0 4px;
+}
+
+.drift-alert-on {
+  margin-top: 20px;
+}
+
+.drift-alert-on__label {
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+.drift-alert-on__info {
+  color: #999;
+  font-size: 12px;
+  margin-left: 4px;
+  cursor: help;
+}
+
+.drift-alert-on__info--sm {
+  font-size: 11px;
+}
+
+.drift-alert-on__group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 24px;
+}
+
+.drift-alert-on__group :deep(.ant-checkbox-wrapper) {
+  margin-inline-start: 0;
+}
+
+.drift-sensitivity-custom {
+  font-size: 12px;
+  color: #d4880c;
+  margin-top: 6px;
+}
+
+.drift-advanced-collapse {
+  margin-top: 20px;
+  border-top: 1px solid #f0f0f0;
+  padding-top: 4px;
+}
+
+.drift-advanced-collapse :deep(.ant-collapse-header) {
+  padding-left: 0 !important;
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.drift-advanced-collapse :deep(.ant-collapse-content-box) {
+  padding-left: 0 !important;
+  padding-right: 0 !important;
+}
+
+.drift-advanced-actions {
+  margin-top: 20px;
 }
 </style>

@@ -2260,6 +2260,7 @@ router.patch('/v1/protocol-outputs/:protocol/drift', requireRole('operator'), as
 			...body.drift_options,
 		};
 		const updated = await EndpointOutputModel.setOutput({ ...existing, drift_options });
+		actions.reconfigureSchemaDrift(protocol, drift_options ?? undefined);
 		res.json({ output: updated });
 	} catch (err) {
 		next(err);
@@ -2290,6 +2291,7 @@ router.patch('/v1/protocol-outputs/drift', requireRole('operator'), async (req: 
 				...drift_options,
 			};
 			updated.push(await EndpointOutputModel.setOutput({ ...existing, drift_options: merged }));
+			actions.reconfigureSchemaDrift(existing.protocol, merged ?? undefined);
 		}
 
 		res.json({ outputs: updated });
@@ -2823,6 +2825,43 @@ router.get('/v1/mqtt/broker/topic-tree', (_req: Request, res: Response) => {
 router.get('/v1/mqtt/topics', (_req: Request, res: Response) => {
 	const monitor = BrokerMonitorService.getInstance();
 	res.json(monitor.getTopics());
+});
+
+// Side effect: starts/keeps-alive history tracking for this topic (lazy/LRU —
+// see MAX_WATCHED_TOPICS in broker-monitor.ts). List omits full payload text
+// so polling it is cheap; fetch one entry's text via the route below.
+router.get('/v1/mqtt/broker/history', (req: Request, res: Response) => {
+	const topic = typeof req.query.topic === 'string' ? req.query.topic : '';
+	if (!topic.trim()) return res.status(400).json({ error: '"topic" query param is required' });
+	const monitor = BrokerMonitorService.getInstance();
+	monitor.watchTopic(topic);
+	const entries = monitor.getHistory(topic).map(({ text, ...rest }) => rest);
+	res.json({ topic, entries });
+});
+
+router.get('/v1/mqtt/broker/history/:id', (req: Request, res: Response) => {
+	const topic = typeof req.query.topic === 'string' ? req.query.topic : '';
+	const id = Number(req.params.id);
+	if (!topic.trim() || !Number.isFinite(id)) {
+		return res.status(400).json({ error: '"topic" query param and numeric id are required' });
+	}
+	const entry = BrokerMonitorService.getInstance().getHistoryEntry(topic, id);
+	if (!entry) return res.status(404).json({ error: 'History entry not found (topic not watched, or entry evicted)' });
+	res.json(entry);
+});
+
+// Latest compression result for this exact destination topic, if the publish
+// pipeline has recorded one — see PublishManager.collectRouteEntries() /
+// ActivityMonitor.recordCompression() (../publish/core/activity-monitor.js,
+// imported below for the Pipeline Activity Monitor routes). Not every topic
+// has one: only topics actually fed by a publish subscription (not every
+// MQTT topic the broker-monitor's `#` firehose happens to see) ever get a
+// snapshot recorded.
+router.get('/v1/mqtt/broker/compression', (req: Request, res: Response) => {
+	const topic = typeof req.query.topic === 'string' ? req.query.topic : '';
+	if (!topic.trim()) return res.status(400).json({ error: '"topic" query param is required' });
+	const snapshot = activityMonitor.getCompression(topic);
+	res.json({ topic, snapshot: snapshot ?? null });
 });
 
 router.post('/v1/mqtt/broker/test', requireRole('operator'), (req: Request, res: Response) => {

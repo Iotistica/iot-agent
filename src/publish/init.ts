@@ -4,6 +4,7 @@ import type { Protocol } from '../plugins/protocol.js';
 import {
 	type DevicePublishConfig,
 	type DeviceConfig,
+	type DriftOptions,
 	type MqttConnection,
 	type Logger,
 } from './core/types.js';
@@ -533,6 +534,22 @@ export class DevicePublish extends EventEmitter {
 			device.clearSchemaDriftBaseline();
 		}
 		this.logger.info('Cleared in-memory schema-drift state for all endpoints', { deviceCount: this.devices.length });
+	}
+
+	/**
+	 * Applies a new drift_options config to the live PublishManager for one
+	 * protocol pipe, without requiring an agent restart. PublishManager
+	 * exposes no public .protocol getter, so — same as enableDevice/
+	 * disableDevice/updateInterval above — this matches a protocol string
+	 * against the parallel DeviceConfig array (which does carry .protocol,
+	 * populated 1:1 from endpoint_outputs rows) to find the right index into
+	 * this.devices.
+	 */
+	public async reconfigureSchemaDrift(protocol: string, driftOptions: DriftOptions | undefined): Promise<void> {
+		const publishConfig = this.config as DevicePublishConfig;
+		const index = publishConfig.endpoints.findIndex((e: DeviceConfig) => e.protocol === protocol);
+		if (index < 0) return;
+		await this.devices[index]?.reconfigureSchemaDrift(driftOptions);
 	}
 
 	/**

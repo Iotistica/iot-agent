@@ -11,6 +11,8 @@ export interface TopicNode {
   lastMessage: string | null;
   lastMessageAt: number | null;
   messageType: 'json' | 'string' | 'binary';
+  /** True when lastMessage was cut at MAX_MESSAGE_SIZE and isn't the full payload. */
+  truncated: boolean;
   retain: boolean;
   qos: number;
   children: Record<string, TopicNode>;
@@ -57,12 +59,31 @@ interface RateSample {
   bytesSent: number;
 }
 
+export interface TopicHistoryEntry {
+  id: number;
+  ts: number;
+  bytes: number;          // full original payload size, pre-truncation
+  qos: number;
+  retain: boolean;
+  messageType: 'json' | 'string' | 'binary';
+  truncated: boolean;     // true if `text` is cut short of the full payload
+  text: string;           // bounded to MAX_HISTORY_ENTRY_SIZE
+}
+
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-const MAX_MESSAGE_SIZE = 64 * 1024;  // truncate stored payload at 64KB
+const MAX_MESSAGE_SIZE = 256 * 1024; // truncate stored payload at 256KB
 const RATE_SAMPLE_INTERVAL = 5000;   // sample rates every 5s
 const MAX_RATE_SAMPLES = 12;         // keep 1 minute of samples
 const MONITOR_CLIENT_ID = `iotistica-monitor-${Math.random().toString(36).slice(2, 8)}`;
+
+// History is only tracked for topics the admin UI has actually selected
+// (lazy/LRU), not for every topic the monitor's `#` firehose sees — an
+// always-on ring buffer per topic would be unbounded (the monitor sees
+// every topic on the broker, with no upstream throttle on message rate).
+const MAX_WATCHED_TOPICS = 20;        // LRU-evicted
+const MAX_HISTORY_PER_TOPIC = 150;
+const MAX_HISTORY_ENTRY_SIZE = 32 * 1024; // tighter than MAX_MESSAGE_SIZE — this cost multiplies by up to 150 entries x 20 topics
 
 // ── BrokerMonitorService ───────────────────────────────────────────────────────
 
@@ -77,6 +98,12 @@ export class BrokerMonitorService extends EventEmitter {
 	private rateSamples: RateSample[] = [];
 	private rateTimer: NodeJS.Timeout | null = null;
 	private _connected = false;
+	// LRU: Map insertion order is recency — delete+re-set on access bumps a topic
+	// to most-recently-used. Mirrors ActivityMonitor's bounded ring-buffer idiom
+	// (src/publish/core/activity-monitor.ts) rather than inventing a new one.
+	private watchedTopics = new Map<string, true>();
+	private historyByTopic = new Map<string, TopicHistoryEntry[]>();
+	private nextHistoryId = 1;
 	private brokerUrl: string;
 	private username: string;
 	private password: string;
@@ -152,21 +179,29 @@ export class BrokerMonitorService extends EventEmitter {
 		// Skip our own monitor client's messages
 		if (topic.startsWith(`$`)) return;
 
-		const { text, type } = this.decodePayload(payload);
-		this.upsertTopic(topic, text, type, payload.length, packet);
+		const { text, type, truncated } = this.decodePayload(payload);
+		this.upsertTopic(topic, text, type, truncated, payload.length, packet);
+		if (this.watchedTopics.has(topic)) this.recordHistory(topic, text, type, truncated, payload.length, packet);
 		this.totalMessages++;
 	}
 
-	private decodePayload(payload: Buffer): { text: string; type: 'json' | 'string' | 'binary' } {
-		if (payload.length === 0) return { text: '', type: 'string' };
+	private decodePayload(payload: Buffer): { text: string; type: 'json' | 'string' | 'binary'; truncated: boolean } {
+		if (payload.length === 0) return { text: '', type: 'string', truncated: false };
 
-		const sample = payload.slice(0, MAX_MESSAGE_SIZE);
+		const truncated = payload.length > MAX_MESSAGE_SIZE;
+		const sample = truncated ? payload.slice(0, MAX_MESSAGE_SIZE) : payload;
 		const str = sample.toString('utf8');
 
-		// Try JSON
+		// Classify using the FULL payload, not the truncated sample — a valid JSON
+		// message larger than MAX_MESSAGE_SIZE would otherwise have its closing
+		// braces cut off, fail JSON.parse on the sample alone, and get silently
+		// misclassified as 'string' (losing pretty-print/syntax highlight even
+		// though the message genuinely is JSON). The displayed/stored text is
+		// still bounded to the sample — only classification sees the full buffer.
+		const fullStr = truncated ? payload.toString('utf8') : str;
 		try {
-			JSON.parse(str);
-			return { text: str, type: 'json' };
+			JSON.parse(fullStr);
+			return { text: str, type: 'json', truncated };
 		} catch { /* not JSON */ }
 
 		// Printable string check
@@ -174,15 +209,16 @@ export class BrokerMonitorService extends EventEmitter {
 			const cp = c.charCodeAt(0);
 			return cp >= 0x09 && cp <= 0x7e || cp >= 0x80;
 		});
-		if (isPrintable) return { text: str, type: 'string' };
+		if (isPrintable) return { text: str, type: 'string', truncated };
 
-		return { text: `<binary ${payload.length}B>`, type: 'binary' };
+		return { text: `<binary ${payload.length}B>`, type: 'binary', truncated: false };
 	}
 
 	private upsertTopic(
 		topic: string,
 		message: string,
 		messageType: 'json' | 'string' | 'binary',
+		truncated: boolean,
 		bytes: number,
 		packet: any,
 	): void {
@@ -203,6 +239,7 @@ export class BrokerMonitorService extends EventEmitter {
 					lastMessage: null,
 					lastMessageAt: null,
 					messageType: 'string',
+					truncated: false,
 					retain: false,
 					qos: 0,
 					children: {},
@@ -217,12 +254,38 @@ export class BrokerMonitorService extends EventEmitter {
 				current.lastMessage = message;
 				current.lastMessageAt = Date.now();
 				current.messageType = messageType;
+				current.truncated = truncated;
 				current.retain = packet.retain ?? false;
 				current.qos = packet.qos ?? 0;
 			}
 
 			node = current.children;
 		}
+	}
+
+	private recordHistory(
+		topic: string,
+		text: string,
+		type: 'json' | 'string' | 'binary',
+		truncated: boolean,
+		bytes: number,
+		packet: any,
+	): void {
+		const bucket = this.historyByTopic.get(topic);
+		if (!bucket) return; // not watched
+
+		const bounded = text.length > MAX_HISTORY_ENTRY_SIZE ? text.slice(0, MAX_HISTORY_ENTRY_SIZE) : text;
+		bucket.push({
+			id: this.nextHistoryId++,
+			ts: Date.now(),
+			bytes,
+			qos: packet.qos ?? 0,
+			retain: packet.retain ?? false,
+			messageType: type,
+			truncated: truncated || bounded.length < text.length,
+			text: bounded,
+		});
+		if (bucket.length > MAX_HISTORY_PER_TOPIC) bucket.splice(0, bucket.length - MAX_HISTORY_PER_TOPIC);
 	}
 
 	// ── Rate sampling ─────────────────────────────────────────────────────────────
@@ -313,5 +376,42 @@ export class BrokerMonitorService extends EventEmitter {
 		};
 		walk(this.topicTree);
 		return result.sort((a, b) => (b.lastMessageAt ?? 0) - (a.lastMessageAt ?? 0));
+	}
+
+	// ── Topic history (lazy/LRU — see MAX_WATCHED_TOPICS) ──────────────────────────
+
+	/**
+	 * Starts tracking history for this topic (idempotent; bumps LRU recency on
+	 * repeat calls). Called whenever the admin UI selects a topic, not only when
+	 * the History tab is opened, so a backlog has already accumulated by the
+	 * time an operator checks it after viewing Points/Raw JSON for a while.
+	 */
+	watchTopic(fullTopic: string): void {
+		if (this.watchedTopics.has(fullTopic)) {
+			this.watchedTopics.delete(fullTopic);
+			this.watchedTopics.set(fullTopic, true);
+			return;
+		}
+		this.watchedTopics.set(fullTopic, true);
+		if (!this.historyByTopic.has(fullTopic)) this.historyByTopic.set(fullTopic, []);
+		if (this.watchedTopics.size > MAX_WATCHED_TOPICS) {
+			const oldest = this.watchedTopics.keys().next().value as string;
+			this.watchedTopics.delete(oldest);
+			this.historyByTopic.delete(oldest); // free memory immediately, not just stop appending
+		}
+	}
+
+	unwatchTopic(fullTopic: string): void {
+		this.watchedTopics.delete(fullTopic);
+		this.historyByTopic.delete(fullTopic);
+	}
+
+	/** Newest-first. Empty if the topic was never watched (or was evicted). */
+	getHistory(fullTopic: string): TopicHistoryEntry[] {
+		return (this.historyByTopic.get(fullTopic) ?? []).slice().reverse();
+	}
+
+	getHistoryEntry(fullTopic: string, id: number): TopicHistoryEntry | undefined {
+		return this.historyByTopic.get(fullTopic)?.find(e => e.id === id);
 	}
 }

@@ -280,7 +280,7 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
 }
 
 .tree-pane {
-  width: 280px;
+  width: 340px;
   flex-shrink: 0;
   border-right: 1px solid #f0f0f0;
   display: flex;

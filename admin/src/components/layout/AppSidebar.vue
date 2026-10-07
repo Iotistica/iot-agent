@@ -7,7 +7,7 @@ import {
   PartitionOutlined,
   ApartmentOutlined,
   RadarChartOutlined,
-  FundOutlined,
+  BellOutlined,
   FileTextOutlined,
   ContainerOutlined,
   SettingOutlined,
@@ -126,8 +126,8 @@ function onMenuClick({ key }: { key: string }) {
         </a-menu-item>
 
         <a-menu-item key="/anomaly">
-          <template #icon><FundOutlined /></template>
-          Analytics
+          <template #icon><BellOutlined /></template>
+          Alerts
         </a-menu-item>
 
         <a-menu-item key="/mqtt-broker">

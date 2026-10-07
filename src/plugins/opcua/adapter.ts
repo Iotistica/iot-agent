@@ -430,7 +430,19 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 			return 'metric';
 		}
 
-		// Non-numeric = metadata (strings, booleans, etc.)
+		// Boolean (ns=0;i=1) is time-series telemetry too — run status, alarms,
+		// occupancy/override flags are exactly the kind of point a BMS operator
+		// watches live, not static configuration. Excluding it here silently
+		// dropped every Boolean OPC-UA node from the subscribed/polled metric
+		// set entirely (readMetadata() reads 'metadata' nodes once on
+		// connect/reconnect, never again) — confirmed live: a source with 1000
+		// configured data points, 275 of them Boolean, only ever validated and
+		// subscribed to 725.
+		if (dataType === 1) {
+			return 'metric';
+		}
+
+		// Remaining non-numeric types (String, etc.) = metadata.
 		return 'metadata';
 	}
 

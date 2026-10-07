@@ -33,6 +33,21 @@ type EndpointRow = Omit<Endpoint, 'enabled' | 'connection' | 'data_points' | 'me
   group_name?: string | null;
 };
 
+/**
+ * Thrown by EndpointModel.create() when an enabled endpoint already serves
+ * the same physical connection target. See findDuplicateConnection()'s doc
+ * comment for why this must be rejected rather than silently allowed —
+ * callers should catch this and respond with a clear "already configured"
+ * message instead of letting the inevitable downstream devices.uuid
+ * collision leak through as a raw SQL error.
+ */
+export class DuplicateEndpointConnectionError extends Error {
+  constructor(public readonly existing: Endpoint) {
+    super(`An enabled endpoint already serves this connection: "${existing.name}" (uuid ${existing.uuid})`);
+    this.name = 'DuplicateEndpointConnectionError';
+  }
+}
+
 export class EndpointModel {
 	private static table = 'endpoints';
 
@@ -151,6 +166,23 @@ export class EndpointModel {
 	}
 
 	/**
+	 * Finds an existing ENABLED endpoint that already serves the same physical
+	 * connection target as `connection`, for protocols where a second endpoint
+	 * pointed at the same server is fundamentally incompatible with this
+	 * table's device-identity model (devices.uuid is derived from the
+	 * device's own identity, independent of which endpoint found it — a
+	 * second endpoint for the same server always collides once its devices
+	 * get seeded). Scoped to OPC-UA for now, the only protocol with a
+	 * confirmed duplicate-connection bug; extend the switch if another
+	 * protocol needs the same protection.
+	 */
+	static async findDuplicateConnection(protocol: string, connection: Record<string, any>): Promise<Endpoint | null> {
+		if (protocol !== 'opcua' || !connection?.endpointUrl) return null;
+		const candidates = await this.getAll(protocol);
+		return candidates.find((e) => e.enabled && e.connection?.endpointUrl === connection.endpointUrl) ?? null;
+	}
+
+	/**
    * Get enabled devices for a protocol
    */
 	static async getEnabled(protocol: string): Promise<Endpoint[]> {
@@ -165,6 +197,9 @@ export class EndpointModel {
    * Create new endpoint
    */
 	static async create(device: Endpoint): Promise<Endpoint> {
+		const duplicate = await this.findDuplicateConnection(device.protocol, device.connection);
+		if (duplicate) throw new DuplicateEndpointConnectionError(duplicate);
+
 		const serialized = this.serializeEndpoint({
 			...device,
 			uuid: device.uuid || randomUUID(),

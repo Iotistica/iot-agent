@@ -2,12 +2,12 @@ import { EventEmitter } from 'events';
 import { getHeapStatistics } from 'v8';
 import { agentTopic } from '../../mqtt/topics.js';
 import type { Protocol } from '../../plugins/protocol.js';
-import type { DeviceConfig, MqttConnection, Logger, DeviceStats, IPublishClient, IPublishPlugin } from './types.js';
+import type { DeviceConfig, DriftOptions, MqttConnection, Logger, DeviceStats, IPublishClient, IPublishPlugin } from './types.js';
 import { DeviceState, normalizeTarget } from './types.js';
 import { AnomalyFeed } from '../anomaly/feed.js';
 import { AnomalyEnricher } from '../anomaly/enrich.js';
 import { PayloadCompressor } from './compress.js';
-import type { CompressorOptions } from './compress.js';
+import type { CompressorOptions, CompressionInfo } from './compress.js';
 import { compressionToOpts } from './compress.js';
 import { MessageBatcher } from './batch.js';
 import { SocketConnection } from './socket.js';
@@ -86,6 +86,21 @@ interface TagPayload {
 	// Never named `pointId` — provisionalPointId is rename-sensitive, not durable
 	// identity (see src/point-name/types.ts's PointIdentity doc comment).
 	provisionalPointId?: string;
+	// Anomaly enrichment — same fields as MlFeaturePayload below, previously
+	// 'ml'-format-only. Included here too so a 'tags'/'ecp' subscription (the
+	// common case) doesn't have to switch to 'ml' format just to see anomaly
+	// scores. Only present when anomaly detection is bound and this specific
+	// reading was actually scored — see readAnomalyFields().
+	anomaly_score?: number;
+	anomaly_threshold?: number;
+	baseline_samples?: number;
+	detection_methods?: string[];
+	trend?: string;
+	trend_strength?: number;
+	predicted_next?: number;
+	forecast_confidence?: number;
+	device_state?: unknown;
+	state_duration_seconds?: number;
 }
 
 type MlDtype = 'bool' | 'int' | 'float' | 'string' | 'error';
@@ -300,6 +315,20 @@ export class PublishManager extends EventEmitter {
 		if (this.incidentCorrelator) {
 			this.schemaDriftDetector.setDriftAlertHandler((event: DriftAlertEvent) => this.handleDriftAlert(event));
 		}
+	}
+
+	/**
+	 * Applies a new drift_options config to the already-running detector,
+	 * without requiring an agent restart. Safe to call at any time: the Pro
+	 * package's SchemaDriftDetector has no dispose/cleanup method and no
+	 * timers/open handles (verified against its source) — discarding the old
+	 * instance and constructing a fresh one via initSchemaDrift() just works,
+	 * and its constructor synchronously reloads any already-learned baseline
+	 * from SchemaDriftModel, so a live reconfigure doesn't reset warmup.
+	 */
+	public async reconfigureSchemaDrift(driftOptions: DriftOptions | undefined): Promise<void> {
+		this.config.driftOptions = driftOptions;
+		await this.initSchemaDrift();
 	}
 
 	public setAnomalyService(service?: any): void {
@@ -800,6 +829,38 @@ export class PublishManager extends EventEmitter {
 		};
 	}
 
+	/** Compact anomaly-enrichment projection for tag/ml payloads — reads whatever
+	 *  AnomalyEnricher.enrich() attached directly onto the message (see processAnomaly()).
+	 *  Only present when anomaly detection is bound AND this specific reading was
+	 *  actually scored — never fabricated for a reading that wasn't. Shared by
+	 *  mapTagPayload() ('tags'/'ecp') and attachMlEnrichment() ('ml') so both formats
+	 *  carry the identical field set instead of two independently-maintained copies. */
+	private readAnomalyFields(message: ProtocolMessage): {
+		anomaly_score?: number;
+		anomaly_threshold?: number;
+		baseline_samples?: number;
+		detection_methods?: string[];
+		trend?: string;
+		trend_strength?: number;
+		predicted_next?: number;
+		forecast_confidence?: number;
+		device_state?: unknown;
+		state_duration_seconds?: number;
+	} {
+		return {
+			...(typeof message.anomaly_score === 'number' && { anomaly_score: message.anomaly_score }),
+			...(typeof message.anomaly_threshold === 'number' && { anomaly_threshold: message.anomaly_threshold }),
+			...(typeof message.baseline_samples === 'number' && { baseline_samples: message.baseline_samples }),
+			...(Array.isArray(message.detection_methods) && { detection_methods: message.detection_methods as string[] }),
+			...(typeof message.trend === 'string' && { trend: message.trend }),
+			...(typeof message.trend_strength === 'number' && { trend_strength: message.trend_strength }),
+			...(typeof message.predicted_next === 'number' && { predicted_next: message.predicted_next }),
+			...(typeof message.forecast_confidence === 'number' && { forecast_confidence: message.forecast_confidence }),
+			...(message.device_state !== undefined && { device_state: message.device_state }),
+			...(typeof message.state_duration_seconds === 'number' && { state_duration_seconds: message.state_duration_seconds }),
+		};
+	}
+
 	/** Compact point-identity projection for the Live View activity-monitor path (see the
 	 *  activityMonitor.record() call site below) — reads message.pointIdentity (see
 	 *  src/point-name/interceptor.ts) when present. Unlike tag/ml payloads (mapTagPayload()/
@@ -828,6 +889,7 @@ export class PublishManager extends EventEmitter {
 
 		const unitFields = this.readNormalizedUnit(message);
 		const qualityFields = this.readQualityFields(message);
+		const anomalyFields = this.readAnomalyFields(message);
 
 		const quality = typeof message.quality === 'string' ? message.quality.toUpperCase() : undefined;
 		const hasError = message.error !== undefined
@@ -848,6 +910,7 @@ export class PublishManager extends EventEmitter {
 				error: message.error ?? message.errorCode ?? message.qualityCode ?? 'READ_ERROR',
 				...unitFields,
 				...qualityFields,
+				...anomalyFields,
 				...(provisionalPointId && { provisionalPointId }),
 			};
 		}
@@ -865,11 +928,12 @@ export class PublishManager extends EventEmitter {
 				type: this.inferEcpType(value),
 				...unitFields,
 				...qualityFields,
+				...anomalyFields,
 				...(provisionalPointId && { provisionalPointId }),
 			};
 		}
 
-		return { name, rawName, value, ...unitFields, ...qualityFields, ...(provisionalPointId && { provisionalPointId }) };
+		return { name, rawName, value, ...unitFields, ...qualityFields, ...anomalyFields, ...(provisionalPointId && { provisionalPointId }) };
 	}
 
 	private mapMlFeaturePayload(message: ProtocolMessage, index: number): MlFeaturePayload {
@@ -936,16 +1000,7 @@ export class PublishManager extends EventEmitter {
 	}
 
 	private attachMlEnrichment(feature: MlFeaturePayload, message: ProtocolMessage): void {
-		if (typeof message.anomaly_score === 'number') feature.anomaly_score = message.anomaly_score;
-		if (typeof message.anomaly_threshold === 'number') feature.anomaly_threshold = message.anomaly_threshold;
-		if (typeof message.baseline_samples === 'number') feature.baseline_samples = message.baseline_samples;
-		if (Array.isArray(message.detection_methods)) feature.detection_methods = message.detection_methods as string[];
-		if (typeof message.trend === 'string') feature.trend = message.trend;
-		if (typeof message.trend_strength === 'number') feature.trend_strength = message.trend_strength;
-		if (typeof message.predicted_next === 'number') feature.predicted_next = message.predicted_next;
-		if (typeof message.forecast_confidence === 'number') feature.forecast_confidence = message.forecast_confidence;
-		if (message.device_state !== undefined) feature.device_state = message.device_state;
-		if (typeof message.state_duration_seconds === 'number') feature.state_duration_seconds = message.state_duration_seconds;
+		Object.assign(feature, this.readAnomalyFields(message));
 		Object.assign(feature, this.readNormalizedUnit(message));
 		Object.assign(feature, this.readQualityFields(message));
 		const provisionalPointId = (message.pointIdentity as PointIdentity | undefined)?.provisionalPointId;
@@ -979,18 +1034,22 @@ export class PublishManager extends EventEmitter {
 		endpointName: string,
 		messages: ProtocolMessage[],
 		compressedPayloadCache: Map<string, string | Buffer>,
+		compressionInfoCache: Map<string, CompressionInfo>,
 		overrideOpts?: CompressorOptions,
 		filterBadQuality = false,
-	): Promise<string | Buffer> {
-		const cached = compressedPayloadCache.get(cacheKey);
-		if (cached !== undefined) {
-			return cached;
+	): Promise<{ payload: string | Buffer; info?: CompressionInfo }> {
+		const cachedPayload = compressedPayloadCache.get(cacheKey);
+		if (cachedPayload !== undefined) {
+			// Same cacheKey -> identical compression inputs -> the cached info is
+			// still accurate, not stale, for whichever binding hits this branch.
+			return { payload: cachedPayload, info: compressionInfoCache.get(cacheKey) };
 		}
 
 		const { data, baselineSize } = this.buildPayload(endpointName, messages, payloadFormat, filterBadQuality);
-		const { payload } = await this.compressor.compress(data, baselineSize, this.stats.data.messagesPublished, overrideOpts);
+		const { payload, info } = await this.compressor.compress(data, baselineSize, this.stats.data.messagesPublished, overrideOpts);
 		compressedPayloadCache.set(cacheKey, payload);
-		return payload;
+		compressionInfoCache.set(cacheKey, info);
+		return { payload, info };
 	}
 
 	private normalizeExternalGroupName(endpointName: string): string {
@@ -1194,8 +1253,10 @@ export class PublishManager extends EventEmitter {
 			}
 
 			const compressedPayloadCache = new Map<string, string | Buffer>();
+			const compressionInfoCache = new Map<string, CompressionInfo>();
 			compressedPayloadCache.set(`${this.payloadFormat}::global::fq=false`, payload);
-			await this.routePublishBatch(topic, compressedPayloadCache, endpointName, enriched);
+			compressionInfoCache.set(`${this.payloadFormat}::global::fq=false`, info);
+			await this.routePublishBatch(topic, compressedPayloadCache, compressionInfoCache, endpointName, enriched);
 			publishConfirmed = true;
 
 			// This point is only reached after routePublishBatch() has already delivered
@@ -1451,6 +1512,7 @@ export class PublishManager extends EventEmitter {
 	private async routePublishBatch(
 		sourceTopic: string,
 		compressedPayloadCache: Map<string, string | Buffer>,
+		compressionInfoCache: Map<string, CompressionInfo>,
 		endpointName: string,
 		messages: ProtocolMessage[],
 	): Promise<void> {
@@ -1458,7 +1520,7 @@ export class PublishManager extends EventEmitter {
 			throw new Error('No publish destinations configured');
 		}
 
-		const entries = await this.collectRouteEntries(sourceTopic, compressedPayloadCache, endpointName, messages);
+		const entries = await this.collectRouteEntries(sourceTopic, compressedPayloadCache, compressionInfoCache, endpointName, messages);
 		if (entries.length === 0) {
 			throw new Error('No valid publish destinations configured (missing route_json.topic)');
 		}
@@ -1486,6 +1548,7 @@ export class PublishManager extends EventEmitter {
 	private async collectRouteEntries(
 		sourceTopic: string,
 		compressedPayloadCache: Map<string, string | Buffer>,
+		compressionInfoCache: Map<string, CompressionInfo>,
 		endpointName: string,
 		messages: ProtocolMessage[],
 	): Promise<Array<[IPublishPlugin, PublishBatchItem[]]>> {
@@ -1534,17 +1597,22 @@ export class PublishManager extends EventEmitter {
 			// mirroring SocketServer.routeAndSendToSocket()'s "filteredPoints.length === 0 →
 			// return" precedent, instead of publishing an empty/near-empty batch.
 			const allThrottledOut = minIntervalMs > 0 && effectiveMessages.length === 0 && messages.length > 0;
-			const payload: string | Buffer | null = allThrottledOut
-				? null
-				: await this.getCompressedPayloadForFormat(
+			let payload: string | Buffer | null = null;
+			let compressionInfo: CompressionInfo | undefined;
+			if (!allThrottledOut) {
+				const compressed = await this.getCompressedPayloadForFormat(
 					payloadFormat,
 					cacheKey,
 					endpointName,
 					effectiveMessages,
 					compressedPayloadCache,
+					compressionInfoCache,
 					overrideOpts,
 					filterBadQuality,
 				);
+				payload = compressed.payload;
+				compressionInfo = compressed.info;
+			}
 
 			this.logger?.debug('Routing batch to destination', {
 				component: 'PublishManager',
@@ -1611,6 +1679,9 @@ export class PublishManager extends EventEmitter {
 			}
 
 			if (payload !== null) {
+				if (compressionInfo) {
+					activityMonitor.recordCompression(destinationTopic, compressionInfo);
+				}
 				const items = batchesByPlugin.get(binding.plugin) || [];
 				items.push({
 					topic: sourceTopic,

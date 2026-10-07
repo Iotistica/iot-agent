@@ -21,6 +21,41 @@ export const RESOLUTION_REASON_LABELS: Record<ResolutionReason, string> = {
   accepted: 'Known / Accepted',
 }
 
+export type DriftAlertType = 'new-field' | 'missing-field' | 'type-drift' | 'rename-candidate'
+
+// Mirrors src/publish/core/types.ts's DriftOptionsSchema (the shape saved to
+// endpoint_outputs.drift_options_json and read by PublishManager at
+// construction/reconfigure time) — kept as the single shared definition so
+// AnomalyView.vue doesn't maintain its own drifted-apart copy.
+export interface DriftOptions {
+  enabled?: boolean
+  warmupBatches?: number
+  consecutiveMissingThreshold?: number
+  alertCooldownMs?: number
+  minFieldPresenceRatio?: number
+  adaptiveRetireBatches?: number
+  adaptiveRetireMs?: number
+  alertOnDriftTypes?: DriftAlertType[]
+  adaptivePromotionBatches?: number
+  /** @deprecated No longer consulted by the detector — see adaptivePromotionMinElapsedMs. */
+  adaptivePromotionRatio?: number
+  adaptivePromotionMinElapsedMs?: number
+  minTypeDominanceRatio?: number
+  maxTrackedFields?: number
+  maxTrackedDevices?: number
+  maxTraversalDepth?: number
+  maxFieldsPerBatch?: number
+  maxRenameCandidates?: number
+  maxRenameFieldLength?: number
+  logSampleSize?: number
+  checkIntervalBatches?: number
+}
+
+export interface ProtocolOutput {
+  protocol: string
+  drift_options?: DriftOptions | null
+}
+
 export interface BaselineProgress {
   metricName: string
   deviceState: string
@@ -119,6 +154,20 @@ export const anomalyApi = {
 
   clearSchemaDriftBaselines(): Promise<{ deleted: number }> {
     return client.delete<{ deleted: number }>('/v1/schema-drift/baselines').then((r) => r.data)
+  },
+
+  getProtocolOutputs(): Promise<{ outputs: ProtocolOutput[] }> {
+    return client.get<{ outputs: ProtocolOutput[] }>('/v1/protocol-outputs').then((r) => r.data)
+  },
+
+  // Applies to every configured protocol pipe — the one control surface
+  // operators use (see src/api/v1.ts's PATCH /v1/protocol-outputs/drift).
+  // Now also live-reconfigures the already-running agent server-side, no
+  // restart required.
+  updateDrift(driftOptions: DriftOptions | null): Promise<{ outputs: ProtocolOutput[] }> {
+    return client
+      .patch<{ outputs: ProtocolOutput[] }>('/v1/protocol-outputs/drift', { drift_options: driftOptions })
+      .then((r) => r.data)
   },
 
   // ── Edge tracking ────────────────────────────────────────────────────────────

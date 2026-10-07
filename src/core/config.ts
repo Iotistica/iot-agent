@@ -10,7 +10,7 @@
  */
 
 import { EventEmitter } from "events";
-import { EndpointModel, type Endpoint } from "../db/models/endpoint.model.js";
+import { EndpointModel, DuplicateEndpointConnectionError, type Endpoint } from "../db/models/endpoint.model.js";
 import { StateSnapshotModel } from "../db/models/index.js";
 import { cloneDeep, deepEqual } from "../lib/collection-utils.js";
 import {
@@ -1119,7 +1119,30 @@ export class ConfigManager extends EventEmitter {
 						});
 					}
 
-					await EndpointModel.create(normalizedDevice);
+					try {
+						await EndpointModel.create(normalizedDevice);
+					} catch (createError) {
+						if (createError instanceof DuplicateEndpointConnectionError) {
+							// This target-config entry's uuid doesn't match any DB row, but it
+							// points at a connection an existing enabled endpoint already
+							// serves (devices.uuid is derived from physical device identity,
+							// independent of which endpoint found it — a second endpoint for
+							// the same connection always collides once its devices get
+							// seeded). Skip it rather than creating a broken row every
+							// reconciliation pass — this was the actual source of the OPC-UA
+							// duplicate-endpoint recreation loop.
+							this.logger?.warnSync("Skipping endpoint creation — connection already served by another endpoint", {
+								component: LogComponents.configManager,
+								operation: "syncEndpointsToDatabase",
+								deviceName: normalizedDevice.name,
+								deviceUuid: normalizedDevice.uuid,
+								existingEndpointName: createError.existing.name,
+								existingEndpointUuid: createError.existing.uuid,
+							});
+							continue;
+						}
+						throw createError;
+					}
 
 					// CRITICAL: Verify what was actually saved to DB
 					let verifyInsert: any = null;

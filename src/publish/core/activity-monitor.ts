@@ -32,6 +32,17 @@ export interface SubscriptionActivity {
 	rawPointName?: string;
 }
 
+export interface CompressionSnapshot {
+	topic: string;
+	method: string;
+	originalSize: number;
+	compressedSize: number;
+	savedBytes: number;
+	savedPercent: number; // 0-100, one decimal place — frontend formats for display
+	compressionMs: number;
+	recordedAt: string;
+}
+
 export interface ActivityEvent {
 	id: number;
 	timestamp: string;
@@ -101,6 +112,17 @@ class ActivityMonitor {
 	 * an hour.
 	 */
 	private lastSeenByPoint = new Map<string, { protocol: string; deviceName: string; lastSeen: number }>();
+
+	/**
+	 * Latest compression result per destination topic, for the MQTT Explorer's
+	 * per-topic compression stats display. Keyed directly by the outbound MQTT
+	 * topic string (not subscriptionId/destinationId) since that's the only
+	 * identity the Explorer — which only sniffs raw wire traffic — actually
+	 * has. One entry per topic, overwritten on every publish; never evicted
+	 * (same self-bounding reasoning as lastSeenByPoint — bounded by the number
+	 * of distinct destination topics actually configured, not by time).
+	 */
+	private compressionByTopic = new Map<string, CompressionSnapshot>();
 
 	// Fixed-size ring for the rolling "Good Quality %" tile — 20 buckets of 15s
 	// = 5 minutes of trailing history, bounded memory instead of retaining every
@@ -219,6 +241,36 @@ class ActivityMonitor {
 	/** Cumulative points recorded per protocol since agent start — never resets or evicts. */
 	getThroughputCounters(): Record<string, number> {
 		return Object.fromEntries(this.totalPointsByProtocol);
+	}
+
+	/**
+	 * Records one destination binding's compression result for this publish
+	 * tick. Call once per binding (not per metric/reading) — same formulas
+	 * PublishStats.logPublishSuccess() already logs (savedBytes = originalSize
+	 * - compressedSize, savedPercent = ratio), reused here instead of
+	 * reimplemented so the two stay in lockstep.
+	 *
+	 * Skips the periodic no-op calibration pass (CompressionInfo.isBaseline,
+	 * ~1 in 1000 publishes — see compress.ts's shouldMeasureBaseline()):
+	 * recording it would overwrite a topic's real compression snapshot with a
+	 * misleading "0% saved" blip once every ~1000 ticks.
+	 */
+	recordCompression(topic: string, info: { method: string; originalSize: number; compressedSize: number; ratio: number; compressionMs: number; isBaseline?: boolean }): void {
+		if (info.isBaseline) return;
+		this.compressionByTopic.set(topic, {
+			topic,
+			method: info.method,
+			originalSize: info.originalSize,
+			compressedSize: info.compressedSize,
+			savedBytes: info.originalSize - info.compressedSize,
+			savedPercent: Math.round(info.ratio * 10) / 10,
+			compressionMs: info.compressionMs,
+			recordedAt: new Date().toISOString(),
+		});
+	}
+
+	getCompression(topic: string): CompressionSnapshot | undefined {
+		return this.compressionByTopic.get(topic);
 	}
 
 	/**

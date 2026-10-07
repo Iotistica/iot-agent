@@ -9,6 +9,7 @@ import type ContainerManager from '../containers/container-manager';
 import type { AgentManager } from '../core/index.js';
 import type { CloudSync } from '../sync';
 import type { AgentLogger } from '../logging/agent-logger';
+import type { DriftOptions } from '../publish/core/types.js';
 import type { LocalLogBackend } from '../logging/local-backend';
 import type { AdapterManager } from '../plugins';
 import type { ConfigManager } from '../core/config';
@@ -1217,25 +1218,47 @@ export const addEndpoint = async (body: {
 	// endpoint immediately. applyConfigUpdate only updates target state; the reconciler
 	// that syncs target state → DB runs asynchronously and would otherwise leave the
 	// table empty until the next reconciliation cycle.
-	const { EndpointModel } = await import('../db/models/endpoint.model.js');
-	const savedEndpoint = await EndpointModel.upsert({
-		uuid,
-		fingerprint: body.fingerprint,
-		name: body.name,
-		protocol: body.protocol as any,
-		connection: resolvedConnection,
-		poll_interval: body.poll_interval ?? 5000,
-		enabled: body.enabled !== false,
-		data_points: resolvedDataPoints.length > 0 ? resolvedDataPoints : undefined,
-		metadata: resolvedMetadata,
-	});
+	const { EndpointModel, DuplicateEndpointConnectionError } = await import('../db/models/endpoint.model.js');
+	let savedEndpoint;
+	try {
+		savedEndpoint = await EndpointModel.upsert({
+			uuid,
+			fingerprint: body.fingerprint,
+			name: body.name,
+			protocol: body.protocol as any,
+			connection: resolvedConnection,
+			poll_interval: body.poll_interval ?? 5000,
+			enabled: body.enabled !== false,
+			data_points: resolvedDataPoints.length > 0 ? resolvedDataPoints : undefined,
+			metadata: resolvedMetadata,
+		});
+	} catch (err) {
+		if (err instanceof DuplicateEndpointConnectionError) {
+			throw Object.assign(
+				new Error(`${body.name || 'This endpoint'} is already configured as "${err.existing.name}"`),
+				{ statusCode: 409 },
+			);
+		}
+		throw err;
+	}
 
 	// Keep the devices table in step so this source's readings resolve to a
 	// friendly name (not a raw "<name>-<uuid8>" string) in the Live/Dashboard
 	// views immediately — normally only discovery does this (src/discovery/db.ts),
 	// which a manually-added source (e.g. via the register-map editor) never runs.
-	const { ProtocolDevicesModel } = await import('../db/models/index.js');
-	await ProtocolDevicesModel.syncFromEndpoint(savedEndpoint);
+	try {
+		const { ProtocolDevicesModel } = await import('../db/models/index.js');
+		await ProtocolDevicesModel.syncFromEndpoint(savedEndpoint);
+	} catch (err) {
+		// Don't leave a broken orphan behind (empty-feeling endpoint whose devices
+		// never got seeded) — roll back the endpoint we just committed above and
+		// surface a clear error instead of a raw devices.uuid constraint failure.
+		await EndpointModel.deleteByUuid(uuid).catch(() => {});
+		throw Object.assign(
+			new Error(`Failed to register devices for "${body.name}": ${err instanceof Error ? err.message : String(err)}`),
+			{ statusCode: 409 },
+		);
+	}
 
 	return {
 		uuid,
@@ -1946,6 +1969,22 @@ export const clearSchemaDriftBaselines = async (): Promise<number> => {
 	} catch {
 		return 0;
 	}
+};
+
+/**
+ * Applies a drift_options change to the already-running agent, without
+ * requiring a restart. Fire-and-forget (mirrors reloadAllBindings's call
+ * style above) — the Pro package's dynamic import shouldn't block the
+ * PATCH response. Used by: PATCH /v1/protocol-outputs/:protocol/drift and
+ * PATCH /v1/protocol-outputs/drift.
+ */
+export const reconfigureSchemaDrift = async (protocol: string, driftOptions: DriftOptions | undefined): Promise<void> => {
+	devicePublish?.reconfigureSchemaDrift(protocol, driftOptions).catch((err) => {
+		logger?.warnSync('Failed to live-reconfigure schema drift', {
+			protocol,
+			error: err instanceof Error ? err.message : String(err),
+		});
+	});
 };
 
 /**

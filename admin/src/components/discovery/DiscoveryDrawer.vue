@@ -101,7 +101,15 @@ function isAlreadyAdded(device: DiscoveredDevice): boolean {
   if (addedThisSession.value.has(device.fingerprint)) return true
   return existingEndpoints.value.some((ep: Endpoint) =>
     (ep.fingerprint && ep.fingerprint === device.fingerprint) ||
-    ep.name === device.name,
+    ep.name === device.name ||
+    // OPC-UA: a second endpoint can never coexist with one already serving the
+    // same physical server (the backend rejects it — devices.uuid is derived
+    // from device identity, independent of which endpoint found it) — so match
+    // on connection too, not just name/fingerprint, which a re-scan's
+    // synthesized candidate name never matches a manually-named endpoint on.
+    (device.protocol === 'opcua' && ep.protocol === 'opcua' &&
+      !!device.connection?.endpointUrl &&
+      ep.connection?.endpointUrl === device.connection?.endpointUrl),
   )
 }
 

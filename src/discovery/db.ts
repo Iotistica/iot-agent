@@ -1,7 +1,7 @@
 /** Discovery persistence store for endpoints and staleness checks. */
 import type { AgentLogger } from '../logging/agent-logger.js';
 import { LogComponents } from '../logging/types.js';
-import { EndpointModel, type Endpoint } from '../db/models/endpoint.model.js';
+import { EndpointModel, DuplicateEndpointConnectionError, type Endpoint } from '../db/models/endpoint.model.js';
 import { ProtocolDevicesModel } from '../db/models/index.js';
 import type { DiscoveredDevice } from '../plugins/types.js';
 import type { ConfigManager } from '../core/config.js';
@@ -367,6 +367,13 @@ export class DiscoveryStore {
 				const endpoint: Endpoint = {
 					name: device.name,
 					protocol: device.protocol as 'modbus' | 'can' | 'opcua' | 'mqtt',
+					// Top-level column, not just nested in metadata below — this is what
+					// addEndpoint()/EndpointModel.upsert() write to and what the
+					// existingByFingerprint dedup check above reads. Without this, an
+					// endpoint discovery creates here is invisible to fingerprint-based
+					// dedup on any later pass (and to anything created via the manual
+					// Add-source path, which only ever sets the top-level column).
+					fingerprint: device.fingerprint,
 					enabled: endpointEnabled,
 					poll_interval: 5000,
 					connection: device.connection,
@@ -431,6 +438,22 @@ export class DiscoveryStore {
 					});
 				}
 			} catch (error) {
+				if (error instanceof DuplicateEndpointConnectionError) {
+					// A different endpoint already serves this exact physical connection
+					// (the existingByEndpointUrl check above should normally catch this
+					// first, but this is the backstop — no endpoint was created, so
+					// there's nothing to roll back, just skip).
+					this.logger?.infoSync(`Skipping "${device.name}" — connection already served by "${error.existing.name}"`, {
+						component: LogComponents.discovery,
+						traceId,
+						protocol: device.protocol,
+						existingEndpointName: error.existing.name,
+						existingEndpointUuid: error.existing.uuid,
+					});
+					skipped++;
+					skippedDevices.push({ name: device.name, protocol: device.protocol, reason: 'duplicate_connection' });
+					continue;
+				}
 				this.logger?.errorSync(
 					`Failed to save device "${device.name}"`,
           error as Error,
