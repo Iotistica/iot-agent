@@ -407,7 +407,7 @@ const DEFAULT_ALERT_DRIFT_TYPES: DriftAlertType[] = ['missing-field', 'type-drif
 
 const globalDrift = ref<DriftOptions>({})
 const driftLoading = ref(false)
-const showAdvancedDrift = ref(false)
+
 
 async function loadAlertDrift() {
   driftLoading.value = true
@@ -478,26 +478,6 @@ function setSensitivityPreset(level: SensitivityLevel) {
   }
 }
 
-const ADVANCED_DRIFT_DEFAULTS: DriftOptions = {
-  warmupBatches: 20,
-  adaptiveRetireBatches: 250,
-  adaptiveRetireMs: 86_400_000,
-  maxTrackedFields: 1000,
-  maxTrackedDevices: 2000,
-  maxFieldsPerBatch: 500,
-  maxTraversalDepth: 5,
-  maxRenameCandidates: 20,
-  maxRenameFieldLength: 64,
-  logSampleSize: 10,
-  checkIntervalBatches: 1,
-}
-
-function restoreAdvancedDriftDefaults() {
-  for (const [key, value] of Object.entries(ADVANCED_DRIFT_DEFAULTS)) {
-    setDrift(key as keyof DriftOptions, value)
-  }
-  message.success('Advanced settings restored to recommended defaults')
-}
 
 const ALERT_FREQUENCY_OPTIONS: { value: number; label: string }[] = [
   { value: 5 * 60_000, label: '5 minutes' },
@@ -1508,241 +1488,6 @@ async function saveAllAlertConfig() {
                       </a-checkbox-group>
                     </div>
 
-                    <a-collapse v-model:active-key="showAdvancedDrift" :bordered="false" ghost class="drift-advanced-collapse">
-                      <a-collapse-panel key="advanced" header="Advanced settings">
-                    <a-row :gutter="[20, 20]">
-                      <a-col :xs="24" :sm="12" :lg="8">
-                        <SettingsField
-                          label="Warmup batches"
-                          tooltip="How many times a device must be observed before its baseline is learned. Counted per device — a device that reports rarely just takes longer in wall-clock time to finish warmup, not more attempts."
-                        >
-                          <a-input-number
-                            :value="globalDrift.warmupBatches ?? 20"
-                            :min="1" :max="500"
-                            @change="(v: number) => setDrift('warmupBatches', v)"
-                          />
-                        </SettingsField>
-                      </a-col>
-                      <a-col :xs="24" :sm="12" :lg="8">
-                        <SettingsField
-                          label="Missing threshold"
-                          tooltip="How many consecutive times a device must be observed without a previously-known field before it's flagged as removed (critical severity). Higher values tolerate more occasional gaps before alerting."
-                        >
-                          <a-input-number
-                            :value="globalDrift.consecutiveMissingThreshold ?? 10"
-                            :min="1" :max="1000"
-                            @change="(v: number) => setDrift('consecutiveMissingThreshold', v)"
-                          />
-                        </SettingsField>
-                      </a-col>
-                      <a-col :xs="24" :sm="12" :lg="8">
-                        <SettingsField
-                          label="Alert cooldown (ms)"
-                          tooltip="Minimum time between repeat alerts for the same field on the same device. Prevents a single ongoing drift from spamming repeated alerts. In milliseconds — 1800000 = 30 minutes."
-                        >
-                          <a-input-number
-                            :value="globalDrift.alertCooldownMs ?? 1800000"
-                            :min="0" :step="60000"
-                            @change="(v: number) => setDrift('alertCooldownMs', v)"
-                          />
-                        </SettingsField>
-                      </a-col>
-                      <a-col :xs="24" :sm="12" :lg="8">
-                        <SettingsField
-                          label="Min presence ratio"
-                          tooltip="During warmup, the fraction of a device's observations a field must appear in to be included in its baseline. 0.5 means a field must be present at least half the time to count — filters out fields that only show up sporadically."
-                        >
-                          <a-input-number
-                            :value="globalDrift.minFieldPresenceRatio ?? 0.5"
-                            :min="0" :max="1" :step="0.05" :precision="2"
-                            @change="(v: number) => setDrift('minFieldPresenceRatio', v)"
-                          />
-                        </SettingsField>
-                      </a-col>
-                      <a-col :xs="24" :sm="12" :lg="8">
-                        <SettingsField
-                          label="Retire threshold (baseline fields)"
-                          tooltip="The number of consecutive times an already-learned baseline field can be missing before it's removed from the learned schema. This value is intentionally set much higher than the missing-field alert threshold, so a temporary issue—such as a bad reload or a short data gap—won't cause the system to forget a field it has already learned is normally present."
-                        >
-                          <a-input-number
-                            :value="globalDrift.adaptiveRetireBatches ?? 250"
-                            :min="1" :max="10000"
-                            @change="(v: number) => setDrift('adaptiveRetireBatches', v)"
-                          />
-                        </SettingsField>
-                      </a-col>
-                      <a-col :xs="24" :sm="12" :lg="8">
-                        <SettingsField
-                          label="Retire time (new-field candidates)"
-                          tooltip="How long (ms) a not-yet-promoted candidate field can go unobserved before its progress toward promotion is discarded. Wall-clock time, not observation count — on a source that batches very frequently (e.g. an OPC-UA subscription), a count-based threshold could elapse in seconds even for a field that genuinely reports every few minutes, wiping its progress before it ever has a chance to promote. Default 24h."
-                        >
-                          <a-input-number
-                            :value="globalDrift.adaptiveRetireMs ?? 86400000"
-                            :min="60000" :step="3600000"
-                            @change="(v: number) => setDrift('adaptiveRetireMs', v)"
-                          />
-                        </SettingsField>
-                      </a-col>
-                    </a-row>
-
-                    <div class="drift-subheading">
-                      Sensitivity &amp; promotion
-                      <a-tooltip title="How a field that wasn't in the original baseline eventually stops being flagged once it's proven to be a normal, stable part of the schema (not just a one-off), and how confidently a field's value type must repeat before a different type is treated as real drift.">
-                        <QuestionCircleOutlined class="drift-alert-on__info" />
-                      </a-tooltip>
-                    </div>
-                    <a-row :gutter="[20, 20]">
-                      <a-col :xs="24" :sm="12" :lg="8">
-                        <SettingsField
-                          label="Promotion batches"
-                          tooltip="How many times a field not in the original baseline must be observed before it's silently promoted into the baseline and stops being flagged as drift (e.g. a setpoint that only reports on change, not every cycle). Works together with Promotion min elapsed time below — both must be satisfied."
-                        >
-                          <a-input-number
-                            :value="globalDrift.adaptivePromotionBatches ?? 50"
-                            :min="1" :max="10000"
-                            @change="(v: number) => setDrift('adaptivePromotionBatches', v)"
-                          />
-                        </SettingsField>
-                      </a-col>
-                      <a-col :xs="24" :sm="12" :lg="8">
-                        <SettingsField
-                          label="Promotion min elapsed time"
-                          tooltip="How long (ms), at minimum, since a candidate field was first seen before it can be promoted into the baseline — alongside Promotion batches above, both must hold. Wall-clock time rather than a fraction of total observations: a field that only reports every few minutes on a fast-batching source (e.g. OPC-UA) can still promote once it's shown up enough times over enough real elapsed time, regardless of how many unrelated batches happened in between. Default 10 minutes."
-                        >
-                          <a-input-number
-                            :value="globalDrift.adaptivePromotionMinElapsedMs ?? 600000"
-                            :min="0" :step="60000"
-                            @change="(v: number) => setDrift('adaptivePromotionMinElapsedMs', v)"
-                          />
-                        </SettingsField>
-                      </a-col>
-                      <a-col :xs="24" :sm="12" :lg="8">
-                        <SettingsField
-                          label="Min type dominance ratio"
-                          tooltip="The fraction of a field's observations a value type must represent to be considered its expected type. Prevents one bad or unusual payload from permanently widening what's accepted as normal for that field."
-                        >
-                          <a-input-number
-                            :value="globalDrift.minTypeDominanceRatio ?? 0.15"
-                            :min="0" :max="1" :step="0.01" :precision="2"
-                            @change="(v: number) => setDrift('minTypeDominanceRatio', v)"
-                          />
-                        </SettingsField>
-                      </a-col>
-                    </a-row>
-
-                    <div class="drift-subheading">
-                      Performance &amp; limits
-                      <a-tooltip title="Safety caps that bound how much memory and CPU schema-drift tracking can use on a busy endpoint. The defaults are generous — only lower these on resource-constrained deployments, or raise them if a single endpoint legitimately has more devices/fields than the caps allow.">
-                        <QuestionCircleOutlined class="drift-alert-on__info" />
-                      </a-tooltip>
-                    </div>
-                    <a-row :gutter="[20, 20]">
-                      <a-col :xs="24" :sm="12" :lg="8">
-                        <SettingsField
-                          label="Check interval (batches)"
-                          tooltip="Once the baseline is established, run the full drift check only every Nth batch instead of every batch. 1 = every batch (default). Raise this to reduce CPU use on very high-frequency endpoints; warmup always checks every batch regardless of this setting."
-                        >
-                          <a-input-number
-                            :value="globalDrift.checkIntervalBatches ?? 1"
-                            :min="1" :max="1000"
-                            @change="(v: number) => setDrift('checkIntervalBatches', v)"
-                          />
-                        </SettingsField>
-                      </a-col>
-                      <a-col :xs="24" :sm="12" :lg="8">
-                        <SettingsField
-                          label="Max tracked fields"
-                          tooltip="Upper bound on how many distinct fields are tracked per device. Prevents a device with a runaway/malformed payload from growing its schema without limit."
-                        >
-                          <a-input-number
-                            :value="globalDrift.maxTrackedFields ?? 1000"
-                            :min="1" :max="100000"
-                            @change="(v: number) => setDrift('maxTrackedFields', v)"
-                          />
-                        </SettingsField>
-                      </a-col>
-                      <a-col :xs="24" :sm="12" :lg="8">
-                        <SettingsField
-                          label="Max tracked devices"
-                          tooltip="Upper bound on how many distinct device identities are tracked per endpoint. Bounds memory on a shared/multiplexed endpoint (e.g. a BACnet pipe with many devices) against a misbehaving upstream generating unique names per message."
-                        >
-                          <a-input-number
-                            :value="globalDrift.maxTrackedDevices ?? 2000"
-                            :min="1" :max="100000"
-                            @change="(v: number) => setDrift('maxTrackedDevices', v)"
-                          />
-                        </SettingsField>
-                      </a-col>
-                      <a-col :xs="24" :sm="12" :lg="8">
-                        <SettingsField
-                          label="Max fields per batch"
-                          tooltip="Upper bound on how many fields are processed from a single observation/batch. A safety cap, not a normal operating limit."
-                        >
-                          <a-input-number
-                            :value="globalDrift.maxFieldsPerBatch ?? 500"
-                            :min="1" :max="100000"
-                            @change="(v: number) => setDrift('maxFieldsPerBatch', v)"
-                          />
-                        </SettingsField>
-                      </a-col>
-                      <a-col :xs="24" :sm="12" :lg="8">
-                        <SettingsField
-                          label="Max traversal depth"
-                          tooltip="How many levels deep into a nested payload the schema extractor will recurse when looking for fields."
-                        >
-                          <a-input-number
-                            :value="globalDrift.maxTraversalDepth ?? 5"
-                            :min="1" :max="20"
-                            @change="(v: number) => setDrift('maxTraversalDepth', v)"
-                          />
-                        </SettingsField>
-                      </a-col>
-                      <a-col :xs="24" :sm="12" :lg="8">
-                        <SettingsField
-                          label="Max rename candidates"
-                          tooltip="Upper bound on how many missing/new field pairs are compared per side when looking for a rename (a missing field and a new field that look like the same field, renamed). Higher values catch more rename pairs on devices with many simultaneous field changes, at more CPU cost."
-                        >
-                          <a-input-number
-                            :value="globalDrift.maxRenameCandidates ?? 20"
-                            :min="1" :max="1000"
-                            @change="(v: number) => setDrift('maxRenameCandidates', v)"
-                          />
-                        </SettingsField>
-                      </a-col>
-                      <a-col :xs="24" :sm="12" :lg="8">
-                        <SettingsField
-                          label="Max rename field length"
-                          tooltip="Field names longer than this are skipped during rename-candidate detection (the similarity comparison gets expensive on long strings). Shorter field names are always checked."
-                        >
-                          <a-input-number
-                            :value="globalDrift.maxRenameFieldLength ?? 64"
-                            :min="1" :max="500"
-                            @change="(v: number) => setDrift('maxRenameFieldLength', v)"
-                          />
-                        </SettingsField>
-                      </a-col>
-                      <a-col :xs="24" :sm="12" :lg="8">
-                        <SettingsField
-                          label="Log sample size"
-                          tooltip="How many example field names to include in each drift log line (e.g. 'sampleAdditiveFields'). Purely cosmetic — doesn't affect detection, only log verbosity."
-                        >
-                          <a-input-number
-                            :value="globalDrift.logSampleSize ?? 10"
-                            :min="0" :max="100"
-                            @change="(v: number) => setDrift('logSampleSize', v)"
-                          />
-                        </SettingsField>
-                      </a-col>
-                    </a-row>
-
-                        <div class="drift-advanced-actions">
-                          <a-button size="small" @click="restoreAdvancedDriftDefaults">
-                            <template #icon><ReloadOutlined /></template>
-                            Restore advanced defaults
-                          </a-button>
-                        </div>
-                      </a-collapse-panel>
-                    </a-collapse>
                   </a-spin>
                 </SettingsSection>
 
@@ -1879,11 +1624,6 @@ async function saveAllAlertConfig() {
   color: #767676;
 }
 
-.drift-subheading {
-  font-size: 13px;
-  font-weight: 600;
-  margin: 20px 0 4px;
-}
 
 .drift-alert-on {
   margin-top: 20px;
@@ -1922,24 +1662,4 @@ async function saveAllAlertConfig() {
   margin-top: 6px;
 }
 
-.drift-advanced-collapse {
-  margin-top: 20px;
-  border-top: 1px solid #f0f0f0;
-  padding-top: 4px;
-}
-
-.drift-advanced-collapse :deep(.ant-collapse-header) {
-  padding-left: 0 !important;
-  font-weight: 600;
-  font-size: 13px;
-}
-
-.drift-advanced-collapse :deep(.ant-collapse-content-box) {
-  padding-left: 0 !important;
-  padding-right: 0 !important;
-}
-
-.drift-advanced-actions {
-  margin-top: 20px;
-}
 </style>

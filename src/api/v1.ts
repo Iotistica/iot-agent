@@ -2419,6 +2419,84 @@ router.delete('/v1/schema-drift/baselines', requireRole('operator'), async (req:
 });
 
 /**
+ * GET /v1/schema-drift/config
+ * Return the effective schema drift configuration and its sensitivity classification.
+ */
+router.get('/v1/schema-drift/config', async (req: Request, res: Response, next: NextFunction) => {
+	try {
+		const { EndpointOutputModel } = await import('../db/models/endpoint-outputs.model.js');
+		const { classifySensitivity } = await import('../publish/core/drift-presets.js');
+		const outputs = await EndpointOutputModel.getAll();
+		const withDrift = outputs.find((o: any) => o.drift_options);
+		const config = withDrift?.drift_options ?? {};
+		res.json({ config, sensitivity: classifySensitivity(config) });
+	} catch (err) {
+		next(err);
+	}
+});
+
+/**
+ * PATCH /v1/schema-drift/config
+ * Update schema drift configuration fields. Flat body — { warmupBatches: 30 },
+ * not wrapped in drift_options. Rejects unknown keys. Merges onto existing,
+ * applies to all protocol pipes, live-reloads.
+ */
+router.patch('/v1/schema-drift/config', requireRole('operator'), async (req: Request, res: Response, next: NextFunction) => {
+	try {
+		const { DriftOptionsSchema } = await import('../publish/core/types.js');
+		const { EndpointOutputModel } = await import('../db/models/endpoint-outputs.model.js');
+		const { classifySensitivity } = await import('../publish/core/drift-presets.js');
+
+		const inner = DriftOptionsSchema.unwrap();
+		const parsed = inner.strict().partial().parse(req.body);
+		if (Object.keys(parsed).length === 0) {
+			res.status(400).json({ error: 'No valid drift options provided' });
+			return;
+		}
+
+		const outputs = await EndpointOutputModel.getAll();
+		let merged: any = {};
+		for (const existing of outputs) {
+			merged = { ...existing.drift_options, ...parsed };
+			await EndpointOutputModel.setOutput({ ...existing, drift_options: merged });
+			actions.reconfigureSchemaDrift(existing.protocol, merged);
+		}
+
+		res.json({ config: merged, sensitivity: classifySensitivity(merged) });
+	} catch (err: any) {
+		if (err?.name === 'ZodError') {
+			res.status(400).json({ error: 'Validation failed', details: err.issues });
+			return;
+		}
+		next(err);
+	}
+});
+
+/**
+ * POST /v1/schema-drift/config/reset-advanced
+ * Reset only the 11 advanced tuning fields to their defaults. Does not touch
+ * sensitivity preset fields, enabled, alertCooldownMs, or alertOnDriftTypes.
+ */
+router.post('/v1/schema-drift/config/reset-advanced', requireRole('operator'), async (req: Request, res: Response, next: NextFunction) => {
+	try {
+		const { EndpointOutputModel } = await import('../db/models/endpoint-outputs.model.js');
+		const { ADVANCED_DRIFT_DEFAULTS, classifySensitivity } = await import('../publish/core/drift-presets.js');
+
+		const outputs = await EndpointOutputModel.getAll();
+		let merged: any = {};
+		for (const existing of outputs) {
+			merged = { ...existing.drift_options, ...ADVANCED_DRIFT_DEFAULTS };
+			await EndpointOutputModel.setOutput({ ...existing, drift_options: merged });
+			actions.reconfigureSchemaDrift(existing.protocol, merged);
+		}
+
+		res.json({ config: merged, sensitivity: classifySensitivity(merged) });
+	} catch (err) {
+		next(err);
+	}
+});
+
+/**
  * GET /v1/settings
  * Return the user-editable agent settings (logging, features, intervals, runtime,
  * anomalyDetection) plus read-only agent identity (uuid, name, version).

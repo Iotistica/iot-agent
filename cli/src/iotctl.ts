@@ -18,6 +18,7 @@ import {
   publishSubscriptionsAdd,
   publishSubscriptionsList,
 } from './commands/publish';
+import { schemaDriftGet, schemaDriftSet, schemaDriftResetAdvanced } from './commands/schema-drift';
 
 function buildCommands(args: string[]): CommandMap {
   const commands: CommandMap = {
@@ -128,6 +129,12 @@ function buildCommands(args: string[]): CommandMap {
       restore: dbRestore,
       prune: dbPrune,
       _default: dbList,
+    },
+    'schema-drift': {
+      get: schemaDriftGet,
+      set: (...args: string[]) => schemaDriftSet(...args),
+      'reset-advanced': schemaDriftResetAdvanced,
+      _default: schemaDriftGet,
     },
     buffer: {
       status: bufferStatus,
