@@ -823,10 +823,39 @@ async function deleteTemplate(uuid: string) {
   }
 }
 
-const DETECTION_METHODS: DetectionMethod[] = [
-  'zscore', 'mad', 'iqr', 'expected_range', 'rate_change', 'ewma', 'cusum', 'fusion',
-]
 const SEASONALITY_OPTIONS = ['none', 'day-night', 'hourly', 'weekly']
+
+// UI-only grouping: preserve the existing method IDs and API payload.
+const DETECTION_METHOD_GROUPS: { title: string; description: string; methods: DetectionMethod[] }[] = [
+  { title: 'Outlier detection', description: 'Identify unusual individual measurements.', methods: ['zscore', 'mad', 'iqr', 'expected_range'] },
+  { title: 'Change detection', description: 'Identify rapid changes or sustained shifts in behavior.', methods: ['rate_change', 'ewma', 'cusum'] },
+  { title: 'Combined detection', description: 'Combine evidence from multiple detectors.', methods: ['fusion'] },
+  { title: 'Simulation', description: 'Handle explicitly tagged simulated anomalies.', methods: ['simulation'] },
+]
+
+const DETECTION_METHOD_HELP: Record<DetectionMethod, string> = {
+  zscore: 'Flags readings far from the mean, measured in standard deviations.',
+  mad: 'Flags readings far from the median using a robust deviation measure.',
+  iqr: 'Flags readings outside the typical interquartile distribution.',
+  expected_range: 'Flags readings outside the configured minimum and maximum bounds.',
+  rate_change: 'Flags unusually rapid changes between measurements.',
+  ewma: 'Tracks an exponentially weighted moving average to identify deviations.',
+  cusum: 'Accumulates small deviations to detect sustained changes in the mean.',
+  fusion: 'Combines signals from multiple detection methods.',
+  simulation: 'Handles ground-truth anomaly signals from the simulation subsystem.',
+}
+
+const selectedMethodCount = computed(() => metricForm.value.methods.length)
+const thresholdLabel = computed(() => {
+  const methods = metricForm.value.methods
+  if (methods.length === 1) {
+    if (methods[0] === 'zscore') return 'Threshold (standard deviations)'
+    if (methods[0] === 'mad') return 'Threshold (MAD multiplier)'
+    if (methods[0] === 'cusum') return 'Threshold (CUSUM decision level)'
+  }
+  return 'Detection threshold (shared)'
+})
+
 
 // ── Available metric suggestions ───────────────────────────────────────────
 type MetricSuggestion = {
@@ -1046,6 +1075,10 @@ async function saveMetric() {
   // open, see openEditMetric()).
   if (editingMetricIdx.value === null && !sourceFilter.value) {
     message.error('Source is required')
+    return
+  }
+  if (metricForm.value.methods.length === 0) {
+    message.error('Select at least one detection method')
     return
   }
   if (!metricForm.value.name.trim()) {
@@ -1752,14 +1785,35 @@ onUnmounted(() => {
         </a-form-item>
 
         <a-form-item label="Detection methods">
-          <a-checkbox-group v-model:value="metricForm.methods" style="display: flex; flex-wrap: wrap; gap: 8px">
-            <a-checkbox v-for="m in DETECTION_METHODS" :key="m" :value="m">{{ m }}</a-checkbox>
-          </a-checkbox-group>
+          <div class="detection-method-groups">
+            <div v-for="group in DETECTION_METHOD_GROUPS" :key="group.title" class="detection-method-group">
+              <div class="detection-method-group-title">{{ group.title }}</div>
+              <div class="detection-method-group-description">{{ group.description }}</div>
+              <a-checkbox-group v-model:value="metricForm.methods" class="detection-method-checkboxes">
+                <a-checkbox v-for="m in group.methods" :key="m" :value="m">{{ m }}</a-checkbox>
+              </a-checkbox-group>
+            </div>
+          </div>
+          <div v-if="selectedMethodCount === 0" class="detection-method-warning">
+            Select at least one detection method.
+          </div>
+          <div v-for="method in metricForm.methods" :key="method" class="detection-method-explanation">
+            <strong>{{ method }}</strong> — {{ DETECTION_METHOD_HELP[method] }}
+          </div>
         </a-form-item>
+
+        <a-alert
+          v-if="selectedMethodCount > 1"
+          type="info"
+          show-icon
+          class="detection-method-notice"
+          message="Shared detector settings"
+          description="This rule currently stores one threshold and one window size for all selected methods. Method-specific thresholds require a backend configuration change."
+        />
 
         <a-row :gutter="12">
           <a-col :span="12">
-            <a-form-item label="Threshold (σ / MAD multiplier)">
+            <a-form-item :label="thresholdLabel">
               <a-input-number
                 v-model:value="metricForm.threshold"
                 :min="0.1"
@@ -1779,6 +1833,10 @@ onUnmounted(() => {
             </a-form-item>
           </a-col>
         </a-row>
+
+        <div class="detection-method-setting-help">
+          The threshold and sample window are shared by the selected methods. Existing saved rules and templates retain their current values.
+        </div>
 
         <a-row :gutter="12">
           <a-col :span="12">
@@ -1937,5 +1995,15 @@ onUnmounted(() => {
 .severity-critical {
   animation: severity-pulse 0.75s ease-in-out infinite;
 }
+
+.detection-method-groups { display: grid; gap: 12px; }
+.detection-method-group { padding: 10px 12px; border: 1px solid #e8e8e8; border-radius: 6px; }
+.detection-method-group-title { font-size: 13px; font-weight: 600; }
+.detection-method-group-description { font-size: 12px; color: #888; margin: 2px 0 8px; }
+.detection-method-checkboxes { display: flex; flex-wrap: wrap; gap: 8px 12px; }
+.detection-method-explanation { margin-top: 6px; color: #777; font-size: 12px; line-height: 1.5; }
+.detection-method-warning { margin-top: 8px; color: #cf1322; font-size: 12px; }
+.detection-method-notice { margin-bottom: 16px; }
+.detection-method-setting-help { font-size: 12px; color: #888; margin: -8px 0 16px; }
 
 </style>
