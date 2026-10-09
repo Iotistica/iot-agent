@@ -22,7 +22,11 @@ const { hasRole } = useAuth()
 const rows = ref<Endpoint[]>([])
 const loading = ref(false)
 const error = ref<string | null>(null)
-const activeProtocol = ref('all')
+const activeProtocol = ref<string | undefined>(undefined)
+const search = ref('')
+const statusFilter = ref<string | undefined>(undefined)
+const enabledFilter = ref<string | undefined>(undefined)
+const pageSize = ref(20)
 const drawerOpen = ref(false)
 const discoveryOpen = ref(false)
 const editing = ref<Endpoint | null>(null)
@@ -43,12 +47,28 @@ const rowSelection = computed(() => ({
 
 let refreshTimer: ReturnType<typeof setInterval> | null = null
 
-const filteredRows = computed(() =>
-  activeProtocol.value === 'all'
-    ? rows.value
-    : rows.value.filter((r) => r.protocol === activeProtocol.value),
-)
-
+const filteredRows = computed(() => rows.value.filter(r => {
+  const q = search.value.trim().toLowerCase()
+  const name = (r.metadata?.objectName as string | undefined) || r.name
+  const status = !r.enabled ? 'disabled' : (r.health?.communicationQuality ?? 'unknown')
+  return (!q || [name, r.name, r.protocol, connSummary(r)].some(v => String(v || '').toLowerCase().includes(q)))
+    && (!activeProtocol.value || r.protocol === activeProtocol.value)
+    && (!statusFilter.value || status === statusFilter.value)
+    && (!enabledFilter.value || (enabledFilter.value === 'enabled' ? r.enabled : !r.enabled))
+}))
+const protocolOptions = computed(() => Object.keys(protocolCounts.value).sort()
+  .map(v => ({ value: v, label: protocolLabel(v) + ' (' + protocolCounts.value[v] + ')' })))
+const statusOptions = [
+  {value:'good',label:'Connected'}, {value:'degraded',label:'Degraded'},
+  {value:'poor',label:'Poor'}, {value:'offline',label:'Offline'},
+  {value:'unknown',label:'No data'}, {value:'disabled',label:'Disabled'}
+]
+function clearFilters() {
+  search.value = ''
+  activeProtocol.value = undefined
+  statusFilter.value = undefined
+  enabledFilter.value = undefined
+}
 const protocolCounts = computed(() => {
   const counts: Record<string, number> = {}
   for (const r of rows.value) {
@@ -340,56 +360,20 @@ onUnmounted(() => {
 
 <template>
   <AppLayout title="Sources">
-    <div class="toolbar">
-      <a-radio-group
-        v-model:value="activeProtocol"
-        button-style="solid"
-        size="small"
-      >
-        <a-radio-button value="all">All ({{ rows.length }})</a-radio-button>
-        <a-radio-button value="modbus">Modbus ({{ protocolCounts.modbus ?? 0 }})</a-radio-button>
-        <a-radio-button value="opcua">OPC-UA ({{ protocolCounts.opcua ?? 0 }})</a-radio-button>
-        <a-radio-button value="mqtt">MQTT ({{ protocolCounts.mqtt ?? 0 }})</a-radio-button>
-        <a-radio-button value="bacnet">BACnet ({{ protocolCounts.bacnet ?? 0 }})</a-radio-button>
-      </a-radio-group>
-
-      <a-space>
-        <template v-if="selectedUuids.length > 0">
-          <span style="font-size: 13px; color: #666">{{ selectedUuids.length }} selected</span>
-          <a-button :loading="bulkEnabling" @click="bulkEnable">
-            <template #icon><CheckCircleOutlined /></template>
-            Enable
-          </a-button>
-          <a-button :loading="bulkDisabling" @click="bulkDisable">
-            <template #icon><StopOutlined /></template>
-            Disable
-          </a-button>
-          <a-button v-if="hasRole('operator')" danger :loading="deleting" @click="confirmDeleteSelected">
-            <template #icon><DeleteOutlined /></template>
-            Delete
-          </a-button>
-        </template>
-        <a-button @click="discoveryOpen = true">
-          <template #icon><RadarChartOutlined /></template>
-          Discover
-        </a-button>
-        <a-button type="primary" @click="openCreate">
-          <template #icon><PlusOutlined /></template>
-          Add Source
-        </a-button>
-        <a-button
-          v-if="rows.length > 0 && hasRole('admin')"
-          danger
-          :loading="deletingAll"
-          :disabled="selectedUuids.length > 0"
-          @click="confirmDeleteAll"
-        >
-          <template #icon><DeleteOutlined /></template>
-          Delete All
-        </a-button>
-      </a-space>
-    </div>
-
+    <div class="sources-page">
+      <div class="page-actions">
+        <div class="selection-actions" v-if="selectedUuids.length > 0">
+          <span class="selection-count">{{ selectedUuids.length }} selected</span>
+          <a-button :loading="bulkEnabling" @click="bulkEnable"><template #icon><CheckCircleOutlined /></template>Enable</a-button>
+          <a-button :loading="bulkDisabling" @click="bulkDisable"><template #icon><StopOutlined /></template>Disable</a-button>
+          <a-button v-if="hasRole('operator')" danger :loading="deleting" @click="confirmDeleteSelected"><template #icon><DeleteOutlined /></template>Delete</a-button>
+        </div>
+        <div class="primary-actions">
+          <a-button @click="discoveryOpen = true"><template #icon><RadarChartOutlined /></template>Discover</a-button>
+          <a-button type="primary" @click="openCreate"><template #icon><PlusOutlined /></template>Add Source</a-button>
+          <a-button v-if="rows.length > 0 && hasRole('admin')" danger :loading="deletingAll" :disabled="selectedUuids.length > 0" @click="confirmDeleteAll"><template #icon><DeleteOutlined /></template>Delete All</a-button>
+        </div>
+      </div>
     <a-alert
       v-if="error"
       type="error"
@@ -398,19 +382,30 @@ onUnmounted(() => {
       style="margin-bottom: 16px"
     />
 
+    <a-card class="sources-card" size="small">
+      <div class="card-heading"><div><h3>Source browser</h3><span>Manage connected sources and communication health</span></div><span class="result-count">{{ filteredRows.length }} sources</span></div>
+      <div class="filters">
+        <a-input v-model:value="search" placeholder="Search source, protocol, connection…" allow-clear class="search" />
+        <a-select v-model:value="activeProtocol" :options="protocolOptions" placeholder="All protocols" allow-clear class="filter" />
+        <a-select v-model:value="statusFilter" :options="statusOptions" placeholder="All states" allow-clear class="filter" />
+        <a-select v-model:value="enabledFilter" :options="[{value:'enabled',label:'Enabled'},{value:'disabled',label:'Disabled'}]" placeholder="All availability" allow-clear class="filter" />
+        <a-button @click="clearFilters">Clear</a-button>
+      </div>
+      <div class="results">Showing {{ filteredRows.length }} of {{ rows.length }} sources · Refreshes every 10 seconds</div>
     <a-table
       :columns="columns"
       :data-source="filteredRows"
       :loading="loading"
       :pagination="{
-        pageSize: 20,
+        pageSize: pageSize,
         showSizeChanger: true,
         pageSizeOptions: ['20', '50', '100', '200'],
         showTotal: (total: number) => `${total} source${total !== 1 ? 's' : ''}`,
       }"
       :row-selection="rowSelection"
       row-key="uuid"
-      size="middle"
+      size="small"
+      :scroll="{ x: 1050 }"
     >
       <template #bodyCell="{ column, record }">
         <template v-if="column.key === 'name'">
@@ -432,8 +427,9 @@ onUnmounted(() => {
               <span
                 class="status-dot"
                 :style="{ background: qualityMeta(record).dotColor }"
-                :class="{ 'status-dot--pulse': record.health?.communicationQuality === 'good' }"
-              />
+                :class="{ 'status-dot--pulse': record.health?.communicationQuality === 'good' }">
+              </span>
+              
               <span class="status-label" :style="{ color: qualityMeta(record).color }">
                 {{ qualityMeta(record).label }}
               </span>
@@ -478,7 +474,9 @@ onUnmounted(() => {
         </template>
       </template>
     </a-table>
+    </a-card>
 
+    </div>
     <SourceDrawer
       v-model:open="drawerOpen"
       :editing="editing"
@@ -501,15 +499,23 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
-.toolbar {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 16px;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
+.sources-page { padding: 0 2px 20px; }
+.page-actions { display: flex; justify-content: flex-end; align-items: center; flex-wrap: wrap; gap: 12px; margin-bottom: 14px; }
+.primary-actions, .selection-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.selection-actions { margin-right: auto; }
+.selection-count { font-size: 12px; color: #64748b; }
+.sources-card { border-radius: 9px; }
+.card-heading { display: flex; justify-content: space-between; align-items: center; margin-bottom: 18px; gap: 12px; }
+.card-heading h3 { margin: 0 0 3px; font-size: 15px; font-weight: 650; }
+.card-heading span { font-size: 11px; color: #8b94a3; }
+.result-count { background: #f1f5fb; padding: 5px 12px; border-radius: 20px; white-space: nowrap; }
+.filters { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
+.search { width: 300px; max-width: 100%; }
+.filter { width: 170px; max-width: 100%; }
+.results { color: #888; font-size: 12px; margin-bottom: 10px; }
+.sources-card :deep(.ant-table-thead > tr > th) { background: #f7f9fc; font-size: 12px; font-weight: 650; }
+.sources-card :deep(.ant-table-tbody > tr:hover > td) { background: #f5f9ff; }
+@media (max-width: 900px) { .page-actions { justify-content: flex-start; } .selection-actions { width: 100%; } }
 .status-cell {
   display: flex;
   align-items: center;

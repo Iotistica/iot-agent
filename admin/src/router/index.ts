@@ -24,7 +24,7 @@ const router = createRouter({
     },
     {
       path: '/data-flow',
-      component: () => import('@/views/LiveView.vue'),
+      component: () => import('@/views/DataExplorer.vue'),
       meta: { title: 'Data Flow' },
     },
     {

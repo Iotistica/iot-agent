@@ -548,12 +548,13 @@ async function saveAllAlertConfig() {
     </a-alert>
 
     <a-spin :spinning="loading">
-      <a-tabs v-model:active-key="activeTab">
+      <div class="settings-shell">
+      <a-tabs v-model:active-key="activeTab" class="settings-tabs">
 
         <!-- ══ AGENT ══════════════════════════════════════════════════════════ -->
         <a-tab-pane key="agent" tab="Agent">
-          <a-card size="small">
-            <a-descriptions :column="2" size="small" bordered>
+          <a-card size="small" class="settings-card">
+            <a-descriptions :column="{ xs: 1, sm: 1, md: 2 }" size="small" bordered class="agent-descriptions">
               <a-descriptions-item label="UUID" :span="2">
                 <a-typography-text copyable :content="settings.agent?.uuid ?? '—'">
                   {{ settings.agent?.uuid ?? '—' }}
@@ -630,7 +631,8 @@ async function saveAllAlertConfig() {
               <p style="margin: 0 0 12px; font-size: 13px; font-weight: 600; color: rgba(0,0,0,.65)">
                 Connect to Iotistica
               </p>
-              <a-row :gutter="[12, 12]">
+              <a-form layout="vertical" class="provision-form">
+              <a-row :gutter="[16, 18]">
                 <a-col :span="24">
                   <a-form-item label="Provisioning key" style="margin-bottom: 0" required>
                     <a-input-password
@@ -640,7 +642,7 @@ async function saveAllAlertConfig() {
                     />
                   </a-form-item>
                 </a-col>
-                <a-col :span="12">
+                <a-col :xs="24" :sm="12">
                   <a-form-item label="API endpoint" style="margin-bottom: 0">
                     <a-input
                       v-model:value="provisionForm.apiEndpoint"
@@ -649,7 +651,7 @@ async function saveAllAlertConfig() {
                     />
                   </a-form-item>
                 </a-col>
-                <a-col :span="12">
+                <a-col :xs="24" :sm="12">
                   <a-form-item label="Device name" style="margin-bottom: 0">
                     <a-input
                       v-model:value="provisionForm.deviceName"
@@ -670,13 +672,14 @@ async function saveAllAlertConfig() {
                   </a-button>
                 </a-col>
               </a-row>
+              </a-form>
             </template>
           </a-card>
         </a-tab-pane>
 
         <!-- ══ FEATURES ═══════════════════════════════════════════════════════ -->
         <a-tab-pane key="features" tab="Features">
-          <a-card size="small">
+          <a-card size="small" class="settings-card">
             <a-space direction="vertical" style="width: 100%">
               <div class="toggle-row">
                 <div>
@@ -756,9 +759,9 @@ async function saveAllAlertConfig() {
 
         <!-- ══ LOGGING ════════════════════════════════════════════════════════ -->
         <a-tab-pane key="logging" tab="Logging">
-          <a-card size="small">
+          <a-card size="small" class="settings-card">
             <a-row :gutter="[16, 16]">
-              <a-col :span="6">
+              <a-col :xs="24" :sm="12" :lg="6">
                 <a-form-item label="Log level" style="margin-bottom: 0">
                   <a-select
                     :value="settings.logging?.level ?? 'info'"
@@ -772,7 +775,7 @@ async function saveAllAlertConfig() {
                   </a-select>
                 </a-form-item>
               </a-col>
-              <a-col :span="6">
+              <a-col :xs="24" :sm="12" :lg="6">
                 <a-form-item label="Max entries" style="margin-bottom: 0">
                   <a-input-number
                     :value="settings.logging?.maxLogs ?? 10000"
@@ -783,7 +786,7 @@ async function saveAllAlertConfig() {
                   />
                 </a-form-item>
               </a-col>
-              <a-col :span="6">
+              <a-col :xs="24" :sm="12" :lg="6">
                 <a-form-item style="margin-bottom: 0">
                   <template #label>
                     Max age (ms)
@@ -799,7 +802,7 @@ async function saveAllAlertConfig() {
                   />
                 </a-form-item>
               </a-col>
-              <a-col :span="6">
+              <a-col :xs="24" :sm="12" :lg="6">
                 <a-form-item label="Max file (bytes)" style="margin-bottom: 0">
                   <a-input-number
                     :value="settings.logging?.maxLogFileSize ?? 52428800"
@@ -857,10 +860,10 @@ async function saveAllAlertConfig() {
 
         <!-- ══ INTERVALS ══════════════════════════════════════════════════════ -->
         <a-tab-pane key="intervals" tab="Intervals">
-          <a-card size="small" style="margin-bottom: 12px">
+          <a-card size="small" class="settings-card settings-card--spaced">
             <template #title>Agent communication</template>
             <a-row :gutter="[16, 16]">
-              <a-col :span="6">
+              <a-col :xs="24" :sm="12" :lg="6">
                 <a-form-item style="margin-bottom: 0">
                   <template #label>
                     Report (ms)
@@ -876,7 +879,7 @@ async function saveAllAlertConfig() {
                   />
                 </a-form-item>
               </a-col>
-              <a-col :span="6">
+              <a-col :xs="24" :sm="12" :lg="6">
                 <a-form-item style="margin-bottom: 0">
                   <template #label>
                     Metrics (ms)
@@ -892,7 +895,7 @@ async function saveAllAlertConfig() {
                   />
                 </a-form-item>
               </a-col>
-              <a-col :span="6">
+              <a-col :xs="24" :sm="12" :lg="6">
                 <a-form-item style="margin-bottom: 0">
                   <template #label>
                     Reconciliation (ms)
@@ -908,7 +911,7 @@ async function saveAllAlertConfig() {
                   />
                 </a-form-item>
               </a-col>
-              <a-col :span="6">
+              <a-col :xs="24" :sm="12" :lg="6">
                 <a-form-item style="margin-bottom: 0">
                   <template #label>
                     Target state poll (ms)
@@ -927,10 +930,10 @@ async function saveAllAlertConfig() {
             </a-row>
           </a-card>
 
-          <a-card size="small">
+          <a-card size="small" class="settings-card">
             <template #title>Runtime &amp; Memory</template>
             <a-row :gutter="[16, 16]">
-              <a-col :span="6">
+              <a-col :xs="24" :sm="12" :lg="6">
                 <a-form-item label="Memory threshold (MB)" style="margin-bottom: 0">
                   <a-input-number
                     :value="settings.runtime?.memory?.thresholdMb ?? 30"
@@ -940,7 +943,7 @@ async function saveAllAlertConfig() {
                   />
                 </a-form-item>
               </a-col>
-              <a-col :span="6">
+              <a-col :xs="24" :sm="12" :lg="6">
                 <a-form-item style="margin-bottom: 0">
                   <template #label>
                     Check interval (ms)
@@ -971,7 +974,7 @@ async function saveAllAlertConfig() {
         <!-- ══ DOCKER ══════════════════════════════════════════════════════════ -->
         <a-tab-pane key="docker" tab="Docker">
           <a-spin :spinning="dockerLoading">
-            <a-card size="small" title="Daemon Connection">
+            <a-card size="small" class="settings-card" title="Daemon Connection">
               <a-form layout="vertical">
 
                 <a-form-item label="Connection type">
@@ -1094,15 +1097,15 @@ async function saveAllAlertConfig() {
 
         <!-- ══ MQTT MONITOR ═══════════════════════════════════════════════════ -->
         <a-tab-pane key="mqtt-monitor" tab="MQTT">
-          <p style="margin: 0 0 16px; font-size: 13px; color: #888">
+          <p class="settings-intro">
             Connection settings for the local MQTT broker the agent monitors.
             Changes take effect immediately — the monitor reconnects without a restart.
           </p>
 
-          <a-card size="small" title="Local Broker Connection">
+          <a-card size="small" class="settings-card" title="Local Broker Connection">
             <a-form layout="vertical">
               <a-row :gutter="[16, 0]">
-                <a-col :span="14">
+                <a-col :xs="24" :lg="16">
                   <a-form-item label="Broker URL" required>
                     <a-input
                       v-model:value="mqttForm.url"
@@ -1118,7 +1121,7 @@ async function saveAllAlertConfig() {
               </a-row>
 
               <a-row :gutter="[16, 0]">
-                <a-col :span="7">
+                <a-col :xs="24" :sm="12" :lg="8">
                   <a-form-item label="Username">
                     <a-input
                       v-model:value="mqttForm.username"
@@ -1127,7 +1130,7 @@ async function saveAllAlertConfig() {
                     />
                   </a-form-item>
                 </a-col>
-                <a-col :span="7">
+                <a-col :xs="24" :sm="12" :lg="8">
                   <a-form-item label="Password">
                     <a-input-password
                       v-model:value="mqttForm.password"
@@ -1172,7 +1175,7 @@ async function saveAllAlertConfig() {
         </a-tab-pane>
 
         <a-tab-pane key="units" tab="Units">
-          <p style="margin: 0 0 16px; font-size: 13px; color: #888">
+          <p class="settings-intro">
             Admin-created unit mappings — created via the "Resolve" action on the
             Dashboard's Normalization Health section when an incoming reading uses
             a unit the built-in catalog doesn't recognize. You can re-map an
@@ -1180,6 +1183,7 @@ async function saveAllAlertConfig() {
             resolve it from the Dashboard.
           </p>
 
+          <a-card class="settings-card" size="small" title="Custom unit mappings">
           <a-table
             :columns="customAliasColumns"
             :data-source="customAliases"
@@ -1205,6 +1209,7 @@ async function saveAllAlertConfig() {
               </div>
             </template>
           </a-table>
+          </a-card>
         </a-tab-pane>
 
         <!-- ══ ALERTS ════════════════════════════════════════════════════════ -->
@@ -1511,6 +1516,7 @@ async function saveAllAlertConfig() {
         </a-tab-pane>
 
       </a-tabs>
+      </div>
     </a-spin>
 
     <a-modal
@@ -1660,6 +1666,69 @@ async function saveAllAlertConfig() {
   font-size: 12px;
   color: #d4880c;
   margin-top: 6px;
+}
+
+
+/* Agent provisioning: explicit vertical labels to avoid Ant Form horizontal defaults */
+.provision-form { width: 100%; }
+.provision-form :deep(.ant-form-item) { display: block; width: 100%; }
+.provision-form :deep(.ant-form-item-row) { display: flex; flex-direction: column; align-items: stretch; }
+.provision-form :deep(.ant-form-item-label) { flex: none; width: 100%; max-width: 100%; text-align: left; padding: 0 0 6px; }
+.provision-form :deep(.ant-form-item-control) { flex: none; width: 100%; max-width: 100%; }
+.provision-form :deep(.ant-input),
+.provision-form :deep(.ant-input-affix-wrapper) { width: 100%; }
+/* Unified settings layout — consistent with Sources / Data Explorer */
+.settings-shell { width: 100%; max-width: none; margin: 0; padding: 0 0 28px; min-width: 0; }
+.settings-tabs { width: 100%; min-width: 0; }
+.settings-tabs :deep(.ant-tabs-nav) { margin: 0 0 18px; }
+.settings-tabs :deep(.ant-tabs-nav-wrap) { min-width: 0; }
+.settings-tabs :deep(.ant-tabs-tab) { padding: 11px 4px; font-size: 13px; }
+.settings-tabs :deep(.ant-tabs-content-holder),
+.settings-tabs :deep(.ant-tabs-tabpane) { min-width: 0; }
+.settings-card { border: 1px solid #e7ebf0; border-radius: 10px; overflow: hidden; margin-bottom: 14px; }
+.settings-card--spaced { margin-bottom: 14px; }
+.settings-card :deep(.ant-card-head) { min-height: 49px; border-bottom: 1px solid #edf0f4; padding: 0 22px; }
+.settings-card :deep(.ant-card-head-title) { font-size: 14px; font-weight: 650; }
+.settings-card :deep(.ant-card-body) { padding: 22px; }
+.settings-intro { margin: 0 0 16px; color: #7c8795; font-size: 13px; line-height: 1.65; max-width: 850px; }
+.settings-shell :deep(.ant-form-item) { margin-bottom: 0; min-width: 0; }
+.settings-shell :deep(.ant-form-item-label) { padding-bottom: 6px; }
+.settings-shell :deep(.ant-form-item-label > label) { font-size: 12px; font-weight: 600; color: #566274; height: auto; min-height: 20px; }
+.settings-shell :deep(.ant-input),
+.settings-shell :deep(.ant-input-number),
+.settings-shell :deep(.ant-select-selector),
+.settings-shell :deep(.ant-input-affix-wrapper) { border-radius: 6px; }
+.settings-shell :deep(.ant-input-number),
+.settings-shell :deep(.ant-select),
+.settings-shell :deep(.ant-input-affix-wrapper) { max-width: 100%; }
+.settings-shell :deep(.ant-row) { row-gap: 18px; }
+.settings-shell :deep(.ant-col) { min-width: 0; }
+.toggle-row { min-height: 58px; padding: 10px 0; }
+.toggle-row > div:first-child { flex: 1; min-width: 0; padding-right: 12px; }
+.toggle-row :deep(.ant-switch) { flex-shrink: 0; }
+.toggle-label { font-size: 13px; font-weight: 650; color: #263448; }
+.toggle-desc { font-size: 12px; line-height: 1.55; color: #7c8795; max-width: 780px; margin-top: 3px; }
+.save-bar, .settings-page__actions { position: relative; display: flex; justify-content: flex-end; align-items: center; gap: 10px; flex-wrap: wrap; padding: 16px 0 4px; margin-top: 0; border-top: 0; }
+.settings-page { max-width: none; width: 100%; margin: 0; display: flex; flex-direction: column; gap: 14px; }
+.settings-page :deep(.ant-row) { row-gap: 20px; }
+.settings-page :deep(.ant-input-number),
+.settings-page :deep(.ant-select),
+.settings-page :deep(.ant-input) { width: 100%; }
+.settings-page :deep(.ant-card), .settings-page :deep(.settings-section) { max-width: 100%; }
+.settings-page__notice { margin-top: 14px; }
+.agent-descriptions :deep(.ant-descriptions-item-label) { width: 165px; min-width: 125px; background: #f7f9fc; font-weight: 600; font-size: 12px; }
+.agent-descriptions :deep(.ant-descriptions-item-content) { overflow-wrap: anywhere; font-size: 12px; }
+.settings-shell :deep(.ant-table-thead > tr > th) { background: #f7f9fc; font-weight: 650; font-size: 12px; }
+.settings-shell :deep(.ant-table-tbody > tr:hover > td) { background: #f5f9ff; }
+.sensitivity-control { max-width: 100%; }
+.drift-alert-on__group { row-gap: 12px; }
+@media (max-width: 767px) {
+  .settings-shell { padding-bottom: 18px; }
+  .settings-card :deep(.ant-card-body) { padding: 16px; }
+  .settings-card :deep(.ant-card-head) { padding: 0 16px; }
+  .agent-descriptions :deep(.ant-descriptions-item-label) { min-width: 105px; width: 115px; }
+  .settings-page__actions, .save-bar { justify-content: flex-start; }
+  .settings-tabs :deep(.ant-tabs-nav) { margin-bottom: 14px; }
 }
 
 </style>
