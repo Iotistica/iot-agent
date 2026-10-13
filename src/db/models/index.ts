@@ -77,3 +77,7 @@ export type { CustomUnitAliasRecord } from './custom-unit-aliases.model';
 // Point Name Normalization identity cache (operational, runtime-written — not reference data)
 export { PointNameMappingsModel } from './point-name.model';
 export type { PointNameMappingRecord } from './point-name.model';
+
+// Data Explorer saved views (per-user named point collections)
+export { DataExplorerViewModel } from './data-explorer-view.model';
+export type { DataExplorerViewRecord } from './data-explorer-view.model';

@@ -332,7 +332,6 @@ export type DetectionMethod =
   | 'ewma'
   | 'cusum'
   | 'fusion'
-  | 'simulation'
 export type SeasonalityPattern = 'none' | 'day-night' | 'hourly' | 'weekly'
 
 export interface AnomalyAlert {

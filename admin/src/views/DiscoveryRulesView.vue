@@ -83,15 +83,15 @@ const recentRunsColumns: TableColumnType<DiscoveryRun>[] = [
 ]
 
 const columns: TableColumnType<DiscoveryRule>[] = [
-  { title: 'Name', dataIndex: 'name', key: 'name', ellipsis: true, minWidth: 140 },
-  { title: 'Protocol', key: 'protocol', width: 95 },
+  { title: 'Name', dataIndex: 'name', key: 'name', ellipsis: true, minWidth: 140, sorter: (a: DiscoveryRule, b: DiscoveryRule) => a.name.localeCompare(b.name) },
+  { title: 'Protocol', key: 'protocol', width: 95, sorter: (a: DiscoveryRule, b: DiscoveryRule) => a.protocol.localeCompare(b.protocol) },
   { title: 'Interval', key: 'interval_seconds', width: 85 },
   { title: 'Auto-enable', key: 'auto_enable', width: 100 },
   { title: 'Status', key: 'status', width: 95 },
   { title: 'Last run', key: 'last_run_at', width: 140, ellipsis: true },
   { title: 'Next run', key: 'next_run_at', width: 140, ellipsis: true },
   { title: 'Last result', key: 'last_result_json', width: 130, ellipsis: true },
-  { title: 'Enabled', key: 'enabled', width: 90 },
+  { title: 'Enabled', key: 'enabled', width: 90, sorter: (a: DiscoveryRule, b: DiscoveryRule) => Number(a.enabled) - Number(b.enabled) },
   { title: 'Actions', key: 'actions', width: 160, fixed: 'right' },
 ]
 
@@ -233,55 +233,37 @@ onUnmounted(() => { if (refreshTimer) clearInterval(refreshTimer) })
 
 <template>
   <AppLayout title="Discovery">
+    <div class="heading">
+      <p>Scheduled protocol scans — runs automatically, or trigger manually.</p>
+      <div class="header-actions">
+        <template v-if="selectedUuids.length > 0">
+          <span style="font-size: 13px; color: #666">{{ selectedUuids.length }} selected</span>
+          <a-button :loading="bulkEnabling" @click="bulkEnable"><template #icon><CheckCircleOutlined /></template>Enable</a-button>
+          <a-button :loading="bulkDisabling" @click="bulkDisable"><template #icon><StopOutlined /></template>Disable</a-button>
+          <a-button danger :loading="deleting" @click="confirmDeleteSelected"><template #icon><DeleteOutlined /></template>Delete</a-button>
+        </template>
+        <a-button type="primary" @click="openCreate"><template #icon><PlusOutlined /></template>New Rule</a-button>
+      </div>
+    </div>
+
+    <a-alert v-if="error" type="error" :message="error" show-icon style="margin-bottom: 16px" />
+
     <a-tabs :active-key="activeTab" @change="onTabChange">
 
       <!-- ── Rules tab ───────────────────────────────────────────────────── -->
       <a-tab-pane key="rules" tab="Rules">
-        <div class="toolbar">
-          <a-space>
-            <template v-if="selectedUuids.length > 0">
-              <span style="font-size: 13px; color: #666">{{ selectedUuids.length }} selected</span>
-              <a-button :loading="bulkEnabling" @click="bulkEnable">
-                <template #icon><CheckCircleOutlined /></template>
-                Enable
-              </a-button>
-              <a-button :loading="bulkDisabling" @click="bulkDisable">
-                <template #icon><StopOutlined /></template>
-                Disable
-              </a-button>
-              <a-button danger :loading="deleting" @click="confirmDeleteSelected">
-                <template #icon><DeleteOutlined /></template>
-                Delete
-              </a-button>
-            </template>
-            <span v-else style="color: #888; font-size: 13px">
-              Scheduled protocol scans — runs automatically, or trigger manually.
-            </span>
-          </a-space>
-          <a-button type="primary" @click="openCreate">
-            <template #icon><PlusOutlined /></template>
-            New Rule
-          </a-button>
-        </div>
-
-        <a-alert
-          v-if="error"
-          type="error"
-          :message="error"
-          show-icon
-          style="margin-bottom: 16px"
-        />
-
-        <a-table
-          :columns="columns"
-          :data-source="rows"
-          :loading="loading"
-          :pagination="false"
-          :scroll="{ x: 'max-content' }"
-          :row-selection="rowSelection"
-          row-key="uuid"
-          size="middle"
-        >
+        <a-card size="small" class="list-card">
+          <div class="toolbar-info">{{ rows.length }} rule{{ rows.length !== 1 ? 's' : '' }}</div>
+          <a-table
+            :columns="columns"
+            :data-source="rows"
+            :loading="loading"
+            :pagination="{ pageSize: 20, showSizeChanger: true, pageSizeOptions: ['10', '20', '50'] }"
+            :scroll="{ x: 'max-content' }"
+            :row-selection="rowSelection"
+            row-key="uuid"
+            size="small"
+          >
           <template #bodyCell="{ column, record }">
             <template v-if="column.key === 'protocol'">
               <a-tag :color="protocolColor(record.protocol)">{{ protocolLabel(record.protocol) }}</a-tag>
@@ -337,24 +319,24 @@ onUnmounted(() => { if (refreshTimer) clearInterval(refreshTimer) })
             </template>
           </template>
         </a-table>
+        </a-card>
       </a-tab-pane>
 
       <!-- ── Recent runs tab ────────────────────────────────────────────── -->
       <a-tab-pane key="runs" tab="Recent Runs">
-        <div style="display: flex; justify-content: flex-end; margin-bottom: 12px">
-          <a-button size="small" :loading="recentRunsLoading" @click="loadRecentRuns">
-            Refresh
-          </a-button>
-        </div>
-
-        <a-table
-          :columns="recentRunsColumns"
-          :data-source="recentRuns"
-          :loading="recentRunsLoading"
-          :pagination="{ pageSize: 20, showSizeChanger: false }"
-          row-key="id"
-          size="small"
-        >
+        <a-card size="small" class="list-card">
+          <div class="toolbar-info" style="display: flex; justify-content: space-between; align-items: center">
+            <span>{{ recentRuns.length }} recent runs</span>
+            <a-button size="small" :loading="recentRunsLoading" @click="loadRecentRuns">Refresh</a-button>
+          </div>
+          <a-table
+            :columns="recentRunsColumns"
+            :data-source="recentRuns"
+            :loading="recentRunsLoading"
+            :pagination="{ pageSize: 20, showSizeChanger: true, pageSizeOptions: ['10', '20', '50'] }"
+            row-key="id"
+            size="small"
+          >
           <template #bodyCell="{ column, record }">
             <template v-if="column.key === 'rule'">
               <span style="font-size: 12px">{{ record.rule_name }}</span>
@@ -391,6 +373,7 @@ onUnmounted(() => { if (refreshTimer) clearInterval(refreshTimer) })
             </div>
           </template>
         </a-table>
+        </a-card>
       </a-tab-pane>
 
     </a-tabs>
@@ -415,11 +398,11 @@ onUnmounted(() => { if (refreshTimer) clearInterval(refreshTimer) })
 </template>
 
 <style scoped>
-.toolbar {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 16px;
-  gap: 8px;
-}
+.heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 16px; }
+.heading p { color: #777; margin: 0; }
+.header-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.list-card { border-radius: 9px; }
+.list-card :deep(.ant-table-thead > tr > th) { background: #f7f9fc; font-size: 12px; font-weight: 650; }
+.list-card :deep(.ant-table-tbody > tr:hover > td) { background: #f5f9ff; }
+.toolbar-info { color: #888; font-size: 12px; margin-bottom: 10px; }
 </style>

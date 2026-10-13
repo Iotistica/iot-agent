@@ -35,6 +35,7 @@ import { migration as addUseForCommandsToPublishDestinations } from './migration
 import { migration as addUnitCatalog } from './migrations/20260803000000_add_unit_catalog.js';
 import { migration as addPointNameMappings } from './migrations/20260804000000_add_point_name_mappings.js';
 import { migration as addCustomUnitAliases } from './migrations/20261004000000_add_custom_unit_aliases.js';
+import { migration as addDataExplorerViews } from './migrations/20261012000000_add_data_explorer_views.js';
 import type { NativeSqliteMigration } from './migration-types.js';
 
 export const nativeMigrations: NativeSqliteMigration[] = [
@@ -75,4 +76,5 @@ export const nativeMigrations: NativeSqliteMigration[] = [
 	addUnitCatalog,
 	addPointNameMappings,
 	addCustomUnitAliases,
+	addDataExplorerViews,
 ];

@@ -20,7 +20,8 @@ interface Device {
 
 const rows = ref<Device[]>([])
 const loading = ref(false)
-const activeProtocol = ref('')
+const activeProtocol = ref<string | undefined>(undefined)
+const search = ref('')
 let refreshTimer: ReturnType<typeof setInterval> | null = null
 
 const selectedUuids = ref<string[]>([])
@@ -33,26 +34,24 @@ const rowSelection = computed(() => ({
   onChange: (keys: string[]) => { selectedUuids.value = keys },
 }))
 
-const filtered = computed(() =>
-  activeProtocol.value
-    ? rows.value.filter(d => d.protocol === activeProtocol.value)
-    : rows.value,
-)
+const filtered = computed(() => rows.value.filter(d => {
+  const q = search.value.trim().toLowerCase()
+  const name = (d.metadata?.objectName as string | undefined) || d.name
+  return (!q || [name, d.name, d.protocol, d.identifier].some(v => (v || '').toLowerCase().includes(q)))
+    && (!activeProtocol.value || d.protocol === activeProtocol.value)
+}))
 
-const protocolCounts = computed(() => {
-  const counts: Record<string, number> = {}
-  for (const d of rows.value) {
-    counts[d.protocol] = (counts[d.protocol] ?? 0) + 1
-  }
-  return counts
-})
+const protocolOptions = computed(() => [...new Set(rows.value.map(d => d.protocol))].sort()
+  .map(v => ({ value: v, label: protocolLabel(v) })))
+
+function clearFilters() { search.value = ''; activeProtocol.value = undefined }
 
 const columns: TableColumnType[] = [
-  { title: 'Name',       key: 'name',       ellipsis: true },
-  { title: 'Protocol',   key: 'protocol',   width: 110 },
+  { title: 'Name',       key: 'name',       ellipsis: true, sorter: (a: Device, b: Device) => ((a.metadata?.objectName as string) || a.name).localeCompare((b.metadata?.objectName as string) || b.name) },
+  { title: 'Protocol',   key: 'protocol',   width: 110, sorter: (a: Device, b: Device) => a.protocol.localeCompare(b.protocol) },
   { title: 'Identifier', key: 'identifier', width: 160, ellipsis: true },
   { title: 'UUID',       key: 'uuid',       width: 160 },
-  { title: 'Last Seen',  key: 'lastSeen',   width: 130 },
+  { title: 'Last Seen',  key: 'lastSeen',   width: 130, sorter: (a: Device, b: Device) => (new Date(a.lastSeenAt || 0).getTime()) - (new Date(b.lastSeenAt || 0).getTime()) },
   { title: 'Status',     key: 'status',     width: 110 },
 ]
 
@@ -182,50 +181,31 @@ onUnmounted(() => {
 
 <template>
   <AppLayout title="Devices">
-    <div class="devices-page">
-      <div class="page-header">
-        <p class="subtitle">Physical and logical devices discovered through protocol endpoints</p>
+    <div class="heading">
+      <p>Physical and logical devices discovered through protocol endpoints.</p>
+      <div class="header-actions">
+        <template v-if="selectedUuids.length > 0">
+          <span style="font-size: 13px; color: #666">{{ selectedUuids.length }} selected</span>
+          <a-button :loading="bulkEnabling" @click="bulkEnable"><template #icon><CheckCircleOutlined /></template>Enable</a-button>
+          <a-button :loading="bulkDisabling" @click="bulkDisable"><template #icon><StopOutlined /></template>Disable</a-button>
+          <a-button danger :loading="deleting" @click="confirmDeleteSelected"><template #icon><DeleteOutlined /></template>Delete</a-button>
+        </template>
+        <a-button @click="load" :loading="loading">Refresh</a-button>
       </div>
+    </div>
 
-      <!-- Protocol filter tabs + table toolbar (same row, consistent with other grid pages) -->
-      <div class="protocol-tabs">
-        <a-radio-group
-          v-model:value="activeProtocol"
-          button-style="solid"
-          size="small"
-        >
-          <a-radio-button value="">All ({{ rows.length }})</a-radio-button>
-          <a-radio-button value="modbus">Modbus ({{ protocolCounts.modbus ?? 0 }})</a-radio-button>
-          <a-radio-button value="opcua">OPC-UA ({{ protocolCounts.opcua ?? 0 }})</a-radio-button>
-          <a-radio-button value="mqtt">MQTT ({{ protocolCounts.mqtt ?? 0 }})</a-radio-button>
-          <a-radio-button value="bacnet">BACnet ({{ protocolCounts.bacnet ?? 0 }})</a-radio-button>
-        </a-radio-group>
-
-        <a-space>
-          <template v-if="selectedUuids.length > 0">
-            <span style="font-size: 13px; color: #666">{{ selectedUuids.length }} selected</span>
-            <a-button :loading="bulkEnabling" @click="bulkEnable">
-              <template #icon><CheckCircleOutlined /></template>
-              Enable
-            </a-button>
-            <a-button :loading="bulkDisabling" @click="bulkDisable">
-              <template #icon><StopOutlined /></template>
-              Disable
-            </a-button>
-            <a-button danger :loading="deleting" @click="confirmDeleteSelected">
-              <template #icon><DeleteOutlined /></template>
-              Delete
-            </a-button>
-          </template>
-          <a-button @click="load" :loading="loading">Refresh</a-button>
-        </a-space>
+    <a-card size="small" class="list-card">
+      <div class="filters">
+        <a-input v-model:value="search" placeholder="Search name, protocol, identifier…" allow-clear class="search" />
+        <a-select v-model:value="activeProtocol" :options="protocolOptions" placeholder="All protocols" allow-clear class="filter" />
+        <a-button @click="clearFilters">Clear</a-button>
       </div>
-
+      <div class="toolbar-info">Showing {{ filtered.length }} of {{ rows.length }} devices</div>
       <a-table
         :dataSource="filtered"
         :columns="columns"
         :loading="loading"
-        :pagination="{ pageSize: 50, hideOnSinglePage: true }"
+        :pagination="{ pageSize: 20, showSizeChanger: true, pageSizeOptions: ['10', '20', '50'] }"
         :row-selection="rowSelection"
         row-key="uuid"
         size="small"
@@ -243,7 +223,7 @@ onUnmounted(() => {
           </template>
 
           <template v-else-if="column.key === 'identifier'">
-            <span class="mono-text">{{ identifierLabel(record) }}</span>
+            <span>{{ identifierLabel(record) }}</span>
           </template>
 
           <template v-else-if="column.key === 'uuid'">
@@ -279,34 +259,21 @@ onUnmounted(() => {
           </a-empty>
         </template>
       </a-table>
-    </div>
+    </a-card>
   </AppLayout>
 </template>
 
 <style scoped>
-.devices-page {
-  padding: 24px;
-  max-width: 1200px;
-}
-
-.page-header {
-  margin-bottom: 20px;
-}
-
-.subtitle {
-  margin: 0;
-  color: #888;
-  font-size: 13px;
-}
-
-.protocol-tabs {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 12px;
-  margin-bottom: 16px;
-}
+.heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 16px; }
+.heading p { color: #777; margin: 0; }
+.header-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.list-card { border-radius: 9px; }
+.list-card :deep(.ant-table-thead > tr > th) { background: #f7f9fc; font-size: 12px; font-weight: 650; }
+.list-card :deep(.ant-table-tbody > tr:hover > td) { background: #f5f9ff; }
+.filters { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
+.search { width: 300px; max-width: 100%; }
+.filter { width: 170px; max-width: 100%; }
+.toolbar-info { color: #888; font-size: 12px; margin-bottom: 10px; }
 
 .device-name {
   font-weight: 400;

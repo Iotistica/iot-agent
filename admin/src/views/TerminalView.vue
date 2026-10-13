@@ -292,22 +292,23 @@ onUnmounted(() => {
 <template>
   <AppLayout title="Terminal" flex>
 
-    <!-- Toolbar -->
-    <div class="toolbar">
-      <a-badge
-        :status="connState === 'connected' ? 'success' : connState === 'connecting' ? 'processing' : 'error'"
-        :text="connState === 'connected' ? 'Connected' : connState === 'connecting' ? 'Connecting…' : 'Disconnected'"
-        style="font-size: 13px"
-      />
-      <div style="flex: 1" />
-      <a-button v-if="connState === 'connected'" size="small" danger @click="disconnect">
-        <template #icon><DisconnectOutlined /></template>
-        Disconnect
-      </a-button>
-      <a-button v-else size="small" type="primary" :loading="connState === 'connecting'" @click="reconnect">
-        <template #icon><ReloadOutlined /></template>
-        Reconnect
-      </a-button>
+    <div class="heading">
+      <p>Interactive shell access to the agent host.</p>
+      <div class="header-actions">
+        <a-badge
+          :status="connState === 'connected' ? 'success' : connState === 'connecting' ? 'processing' : 'error'"
+          :text="connState === 'connected' ? 'Connected' : connState === 'connecting' ? 'Connecting…' : 'Disconnected'"
+          style="font-size: 13px"
+        />
+        <a-button v-if="connState === 'connected'" size="small" danger @click="disconnect">
+          <template #icon><DisconnectOutlined /></template>
+          Disconnect
+        </a-button>
+        <a-button v-else size="small" type="primary" :loading="connState === 'connecting'" @click="reconnect">
+          <template #icon><ReloadOutlined /></template>
+          Reconnect
+        </a-button>
+      </div>
     </div>
 
     <!-- Error banner -->
@@ -374,13 +375,9 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
-.toolbar {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-bottom: 12px;
-  flex-shrink: 0;
-}
+.heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 16px; flex-shrink: 0; }
+.heading p { color: #777; margin: 0; }
+.header-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 
 /* ── Split ── */
 .split {

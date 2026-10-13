@@ -54,12 +54,12 @@ const assetDrawerOpen = ref(false)
 const assetEditing = ref<Asset | null>(null)
 
 const assetColumns: TableColumnType<Asset>[] = [
-  { title: 'Name', dataIndex: 'name', key: 'name', ellipsis: true, minWidth: 160 },
-  { title: 'Equipment Type', dataIndex: 'asset_type', key: 'asset_type', width: 130, ellipsis: true },
-  { title: 'Criticality', key: 'criticality', width: 100 },
+  { title: 'Name', dataIndex: 'name', key: 'name', ellipsis: true, minWidth: 160, sorter: (a: Asset, b: Asset) => (a.name ?? '').localeCompare(b.name ?? '') },
+  { title: 'Equipment Type', dataIndex: 'asset_type', key: 'asset_type', width: 130, ellipsis: true, sorter: (a: Asset, b: Asset) => (a.asset_type ?? '').localeCompare(b.asset_type ?? '') },
+  { title: 'Criticality', key: 'criticality', width: 100, sorter: (a: Asset, b: Asset) => (CRITICALITY_ORDER[a.criticality] ?? 9) - (CRITICALITY_ORDER[b.criticality] ?? 9) },
   { title: 'Metrics', key: 'metrics', width: 90 },
   { title: 'Manufacturer / Model', key: 'manufacturer', width: 180, ellipsis: true },
-  { title: 'Location', dataIndex: 'location', key: 'location', width: 140, ellipsis: true },
+  { title: 'Location', dataIndex: 'location', key: 'location', width: 140, ellipsis: true, sorter: (a: Asset, b: Asset) => (a.location ?? '').localeCompare(b.location ?? '') },
   { title: 'Actions', key: 'actions', width: 120, fixed: 'right' },
 ]
 
@@ -125,20 +125,20 @@ const maintRecommendations = ref<MaintenanceRecommendation[]>([])
 const maintRecsLoading = ref(false)
 
 const maintRuleColumns: TableColumnType<MaintenanceRule>[] = [
-  { title: 'Asset', key: 'asset', ellipsis: true, minWidth: 140 },
-  { title: 'Component', dataIndex: 'component', key: 'component', width: 130, ellipsis: true },
+  { title: 'Asset', key: 'asset', ellipsis: true, minWidth: 140, sorter: (a: MaintenanceRule, b: MaintenanceRule) => (a.asset_name ?? '').localeCompare(b.asset_name ?? '') },
+  { title: 'Component', dataIndex: 'component', key: 'component', width: 130, ellipsis: true, sorter: (a: MaintenanceRule, b: MaintenanceRule) => (a.component ?? '').localeCompare(b.component ?? '') },
   { title: 'Rule type', key: 'rule_type', width: 150 },
-  { title: 'Enabled', key: 'enabled', width: 90 },
+  { title: 'Enabled', key: 'enabled', width: 90, sorter: (a: MaintenanceRule, b: MaintenanceRule) => Number(a.enabled) - Number(b.enabled) },
   { title: 'Actions', key: 'actions', width: 110, fixed: 'right' },
 ]
 
 const maintRecColumns: TableColumnType<MaintenanceRecommendation>[] = [
-  { title: 'Criticality', key: 'criticality', width: 100 },
-  { title: 'Asset', dataIndex: 'asset_name', key: 'asset_name', ellipsis: true, minWidth: 140 },
+  { title: 'Criticality', key: 'criticality', width: 100, sorter: (a: MaintenanceRecommendation, b: MaintenanceRecommendation) => (CRITICALITY_ORDER[a.criticality] ?? 9) - (CRITICALITY_ORDER[b.criticality] ?? 9) },
+  { title: 'Asset', dataIndex: 'asset_name', key: 'asset_name', ellipsis: true, minWidth: 140, sorter: (a: MaintenanceRecommendation, b: MaintenanceRecommendation) => (a.asset_name ?? '').localeCompare(b.asset_name ?? '') },
   { title: 'Component', dataIndex: 'component', key: 'component', width: 130, ellipsis: true },
   { title: 'Message', dataIndex: 'message', key: 'message', ellipsis: true, minWidth: 220 },
   { title: 'Due by', key: 'due_by', width: 140 },
-  { title: 'Status', key: 'status', width: 110 },
+  { title: 'Status', key: 'status', width: 110, sorter: (a: MaintenanceRecommendation, b: MaintenanceRecommendation) => (a.status ?? '').localeCompare(b.status ?? '') },
   { title: 'Actions', key: 'actions', width: 220, fixed: 'right' },
 ]
 
@@ -264,20 +264,20 @@ const energyRecommendations = ref<EnergyRecommendation[]>([])
 const energyRecsLoading = ref(false)
 
 const energyRuleColumns: TableColumnType<EnergyRule>[] = [
-  { title: 'Asset', key: 'asset', ellipsis: true, minWidth: 140 },
-  { title: 'Metric', dataIndex: 'metric', key: 'metric', width: 150, ellipsis: true },
+  { title: 'Asset', key: 'asset', ellipsis: true, minWidth: 140, sorter: (a: EnergyRule, b: EnergyRule) => (a.asset_name ?? '').localeCompare(b.asset_name ?? '') },
+  { title: 'Metric', dataIndex: 'metric', key: 'metric', width: 150, ellipsis: true, sorter: (a: EnergyRule, b: EnergyRule) => (a.metric ?? '').localeCompare(b.metric ?? '') },
   { title: 'Rule type', key: 'rule_type', width: 150 },
-  { title: 'Enabled', key: 'enabled', width: 90 },
+  { title: 'Enabled', key: 'enabled', width: 90, sorter: (a: EnergyRule, b: EnergyRule) => Number(a.enabled) - Number(b.enabled) },
   { title: 'Actions', key: 'actions', width: 110, fixed: 'right' },
 ]
 
 const energyRecColumns: TableColumnType<EnergyRecommendation>[] = [
-  { title: 'Criticality', key: 'criticality', width: 100 },
-  { title: 'Asset', dataIndex: 'asset_name', key: 'asset_name', ellipsis: true, minWidth: 140 },
+  { title: 'Criticality', key: 'criticality', width: 100, sorter: (a: EnergyRecommendation, b: EnergyRecommendation) => (CRITICALITY_ORDER[a.criticality] ?? 9) - (CRITICALITY_ORDER[b.criticality] ?? 9) },
+  { title: 'Asset', dataIndex: 'asset_name', key: 'asset_name', ellipsis: true, minWidth: 140, sorter: (a: EnergyRecommendation, b: EnergyRecommendation) => (a.asset_name ?? '').localeCompare(b.asset_name ?? '') },
   { title: 'Metric', dataIndex: 'metric', key: 'metric', width: 140, ellipsis: true },
   { title: 'Message', dataIndex: 'message', key: 'message', ellipsis: true, minWidth: 200 },
   { title: 'Est. impact', dataIndex: 'estimated_impact', key: 'estimated_impact', width: 120 },
-  { title: 'Status', key: 'status', width: 110 },
+  { title: 'Status', key: 'status', width: 110, sorter: (a: EnergyRecommendation, b: EnergyRecommendation) => (a.status ?? '').localeCompare(b.status ?? '') },
   { title: 'Actions', key: 'actions', width: 220, fixed: 'right' },
 ]
 
@@ -383,29 +383,39 @@ async function setEnergyStatus(row: EnergyRecommendation, status: Recommendation
 
 <template>
   <AppLayout title="Assets">
+    <div class="heading">
+      <p>Equipment registry — criticality drives maintenance and energy rule prioritization.</p>
+      <div class="header-actions">
+        <a-button v-if="activeTopTab === 'assets'" type="primary" @click="openCreateAsset">
+          <template #icon><PlusOutlined /></template>
+          New Asset
+        </a-button>
+        <a-button v-if="activeTopTab === 'maintenance' && maintActiveTab === 'rules'" type="primary" @click="openCreateMaintRule">
+          <template #icon><PlusOutlined /></template>
+          New Rule
+        </a-button>
+        <a-button v-if="activeTopTab === 'energy' && energyActiveTab === 'rules'" type="primary" @click="openCreateEnergyRule">
+          <template #icon><PlusOutlined /></template>
+          New Rule
+        </a-button>
+      </div>
+    </div>
+
     <a-tabs :active-key="activeTopTab" @change="onTopTabChange">
       <!-- ══ ASSETS ═══════════════════════════════════════════════════════ -->
       <a-tab-pane key="assets" tab="Assets">
-        <div class="toolbar">
-          <span style="color: #888; font-size: 13px">
-            The equipment behind your metrics — criticality drives how maintenance rules prioritize.
-          </span>
-          <a-button type="primary" @click="openCreateAsset">
-            <template #icon><PlusOutlined /></template>
-            New Asset
-          </a-button>
-        </div>
-
         <a-alert v-if="assetsError" type="error" :message="assetsError" show-icon style="margin-bottom: 16px" />
 
+        <a-card size="small" class="list-card">
+        <div class="toolbar-info">{{ assetRows.length }} asset{{ assetRows.length !== 1 ? 's' : '' }}</div>
         <a-table
           :columns="assetColumns"
           :data-source="assetRows"
           :loading="assetsLoading"
-          :pagination="false"
+          :pagination="{ pageSize: 20, showSizeChanger: true, pageSizeOptions: ['10', '20', '50'] }"
           :scroll="{ x: 'max-content' }"
           row-key="uuid"
-          size="middle"
+          size="small"
         >
           <template #bodyCell="{ column, record }">
             <template v-if="column.key === 'criticality'">
@@ -436,6 +446,7 @@ async function setEnergyStatus(row: EnergyRecommendation, status: Recommendation
             </div>
           </template>
         </a-table>
+        </a-card>
       </a-tab-pane>
 
       <!-- ══ MAINTENANCE ══════════════════════════════════════════════════ -->
@@ -447,15 +458,9 @@ async function setEnergyStatus(row: EnergyRecommendation, status: Recommendation
 
         <a-tabs :active-key="maintActiveTab" @change="onMaintTabChange">
           <a-tab-pane key="rules" tab="Rules">
-            <div class="toolbar">
-              <span style="color: #888; font-size: 13px">Which assets get watched, and by which rule.</span>
-              <a-button type="primary" @click="openCreateMaintRule">
-                <template #icon><PlusOutlined /></template>
-                New Rule
-              </a-button>
-            </div>
-
-            <a-table :columns="maintRuleColumns" :data-source="maintRules" :loading="maintRulesLoading" :pagination="false" :scroll="{ x: 'max-content' }" row-key="id" size="middle">
+            <a-card size="small" class="list-card">
+            <div class="toolbar-info">{{ maintRules.length }} rule{{ maintRules.length !== 1 ? 's' : '' }}</div>
+            <a-table :columns="maintRuleColumns" :data-source="maintRules" :loading="maintRulesLoading" :pagination="{ pageSize: 20, showSizeChanger: true, pageSizeOptions: ['10', '20', '50'] }" :scroll="{ x: 'max-content' }" row-key="id" size="small">
               <template #bodyCell="{ column, record }">
                 <template v-if="column.key === 'asset'">
                   <span style="font-size: 13px">{{ record.asset_name ?? '—' }}</span>
@@ -481,10 +486,13 @@ async function setEnergyStatus(row: EnergyRecommendation, status: Recommendation
                 </div>
               </template>
             </a-table>
+            </a-card>
           </a-tab-pane>
 
           <a-tab-pane key="recommendations" tab="Recommendations">
-            <a-table :columns="maintRecColumns" :data-source="maintRecommendations" :loading="maintRecsLoading" :pagination="{ pageSize: 20, showSizeChanger: false }" row-key="id" size="middle">
+            <a-card size="small" class="list-card">
+            <div class="toolbar-info">{{ maintRecommendations.length }} recommendation{{ maintRecommendations.length !== 1 ? 's' : '' }}</div>
+            <a-table :columns="maintRecColumns" :data-source="maintRecommendations" :loading="maintRecsLoading" :pagination="{ pageSize: 20, showSizeChanger: true, pageSizeOptions: ['10', '20', '50'] }" row-key="id" size="small">
               <template #bodyCell="{ column, record }">
                 <template v-if="column.key === 'criticality'">
                   <a-tag :color="CRITICALITY_TAG_COLOR[record.criticality]">{{ record.criticality }}</a-tag>
@@ -509,6 +517,7 @@ async function setEnergyStatus(row: EnergyRecommendation, status: Recommendation
                 </div>
               </template>
             </a-table>
+            </a-card>
           </a-tab-pane>
 
           <a-tab-pane key="alert-routing" tab="Alert Routing">
@@ -566,15 +575,9 @@ async function setEnergyStatus(row: EnergyRecommendation, status: Recommendation
 
         <a-tabs :active-key="energyActiveTab" @change="onEnergyTabChange">
           <a-tab-pane key="rules" tab="Rules">
-            <div class="toolbar">
-              <span style="color: #888; font-size: 13px">Which assets get watched for energy waste, and by which rule.</span>
-              <a-button type="primary" @click="openCreateEnergyRule">
-                <template #icon><PlusOutlined /></template>
-                New Rule
-              </a-button>
-            </div>
-
-            <a-table :columns="energyRuleColumns" :data-source="energyRules" :loading="energyRulesLoading" :pagination="false" :scroll="{ x: 'max-content' }" row-key="id" size="middle">
+            <a-card size="small" class="list-card">
+            <div class="toolbar-info">{{ energyRules.length }} rule{{ energyRules.length !== 1 ? 's' : '' }}</div>
+            <a-table :columns="energyRuleColumns" :data-source="energyRules" :loading="energyRulesLoading" :pagination="{ pageSize: 20, showSizeChanger: true, pageSizeOptions: ['10', '20', '50'] }" :scroll="{ x: 'max-content' }" row-key="id" size="small">
               <template #bodyCell="{ column, record }">
                 <template v-if="column.key === 'asset'">
                   <span style="font-size: 13px">{{ record.asset_name ?? '—' }}</span>
@@ -600,10 +603,13 @@ async function setEnergyStatus(row: EnergyRecommendation, status: Recommendation
                 </div>
               </template>
             </a-table>
+            </a-card>
           </a-tab-pane>
 
           <a-tab-pane key="recommendations" tab="Recommendations">
-            <a-table :columns="energyRecColumns" :data-source="energyRecommendations" :loading="energyRecsLoading" :pagination="{ pageSize: 20, showSizeChanger: false }" row-key="id" size="middle">
+            <a-card size="small" class="list-card">
+            <div class="toolbar-info">{{ energyRecommendations.length }} recommendation{{ energyRecommendations.length !== 1 ? 's' : '' }}</div>
+            <a-table :columns="energyRecColumns" :data-source="energyRecommendations" :loading="energyRecsLoading" :pagination="{ pageSize: 20, showSizeChanger: true, pageSizeOptions: ['10', '20', '50'] }" row-key="id" size="small">
               <template #bodyCell="{ column, record }">
                 <template v-if="column.key === 'criticality'">
                   <a-tag :color="CRITICALITY_TAG_COLOR[record.criticality]">{{ record.criticality }}</a-tag>
@@ -625,6 +631,7 @@ async function setEnergyStatus(row: EnergyRecommendation, status: Recommendation
                 </div>
               </template>
             </a-table>
+            </a-card>
           </a-tab-pane>
 
           <a-tab-pane key="alert-routing" tab="Alert Routing">
@@ -681,13 +688,13 @@ async function setEnergyStatus(row: EnergyRecommendation, status: Recommendation
 </template>
 
 <style scoped>
-.toolbar {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 16px;
-  gap: 8px;
-}
+.heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 16px; }
+.heading p { color: #777; margin: 0; }
+.header-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.list-card { border-radius: 9px; }
+.list-card :deep(.ant-table-thead > tr > th) { background: #f7f9fc; font-size: 12px; font-weight: 650; }
+.list-card :deep(.ant-table-tbody > tr:hover > td) { background: #f5f9ff; }
+.toolbar-info { color: #888; font-size: 12px; margin-bottom: 10px; }
 
 .pro-badge {
   margin-left: 6px;

@@ -505,33 +505,17 @@ async function deploy() {
 
 <template>
   <AppLayout title="Applications">
-
-    <!-- Toolbar -->
-    <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 16px; flex-wrap: wrap">
-      <div style="display: flex; gap: 16px; align-items: center; flex: 1">
-        <span style="font-size: 13px; color: #888">
-          <a-badge status="success" />
-          {{ totalRunning }} running
-        </span>
-        <span style="font-size: 13px; color: #888">
-          {{ totalServices }} total services
-        </span>
-        <span v-if="apps.length > 0" style="font-size: 13px; color: #888">
-          {{ apps.length }} app{{ apps.length !== 1 ? 's' : '' }}
-        </span>
+    <div class="heading">
+      <p>Deploy and manage containerised services on this device.</p>
+      <div class="header-actions">
+        <a-button :loading="loading" @click="load"><template #icon><ReloadOutlined /></template>Refresh</a-button>
+        <a-button :disabled="!dockerAvailable" @click="openMarketplace"><template #icon><ShopOutlined /></template>Marketplace</a-button>
+        <a-button type="primary" :disabled="!dockerAvailable" @click="openDeploy"><template #icon><PlusOutlined /></template>Add Application</a-button>
       </div>
-      <a-button :loading="loading" @click="load">
-        <template #icon><ReloadOutlined /></template>
-        Refresh
-      </a-button>
-      <a-button :disabled="!dockerAvailable" @click="openMarketplace">
-        <template #icon><ShopOutlined /></template>
-        Marketplace
-      </a-button>
-      <a-button type="primary" :disabled="!dockerAvailable" @click="openDeploy">
-        <template #icon><PlusOutlined /></template>
-        Add Application
-      </a-button>
+    </div>
+
+    <div class="toolbar-info" v-if="apps.length > 0">
+      <a-badge status="success" /> {{ totalRunning }} running · {{ totalServices }} total services · {{ apps.length }} app{{ apps.length !== 1 ? 's' : '' }}
     </div>
 
     <!-- Docker unavailable -->
@@ -992,6 +976,10 @@ async function deploy() {
 </template>
 
 <style scoped>
+.heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 16px; }
+.heading p { color: #777; margin: 0; }
+.header-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.toolbar-info { color: #888; font-size: 12px; margin-bottom: 10px; }
 /* ── Card grid ───────────────────────────────────────────── */
 .app-grid {
   display: grid;
@@ -1082,7 +1070,6 @@ async function deploy() {
 .service-image {
   font-size: 11px;
   color: #999;
-  font-family: monospace;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1091,7 +1078,6 @@ async function deploy() {
 
 .port-tag {
   font-size: 11px;
-  font-family: monospace;
   background: #e6f4ff;
   color: #1677ff;
   border: 1px solid #bae0ff;

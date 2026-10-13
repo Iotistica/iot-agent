@@ -201,34 +201,16 @@ onMounted(() => { load(); loadSchedule() })
 </script>
 
 <template>
-  <AppLayout>
+  <AppLayout title="Backups">
     <div class="backups-page">
-      <div class="page-header">
-        <div>
-          <h2>Database Backups</h2>
-          <p class="subtitle">Create and restore SQLite database snapshots</p>
+      <div class="heading">
+        <p>Create and restore SQLite database snapshots.</p>
+        <div class="header-actions">
+          <a-button :loading="loading" @click="load"><template #icon><ReloadOutlined /></template>Refresh</a-button>
+          <a-button :loading="uploading" @click="triggerUpload"><template #icon><UploadOutlined /></template>Upload Backup</a-button>
+          <input ref="uploadInput" type="file" accept=".sqlite" style="display: none" @change="handleUploadChange" />
+          <a-button type="primary" :loading="creating" @click="createBackup"><template #icon><PlusOutlined /></template>Create Backup</a-button>
         </div>
-        <a-space>
-          <a-button :loading="loading" @click="load">
-            <template #icon><ReloadOutlined /></template>
-            Refresh
-          </a-button>
-          <a-button :loading="uploading" @click="triggerUpload">
-            <template #icon><UploadOutlined /></template>
-            Upload Backup
-          </a-button>
-          <input
-            ref="uploadInput"
-            type="file"
-            accept=".sqlite"
-            style="display: none"
-            @change="handleUploadChange"
-          />
-          <a-button type="primary" :loading="creating" @click="createBackup">
-            <template #icon><PlusOutlined /></template>
-            Create Backup
-          </a-button>
-        </a-space>
       </div>
 
       <a-alert
@@ -299,18 +281,20 @@ onMounted(() => { load(); loadSchedule() })
         </a-spin>
       </a-card>
 
+      <a-card size="small" class="list-card">
+      <div class="toolbar-info">{{ backups.length }} backup{{ backups.length !== 1 ? 's' : '' }}</div>
       <a-table
         :dataSource="backups"
         :columns="columns"
         :loading="loading"
         row-key="fileName"
-        :pagination="{ pageSize: 20, hideOnSinglePage: true }"
+        :pagination="{ pageSize: 20, showSizeChanger: true, pageSizeOptions: ['10', '20', '50'] }"
         size="small"
       >
         <template #bodyCell="{ column, record }">
 
           <template v-if="column.key === 'fileName'">
-            <span class="mono">{{ record.fileName }}</span>
+            <span>{{ record.fileName }}</span>
           </template>
 
           <template v-else-if="column.key === 'createdAt'">
@@ -368,34 +352,23 @@ onMounted(() => { load(); loadSchedule() })
           </a-empty>
         </template>
       </a-table>
+      </a-card>
     </div>
   </AppLayout>
 </template>
 
 <style scoped>
 .backups-page {
-  padding: 24px;
   max-width: 1100px;
 }
 
-.page-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  margin-bottom: 20px;
-}
-
-.page-header h2 {
-  margin: 0 0 4px;
-  font-size: 20px;
-  font-weight: 600;
-}
-
-.subtitle {
-  margin: 0;
-  color: #888;
-  font-size: 13px;
-}
+.heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 16px; }
+.heading p { color: #777; margin: 0; }
+.header-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.list-card { border-radius: 9px; }
+.list-card :deep(.ant-table-thead > tr > th) { background: #f7f9fc; font-size: 12px; font-weight: 650; }
+.list-card :deep(.ant-table-tbody > tr:hover > td) { background: #f5f9ff; }
+.toolbar-info { color: #888; font-size: 12px; margin-bottom: 10px; }
 
 .migrate-steps {
   margin: 4px 0 0;

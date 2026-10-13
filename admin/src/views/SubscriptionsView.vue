@@ -36,14 +36,25 @@ const destMap = computed<Record<number, Destination>>(() =>
   Object.fromEntries(destinations.value.map((d) => [d.id, d])),
 )
 
+const search = ref('')
+const destFilter = ref<number | undefined>(undefined)
+const filteredRows = computed(() => rows.value.filter(r => {
+  const q = search.value.trim().toLowerCase()
+  const destName = destMap.value[r.publish_destination_id]?.name ?? ''
+  return (!q || [destName, r.publish_topic, r.payload_format].some(v => (v || '').toLowerCase().includes(q)))
+    && (!destFilter.value || r.publish_destination_id === destFilter.value)
+}))
+const destOptions = computed(() => destinations.value.map(d => ({ value: d.id, label: d.name })))
+function clearFilters() { search.value = ''; destFilter.value = undefined }
+
 const columns: TableColumnType<Subscription>[] = [
-  { title: 'Destination', key: 'destination', width: 180 },
+  { title: 'Destination', key: 'destination', width: 180, sorter: (a, b) => (destMap.value[a.publish_destination_id]?.name ?? '').localeCompare(destMap.value[b.publish_destination_id]?.name ?? '') },
   { title: 'Type', key: 'dest_type', width: 120 },
-  { title: 'Topic', key: 'topic' },
+  { title: 'Topic', key: 'topic', sorter: (a, b) => (a.publish_topic ?? '').localeCompare(b.publish_topic ?? '') },
   { title: 'Protocol', dataIndex: 'topics', key: 'topics', width: 160 },
-  { title: 'Format', dataIndex: 'payload_format', key: 'payload_format', width: 100 },
+  { title: 'Format', dataIndex: 'payload_format', key: 'payload_format', width: 100, sorter: (a, b) => (a.payload_format ?? '').localeCompare(b.payload_format ?? '') },
   { title: 'Compression', dataIndex: 'compression', key: 'compression', width: 160 },
-  { title: 'Enabled', dataIndex: 'enabled', key: 'enabled', width: 90 },
+  { title: 'Enabled', dataIndex: 'enabled', key: 'enabled', width: 90, sorter: (a, b) => Number(a.enabled) - Number(b.enabled) },
   { title: 'Actions', key: 'actions', width: 110, fixed: 'right' },
 ]
 
@@ -157,56 +168,38 @@ onMounted(load)
 
 <template>
   <AppLayout title="Subscriptions">
-    <div class="toolbar">
-      <a-space>
+    <div class="heading">
+      <p>Map sources and metrics to destinations.</p>
+      <div class="header-actions">
         <template v-if="selectedIds.length > 0">
           <span style="font-size: 13px; color: #666">{{ selectedIds.length }} selected</span>
-          <a-button :loading="bulkEnabling" @click="bulkEnable">
-            <template #icon><CheckCircleOutlined /></template>
-            Enable
-          </a-button>
-          <a-button :loading="bulkDisabling" @click="bulkDisable">
-            <template #icon><StopOutlined /></template>
-            Disable
-          </a-button>
-          <a-button danger :loading="deleting" @click="confirmDeleteSelected">
-            <template #icon><DeleteOutlined /></template>
-            Delete
-          </a-button>
+          <a-button :loading="bulkEnabling" @click="bulkEnable"><template #icon><CheckCircleOutlined /></template>Enable</a-button>
+          <a-button :loading="bulkDisabling" @click="bulkDisable"><template #icon><StopOutlined /></template>Disable</a-button>
+          <a-button danger :loading="deleting" @click="confirmDeleteSelected"><template #icon><DeleteOutlined /></template>Delete</a-button>
         </template>
-        <a-alert
-          v-if="destinations.length === 0 && !loading"
-          type="warning"
-          message="Create a destination first before adding subscriptions."
-          show-icon
-          style="padding: 4px 12px"
-        />
-      </a-space>
-      <a-space style="margin-left: auto">
-        <a-button type="primary" :disabled="destinations.length === 0" @click="openCreate">
-          <template #icon><PlusOutlined /></template>
-          New Subscription
-        </a-button>
-      </a-space>
+        <a-button type="primary" :disabled="destinations.length === 0" @click="openCreate"><template #icon><PlusOutlined /></template>New Subscription</a-button>
+      </div>
     </div>
 
-    <a-alert
-      v-if="error"
-      type="error"
-      :message="error"
-      show-icon
-      style="margin-bottom: 16px"
-    />
+    <a-alert v-if="destinations.length === 0 && !loading" type="warning" message="Create a destination first before adding subscriptions." show-icon style="margin-bottom: 16px" />
+    <a-alert v-if="error" type="error" :message="error" show-icon style="margin-bottom: 16px" />
 
-    <a-table
-      :columns="columns"
-      :data-source="rows"
-      :loading="loading"
-      :pagination="false"
-      :row-selection="rowSelection"
-      row-key="id"
-      size="middle"
-    >
+    <a-card size="small" class="list-card">
+      <div class="filters">
+        <a-input v-model:value="search" placeholder="Search destination, topic, format…" allow-clear class="search" />
+        <a-select v-model:value="destFilter" :options="destOptions" placeholder="All destinations" allow-clear class="filter" />
+        <a-button @click="clearFilters">Clear</a-button>
+      </div>
+      <div class="toolbar-info">Showing {{ filteredRows.length }} of {{ rows.length }} subscriptions</div>
+      <a-table
+        :columns="columns"
+        :data-source="filteredRows"
+        :loading="loading"
+        :pagination="{ pageSize: 20, showSizeChanger: true, pageSizeOptions: ['10', '20', '50'] }"
+        :row-selection="rowSelection"
+        row-key="id"
+        size="small"
+      >
       <template #bodyCell="{ column, record }">
         <template v-if="column.key === 'destination'">
           <span v-if="destMap[record.publish_destination_id]">
@@ -226,7 +219,7 @@ onMounted(load)
         </template>
 
         <template v-else-if="column.key === 'topic'">
-          <span v-if="record.route_json?.topic" style="font-family: monospace; font-size: 12px">
+          <span v-if="record.route_json?.topic">
             {{ record.route_json.topic }}
           </span>
           <span v-else style="color: #999">—</span>
@@ -268,6 +261,7 @@ onMounted(load)
         </template>
       </template>
     </a-table>
+    </a-card>
 
     <SubscriptionDrawer
       v-model:open="drawerOpen"
@@ -282,12 +276,14 @@ onMounted(load)
 </template>
 
 <style scoped>
-.toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 16px;
-  flex-wrap: wrap;
-  gap: 8px;
-}
+.heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 16px; }
+.heading p { color: #777; margin: 0; }
+.header-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.list-card { border-radius: 9px; }
+.list-card :deep(.ant-table-thead > tr > th) { background: #f7f9fc; font-size: 12px; font-weight: 650; }
+.list-card :deep(.ant-table-tbody > tr:hover > td) { background: #f5f9ff; }
+.filters { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
+.search { width: 300px; max-width: 100%; }
+.filter { width: 170px; max-width: 100%; }
+.toolbar-info { color: #888; font-size: 12px; margin-bottom: 10px; }
 </style>

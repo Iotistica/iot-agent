@@ -54,6 +54,9 @@ function cancelPasswordChange() {
 <template>
   <AppLayout title="Profile">
     <div class="profile-page">
+      <div class="heading">
+        <p>Your account and password settings.</p>
+      </div>
 
       <a-alert
         v-if="mustChangePassword"
@@ -145,6 +148,9 @@ function cancelPasswordChange() {
 </template>
 
 <style scoped>
+.heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 16px; }
+.heading p { color: #777; margin: 0; }
+
 .profile-page {
   max-width: 640px;
   display: flex;

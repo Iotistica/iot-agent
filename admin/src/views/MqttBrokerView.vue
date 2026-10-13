@@ -6,7 +6,7 @@ import TopicTree from '@/components/mqtt/TopicTree.vue'
 import MessageViewer from '@/components/mqtt/MessageViewer.vue'
 import { useProStatus } from '@/composables/useProStatus'
 import { mqttApi, type TopicNode, type BrokerMetrics } from '@/api/mqtt'
-import { WifiOutlined, GlobalOutlined } from '@ant-design/icons-vue'
+import { WifiOutlined, GlobalOutlined, TeamOutlined, NodeIndexOutlined, LoginOutlined, LogoutOutlined } from '@ant-design/icons-vue'
 
 const { proInstalled } = useProStatus()
 const router = useRouter()
@@ -97,6 +97,9 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
 
 <template>
   <AppLayout title="MQTT">
+    <div class="heading">
+      <p>Live topic tree, throughput metrics, and message inspection.</p>
+    </div>
 
     <!-- Pro gate -->
     <a-alert v-if="!proInstalled" type="info" show-icon style="margin-bottom: 16px">
@@ -143,44 +146,50 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
       </a-alert>
 
       <!-- Metric cards -->
-      <a-row :gutter="16" style="margin-bottom: 16px">
+      <a-row :gutter="12" class="stats">
 
         <a-col :xs="12" :sm="6">
-          <div class="metric-card">
-            <div class="metric-label">Clients</div>
-            <div class="metric-value" :style="{ color: connected ? '#52c41a' : '#999' }">
-              {{ metrics?.clients.connected ?? '—' }}
+          <a-card size="small" class="metric-card">
+            <div class="metric-inner">
+              <span class="metric-icon icon-clients"><TeamOutlined /></span>
+              <a-statistic title="Connected clients" :value="metrics?.clients.connected ?? '—'" :value-style="connected ? { color: '#52c41a' } : {}">
+                <template #suffix><span class="metric-sub">of {{ metrics?.clients.total ?? '—' }}</span></template>
+              </a-statistic>
             </div>
-            <div class="metric-sub">of {{ metrics?.clients.total ?? '—' }} total</div>
-          </div>
+          </a-card>
         </a-col>
 
         <a-col :xs="12" :sm="6">
-          <div class="metric-card">
-            <div class="metric-label">Topics</div>
-            <div class="metric-value">{{ metrics ? Object.keys(topicTree).length > 0 ? countTopics(topicTree) : '0' : '—' }}</div>
-            <div class="metric-sub">{{ metrics?.subscriptions ?? '—' }} subscriptions</div>
-          </div>
+          <a-card size="small" class="metric-card">
+            <div class="metric-inner">
+              <span class="metric-icon icon-topics"><NodeIndexOutlined /></span>
+              <a-statistic title="Topics" :value="metrics ? Object.keys(topicTree).length > 0 ? countTopics(topicTree) : 0 : '—'">
+                <template #suffix><span class="metric-sub">{{ metrics?.subscriptions ?? '—' }} subs</span></template>
+              </a-statistic>
+            </div>
+          </a-card>
         </a-col>
 
         <a-col :xs="12" :sm="6">
-          <div class="metric-card">
-            <div class="metric-label">Msg rate in</div>
-            <div class="metric-value" style="color:#1677ff">
-              {{ metrics ? `${metrics.messageRateIn}/s` : '—' }}
+          <a-card size="small" class="metric-card">
+            <div class="metric-inner">
+              <span class="metric-icon icon-in"><LoginOutlined /></span>
+              <a-statistic title="Msg rate in" :value="metrics ? `${metrics.messageRateIn}/s` : '—'">
+                <template #suffix><span class="metric-sub">{{ metrics ? fmtKB(metrics.throughputIn) : '' }}</span></template>
+              </a-statistic>
             </div>
-            <div class="metric-sub">{{ metrics ? fmtKB(metrics.throughputIn) : '—' }}</div>
-          </div>
+          </a-card>
         </a-col>
 
         <a-col :xs="12" :sm="6">
-          <div class="metric-card">
-            <div class="metric-label">Msg rate out</div>
-            <div class="metric-value" style="color:#722ed1">
-              {{ metrics ? `${metrics.messageRateOut}/s` : '—' }}
+          <a-card size="small" class="metric-card">
+            <div class="metric-inner">
+              <span class="metric-icon icon-out"><LogoutOutlined /></span>
+              <a-statistic title="Msg rate out" :value="metrics ? `${metrics.messageRateOut}/s` : '—'">
+                <template #suffix><span class="metric-sub">{{ metrics ? fmtKB(metrics.throughputOut) : '' }}</span></template>
+              </a-statistic>
             </div>
-            <div class="metric-sub">{{ metrics ? fmtKB(metrics.throughputOut) : '—' }}</div>
-          </div>
+          </a-card>
         </a-col>
 
       </a-row>
@@ -241,33 +250,22 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
 </template>
 
 <style scoped>
-.metric-card {
-  background: #fafafa;
-  border: 1px solid #f0f0f0;
-  border-radius: 8px;
-  padding: 14px 16px;
-}
+.heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 16px; }
+.heading p { color: #777; margin: 0; }
 
-.metric-label {
-  font-size: 11px;
-  color: #aaa;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  margin-bottom: 4px;
-}
-
-.metric-value {
-  font-size: 26px;
-  font-weight: 700;
-  line-height: 1.1;
-  font-variant-numeric: tabular-nums;
-}
-
-.metric-sub {
-  font-size: 11px;
-  color: #bbb;
-  margin-top: 2px;
-}
+.stats { margin-bottom: 14px; }
+.stats :deep(.ant-card) { border-radius: 9px; border-color: #e7ebf0; }
+.stats :deep(.ant-card-body) { padding: 17px 18px; }
+.metric-inner { display: flex; align-items: center; gap: 15px; min-height: 66px; }
+.metric-icon { width: 50px; height: 50px; flex-shrink: 0; border-radius: 14px; display: inline-flex; align-items: center; justify-content: center; font-size: 23px; }
+.icon-clients { background: #eefbf4; color: #52c41a; }
+.icon-topics { background: #edf4ff; color: #1677ff; }
+.icon-in { background: #edf4ff; color: #1677ff; }
+.icon-out { background: #f5f0ff; color: #722ed1; }
+.metric-card :deep(.ant-statistic-title) { color: #8390a3; }
+.metric-card :deep(.ant-statistic-content) { font-size: 23px; }
+.metric-sub { font-size: 11px; color: #bbb; margin-left: 4px; }
+@media (max-width: 850px) { .metric-inner { gap: 8px; } .metric-icon { width: 38px; height: 38px; } }
 
 .split-panel {
   display: flex;

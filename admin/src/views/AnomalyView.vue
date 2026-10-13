@@ -11,7 +11,6 @@ import AppLayout from '@/components/layout/AppLayout.vue'
 import { useProStatus } from '@/composables/useProStatus'
 
 const { proInstalled } = useProStatus()
-import { methodColor } from '@/utils/protocol'
 import { anomalyApi, RESOLUTION_REASON_LABELS, type BadActor, type ResolutionReason, type SchemaDriftBaselineRow } from '@/api/anomaly'
 import { client as apiClient } from '@/api/client'
 import { sourcesApi } from '@/api/sources'
@@ -825,36 +824,142 @@ async function deleteTemplate(uuid: string) {
 
 const SEASONALITY_OPTIONS = ['none', 'day-night', 'hourly', 'weekly']
 
-// UI-only grouping: preserve the existing method IDs and API payload.
-const DETECTION_METHOD_GROUPS: { title: string; description: string; methods: DetectionMethod[] }[] = [
-  { title: 'Outlier detection', description: 'Identify unusual individual measurements.', methods: ['zscore', 'mad', 'iqr', 'expected_range'] },
-  { title: 'Change detection', description: 'Identify rapid changes or sustained shifts in behavior.', methods: ['rate_change', 'ewma', 'cusum'] },
-  { title: 'Combined detection', description: 'Combine evidence from multiple detectors.', methods: ['fusion'] },
-  { title: 'Simulation', description: 'Handle explicitly tagged simulated anomalies.', methods: ['simulation'] },
+const DETECTION_CATEGORIES = [
+  {
+    key: 'unusual',
+    title: 'Unusual Values',
+    description: 'Detect readings that are unusually high or low compared to normal behavior.',
+    defaultMethod: 'mad' as DetectionMethod,
+    methods: ['mad', 'zscore', 'iqr'] as DetectionMethod[],
+  },
+  {
+    key: 'sudden',
+    title: 'Sudden Changes',
+    description: 'Detect unexpected rapid increases or decreases in sensor readings.',
+    defaultMethod: 'rate_change' as DetectionMethod,
+    methods: ['rate_change'] as DetectionMethod[],
+  },
+  {
+    key: 'gradual',
+    title: 'Gradual Changes',
+    description: 'Detect slow drift or sustained changes in sensor behavior over time.',
+    defaultMethod: 'ewma' as DetectionMethod,
+    methods: ['ewma', 'cusum'] as DetectionMethod[],
+  },
 ]
 
-const DETECTION_METHOD_HELP: Record<DetectionMethod, string> = {
-  zscore: 'Flags readings far from the mean, measured in standard deviations.',
-  mad: 'Flags readings far from the median using a robust deviation measure.',
-  iqr: 'Flags readings outside the typical interquartile distribution.',
-  expected_range: 'Flags readings outside the configured minimum and maximum bounds.',
-  rate_change: 'Flags unusually rapid changes between measurements.',
-  ewma: 'Tracks an exponentially weighted moving average to identify deviations.',
-  cusum: 'Accumulates small deviations to detect sustained changes in the mean.',
-  fusion: 'Combines signals from multiple detection methods.',
-  simulation: 'Handles ground-truth anomaly signals from the simulation subsystem.',
+const activeCategories = computed(() => {
+  const active = new Set<string>()
+  for (const cat of DETECTION_CATEGORIES) {
+    if (cat.methods.some(m => metricForm.value.methods.includes(m)))
+      active.add(cat.key)
+  }
+  return active
+})
+
+function toggleCategory(cat: typeof DETECTION_CATEGORIES[number]) {
+  if (activeCategories.value.has(cat.key)) {
+    metricForm.value.methods = metricForm.value.methods.filter(
+      m => !(cat.methods as DetectionMethod[]).includes(m)
+    )
+  } else {
+    metricForm.value.methods.push(cat.defaultMethod)
+  }
 }
 
-const selectedMethodCount = computed(() => metricForm.value.methods.length)
-const thresholdLabel = computed(() => {
-  const methods = metricForm.value.methods
-  if (methods.length === 1) {
-    if (methods[0] === 'zscore') return 'Threshold (standard deviations)'
-    if (methods[0] === 'mad') return 'Threshold (MAD multiplier)'
-    if (methods[0] === 'cusum') return 'Threshold (CUSUM decision level)'
+const hasLegacyFusion = computed(() => metricForm.value.methods.includes('fusion'))
+
+function methodCategoryLabel(method: DetectionMethod): string {
+  for (const cat of DETECTION_CATEGORIES) {
+    if ((cat.methods as DetectionMethod[]).includes(method)) return cat.title
   }
-  return 'Detection threshold (shared)'
+  if (method === 'expected_range') return 'Range Check'
+  if (method === 'fusion') return 'Fusion (legacy)'
+  return method
+}
+
+function uniqueCategoryLabels(methods: DetectionMethod[]): string[] {
+  const seen = new Set<string>()
+  const labels: string[] = []
+  for (const m of methods) {
+    const label = methodCategoryLabel(m)
+    if (!seen.has(label)) { seen.add(label); labels.push(label) }
+  }
+  return labels
+}
+
+const CATEGORY_COLORS: Record<string, string> = {
+  'Unusual Values': 'purple',
+  'Sudden Changes': 'gold',
+  'Gradual Changes': 'cyan',
+  'Range Check': 'volcano',
+  'Fusion (legacy)': 'magenta',
+}
+
+function categoryLabelColor(label: string): string {
+  return CATEGORY_COLORS[label] ?? 'default'
+}
+
+type SensitivityLevel = 'low' | 'medium' | 'high'
+
+const SENSITIVITY_THRESHOLDS: Record<string, Record<SensitivityLevel, number>> = {
+  mad:         { low: 4.0, medium: 3.0, high: 2.0 },
+  zscore:      { low: 4.0, medium: 3.0, high: 2.0 },
+  iqr:         { low: 2.5, medium: 1.5, high: 1.0 },
+  rate_change: { low: 25.0, medium: 10.0, high: 5.0 },
+  ewma:        { low: 3.0, medium: 2.0, high: 1.5 },
+  cusum:       { low: 8.0, medium: 5.0, high: 3.0 },
+}
+
+const primaryMethod = computed(() => {
+  for (const cat of DETECTION_CATEGORIES) {
+    if (activeCategories.value.has(cat.key)) return cat.defaultMethod
+  }
+  return 'mad' as DetectionMethod
 })
+
+const currentSensitivity = computed((): SensitivityLevel | 'custom' => {
+  const mapping = SENSITIVITY_THRESHOLDS[primaryMethod.value]
+  if (!mapping) return 'custom'
+  for (const [level, val] of Object.entries(mapping)) {
+    if (metricForm.value.threshold === val) return level as SensitivityLevel
+  }
+  return 'custom'
+})
+
+function setSensitivity(level: SensitivityLevel) {
+  const mapping = SENSITIVITY_THRESHOLDS[primaryMethod.value]
+  if (mapping) metricForm.value.threshold = mapping[level]
+}
+
+function tableSensitivityLabel(record: AnomalyMetricConfig): string {
+  for (const cat of DETECTION_CATEGORIES) {
+    if (cat.methods.some(m => record.methods.includes(m))) {
+      const mapping = SENSITIVITY_THRESHOLDS[cat.defaultMethod]
+      if (mapping) {
+        for (const [level, val] of Object.entries(mapping)) {
+          if (record.threshold === val) return level.charAt(0).toUpperCase() + level.slice(1)
+        }
+      }
+      break
+    }
+  }
+  return 'Custom'
+}
+
+const confidencePercent = computed({
+  get: () => Math.round((metricForm.value.minConfidence ?? 0.7) * 100),
+  set: (v: number) => { metricForm.value.minConfidence = v / 100 },
+})
+
+const cooldownMinutes = computed({
+  get: () => Math.round((metricForm.value.cooldownMs ?? 300000) / 60000),
+  set: (v: number) => { metricForm.value.cooldownMs = v * 60000 },
+})
+
+const advancedOpen = ref<string[]>([])
+
+const selectedMethodCount = computed(() => metricForm.value.methods.length)
 
 
 // ── Available metric suggestions ───────────────────────────────────────────
@@ -1014,9 +1119,8 @@ function blankMetric(): AnomalyMetricConfig {
 const metricColumns: TableColumnType<AnomalyMetricConfig>[] = [
   { title: 'Point name', key: 'name', ellipsis: true },
   { title: 'Device', key: 'device', width: 160, ellipsis: true },
-  { title: 'Methods', key: 'methods', ellipsis: true },
-  { title: 'Threshold', dataIndex: 'threshold', key: 'threshold', width: 100 },
-  { title: 'Window', dataIndex: 'windowSize', key: 'windowSize', width: 90 },
+  { title: 'Detection', key: 'methods', ellipsis: true },
+  { title: 'Sensitivity', key: 'sensitivity', width: 100 },
   { title: 'Seasonality', key: 'seasonality', width: 110 },
   { title: 'Enabled', key: 'enabled', width: 80 },
   { title: '', key: 'actions', width: 100, fixed: 'right' },
@@ -1052,6 +1156,7 @@ function openAddMetric() {
   metricForm.value = blankMetric()
   expectedMin.value = null
   expectedMax.value = null
+  advancedOpen.value = []
   sourceFilter.value = undefined
   metricDrawerOpen.value = true
   loadMetricSuggestions()
@@ -1062,6 +1167,11 @@ function openEditMetric(metric: AnomalyMetricConfig, idx: number) {
   metricForm.value = { ...metric, name: friendlyLabel(metric.name), methods: [...metric.methods] }
   expectedMin.value = metric.expectedRange?.[0] ?? null
   expectedMax.value = metric.expectedRange?.[1] ?? null
+  // Auto-expand Advanced if threshold doesn't match a sensitivity preset
+  const pm = DETECTION_CATEGORIES.find(c => c.methods.some(m => metric.methods.includes(m)))?.defaultMethod ?? 'mad'
+  const mapping = SENSITIVITY_THRESHOLDS[pm]
+  const isCustom = !mapping || !Object.values(mapping).includes(metric.threshold)
+  advancedOpen.value = isCustom ? ['advanced'] : []
   sourceFilter.value = undefined
   metricDrawerOpen.value = true
   loadMetricSuggestions()
@@ -1178,7 +1288,11 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <AppLayout title="Alerts">
+  <AppLayout title="Detection">
+    <div class="heading">
+      <p>On-device anomaly detection, incident tracking, and baseline management.</p>
+    </div>
+
     <a-alert v-if="!proInstalled" type="info" show-icon style="margin-bottom: 16px">
       <template #message>Catch anomalies before they become failures</template>
       <template #description>
@@ -1208,20 +1322,21 @@ onUnmounted(() => {
 
       <!-- ══ EVENTS ═════════════════════════════════════════════════════════ -->
       <a-tab-pane key="events" tab="Events">
-        <div class="toolbar">
+        <a-card size="small" class="list-card">
+        <div class="filters">
           <a-select
             v-model:value="edgeEventsSeverity"
             placeholder="All severities"
             allow-clear
-            style="width: 150px"
+            class="filter"
             @change="() => { edgeEventsPage = 1; loadEdgeEvents() }"
           >
             <a-select-option value="critical">Critical</a-select-option>
             <a-select-option value="warning">Warning</a-select-option>
             <a-select-option value="info">Info</a-select-option>
           </a-select>
-          <span style="color: #888; font-size: 12px">{{ edgeEventsTotal }} total · auto-refresh 5s</span>
         </div>
+        <div class="toolbar-info">{{ edgeEventsTotal }} total · auto-refresh 5s</div>
         <a-table
           :columns="edgeEventColumns"
           :data-source="edgeEvents"
@@ -1263,24 +1378,26 @@ onUnmounted(() => {
             </div>
           </template>
         </a-table>
+        </a-card>
       </a-tab-pane>
 
       <!-- ══ INCIDENTS ══════════════════════════════════════════════════════ -->
       <a-tab-pane key="incidents" tab="Incidents">
-        <div class="toolbar">
+        <a-card size="small" class="list-card">
+        <div class="filters">
           <a-select
             v-model:value="edgeIncidentsStatus"
             placeholder="All statuses"
             allow-clear
-            style="width: 150px"
+            class="filter"
             @change="() => { edgeIncidentsPage = 1; loadEdgeIncidents() }"
           >
             <a-select-option value="open">Open</a-select-option>
             <a-select-option value="active">Active</a-select-option>
             <a-select-option value="resolved">Resolved</a-select-option>
           </a-select>
-          <span style="color: #888; font-size: 12px">{{ edgeIncidentsTotal }} total · auto-refresh 5s</span>
         </div>
+        <div class="toolbar-info">{{ edgeIncidentsTotal }} total · auto-refresh 5s</div>
         <a-table
           :columns="edgeIncidentColumns"
           :data-source="edgeIncidents"
@@ -1328,13 +1445,13 @@ onUnmounted(() => {
             </div>
           </template>
         </a-table>
+        </a-card>
       </a-tab-pane>
 
       <!-- ══ ALERTS (edge) ══════════════════════════════════════════════════ -->
       <a-tab-pane key="alerts" tab="Alerts">
-        <div class="toolbar" style="justify-content: flex-end">
-          <span style="color: #888; font-size: 12px">{{ edgeAlertsTotal }} total · auto-refresh 5s</span>
-        </div>
+        <a-card size="small" class="list-card">
+        <div class="toolbar-info">{{ edgeAlertsTotal }} total · auto-refresh 5s</div>
         <a-table
           :columns="edgeAlertColumns"
           :data-source="edgeAlerts"
@@ -1370,24 +1487,24 @@ onUnmounted(() => {
             </div>
           </template>
         </a-table>
+        </a-card>
       </a-tab-pane>
 
       <!-- ══ BASELINES ══════════════════════════════════════════════════════ -->
       <a-tab-pane key="baselines" tab="Baselines">
-        <div class="toolbar">
+        <a-card size="small" class="list-card">
+        <div class="filters">
           <a-input
             v-model:value="baselinesMetric"
             placeholder="Search by metric…"
             allow-clear
-            style="width: 260px"
+            class="search"
           >
             <template #prefix><SearchOutlined style="color: #bbb" /></template>
           </a-input>
-          <a-space>
-            <span style="color: #888; font-size: 12px">{{ baselinesTotal }} total · auto-refresh 5s</span>
-            <a-button danger :loading="clearingBaselines" @click="resetBaselinesModalOpen = true">Reset</a-button>
-          </a-space>
+          <a-button danger :loading="clearingBaselines" @click="resetBaselinesModalOpen = true">Reset</a-button>
         </div>
+        <div class="toolbar-info">{{ baselinesTotal }} total · auto-refresh 5s</div>
         <a-table
           :columns="baselineColumns"
           :data-source="baselines"
@@ -1444,6 +1561,7 @@ onUnmounted(() => {
             </div>
           </template>
         </a-table>
+        </a-card>
       </a-tab-pane>
 
       <!-- ══ SCHEMA DRIFT ═══════════════════════════════════════════════════ -->
@@ -1455,20 +1573,19 @@ onUnmounted(() => {
           message="Schema drift detection requires Iotistica Agent Pro"
           style="margin-bottom: 12px"
         />
-        <div class="toolbar">
+        <a-card size="small" class="list-card">
+        <div class="filters">
           <a-input
             v-model:value="schemaDriftQuery"
             placeholder="Search by protocol, device, or field…"
             allow-clear
-            style="width: 300px"
+            class="search"
           >
             <template #prefix><SearchOutlined style="color: #bbb" /></template>
           </a-input>
-          <a-space>
-            <span style="color: #888; font-size: 12px">{{ schemaDriftTotal }} total · auto-refresh 5s</span>
-            <a-button danger :loading="clearingSchemaDrift" @click="resetSchemaDriftModalOpen = true">Reset</a-button>
-          </a-space>
+          <a-button danger :loading="clearingSchemaDrift" @click="resetSchemaDriftModalOpen = true">Reset</a-button>
         </div>
+        <div class="toolbar-info">{{ schemaDriftTotal }} total · auto-refresh 5s</div>
         <a-table
           :columns="schemaDriftColumns"
           :data-source="schemaDriftRows"
@@ -1509,12 +1626,13 @@ onUnmounted(() => {
             </div>
           </template>
         </a-table>
+        </a-card>
       </a-tab-pane>
 
       <!-- ══ RULES ══════════════════════════════════════════════════════════ -->
       <a-tab-pane key="rules" tab="Rules">
         <!-- Hidden for now (device/metric name resolution needs more work first) — v-if="false", not deleted. -->
-        <a-card v-if="false" size="small" style="margin-bottom: 16px">
+        <a-card v-if="false" size="small" class="list-card" style="margin-bottom: 16px">
           <div class="toolbar">
             <span style="color: #888; font-size: 13px">
               <strong>Noisy Metrics (Bad Actors)</strong> — Metrics ranked by incident frequency, regardless of incident validity.
@@ -1572,11 +1690,10 @@ onUnmounted(() => {
 
         <a-spin :spinning="configLoading">
           <template v-if="config">
-            <div class="toolbar">
-              <span style="color: #888; font-size: 13px">
-                Per-metric anomaly detection rules — thresholds, methods, and seasonality.
-              </span>
-              <a-button type="primary" @click="openAddMetric">
+            <a-card size="small" class="list-card">
+            <div class="toolbar-info" style="display: flex; justify-content: space-between; align-items: center">
+              <span>{{ config.metrics.length }} rule{{ config.metrics.length !== 1 ? 's' : '' }}</span>
+              <a-button type="primary" size="small" @click="openAddMetric">
                 <template #icon><PlusOutlined /></template>
                 Add rule
               </a-button>
@@ -1585,9 +1702,9 @@ onUnmounted(() => {
             <a-table
               :columns="metricColumns"
               :data-source="config.metrics"
-              :pagination="false"
+              :pagination="{ pageSize: 20, showSizeChanger: true, pageSizeOptions: ['10', '20', '50'] }"
               row-key="name"
-              size="middle"
+              size="small"
             >
               <template #bodyCell="{ column, record, index }">
                 <template v-if="column.key === 'name'">
@@ -1606,11 +1723,15 @@ onUnmounted(() => {
 
                 <template v-else-if="column.key === 'methods'">
                   <a-tag
-                    v-for="m in record.methods"
-                    :key="m"
-                    :color="methodColor(m)"
+                    v-for="label in uniqueCategoryLabels(record.methods)"
+                    :key="label"
+                    :color="categoryLabelColor(label)"
                     style="font-size: 11px; margin: 1px"
-                  >{{ m }}</a-tag>
+                  >{{ label }}</a-tag>
+                </template>
+
+                <template v-else-if="column.key === 'sensitivity'">
+                  <span style="font-size: 12px">{{ tableSensitivityLabel(record) }}</span>
                 </template>
 
                 <template v-else-if="column.key === 'seasonality'">
@@ -1632,6 +1753,7 @@ onUnmounted(() => {
                 </div>
               </template>
             </a-table>
+            </a-card>
           </template>
 
           <div v-else-if="!configLoading" style="padding: 48px 0; text-align: center; color: #aaa; font-size: 13px">
@@ -1776,98 +1898,63 @@ onUnmounted(() => {
              implies its device, and with normalized names the device is
              usually baked into the point name itself. -->
 
-        <a-form-item label="Seasonality">
-          <a-select v-model:value="metricForm.seasonality" style="width: 160px">
-            <a-select-option v-for="s in SEASONALITY_OPTIONS" :key="s" :value="s">
-              {{ s }}
-            </a-select-option>
-          </a-select>
-        </a-form-item>
-
-        <a-form-item label="Detection methods">
-          <div class="detection-method-groups">
-            <div v-for="group in DETECTION_METHOD_GROUPS" :key="group.title" class="detection-method-group">
-              <div class="detection-method-group-title">{{ group.title }}</div>
-              <div class="detection-method-group-description">{{ group.description }}</div>
-              <a-checkbox-group v-model:value="metricForm.methods" class="detection-method-checkboxes">
-                <a-checkbox v-for="m in group.methods" :key="m" :value="m">{{ m }}</a-checkbox>
-              </a-checkbox-group>
-            </div>
+        <a-form-item label="Detection type">
+          <div class="detection-category-cards" role="group" aria-label="Detection type">
+            <label
+              v-for="cat in DETECTION_CATEGORIES"
+              :key="cat.key"
+              class="detection-category-card"
+              :class="{ 'detection-category-card--active': activeCategories.has(cat.key) }"
+            >
+              <a-checkbox
+                :checked="activeCategories.has(cat.key)"
+                @change="toggleCategory(cat)"
+              />
+              <div class="detection-category-card__content">
+                <div class="detection-category-card__title">{{ cat.title }}</div>
+                <div class="detection-category-card__desc">{{ cat.description }}</div>
+              </div>
+            </label>
           </div>
           <div v-if="selectedMethodCount === 0" class="detection-method-warning">
-            Select at least one detection method.
+            Select at least one detection type.
           </div>
-          <div v-for="method in metricForm.methods" :key="method" class="detection-method-explanation">
-            <strong>{{ method }}</strong> — {{ DETECTION_METHOD_HELP[method] }}
+          <div v-if="activeCategories.size > 1" class="multi-category-note">
+            Multiple detection types enabled. Shared settings may affect each type differently.
+          </div>
+          <a-alert
+            v-if="hasLegacyFusion"
+            type="info"
+            show-icon
+            style="margin-top: 8px"
+            message="This rule uses the legacy Fusion method. It will continue to work, but Fusion cannot be added to new rules."
+          />
+        </a-form-item>
+
+        <a-form-item label="Sensitivity">
+          <a-segmented
+            :value="currentSensitivity === 'custom' ? undefined : currentSensitivity"
+            :options="[
+              { label: 'Low', value: 'low' },
+              { label: 'Medium', value: 'medium' },
+              { label: 'High', value: 'high' },
+            ]"
+            @change="setSensitivity($event as SensitivityLevel)"
+          />
+          <div class="sensitivity-description">
+            <span v-if="currentSensitivity === 'low'">Fewer anomaly alerts. Focus on larger deviations.</span>
+            <span v-else-if="currentSensitivity === 'high'">Detect smaller deviations. May generate more alerts.</span>
+            <span v-else-if="currentSensitivity === 'medium'">Balanced anomaly detection.</span>
+            <span v-else>Custom threshold — adjust in Advanced Settings below.</span>
           </div>
         </a-form-item>
 
-        <a-alert
-          v-if="selectedMethodCount > 1"
-          type="info"
-          show-icon
-          class="detection-method-notice"
-          message="Shared detector settings"
-          description="This rule currently stores one threshold and one window size for all selected methods. Method-specific thresholds require a backend configuration change."
-        />
-
-        <a-row :gutter="12">
-          <a-col :span="12">
-            <a-form-item :label="thresholdLabel">
-              <a-input-number
-                v-model:value="metricForm.threshold"
-                :min="0.1"
-                :step="0.5"
-                style="width: 100%"
-              />
-            </a-form-item>
-          </a-col>
-          <a-col :span="12">
-            <a-form-item label="Window size (samples)">
-              <a-input-number
-                v-model:value="metricForm.windowSize"
-                :min="5"
-                :step="10"
-                style="width: 100%"
-              />
-            </a-form-item>
-          </a-col>
-        </a-row>
-
-        <div class="detection-method-setting-help">
-          The threshold and sample window are shared by the selected methods. Existing saved rules and templates retain their current values.
-        </div>
-
-        <a-row :gutter="12">
-          <a-col :span="12">
-            <a-form-item label="Min confidence (0–1)">
-              <a-input-number
-                v-model:value="metricForm.minConfidence"
-                :min="0"
-                :max="1"
-                :step="0.05"
-                style="width: 100%"
-              />
-            </a-form-item>
-          </a-col>
-          <a-col :span="12">
-            <a-form-item label="Cooldown (ms)">
-              <a-input-number
-                v-model:value="metricForm.cooldownMs"
-                :min="0"
-                :step="60000"
-                style="width: 100%"
-              />
-            </a-form-item>
-          </a-col>
-        </a-row>
-
         <a-form-item
-          label="Expected range (optional hard min/max bounds)"
+          label="Operating Limits (Optional)"
           :validate-status="expectedRangeMissingBounds ? 'error' : ''"
           :help="expectedRangeMissingBounds
             ? 'expected_range is selected as a detection method — fill in both bounds or it will never alert'
-            : 'Leave both blank to skip hard bounds. Also used by zscore/mad to suppress false positives within these bounds.'"
+            : 'Generate an anomaly when a reading falls outside the configured operating limits.'"
         >
           <a-row :gutter="8">
             <a-col :span="12">
@@ -1886,6 +1973,70 @@ onUnmounted(() => {
             </a-col>
           </a-row>
         </a-form-item>
+
+        <a-collapse
+          v-model:activeKey="advancedOpen"
+          ghost
+          class="advanced-settings-collapse"
+        >
+          <a-collapse-panel key="advanced" header="Advanced Settings (Optional)">
+            <a-row :gutter="12">
+              <a-col :span="12">
+                <a-form-item label="Detection threshold">
+                  <a-input-number
+                    v-model:value="metricForm.threshold"
+                    :min="0.1"
+                    :step="0.5"
+                    style="width: 100%"
+                  />
+                </a-form-item>
+              </a-col>
+              <a-col :span="12">
+                <a-form-item label="Window size (samples)">
+                  <a-input-number
+                    v-model:value="metricForm.windowSize"
+                    :min="5"
+                    :step="10"
+                    style="width: 100%"
+                  />
+                </a-form-item>
+              </a-col>
+            </a-row>
+            <a-row :gutter="12">
+              <a-col :span="12">
+                <a-form-item label="Minimum confidence (%)">
+                  <a-input-number
+                    v-model:value="confidencePercent"
+                    :min="0"
+                    :max="100"
+                    :step="5"
+                    style="width: 100%"
+                    :formatter="(v: number) => `${v}%`"
+                    :parser="(v: string) => Number(v.replace('%', ''))"
+                  />
+                </a-form-item>
+              </a-col>
+              <a-col :span="12">
+                <a-form-item label="Alert cooldown (minutes)">
+                  <a-input-number
+                    v-model:value="cooldownMinutes"
+                    :min="0"
+                    :step="1"
+                    style="width: 100%"
+                  />
+                  <div class="advanced-setting-help">Minimum time between repeated alerts for this rule.</div>
+                </a-form-item>
+              </a-col>
+            </a-row>
+            <a-form-item label="Seasonality">
+              <a-select v-model:value="metricForm.seasonality" style="width: 160px">
+                <a-select-option v-for="s in SEASONALITY_OPTIONS" :key="s" :value="s">
+                  {{ s }}
+                </a-select-option>
+              </a-select>
+            </a-form-item>
+          </a-collapse-panel>
+        </a-collapse>
 
         <a-form-item label="Enabled">
           <a-switch v-model:checked="metricForm.enabled" />
@@ -1943,7 +2094,7 @@ onUnmounted(() => {
             </div>
             <div v-if="t.purpose" style="font-size: 12px; color: #888; margin: 4px 0">{{ t.purpose }}</div>
             <div style="display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px">
-              <a-tag v-for="m in t.methods" :key="m" :color="methodColor(m)" style="font-size: 10px">{{ m }}</a-tag>
+              <a-tag v-for="label in uniqueCategoryLabels(t.methods)" :key="label" :color="categoryLabelColor(label)" style="font-size: 10px">{{ label }}</a-tag>
             </div>
           </div>
         </div>
@@ -1978,6 +2129,15 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
+.heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 16px; }
+.heading p { color: #777; margin: 0; }
+.list-card { border-radius: 9px; }
+.list-card :deep(.ant-table-thead > tr > th) { background: #f7f9fc; font-size: 12px; font-weight: 650; }
+.list-card :deep(.ant-table-tbody > tr:hover > td) { background: #f5f9ff; }
+.filters { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
+.search { width: 300px; max-width: 100%; }
+.filter { width: 170px; max-width: 100%; }
+.toolbar-info { color: #888; font-size: 12px; margin-bottom: 10px; }
 .toolbar {
   display: flex;
   justify-content: space-between;
@@ -1996,14 +2156,22 @@ onUnmounted(() => {
   animation: severity-pulse 0.75s ease-in-out infinite;
 }
 
-.detection-method-groups { display: grid; gap: 12px; }
-.detection-method-group { padding: 10px 12px; border: 1px solid #e8e8e8; border-radius: 6px; }
-.detection-method-group-title { font-size: 13px; font-weight: 600; }
-.detection-method-group-description { font-size: 12px; color: #888; margin: 2px 0 8px; }
-.detection-method-checkboxes { display: flex; flex-wrap: wrap; gap: 8px 12px; }
-.detection-method-explanation { margin-top: 6px; color: #777; font-size: 12px; line-height: 1.5; }
+.detection-category-cards { display: flex; flex-direction: column; gap: 8px; }
+.detection-category-card {
+  display: flex; align-items: flex-start; gap: 12px;
+  padding: 12px; border: 1px solid #d9d9d9; border-radius: 6px;
+  cursor: pointer; transition: all 0.2s;
+}
+.detection-category-card:hover { border-color: #1677ff; }
+.detection-category-card--active { border-color: #1677ff; background: #e6f4ff; }
+.detection-category-card__title { font-weight: 600; font-size: 13px; }
+.detection-category-card__desc { font-size: 12px; color: #666; margin-top: 2px; }
 .detection-method-warning { margin-top: 8px; color: #cf1322; font-size: 12px; }
-.detection-method-notice { margin-bottom: 16px; }
-.detection-method-setting-help { font-size: 12px; color: #888; margin: -8px 0 16px; }
+.multi-category-note { margin-top: 8px; font-size: 12px; color: #888; }
+.sensitivity-description { margin-top: 6px; font-size: 12px; color: #888; }
+.advanced-settings-collapse { margin: 0 -12px 16px; }
+.advanced-settings-collapse :deep(.ant-collapse-header) { font-size: 13px; color: #555; padding: 8px 12px !important; }
+.advanced-settings-collapse :deep(.ant-collapse-content-box) { padding: 0 12px !important; }
+.advanced-setting-help { font-size: 12px; color: #888; margin-top: 4px; }
 
 </style>

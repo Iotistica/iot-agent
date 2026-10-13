@@ -119,35 +119,27 @@ onMounted(load)
 </script>
 
 <template>
-  <AppLayout>
-    <div class="page-header">
-      <div>
-        <h2 class="page-title">MQTT Users</h2>
-        <p class="page-subtitle">Manage credentials for clients connecting to the local MQTT broker</p>
-      </div>
-      <a-space>
+  <AppLayout title="MQTT Users">
+    <div class="heading">
+      <p>Manage credentials for clients connecting to the local MQTT broker.</p>
+      <div class="header-actions">
         <template v-if="selectedUsernames.length > 0">
-          <span style="font-size: 13px; color: rgba(255,255,255,0.65)">{{ selectedUsernames.length }} selected</span>
-          <a-button danger :loading="deleting" @click="confirmDeleteSelected">
-            <template #icon><DeleteOutlined /></template>
-            Delete
-          </a-button>
+          <span style="font-size: 13px; color: #666">{{ selectedUsernames.length }} selected</span>
+          <a-button danger :loading="deleting" @click="confirmDeleteSelected"><template #icon><DeleteOutlined /></template>Delete</a-button>
         </template>
-        <a-button type="primary" @click="openCreate">
-          <template #icon><PlusOutlined /></template>
-          Add User
-        </a-button>
-      </a-space>
+        <a-button type="primary" @click="openCreate"><template #icon><PlusOutlined /></template>Add User</a-button>
+      </div>
     </div>
 
+    <a-card size="small" class="list-card">
     <a-table
       :dataSource="rows"
       :columns="columns"
       :loading="loading"
-      :pagination="false"
+      :pagination="{ pageSize: 20, showSizeChanger: true, pageSizeOptions: ['10', '20', '50'] }"
       :row-selection="rowSelection"
       rowKey="username"
-      size="middle"
+      size="small"
     >
       <template #bodyCell="{ column, record }">
         <template v-if="column.key === 'topic'">
@@ -179,6 +171,7 @@ onMounted(load)
         </template>
       </template>
     </a-table>
+    </a-card>
 
     <!-- Add User Drawer -->
     <a-drawer
@@ -229,25 +222,12 @@ onMounted(load)
 </template>
 
 <style scoped>
-.page-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  margin-bottom: 24px;
-}
-
-.page-title {
-  margin: 0 0 4px;
-  font-size: 20px;
-  font-weight: 600;
-  color: rgba(255, 255, 255, 0.88);
-}
-
-.page-subtitle {
-  margin: 0;
-  color: rgba(255, 255, 255, 0.45);
-  font-size: 13px;
-}
+.heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 16px; }
+.heading p { color: #777; margin: 0; }
+.header-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.list-card { border-radius: 9px; }
+.list-card :deep(.ant-table-thead > tr > th) { background: #f7f9fc; font-size: 12px; font-weight: 650; }
+.list-card :deep(.ant-table-tbody > tr:hover > td) { background: #f5f9ff; }
 
 .drawer-footer {
   position: absolute;
@@ -255,7 +235,7 @@ onMounted(load)
   left: 0;
   right: 0;
   padding: 16px 24px;
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  border-top: 1px solid #f0f0f0;
   display: flex;
   justify-content: flex-end;
 }

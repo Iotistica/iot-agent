@@ -219,42 +219,32 @@ onMounted(loadUsers)
 
 <template>
   <AppLayout title="Users">
+    <div class="heading">
+      <p>Manage admin panel accounts and active sessions.</p>
+      <div class="header-actions">
+        <template v-if="selectedUsernames.length > 0">
+          <span style="font-size: 13px; color: #666">{{ selectedUsernames.length }} selected</span>
+          <a-button :loading="bulkActivating" @click="bulkActivate"><template #icon><CheckCircleOutlined /></template>Activate</a-button>
+          <a-button :loading="bulkDeactivating" @click="bulkDeactivate"><template #icon><StopOutlined /></template>Deactivate</a-button>
+          <a-button danger :loading="deletingUsers" @click="confirmDeleteSelectedUsers"><template #icon><DeleteOutlined /></template>Delete</a-button>
+        </template>
+        <a-button type="primary" @click="openCreate"><template #icon><PlusOutlined /></template>New User</a-button>
+      </div>
+    </div>
+
     <a-tabs default-active-key="users" @change="onTabChange">
 
       <!-- ── Users tab ──────────────────────────────────────────────────────── -->
       <a-tab-pane key="users" tab="Users">
-        <div class="users-toolbar">
-          <a-space>
-            <template v-if="selectedUsernames.length > 0">
-              <span style="font-size: 13px; color: #666">{{ selectedUsernames.length }} selected</span>
-              <a-button :loading="bulkActivating" @click="bulkActivate">
-                <template #icon><CheckCircleOutlined /></template>
-                Activate
-              </a-button>
-              <a-button :loading="bulkDeactivating" @click="bulkDeactivate">
-                <template #icon><StopOutlined /></template>
-                Deactivate
-              </a-button>
-              <a-button danger :loading="deletingUsers" @click="confirmDeleteSelectedUsers">
-                <template #icon><DeleteOutlined /></template>
-                Delete
-              </a-button>
-            </template>
-          </a-space>
-          <a-button type="primary" @click="openCreate">
-            <template #icon><PlusOutlined /></template>
-            New User
-          </a-button>
-        </div>
-
+        <a-card size="small" class="list-card">
         <a-table
           :columns="userColumns"
           :data-source="rows"
           :loading="loading"
-          :pagination="false"
+          :pagination="{ pageSize: 20, showSizeChanger: true, pageSizeOptions: ['10', '20', '50'] }"
           :row-selection="userRowSelection"
           row-key="username"
-          size="middle"
+          size="small"
         >
           <template #bodyCell="{ column, record }">
             <template v-if="column.key === 'role'">
@@ -292,24 +282,23 @@ onMounted(loadUsers)
             </template>
           </template>
         </a-table>
+        </a-card>
       </a-tab-pane>
 
       <!-- ── Sessions tab ───────────────────────────────────────────────────── -->
       <a-tab-pane key="sessions" tab="Sessions">
-        <div style="display: flex; justify-content: flex-end; margin-bottom: 16px">
-          <a-button :loading="sessionsLoading" @click="loadSessions">
-            <template #icon><ReloadOutlined /></template>
-            Refresh
-          </a-button>
+        <a-card size="small" class="list-card">
+        <div class="toolbar-info" style="display: flex; justify-content: space-between; align-items: center">
+          <span>{{ sessions.length }} session{{ sessions.length !== 1 ? 's' : '' }}</span>
+          <a-button size="small" :loading="sessionsLoading" @click="loadSessions">Refresh</a-button>
         </div>
-
         <a-table
           :columns="sessionColumns"
           :data-source="sessions"
           :loading="sessionsLoading"
-          :pagination="{ pageSize: 20 }"
+          :pagination="{ pageSize: 20, showSizeChanger: true, pageSizeOptions: ['10', '20', '50'] }"
           row-key="token_id"
-          size="middle"
+          size="small"
         >
           <template #bodyCell="{ column, record }">
             <template v-if="column.key === 'active'">
@@ -332,6 +321,7 @@ onMounted(loadUsers)
             </template>
           </template>
         </a-table>
+        </a-card>
       </a-tab-pane>
 
     </a-tabs>
@@ -390,11 +380,11 @@ onMounted(loadUsers)
 </template>
 
 <style scoped>
-.users-toolbar {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 16px;
-  gap: 8px;
-}
+.heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 16px; }
+.heading p { color: #777; margin: 0; }
+.header-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.list-card { border-radius: 9px; }
+.list-card :deep(.ant-table-thead > tr > th) { background: #f7f9fc; font-size: 12px; font-weight: 650; }
+.list-card :deep(.ant-table-tbody > tr:hover > td) { background: #f5f9ff; }
+.toolbar-info { color: #888; font-size: 12px; margin-bottom: 10px; }
 </style>

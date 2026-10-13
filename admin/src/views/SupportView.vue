@@ -38,6 +38,9 @@ const resources = [
 
 <template>
   <AppLayout title="Support">
+    <div class="heading">
+      <p>Diagnostics, documentation, and contact channels.</p>
+    </div>
 
     <!-- Community upsell banner -->
     <a-alert
@@ -108,3 +111,8 @@ const resources = [
 
   </AppLayout>
 </template>
+
+<style scoped>
+.heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 16px; }
+.heading p { color: #777; margin: 0; }
+</style>

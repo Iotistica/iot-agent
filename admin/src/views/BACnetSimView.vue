@@ -1,27 +1,23 @@
 <template>
-  <AppLayout>
-    <template #header>
-      <div class="page-header">
-        <div class="page-header-left">
-          <h2>BACnet Simulator</h2>
-          <a-tag :color="connected ? 'green' : 'red'" class="status-tag">
-            {{ connected ? 'Online' : 'Offline' }}
-          </a-tag>
-        </div>
-        <div class="page-header-right">
-          <a-button v-if="!connected" @click="connectToSim" :loading="connecting">
-            Reconnect
-          </a-button>
-          <a-button v-if="connected" @click="reload" :loading="reloading" type="default">
-            Reload Stack
-          </a-button>
-          <a-button type="primary" @click="openAddDevice" :disabled="!connected">
-            <template #icon><PlusOutlined /></template>
-            Add Device
-          </a-button>
-        </div>
+  <AppLayout title="BACnet Simulator">
+    <div class="heading">
+      <p>Virtual BACnet devices for testing and development.</p>
+      <div class="header-actions">
+        <a-tag :color="connected ? 'green' : 'red'" class="status-tag">
+          {{ connected ? 'Online' : 'Offline' }}
+        </a-tag>
+        <a-button v-if="!connected" @click="connectToSim" :loading="connecting">
+          Reconnect
+        </a-button>
+        <a-button v-if="connected" @click="reload" :loading="reloading" type="default">
+          Reload Stack
+        </a-button>
+        <a-button type="primary" @click="openAddDevice" :disabled="!connected">
+          <template #icon><PlusOutlined /></template>
+          Add Device
+        </a-button>
       </div>
-    </template>
+    </div>
 
     <!-- Offline banner -->
     <div v-if="!connected && !connecting" class="offline-banner">
@@ -743,26 +739,9 @@ async function confirmSetValue() {
 </script>
 
 <style scoped>
-.page-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  width: 100%;
-}
-.page-header-left {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-.page-header-left h2 {
-  margin: 0;
-  font-size: 1rem;
-  font-weight: 600;
-}
-.page-header-right {
-  display: flex;
-  gap: 8px;
-}
+.heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 16px; }
+.heading p { color: #777; margin: 0; }
+.header-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .status-tag {
   font-size: 11px;
 }
@@ -916,10 +895,8 @@ async function confirmSetValue() {
 /* Table cells */
 .type-tag, .behavior-tag {
   font-size: 11px;
-  font-family: monospace;
 }
 .live-value {
-  font-family: monospace;
   font-size: 13px;
   color: #52c41a;
 }

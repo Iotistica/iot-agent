@@ -78,12 +78,12 @@ const protocolCounts = computed(() => {
 })
 
 const columns: TableColumnType<Endpoint>[] = [
-  { title: 'Name', dataIndex: 'name', key: 'name', ellipsis: true },
-  { title: 'Protocol', key: 'protocol', width: 110 },
+  { title: 'Name', dataIndex: 'name', key: 'name', ellipsis: true, sorter: (a: Endpoint, b: Endpoint) => ((a.metadata?.objectName as string) || a.name).localeCompare((b.metadata?.objectName as string) || b.name) },
+  { title: 'Protocol', key: 'protocol', width: 110, sorter: (a: Endpoint, b: Endpoint) => a.protocol.localeCompare(b.protocol) },
   { title: 'Status', key: 'status', width: 130 },
   { title: 'Last Seen', key: 'last_seen', width: 100 },
   { title: 'Connection', key: 'connection', ellipsis: true },
-  { title: 'Enabled', key: 'enabled', width: 90 },
+  { title: 'Enabled', key: 'enabled', width: 90, sorter: (a: Endpoint, b: Endpoint) => Number(a.enabled) - Number(b.enabled) },
   { title: 'Poll', key: 'poll_interval', width: 80 },
   { title: 'Actions', key: 'actions', width: 100, fixed: 'right' },
 ]
@@ -360,30 +360,24 @@ onUnmounted(() => {
 
 <template>
   <AppLayout title="Sources">
-    <div class="sources-page">
-      <div class="page-actions">
-        <div class="selection-actions" v-if="selectedUuids.length > 0">
-          <span class="selection-count">{{ selectedUuids.length }} selected</span>
+    <div class="heading">
+      <p>Manage connected protocol endpoints and communication health.</p>
+      <div class="header-actions">
+        <template v-if="selectedUuids.length > 0">
+          <span style="font-size: 13px; color: #666">{{ selectedUuids.length }} selected</span>
           <a-button :loading="bulkEnabling" @click="bulkEnable"><template #icon><CheckCircleOutlined /></template>Enable</a-button>
           <a-button :loading="bulkDisabling" @click="bulkDisable"><template #icon><StopOutlined /></template>Disable</a-button>
           <a-button v-if="hasRole('operator')" danger :loading="deleting" @click="confirmDeleteSelected"><template #icon><DeleteOutlined /></template>Delete</a-button>
-        </div>
-        <div class="primary-actions">
-          <a-button @click="discoveryOpen = true"><template #icon><RadarChartOutlined /></template>Discover</a-button>
-          <a-button type="primary" @click="openCreate"><template #icon><PlusOutlined /></template>Add Source</a-button>
-          <a-button v-if="rows.length > 0 && hasRole('admin')" danger :loading="deletingAll" :disabled="selectedUuids.length > 0" @click="confirmDeleteAll"><template #icon><DeleteOutlined /></template>Delete All</a-button>
-        </div>
+        </template>
+        <a-button @click="discoveryOpen = true"><template #icon><RadarChartOutlined /></template>Discover</a-button>
+        <a-button type="primary" @click="openCreate"><template #icon><PlusOutlined /></template>Add Source</a-button>
+        <a-button v-if="rows.length > 0 && hasRole('admin')" danger :loading="deletingAll" :disabled="selectedUuids.length > 0" @click="confirmDeleteAll"><template #icon><DeleteOutlined /></template>Delete All</a-button>
       </div>
-    <a-alert
-      v-if="error"
-      type="error"
-      :message="error"
-      show-icon
-      style="margin-bottom: 16px"
-    />
+    </div>
 
-    <a-card class="sources-card" size="small">
-      <div class="card-heading"><div><h3>Source browser</h3><span>Manage connected sources and communication health</span></div><span class="result-count">{{ filteredRows.length }} sources</span></div>
+    <a-alert v-if="error" type="error" :message="error" show-icon style="margin-bottom: 16px" />
+
+    <a-card class="list-card" size="small">
       <div class="filters">
         <a-input v-model:value="search" placeholder="Search source, protocol, connection…" allow-clear class="search" />
         <a-select v-model:value="activeProtocol" :options="protocolOptions" placeholder="All protocols" allow-clear class="filter" />
@@ -391,7 +385,7 @@ onUnmounted(() => {
         <a-select v-model:value="enabledFilter" :options="[{value:'enabled',label:'Enabled'},{value:'disabled',label:'Disabled'}]" placeholder="All availability" allow-clear class="filter" />
         <a-button @click="clearFilters">Clear</a-button>
       </div>
-      <div class="results">Showing {{ filteredRows.length }} of {{ rows.length }} sources · Refreshes every 10 seconds</div>
+      <div class="toolbar-info">Showing {{ filteredRows.length }} of {{ rows.length }} sources</div>
     <a-table
       :columns="columns"
       :data-source="filteredRows"
@@ -476,7 +470,6 @@ onUnmounted(() => {
     </a-table>
     </a-card>
 
-    </div>
     <SourceDrawer
       v-model:open="drawerOpen"
       :editing="editing"
@@ -499,23 +492,16 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
-.sources-page { padding: 0 2px 20px; }
-.page-actions { display: flex; justify-content: flex-end; align-items: center; flex-wrap: wrap; gap: 12px; margin-bottom: 14px; }
-.primary-actions, .selection-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
-.selection-actions { margin-right: auto; }
-.selection-count { font-size: 12px; color: #64748b; }
-.sources-card { border-radius: 9px; }
-.card-heading { display: flex; justify-content: space-between; align-items: center; margin-bottom: 18px; gap: 12px; }
-.card-heading h3 { margin: 0 0 3px; font-size: 15px; font-weight: 650; }
-.card-heading span { font-size: 11px; color: #8b94a3; }
-.result-count { background: #f1f5fb; padding: 5px 12px; border-radius: 20px; white-space: nowrap; }
+.heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 16px; }
+.heading p { color: #777; margin: 0; }
+.header-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.list-card { border-radius: 9px; }
+.list-card :deep(.ant-table-thead > tr > th) { background: #f7f9fc; font-size: 12px; font-weight: 650; }
+.list-card :deep(.ant-table-tbody > tr:hover > td) { background: #f5f9ff; }
 .filters { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
 .search { width: 300px; max-width: 100%; }
 .filter { width: 170px; max-width: 100%; }
-.results { color: #888; font-size: 12px; margin-bottom: 10px; }
-.sources-card :deep(.ant-table-thead > tr > th) { background: #f7f9fc; font-size: 12px; font-weight: 650; }
-.sources-card :deep(.ant-table-tbody > tr:hover > td) { background: #f5f9ff; }
-@media (max-width: 900px) { .page-actions { justify-content: flex-start; } .selection-actions { width: 100%; } }
+.toolbar-info { color: #888; font-size: 12px; margin-bottom: 10px; }
 .status-cell {
   display: flex;
   align-items: center;

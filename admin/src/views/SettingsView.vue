@@ -521,6 +521,9 @@ async function saveAllAlertConfig() {
 
 <template>
   <AppLayout title="Settings">
+    <div class="heading">
+      <p>Agent configuration — protocols, intervals, and integrations.</p>
+    </div>
 
     <!-- Global alerts -->
     <a-alert
@@ -1213,27 +1216,29 @@ async function saveAllAlertConfig() {
         </a-tab-pane>
 
         <!-- ══ ALERTS ════════════════════════════════════════════════════════ -->
-        <a-tab-pane key="alerts" tab="Alerts">
+        <a-tab-pane key="alerts" tab="Detection &amp; Alerts">
           <a-spin :spinning="alertConfigLoading">
             <template v-if="alertConfig">
               <div class="settings-page">
-                <a-alert
+                <p class="settings-intro">Configure detection thresholds, schema changes, alert delivery, and retention.</p>
+
+                <!-- Detection settings -->
+                <SettingsSection
+                  title="Anomaly Detection"
+                  subtitle="Configure how anomalies are detected and scored."
+                >
+                  <template #icon><SafetyCertificateOutlined /></template>
+                  <a-alert
                   type="info"
                   show-icon
                   message="Anomaly detection is enabled or disabled in Settings → Features."
                   style="margin-bottom: 20px"
-                />
+                  />
 
-                <!-- Detection settings -->
-                <SettingsSection
-                  title="Anomaly detection settings"
-                  subtitle="Configure how anomalies are detected and scored."
-                >
-                  <template #icon><SafetyCertificateOutlined /></template>
 
                   <a-row :gutter="[20, 20]">
                     <a-col :xs="24" :sm="12" :lg="8">
-                      <SettingsField label="Sensitivity (1–10)" tooltip="Higher sensitivity flags smaller deviations as anomalies.">
+                      <SettingsField label="Detection sensitivity (1–10)" tooltip="Higher sensitivity flags smaller deviations as anomalies.">
                         <div class="sensitivity-control">
                           <div class="sensitivity-control__row">
                             <a-slider
@@ -1253,7 +1258,7 @@ async function saveAllAlertConfig() {
                     </a-col>
                     <a-col :xs="24" :sm="12" :lg="8">
                       <SettingsField
-                        label="Warm-up period (ms)"
+                        label="Learning period (ms)"
                         tooltip="Time to collect baseline data before detection starts."
                         helper="Time to collect baseline data before detection starts."
                       >
@@ -1262,7 +1267,7 @@ async function saveAllAlertConfig() {
                     </a-col>
                     <a-col :xs="24" :sm="12" :lg="8">
                       <SettingsField
-                        label="Min confidence"
+                        label="Minimum confidence"
                         tooltip="Minimum confidence score to consider an anomaly."
                         helper="Minimum confidence score to consider an anomaly."
                       >
@@ -1271,7 +1276,7 @@ async function saveAllAlertConfig() {
                     </a-col>
                     <a-col :xs="24" :sm="12" :lg="8">
                       <SettingsField
-                        label="Cooldown (ms)"
+                        label="Detection cooldown (ms)"
                         tooltip="Minimum time between anomaly detections."
                         helper="Minimum time between anomaly detections."
                       >
@@ -1280,7 +1285,7 @@ async function saveAllAlertConfig() {
                     </a-col>
                     <a-col :xs="24" :sm="12" :lg="8">
                       <SettingsField
-                        label="Max queue size"
+                        label="Alert queue limit"
                         tooltip="Maximum number of items in the anomaly queue."
                         helper="Maximum number of items in the anomaly queue."
                       >
@@ -1290,16 +1295,96 @@ async function saveAllAlertConfig() {
                   </a-row>
                 </SettingsSection>
 
+                <!-- Schema drift settings -->
+                <SettingsSection
+                  title="Schema Drift Detection"
+                  subtitle="Controls how the agent detects unexpected changes in the fields it publishes. Changes apply immediately."
+                >
+                  <template #icon><BranchesOutlined /></template>
+                  <template #extra>
+                    <div class="drift-enabled-toggle">
+                      <span class="drift-enabled-toggle__label">Enabled</span>
+                      <a-switch
+                        :checked="globalDrift.enabled !== false"
+                        size="small"
+                        @change="(v: boolean) => setDrift('enabled', v)"
+                      />
+                    </div>
+                  </template>
+
+                  <a-spin :spinning="driftLoading">
+                    <a-row :gutter="[20, 20]">
+                      <a-col :xs="24" :sm="12" :lg="8">
+                        <SettingsField
+                          label="Detection sensitivity"
+                          tooltip="How readily the agent flags a device's fields as changed. Low tolerates fields that only report occasionally (e.g. a Boolean alarm/fault point with a long toggle period) — fewer alerts. High flags sooner, at the cost of more false positives on genuinely variable sources. Standard is the recommended default."
+                        >
+                          <a-radio-group
+                            button-style="solid"
+                            :value="selectedSensitivity === 'custom' ? undefined : selectedSensitivity"
+                            @change="(e: any) => setSensitivityPreset(e.target.value)"
+                          >
+                            <a-radio-button value="low">Low</a-radio-button>
+                            <a-radio-button value="standard">Standard</a-radio-button>
+                            <a-radio-button value="high">High</a-radio-button>
+                          </a-radio-group>
+                          <div v-if="selectedSensitivity === 'custom'" class="drift-sensitivity-custom">
+                            Custom — advanced settings have been hand-tuned away from a preset
+                          </div>
+                        </SettingsField>
+                      </a-col>
+                      <a-col :xs="24" :sm="12" :lg="8">
+                        <SettingsField
+                          label="Repeat alert interval"
+                          tooltip="Minimum time between repeat alerts for the same field on the same device. Prevents a single ongoing drift from spamming repeated alerts."
+                        >
+                          <a-select
+                            :value="globalDrift.alertCooldownMs ?? 1800000"
+                            style="width: 100%; max-width: 220px"
+                            @change="(v: number) => setDrift('alertCooldownMs', v)"
+                          >
+                            <a-select-option v-for="opt in alertFrequencyOptions" :key="opt.value" :value="opt.value">
+                              {{ opt.label }}
+                            </a-select-option>
+                          </a-select>
+                        </SettingsField>
+                      </a-col>
+                    </a-row>
+
+                    <div class="drift-alert-on">
+                      <div class="drift-alert-on__label">
+                        Alert on
+                        <a-tooltip title="Every drift type is always logged and shows up in the Schema Drift baseline history regardless of this setting — this only controls which ones also raise an alert (Events/Incidents/Alerts, same pipeline anomalies use).">
+                          <QuestionCircleOutlined class="drift-alert-on__info" />
+                        </a-tooltip>
+                      </div>
+                      <a-checkbox-group
+                        :value="globalDrift.alertOnDriftTypes ?? DEFAULT_ALERT_DRIFT_TYPES"
+                        class="drift-alert-on__group"
+                        @change="(v: DriftAlertType[]) => setDrift('alertOnDriftTypes', v)"
+                      >
+                        <a-checkbox v-for="opt in DRIFT_ALERT_TYPE_OPTIONS" :key="opt.value" :value="opt.value">
+                          {{ opt.label }}
+                          <a-tooltip :title="opt.hint">
+                            <QuestionCircleOutlined class="drift-alert-on__info drift-alert-on__info--sm" />
+                          </a-tooltip>
+                        </a-checkbox>
+                      </a-checkbox-group>
+                    </div>
+
+                  </a-spin>
+                </SettingsSection>
+
                 <!-- Alert routing -->
                 <SettingsSection
-                  title="Alert routing"
+                  title="Alert Delivery"
                   subtitle="Configure how and where alerts are delivered."
                 >
                   <template #icon><BellOutlined /></template>
 
                   <a-row :gutter="[20, 20]">
                     <a-col :xs="24" :sm="12" :lg="8">
-                      <SettingsField label="Enable MQTT alerts">
+                      <SettingsField label="Publish alerts to MQTT">
                         <a-switch v-model:checked="alertConfig.alerts.mqtt" />
                       </SettingsField>
                     </a-col>
@@ -1341,7 +1426,7 @@ async function saveAllAlertConfig() {
 
                 <!-- Storage & retention -->
                 <SettingsSection
-                  title="Storage & retention"
+                  title="Data Retention"
                   subtitle="Configure how long data is kept."
                 >
                   <template #icon><DatabaseOutlined /></template>
@@ -1416,86 +1501,6 @@ async function saveAllAlertConfig() {
                   />
                 </SettingsSection>
 
-                <!-- Schema drift settings -->
-                <SettingsSection
-                  title="Schema drift"
-                  subtitle="Controls how the agent detects unexpected changes in the fields it publishes. Changes apply immediately."
-                >
-                  <template #icon><BranchesOutlined /></template>
-                  <template #extra>
-                    <div class="drift-enabled-toggle">
-                      <span class="drift-enabled-toggle__label">Enabled</span>
-                      <a-switch
-                        :checked="globalDrift.enabled !== false"
-                        size="small"
-                        @change="(v: boolean) => setDrift('enabled', v)"
-                      />
-                    </div>
-                  </template>
-
-                  <a-spin :spinning="driftLoading">
-                    <a-row :gutter="[20, 20]">
-                      <a-col :xs="24" :sm="12" :lg="8">
-                        <SettingsField
-                          label="Detection sensitivity"
-                          tooltip="How readily the agent flags a device's fields as changed. Low tolerates fields that only report occasionally (e.g. a Boolean alarm/fault point with a long toggle period) — fewer alerts. High flags sooner, at the cost of more false positives on genuinely variable sources. Standard is the recommended default."
-                        >
-                          <a-radio-group
-                            button-style="solid"
-                            :value="selectedSensitivity === 'custom' ? undefined : selectedSensitivity"
-                            @change="(e: any) => setSensitivityPreset(e.target.value)"
-                          >
-                            <a-radio-button value="low">Low</a-radio-button>
-                            <a-radio-button value="standard">Standard</a-radio-button>
-                            <a-radio-button value="high">High</a-radio-button>
-                          </a-radio-group>
-                          <div v-if="selectedSensitivity === 'custom'" class="drift-sensitivity-custom">
-                            Custom — advanced settings have been hand-tuned away from a preset
-                          </div>
-                        </SettingsField>
-                      </a-col>
-                      <a-col :xs="24" :sm="12" :lg="8">
-                        <SettingsField
-                          label="Alert frequency"
-                          tooltip="Minimum time between repeat alerts for the same field on the same device. Prevents a single ongoing drift from spamming repeated alerts."
-                        >
-                          <a-select
-                            :value="globalDrift.alertCooldownMs ?? 1800000"
-                            style="width: 100%; max-width: 220px"
-                            @change="(v: number) => setDrift('alertCooldownMs', v)"
-                          >
-                            <a-select-option v-for="opt in alertFrequencyOptions" :key="opt.value" :value="opt.value">
-                              {{ opt.label }}
-                            </a-select-option>
-                          </a-select>
-                        </SettingsField>
-                      </a-col>
-                    </a-row>
-
-                    <div class="drift-alert-on">
-                      <div class="drift-alert-on__label">
-                        Alert on
-                        <a-tooltip title="Every drift type is always logged and shows up in the Schema Drift baseline history regardless of this setting — this only controls which ones also raise an alert (Events/Incidents/Alerts, same pipeline anomalies use).">
-                          <QuestionCircleOutlined class="drift-alert-on__info" />
-                        </a-tooltip>
-                      </div>
-                      <a-checkbox-group
-                        :value="globalDrift.alertOnDriftTypes ?? DEFAULT_ALERT_DRIFT_TYPES"
-                        class="drift-alert-on__group"
-                        @change="(v: DriftAlertType[]) => setDrift('alertOnDriftTypes', v)"
-                      >
-                        <a-checkbox v-for="opt in DRIFT_ALERT_TYPE_OPTIONS" :key="opt.value" :value="opt.value">
-                          {{ opt.label }}
-                          <a-tooltip :title="opt.hint">
-                            <QuestionCircleOutlined class="drift-alert-on__info drift-alert-on__info--sm" />
-                          </a-tooltip>
-                        </a-checkbox>
-                      </a-checkbox-group>
-                    </div>
-
-                  </a-spin>
-                </SettingsSection>
-
                 <div v-if="hasRole('operator')" class="settings-page__actions">
                   <a-button @click="resetAlertDetectionDefaults">
                     <template #icon><ReloadOutlined /></template>
@@ -1556,6 +1561,9 @@ async function saveAllAlertConfig() {
 </template>
 
 <style scoped>
+.heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 16px; }
+.heading p { color: #777; margin: 0; }
+
 .toggle-row {
   display: flex;
   align-items: center;
@@ -1731,4 +1739,11 @@ async function saveAllAlertConfig() {
   .settings-tabs :deep(.ant-tabs-nav) { margin-bottom: 14px; }
 }
 
+/* Detection & Alerts: unified vertical field layout even when child components use inline labels */
+.settings-page :deep(.settings-field) { min-width: 0; }
+.settings-page :deep(.ant-input-number),
+.settings-page :deep(.ant-select),
+.settings-page :deep(.ant-input) { width: 100%; }
+.settings-page :deep(.ant-alert) { border-radius: 7px; }
+.settings-page__actions { padding-top: 20px; border-top: 1px solid #edf0f4; }
 </style>

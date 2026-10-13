@@ -163,7 +163,7 @@ function detailFor(row: PointRow) {
         </template>
         <template v-else-if="column.key === 'value'">
           <a-tag v-if="record.hasError" color="red">Error</a-tag>
-          <span v-else style="font-family: monospace">{{ fmtValue(record.value) }}</span>
+          <span v-else>{{ fmtValue(record.value) }}</span>
         </template>
         <template v-else-if="column.key === 'unit'">
           {{ record.unit || '—' }}

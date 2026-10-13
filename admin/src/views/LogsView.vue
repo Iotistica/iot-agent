@@ -11,9 +11,9 @@ const loading = ref(false)
 const autoRefresh = ref(false)
 let refreshTimer: ReturnType<typeof setInterval> | null = null
 
-const filterLevel = ref<LogLevel | ''>('')
-const filterSource = ref<LogSourceType | ''>('')
-const filterComponent = ref('')
+const filterLevel = ref<LogLevel | undefined>(undefined)
+const filterSource = ref<LogSourceType | undefined>(undefined)
+const filterComponent = ref<string | undefined>(undefined)
 const filterText = ref('')
 const limitOption = ref(200)
 
@@ -56,12 +56,20 @@ const filtered = computed(() => {
   })
 })
 
+function clearFilters() {
+  filterLevel.value = undefined
+  filterSource.value = undefined
+  filterComponent.value = undefined
+  filterText.value = ''
+  load()
+}
+
 async function load() {
   loading.value = true
   try {
     const res = await logsApi.getLogs({
-      level: filterLevel.value || undefined,
-      source: filterSource.value || undefined,
+      level: filterLevel.value,
+      source: filterSource.value,
       limit: limitOption.value,
     })
     logs.value = res.logs.slice().reverse()
@@ -88,73 +96,37 @@ onUnmounted(() => { if (refreshTimer) clearInterval(refreshTimer) })
 
 <template>
   <AppLayout title="Logs">
-
-    <!-- Toolbar -->
-    <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 16px; flex-wrap: wrap">
-      <a-radio-group
-        v-model:value="filterLevel"
-        button-style="solid"
-        size="small"
-        @change="load"
-      >
-        <a-radio-button value="">All</a-radio-button>
-        <a-radio-button value="error">Error</a-radio-button>
-        <a-radio-button value="warn">Warn</a-radio-button>
-        <a-radio-button value="info">Info</a-radio-button>
-        <a-radio-button value="debug">Debug</a-radio-button>
-      </a-radio-group>
-
-      <a-radio-group
-        v-model:value="filterSource"
-        button-style="solid"
-        size="small"
-        @change="load"
-      >
-        <a-radio-button value="">All</a-radio-button>
-        <a-radio-button value="system">System</a-radio-button>
-        <a-radio-button value="container">Container</a-radio-button>
-        <a-radio-button value="manager">Manager</a-radio-button>
-      </a-radio-group>
-
-      <a-select
-        v-model:value="filterComponent"
-        :options="componentOptions"
-        placeholder="All components"
-        allow-clear
-        style="width: 160px"
-      />
-
-      <a-select
-        v-model:value="limitOption"
-        style="width: 100px"
-        @change="load"
-      >
-        <a-select-option :value="100">100</a-select-option>
-        <a-select-option :value="200">200</a-select-option>
-        <a-select-option :value="500">500</a-select-option>
-        <a-select-option :value="1000">1000</a-select-option>
-      </a-select>
-
-      <a-input-search
-        v-model:value="filterText"
-        placeholder="Filter message / source…"
-        style="width: 240px"
-        allow-clear
-      />
-
-      <a-button :icon="h(ReloadOutlined)" :loading="loading" @click="load">Refresh</a-button>
-
-      <a-switch
-        :checked="autoRefresh"
-        checked-children="Auto"
-        un-checked-children="Auto"
-        @change="toggleAutoRefresh"
-      />
-
-      <span style="color: #999; font-size: 13px; margin-left: auto">
-        {{ filtered.length }} / {{ total }} entries in memory
-      </span>
+    <div class="heading">
+      <p>Live log stream from agent services and containers.</p>
+      <div class="header-actions">
+        <a-button :icon="h(ReloadOutlined)" :loading="loading" @click="load">Refresh</a-button>
+        <a-switch :checked="autoRefresh" checked-children="Auto" un-checked-children="Auto" @change="toggleAutoRefresh" />
+      </div>
     </div>
+
+    <div class="filters">
+      <a-input v-model:value="filterText" placeholder="Filter message / source…" allow-clear class="search" />
+      <a-select v-model:value="filterLevel" placeholder="All levels" allow-clear class="filter" @change="load">
+        <a-select-option value="error">Error</a-select-option>
+        <a-select-option value="warn">Warn</a-select-option>
+        <a-select-option value="info">Info</a-select-option>
+        <a-select-option value="debug">Debug</a-select-option>
+      </a-select>
+      <a-select v-model:value="filterSource" placeholder="All sources" allow-clear class="filter" @change="load">
+        <a-select-option value="system">System</a-select-option>
+        <a-select-option value="container">Container</a-select-option>
+        <a-select-option value="manager">Manager</a-select-option>
+      </a-select>
+      <a-select v-model:value="filterComponent" :options="componentOptions" placeholder="All components" allow-clear class="filter" />
+      <a-select v-model:value="limitOption" class="filter-small" @change="load">
+        <a-select-option :value="100">100 rows</a-select-option>
+        <a-select-option :value="200">200 rows</a-select-option>
+        <a-select-option :value="500">500 rows</a-select-option>
+        <a-select-option :value="1000">1000 rows</a-select-option>
+      </a-select>
+      <a-button @click="clearFilters">Clear</a-button>
+    </div>
+    <div class="toolbar-info">{{ filtered.length }} / {{ total }} entries in memory</div>
 
     <!-- Log table -->
     <div
@@ -220,4 +192,15 @@ onUnmounted(() => { if (refreshTimer) clearInterval(refreshTimer) })
     </div>
   </AppLayout>
 </template>
+
+<style scoped>
+.heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 16px; }
+.heading p { color: #777; margin: 0; }
+.header-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.filters { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
+.search { width: 300px; max-width: 100%; }
+.filter { width: 170px; max-width: 100%; }
+.filter-small { width: 120px; max-width: 100%; }
+.toolbar-info { color: #888; font-size: 12px; margin-bottom: 10px; }
+</style>
 
