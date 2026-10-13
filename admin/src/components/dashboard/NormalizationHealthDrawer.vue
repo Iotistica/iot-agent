@@ -63,12 +63,12 @@ watch(
 
 const resolveModalOpen = ref(false)
 const resolveTarget = ref<NormalizationIssue | null>(null)
-const selectedCanonicalUnit = ref<string | undefined>(undefined)
+const selectedCanonicalUnit = ref('')
 const resolving = ref(false)
 
 function openResolve(record: NormalizationIssue): void {
   resolveTarget.value = record
-  selectedCanonicalUnit.value = undefined
+  selectedCanonicalUnit.value = ''
   resolveModalOpen.value = true
 }
 
@@ -182,10 +182,9 @@ async function submitResolve(): Promise<void> {
     </div>
     <div>
       <div style="font-size: 12px; color: #888; margin-bottom: 4px">Canonical unit</div>
-      <a-select
+      <a-auto-complete
         v-model:value="selectedCanonicalUnit"
-        show-search
-        placeholder="Select a canonical unit"
+        placeholder="Select or type a canonical unit"
         style="width: 100%"
         :options="canonicalUnitOptions"
         :filter-option="(input: string, option: any) => option.label.toLowerCase().includes(input.toLowerCase())"

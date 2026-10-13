@@ -769,6 +769,9 @@ function applyTemplate(template: TemplateListItem) {
     metricForm.value.seasonality = template.seasonality ?? 'none'
     expectedMin.value = template.expected_range?.[0] ?? null
     expectedMax.value = template.expected_range?.[1] ?? null
+    if (expectedMin.value != null && expectedMax.value != null && !metricForm.value.methods.includes('expected_range')) {
+      metricForm.value.methods.push('expected_range')
+    }
   }
 
   templateLibraryOpen.value = false
@@ -847,6 +850,13 @@ const DETECTION_CATEGORIES = [
     defaultMethod: 'ewma' as DetectionMethod,
     methods: ['ewma', 'cusum'] as DetectionMethod[],
   },
+  {
+    key: 'limits',
+    title: 'Operating Limits',
+    description: 'Alert immediately when a reading falls outside a fixed min/max range.',
+    defaultMethod: 'expected_range' as DetectionMethod,
+    methods: ['expected_range'] as DetectionMethod[],
+  },
 ]
 
 const activeCategories = computed(() => {
@@ -863,6 +873,10 @@ function toggleCategory(cat: typeof DETECTION_CATEGORIES[number]) {
     metricForm.value.methods = metricForm.value.methods.filter(
       m => !(cat.methods as DetectionMethod[]).includes(m)
     )
+    if (cat.key === 'limits') {
+      expectedMin.value = null
+      expectedMax.value = null
+    }
   } else {
     metricForm.value.methods.push(cat.defaultMethod)
   }
@@ -874,7 +888,7 @@ function methodCategoryLabel(method: DetectionMethod): string {
   for (const cat of DETECTION_CATEGORIES) {
     if ((cat.methods as DetectionMethod[]).includes(method)) return cat.title
   }
-  if (method === 'expected_range') return 'Range Check'
+  if (method === 'expected_range') return 'Operating Limits'
   if (method === 'fusion') return 'Fusion (legacy)'
   return method
 }
@@ -889,11 +903,19 @@ function uniqueCategoryLabels(methods: DetectionMethod[]): string[] {
   return labels
 }
 
+function ruleDetectionLabels(record: AnomalyMetricConfig): string[] {
+  const labels = uniqueCategoryLabels(record.methods)
+  if (record.expectedRange && !labels.includes('Operating Limits')) {
+    labels.unshift('Operating Limits')
+  }
+  return labels
+}
+
 const CATEGORY_COLORS: Record<string, string> = {
   'Unusual Values': 'purple',
   'Sudden Changes': 'gold',
   'Gradual Changes': 'cyan',
-  'Range Check': 'volcano',
+  'Operating Limits': 'volcano',
   'Fusion (legacy)': 'magenta',
 }
 
@@ -914,6 +936,7 @@ const SENSITIVITY_THRESHOLDS: Record<string, Record<SensitivityLevel, number>> =
 
 const primaryMethod = computed(() => {
   for (const cat of DETECTION_CATEGORIES) {
+    if (cat.key === 'limits') continue
     if (activeCategories.value.has(cat.key)) return cat.defaultMethod
   }
   return 'mad' as DetectionMethod
@@ -961,6 +984,9 @@ const cooldownMinutes = computed({
 const advancedOpen = ref<string[]>([])
 
 const selectedMethodCount = computed(() => metricForm.value.methods.length)
+const hasStatisticalDetector = computed(() =>
+  DETECTION_CATEGORIES.some(cat => cat.key !== 'limits' && activeCategories.value.has(cat.key))
+)
 
 
 // ── Available metric suggestions ───────────────────────────────────────────
@@ -1163,9 +1189,13 @@ function openAddMetric() {
   loadMetricSuggestions()
 }
 
-function openEditMetric(metric: AnomalyMetricConfig, idx: number) {
+async function openEditMetric(metric: AnomalyMetricConfig, idx: number) {
   editingMetricIdx.value = idx
-  metricForm.value = { ...metric, name: friendlyLabel(metric.name), methods: [...metric.methods] }
+  const methods = [...metric.methods]
+  if (metric.expectedRange && !methods.includes('expected_range')) {
+    methods.push('expected_range')
+  }
+  metricForm.value = { ...metric, name: friendlyLabel(metric.name), methods }
   expectedMin.value = metric.expectedRange?.[0] ?? null
   expectedMax.value = metric.expectedRange?.[1] ?? null
   // Auto-expand Advanced if threshold doesn't match a sensitivity preset
@@ -1175,7 +1205,9 @@ function openEditMetric(metric: AnomalyMetricConfig, idx: number) {
   advancedOpen.value = isCustom ? ['advanced'] : []
   sourceFilter.value = undefined
   metricDrawerOpen.value = true
-  loadMetricSuggestions()
+  await loadMetricSuggestions()
+  const match = metricSuggestions.value.find(s => s.name === metric.name)
+  if (match) sourceFilter.value = sourceKey(match)
 }
 
 async function saveMetric() {
@@ -1198,11 +1230,11 @@ async function saveMetric() {
   }
   if (metricForm.value.methods.includes('expected_range')) {
     if (expectedMin.value == null || expectedMax.value == null) {
-      message.error('Expected range method requires min/max bounds to be set')
+      message.error('Operating Limits requires both min and max bounds')
       return
     }
     if (expectedMin.value >= expectedMax.value) {
-      message.error('Expected range min must be less than max')
+      message.error('Operating Limits min must be less than max')
       return
     }
   }
@@ -1527,9 +1559,9 @@ onUnmounted(() => {
                 v-if="warmupRemainingMs"
                 :title="`Agent-wide warmup, ${warmupCountdownLabel} left — not specific to this rule. Alerts pause for every metric for 15 minutes after the agent starts, to avoid false positives from startup noise. Baseline collection isn't affected.`"
               >
-                <a-tag color="orange" style="font-size: 10px">Warming up</a-tag>
+                <a-tag color="orange" style="font-size: 10px">warming up</a-tag>
               </a-tooltip>
-              <a-tag v-else-if="record.pendingWindowSize" color="blue" style="font-size: 10px">Collecting</a-tag>
+              <a-tag v-else-if="record.pendingWindowSize" color="blue" style="font-size: 10px">collecting</a-tag>
               <a-tag v-else :color="deviceStateColor(record.device_state)" style="font-size: 10px">{{ record.device_state }}</a-tag>
             </template>
             <template v-else-if="column.key === 'time_slot'">
@@ -1724,7 +1756,7 @@ onUnmounted(() => {
 
                 <template v-else-if="column.key === 'methods'">
                   <a-tag
-                    v-for="label in uniqueCategoryLabels(record.methods)"
+                    v-for="label in ruleDetectionLabels(record)"
                     :key="label"
                     :color="categoryLabelColor(label)"
                     style="font-size: 11px; margin: 1px"
@@ -1917,10 +1949,31 @@ onUnmounted(() => {
               </div>
             </label>
           </div>
+          <div v-if="activeCategories.has('limits')" class="limits-inputs">
+            <a-row :gutter="8">
+              <a-col :span="12">
+                <a-input-number
+                  v-model:value="expectedMin"
+                  placeholder="Min"
+                  style="width: 100%"
+                />
+              </a-col>
+              <a-col :span="12">
+                <a-input-number
+                  v-model:value="expectedMax"
+                  placeholder="Max"
+                  style="width: 100%"
+                />
+              </a-col>
+            </a-row>
+            <div v-if="expectedRangeMissingBounds" class="detection-method-warning">
+              Both min and max bounds are required.
+            </div>
+          </div>
           <div v-if="selectedMethodCount === 0" class="detection-method-warning">
             Select at least one detection type.
           </div>
-          <div v-if="activeCategories.size > 1" class="multi-category-note">
+          <div v-if="[...activeCategories].filter(k => k !== 'limits').length > 1" class="multi-category-note">
             Multiple detection types enabled. Shared settings may affect each type differently.
           </div>
           <a-alert
@@ -1932,7 +1985,7 @@ onUnmounted(() => {
           />
         </a-form-item>
 
-        <a-form-item label="Sensitivity">
+        <a-form-item v-if="hasStatisticalDetector" label="Sensitivity">
           <a-segmented
             :value="currentSensitivity === 'custom' ? undefined : currentSensitivity"
             :options="[
@@ -1950,30 +2003,6 @@ onUnmounted(() => {
           </div>
         </a-form-item>
 
-        <a-form-item
-          label="Operating Limits (Optional)"
-          :validate-status="expectedRangeMissingBounds ? 'error' : ''"
-          :help="expectedRangeMissingBounds
-            ? 'expected_range is selected as a detection method — fill in both bounds or it will never alert'
-            : 'Generate an anomaly when a reading falls outside the configured operating limits.'"
-        >
-          <a-row :gutter="8">
-            <a-col :span="12">
-              <a-input-number
-                v-model:value="expectedMin"
-                placeholder="Min"
-                style="width: 100%"
-              />
-            </a-col>
-            <a-col :span="12">
-              <a-input-number
-                v-model:value="expectedMax"
-                placeholder="Max"
-                style="width: 100%"
-              />
-            </a-col>
-          </a-row>
-        </a-form-item>
 
         <a-collapse
           v-model:activeKey="advancedOpen"
@@ -2168,8 +2197,11 @@ onUnmounted(() => {
 .detection-category-card__title { font-weight: 600; font-size: 13px; }
 .detection-category-card__desc { font-size: 12px; color: #666; margin-top: 2px; }
 .detection-method-warning { margin-top: 8px; color: #cf1322; font-size: 12px; }
+.limits-inputs { margin-top: 8px; padding: 10px 12px; background: #fafafa; border: 1px solid #f0f0f0; border-radius: 6px; }
 .multi-category-note { margin-top: 8px; font-size: 12px; color: #888; }
 .sensitivity-description { margin-top: 6px; font-size: 12px; color: #888; }
+:deep(.ant-segmented-item-selected) { background: #1677ff !important; color: #fff !important; }
+:deep(.ant-segmented-item-selected .ant-segmented-item-label) { color: #fff !important; }
 .advanced-settings-collapse { margin: 0 -12px 16px; }
 .advanced-settings-collapse :deep(.ant-collapse-header) { font-size: 13px; color: #555; padding: 8px 12px !important; }
 .advanced-settings-collapse :deep(.ant-collapse-content-box) { padding: 0 12px !important; }

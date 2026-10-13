@@ -117,6 +117,10 @@ export const UNIT_DEFINITIONS: SeedUnitDefinition[] = [
 	// ── Mass (base: kilograms) ───────────────────────────────────────────────
 	{ canonical_unit: 'kilograms', quantity: 'mass', symbol: 'kg', description: 'Kilograms', base_unit: 'kilograms', multiplier: 1, offset: 0 },
 	{ canonical_unit: 'pounds', quantity: 'mass', symbol: 'lb', description: 'Pounds', base_unit: 'kilograms', multiplier: 0.45359237, offset: 0 },
+
+	// ── Illuminance (base: lux) ─────────────────────────────────────────────
+	{ canonical_unit: 'lux', quantity: 'illuminance', symbol: 'lx', description: 'Lux', base_unit: 'lux', multiplier: 1, offset: 0 },
+	{ canonical_unit: 'footCandles', quantity: 'illuminance', symbol: 'fc', description: 'Foot-candles', base_unit: 'lux', multiplier: 10.7639104167, offset: 0 },
 ];
 
 export const UNIT_ALIASES: SeedUnitAlias[] = [
@@ -215,6 +219,11 @@ export const UNIT_ALIASES: SeedUnitAlias[] = [
 	{ source_system: null, alias: 'amperes', canonical_unit: 'amperes' },
 	{ source_system: null, alias: 'amps', canonical_unit: 'amperes' },
 
+	{ source_system: null, alias: 'luxes', canonical_unit: 'lux' },
+	{ source_system: null, alias: 'lx', canonical_unit: 'lux' },
+	{ source_system: null, alias: 'fc', canonical_unit: 'footCandles' },
+	{ source_system: null, alias: 'foot-candles', canonical_unit: 'footCandles' },
+
 	// ── BACnet (source: BACNET_UNITS_SYMBOLS, src/plugins/bacnet/discovery.ts) ──
 	// Scoped (not global) for consistency with how they're actually produced —
 	// several are single characters ('K') which decision #10 requires scoping anyway.
@@ -247,6 +256,9 @@ export const UNIT_ALIASES: SeedUnitAlias[] = [
 	{ source_system: 'bacnet', alias: 'degrees fahrenheit', canonical_unit: 'degreesFahrenheit' },
 	{ source_system: 'bacnet', alias: 'square feet', canonical_unit: 'squareFeet' },
 	{ source_system: 'bacnet', alias: 'square meters', canonical_unit: 'squareMeters' },
+	{ source_system: 'bacnet', alias: 'luxes', canonical_unit: 'lux' },
+	{ source_system: 'bacnet', alias: 'lux', canonical_unit: 'lux' },
+	{ source_system: 'bacnet', alias: 'foot-candles', canonical_unit: 'footCandles' },
 
 	// ── MQTT (source: canonicalizeUnit() output, src/plugins/mqtt/adapter.ts) ──
 	// Single-letter codes MUST stay scoped here (decision #10) — never global.

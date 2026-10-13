@@ -5,11 +5,9 @@ import { message } from 'ant-design-vue'
 import type { TableColumnType } from 'ant-design-vue'
 import {
   SaveOutlined, ReloadOutlined, LinkOutlined, CheckCircleOutlined, WifiOutlined, EditOutlined,
-  SafetyCertificateOutlined, BellOutlined, DatabaseOutlined, BranchesOutlined, QuestionCircleOutlined,
+  QuestionCircleOutlined,
 } from '@ant-design/icons-vue'
 import AppLayout from '@/components/layout/AppLayout.vue'
-import SettingsSection from '@/components/settings/SettingsSection.vue'
-import SettingsField from '@/components/settings/SettingsField.vue'
 import { useAuth } from '@/composables/useAuth'
 import { settingsApi } from '@/api/settings'
 import { client as apiClient } from '@/api/client'
@@ -975,7 +973,7 @@ async function saveAllAlertConfig() {
         </a-tab-pane>
 
         <!-- ══ DOCKER ══════════════════════════════════════════════════════════ -->
-        <a-tab-pane key="docker" tab="Docker">
+        <a-tab-pane key="docker" tab="Applications">
           <a-spin :spinning="dockerLoading">
             <a-card size="small" class="settings-card" title="Daemon Connection">
               <a-form layout="vertical">
@@ -1219,89 +1217,57 @@ async function saveAllAlertConfig() {
         <a-tab-pane key="alerts" tab="Detection &amp; Alerts">
           <a-spin :spinning="alertConfigLoading">
             <template v-if="alertConfig">
-              <div class="settings-page">
-                <p class="settings-intro">Configure detection thresholds, schema changes, alert delivery, and retention.</p>
 
-                <!-- Detection settings -->
-                <SettingsSection
-                  title="Anomaly Detection"
-                  subtitle="Configure how anomalies are detected and scored."
-                >
-                  <template #icon><SafetyCertificateOutlined /></template>
-                  <a-alert
-                  type="info"
-                  show-icon
-                  message="Anomaly detection is enabled or disabled in Settings → Features."
-                  style="margin-bottom: 20px"
-                  />
+              <!-- Anomaly Detection -->
+              <a-card size="small" class="settings-card">
+                <template #title>Anomaly Detection</template>
+                <a-row :gutter="[16, 16]">
+                  <a-col :xs="24" :sm="12" :lg="6">
+                    <a-form-item label="Sensitivity" style="margin-bottom: 0">
+                      <div style="display: flex; align-items: center; gap: 12px; max-width: 240px">
+                        <a-slider v-model:value="alertConfig.sensitivity" :min="1" :max="10" style="flex: 1" />
+                        <a-input-number v-model:value="alertConfig.sensitivity" :min="1" :max="10" style="width: 56px" size="small" />
+                      </div>
+                      <div style="display: flex; justify-content: space-between; font-size: 11px; color: #999; max-width: 240px">
+                        <span>Low</span><span>High</span>
+                      </div>
+                    </a-form-item>
+                  </a-col>
+                  <a-col :xs="24" :sm="12" :lg="6">
+                    <a-form-item style="margin-bottom: 0">
+                      <template #label>
+                        Learning period
+                        <a-typography-text type="secondary" style="font-size: 12px; margin-left: 4px">
+                          {{ msToHuman(alertConfig.warmupPeriodMs) }}
+                        </a-typography-text>
+                      </template>
+                      <a-input-number v-model:value="alertConfig.warmupPeriodMs" :min="0" :step="60000" placeholder="900000" style="width: 100%" :addon-after="'ms'" />
+                    </a-form-item>
+                  </a-col>
+                  <a-col :xs="24" :sm="12" :lg="6">
+                    <a-form-item style="margin-bottom: 0">
+                      <template #label>
+                        Cooldown
+                        <a-typography-text type="secondary" style="font-size: 12px; margin-left: 4px">
+                          {{ msToHuman(alertConfig.alerts.cooldownMs) }}
+                        </a-typography-text>
+                      </template>
+                      <a-input-number v-model:value="alertConfig.alerts.cooldownMs" :min="0" :step="60000" style="width: 100%" :addon-after="'ms'" />
+                    </a-form-item>
+                  </a-col>
+                  <a-col :xs="24" :sm="12" :lg="6">
+                    <a-form-item label="Min confidence" style="margin-bottom: 0">
+                      <a-input-number v-model:value="alertConfig.alerts.minConfidence" :min="0" :max="1" :step="0.05" style="width: 100%" />
+                    </a-form-item>
+                  </a-col>
+                </a-row>
+              </a-card>
 
-
-                  <a-row :gutter="[20, 20]">
-                    <a-col :xs="24" :sm="12" :lg="8">
-                      <SettingsField label="Detection sensitivity (1–10)" tooltip="Higher sensitivity flags smaller deviations as anomalies.">
-                        <div class="sensitivity-control">
-                          <div class="sensitivity-control__row">
-                            <a-slider
-                              v-model:value="alertConfig.sensitivity"
-                              :min="1"
-                              :max="10"
-                              style="flex: 1"
-                            />
-                            <a-input-number v-model:value="alertConfig.sensitivity" :min="1" :max="10" style="width: 64px" />
-                          </div>
-                          <div class="sensitivity-control__scale">
-                            <span>1 · Low</span>
-                            <span>10 · High</span>
-                          </div>
-                        </div>
-                      </SettingsField>
-                    </a-col>
-                    <a-col :xs="24" :sm="12" :lg="8">
-                      <SettingsField
-                        label="Learning period (ms)"
-                        tooltip="Time to collect baseline data before detection starts."
-                        helper="Time to collect baseline data before detection starts."
-                      >
-                        <a-input-number v-model:value="alertConfig.warmupPeriodMs" :min="0" :step="60000" placeholder="900000" />
-                      </SettingsField>
-                    </a-col>
-                    <a-col :xs="24" :sm="12" :lg="8">
-                      <SettingsField
-                        label="Minimum confidence"
-                        tooltip="Minimum confidence score to consider an anomaly."
-                        helper="Minimum confidence score to consider an anomaly."
-                      >
-                        <a-input-number v-model:value="alertConfig.alerts.minConfidence" :min="0" :max="1" :step="0.05" />
-                      </SettingsField>
-                    </a-col>
-                    <a-col :xs="24" :sm="12" :lg="8">
-                      <SettingsField
-                        label="Detection cooldown (ms)"
-                        tooltip="Minimum time between anomaly detections."
-                        helper="Minimum time between anomaly detections."
-                      >
-                        <a-input-number v-model:value="alertConfig.alerts.cooldownMs" :min="0" :step="60000" />
-                      </SettingsField>
-                    </a-col>
-                    <a-col :xs="24" :sm="12" :lg="8">
-                      <SettingsField
-                        label="Alert queue limit"
-                        tooltip="Maximum number of items in the anomaly queue."
-                        helper="Maximum number of items in the anomaly queue."
-                      >
-                        <a-input-number v-model:value="alertConfig.alerts.maxQueueSize" :min="1" />
-                      </SettingsField>
-                    </a-col>
-                  </a-row>
-                </SettingsSection>
-
-                <!-- Schema drift settings -->
-                <SettingsSection
-                  title="Schema Drift Detection"
-                  subtitle="Controls how the agent detects unexpected changes in the fields it publishes. Changes apply immediately."
-                >
-                  <template #icon><BranchesOutlined /></template>
-                  <template #extra>
+              <!-- Schema Drift Detection -->
+              <a-card size="small" class="settings-card">
+                <template #title>
+                  <div style="display: flex; align-items: center; justify-content: space-between; width: 100%">
+                    Schema Drift
                     <div class="drift-enabled-toggle">
                       <span class="drift-enabled-toggle__label">Enabled</span>
                       <a-switch
@@ -1310,207 +1276,160 @@ async function saveAllAlertConfig() {
                         @change="(v: boolean) => setDrift('enabled', v)"
                       />
                     </div>
-                  </template>
-
-                  <a-spin :spinning="driftLoading">
-                    <a-row :gutter="[20, 20]">
-                      <a-col :xs="24" :sm="12" :lg="8">
-                        <SettingsField
-                          label="Detection sensitivity"
-                          tooltip="How readily the agent flags a device's fields as changed. Low tolerates fields that only report occasionally (e.g. a Boolean alarm/fault point with a long toggle period) — fewer alerts. High flags sooner, at the cost of more false positives on genuinely variable sources. Standard is the recommended default."
-                        >
-                          <a-radio-group
-                            button-style="solid"
-                            :value="selectedSensitivity === 'custom' ? undefined : selectedSensitivity"
-                            @change="(e: any) => setSensitivityPreset(e.target.value)"
-                          >
-                            <a-radio-button value="low">Low</a-radio-button>
-                            <a-radio-button value="standard">Standard</a-radio-button>
-                            <a-radio-button value="high">High</a-radio-button>
-                          </a-radio-group>
-                          <div v-if="selectedSensitivity === 'custom'" class="drift-sensitivity-custom">
-                            Custom — advanced settings have been hand-tuned away from a preset
-                          </div>
-                        </SettingsField>
-                      </a-col>
-                      <a-col :xs="24" :sm="12" :lg="8">
-                        <SettingsField
-                          label="Repeat alert interval"
-                          tooltip="Minimum time between repeat alerts for the same field on the same device. Prevents a single ongoing drift from spamming repeated alerts."
-                        >
-                          <a-select
-                            :value="globalDrift.alertCooldownMs ?? 1800000"
-                            style="width: 100%; max-width: 220px"
-                            @change="(v: number) => setDrift('alertCooldownMs', v)"
-                          >
-                            <a-select-option v-for="opt in alertFrequencyOptions" :key="opt.value" :value="opt.value">
-                              {{ opt.label }}
-                            </a-select-option>
-                          </a-select>
-                        </SettingsField>
-                      </a-col>
-                    </a-row>
-
-                    <div class="drift-alert-on">
-                      <div class="drift-alert-on__label">
-                        Alert on
-                        <a-tooltip title="Every drift type is always logged and shows up in the Schema Drift baseline history regardless of this setting — this only controls which ones also raise an alert (Events/Incidents/Alerts, same pipeline anomalies use).">
-                          <QuestionCircleOutlined class="drift-alert-on__info" />
-                        </a-tooltip>
-                      </div>
-                      <a-checkbox-group
-                        :value="globalDrift.alertOnDriftTypes ?? DEFAULT_ALERT_DRIFT_TYPES"
-                        class="drift-alert-on__group"
-                        @change="(v: DriftAlertType[]) => setDrift('alertOnDriftTypes', v)"
-                      >
-                        <a-checkbox v-for="opt in DRIFT_ALERT_TYPE_OPTIONS" :key="opt.value" :value="opt.value">
-                          {{ opt.label }}
-                          <a-tooltip :title="opt.hint">
-                            <QuestionCircleOutlined class="drift-alert-on__info drift-alert-on__info--sm" />
-                          </a-tooltip>
-                        </a-checkbox>
-                      </a-checkbox-group>
-                    </div>
-
-                  </a-spin>
-                </SettingsSection>
-
-                <!-- Alert routing -->
-                <SettingsSection
-                  title="Alert Delivery"
-                  subtitle="Configure how and where alerts are delivered."
-                >
-                  <template #icon><BellOutlined /></template>
-
-                  <a-row :gutter="[20, 20]">
+                  </div>
+                </template>
+                <a-spin :spinning="driftLoading">
+                  <a-row :gutter="[16, 16]">
                     <a-col :xs="24" :sm="12" :lg="8">
-                      <SettingsField label="Publish alerts to MQTT">
-                        <a-switch v-model:checked="alertConfig.alerts.mqtt" />
-                      </SettingsField>
+                      <a-form-item label="Sensitivity" style="margin-bottom: 0">
+                        <a-radio-group
+                          button-style="solid"
+                          :value="selectedSensitivity === 'custom' ? undefined : selectedSensitivity"
+                          @change="(e: any) => setSensitivityPreset(e.target.value)"
+                        >
+                          <a-radio-button value="low">Low</a-radio-button>
+                          <a-radio-button value="standard">Standard</a-radio-button>
+                          <a-radio-button value="high">High</a-radio-button>
+                        </a-radio-group>
+                        <div v-if="selectedSensitivity === 'custom'" class="drift-sensitivity-custom">
+                          Custom — settings differ from a preset
+                        </div>
+                      </a-form-item>
                     </a-col>
                     <a-col :xs="24" :sm="12" :lg="8">
-                      <SettingsField
-                        label="MQTT destination"
-                        tooltip="Local broker from the Destinations page (standalone mode)."
-                        helper="Local broker from the Destinations page (standalone mode)."
-                      >
+                      <a-form-item label="Repeat alert interval" style="margin-bottom: 0">
                         <a-select
-                          :value="alertConfig.alerts.alertDestinationId"
-                          allow-clear
-                          :disabled="!alertConfig.alerts.mqtt"
-                          placeholder="None (use cloud MQTT)"
-                          @change="(v: number | null) => { alertConfig!.alerts.alertDestinationId = v ?? undefined }"
+                          :value="globalDrift.alertCooldownMs ?? 1800000"
+                          style="width: 100%"
+                          @change="(v: number) => setDrift('alertCooldownMs', v)"
                         >
-                          <a-select-option v-for="d in alertMqttDestinations" :key="d.id" :value="d.id">
-                            {{ d.name }}
+                          <a-select-option v-for="opt in alertFrequencyOptions" :key="opt.value" :value="opt.value">
+                            {{ opt.label }}
                           </a-select-option>
                         </a-select>
-                      </SettingsField>
+                      </a-form-item>
                     </a-col>
-                    <a-col :xs="24" :sm="12" :lg="8">
-                      <SettingsField
-                        label="Alert topic"
-                        tooltip="Topic to publish to when a destination is selected."
-                        helper="Topic to publish to when a destination is selected."
+                  </a-row>
+
+                  <div class="drift-alert-on">
+                    <div class="drift-alert-on__label">
+                      Alert on
+                      <a-tooltip title="Controls which drift types raise an alert — all types are always logged regardless.">
+                        <QuestionCircleOutlined class="drift-alert-on__info" />
+                      </a-tooltip>
+                    </div>
+                    <a-checkbox-group
+                      :value="globalDrift.alertOnDriftTypes ?? DEFAULT_ALERT_DRIFT_TYPES"
+                      class="drift-alert-on__group"
+                      @change="(v: DriftAlertType[]) => setDrift('alertOnDriftTypes', v)"
+                    >
+                      <a-checkbox v-for="opt in DRIFT_ALERT_TYPE_OPTIONS" :key="opt.value" :value="opt.value">
+                        {{ opt.label }}
+                        <a-tooltip :title="opt.hint">
+                          <QuestionCircleOutlined class="drift-alert-on__info drift-alert-on__info--sm" />
+                        </a-tooltip>
+                      </a-checkbox>
+                    </a-checkbox-group>
+                  </div>
+                </a-spin>
+              </a-card>
+
+              <!-- Alert Delivery -->
+              <a-card size="small" class="settings-card">
+                <template #title>Alert Delivery</template>
+                <a-row :gutter="[16, 16]">
+                  <a-col :xs="24" :sm="8" :lg="6">
+                    <a-form-item label="Publish to MQTT" style="margin-bottom: 0">
+                      <a-switch v-model:checked="alertConfig.alerts.mqtt" />
+                    </a-form-item>
+                  </a-col>
+                  <a-col :xs="24" :sm="8" :lg="6">
+                    <a-form-item label="Destination" style="margin-bottom: 0">
+                      <a-select
+                        :value="alertConfig.alerts.alertDestinationId"
+                        allow-clear
+                        :disabled="!alertConfig.alerts.mqtt"
+                        placeholder="Default (cloud)"
+                        style="width: 100%"
+                        @change="(v: number | null) => { alertConfig!.alerts.alertDestinationId = v ?? undefined }"
                       >
-                        <a-input
-                          :value="alertConfig.alerts.alertTopic ?? ''"
-                          :disabled="!alertConfig.alerts.mqtt"
-                          placeholder="iotistica/alerts/anomaly"
-                          @change="(e: Event) => { alertConfig!.alerts.alertTopic = (e.target as HTMLInputElement).value || undefined }"
-                        />
-                      </SettingsField>
-                    </a-col>
-                  </a-row>
-                </SettingsSection>
+                        <a-select-option v-for="d in alertMqttDestinations" :key="d.id" :value="d.id">
+                          {{ d.name }}
+                        </a-select-option>
+                      </a-select>
+                    </a-form-item>
+                  </a-col>
+                  <a-col :xs="24" :sm="8" :lg="6">
+                    <a-form-item label="Topic" style="margin-bottom: 0">
+                      <a-input
+                        :value="alertConfig.alerts.alertTopic ?? ''"
+                        :disabled="!alertConfig.alerts.mqtt"
+                        placeholder="iotistica/alerts/anomaly"
+                        style="width: 100%"
+                        @change="(e: Event) => { alertConfig!.alerts.alertTopic = (e.target as HTMLInputElement).value || undefined }"
+                      />
+                    </a-form-item>
+                  </a-col>
+                </a-row>
+              </a-card>
 
-                <!-- Storage & retention -->
-                <SettingsSection
-                  title="Data Retention"
-                  subtitle="Configure how long data is kept."
-                >
-                  <template #icon><DatabaseOutlined /></template>
+              <!-- Data Retention -->
+              <a-card size="small" class="settings-card">
+                <template #title>Data Retention</template>
+                <a-row :gutter="[16, 16]">
+                  <a-col :xs="24" :sm="12" :lg="6">
+                    <a-form-item label="Baseline retention (days)" style="margin-bottom: 0">
+                      <a-input-number
+                        :value="alertConfig.storage?.retention"
+                        :min="1"
+                        placeholder="30"
+                        style="width: 100%"
+                        @change="(v: number) => { if (!alertConfig!.storage) alertConfig!.storage = { retention: v }; else alertConfig!.storage.retention = v }"
+                      />
+                    </a-form-item>
+                  </a-col>
+                  <a-col :xs="24" :sm="12" :lg="6">
+                    <a-form-item label="Event retention (days)" style="margin-bottom: 0">
+                      <a-input-number
+                        :value="alertConfig.storage?.eventRetentionDays"
+                        :min="1"
+                        :placeholder="String(alertConfig.storage?.retention ?? 30)"
+                        style="width: 100%"
+                        @change="(v: number) => { if (!alertConfig!.storage) alertConfig!.storage = { retention: 30, eventRetentionDays: v }; else alertConfig!.storage.eventRetentionDays = v }"
+                      />
+                    </a-form-item>
+                  </a-col>
+                  <a-col :xs="24" :sm="12" :lg="6">
+                    <a-form-item label="Incident retention (days)" style="margin-bottom: 0">
+                      <a-input-number
+                        :value="alertConfig.storage?.incidentRetentionDays"
+                        :min="1"
+                        :placeholder="String(alertConfig.storage?.retention ?? 30)"
+                        style="width: 100%"
+                        @change="(v: number) => { if (!alertConfig!.storage) alertConfig!.storage = { retention: 30, incidentRetentionDays: v }; else alertConfig!.storage.incidentRetentionDays = v }"
+                      />
+                    </a-form-item>
+                  </a-col>
+                  <a-col :xs="24" :sm="12" :lg="6">
+                    <a-form-item label="Alert retention (days)" style="margin-bottom: 0">
+                      <a-input-number
+                        :value="alertConfig.storage?.alertRetentionDays"
+                        :min="1"
+                        :placeholder="String(alertConfig.storage?.retention ?? 30)"
+                        style="width: 100%"
+                        @change="(v: number) => { if (!alertConfig!.storage) alertConfig!.storage = { retention: 30, alertRetentionDays: v }; else alertConfig!.storage.alertRetentionDays = v }"
+                      />
+                    </a-form-item>
+                  </a-col>
+                </a-row>
+              </a-card>
 
-                  <a-row :gutter="[20, 20]">
-                    <a-col :xs="24" :sm="12" :lg="8">
-                      <SettingsField label="Baseline retention (days)" helper="How long baselines are kept.">
-                        <a-input-number
-                          :value="alertConfig.storage?.retention"
-                          :min="1"
-                          @change="(v: number) => { if (!alertConfig!.storage) alertConfig!.storage = { retention: v }; else alertConfig!.storage.retention = v }"
-                        />
-                      </SettingsField>
-                    </a-col>
-                    <a-col :xs="24" :sm="12" :lg="8">
-                      <SettingsField label="Baseline max age (days)" helper="Maximum age of baselines used for detection.">
-                        <a-input-number
-                          :value="alertConfig.storage?.baselineMaxAgeDays"
-                          :min="1"
-                          placeholder="7"
-                          @change="(v: number) => { if (!alertConfig!.storage) alertConfig!.storage = { retention: 30, baselineMaxAgeDays: v }; else alertConfig!.storage.baselineMaxAgeDays = v }"
-                        />
-                      </SettingsField>
-                    </a-col>
-                    <a-col :xs="24" :sm="12" :lg="8">
-                      <SettingsField label="Min samples for baseline" helper="Minimum samples required to create a baseline.">
-                        <a-input-number
-                          :value="alertConfig.storage?.minSamples"
-                          :min="1"
-                          placeholder="5"
-                          @change="(v: number) => { if (!alertConfig!.storage) alertConfig!.storage = { retention: 30, minSamples: v }; else alertConfig!.storage.minSamples = v }"
-                        />
-                      </SettingsField>
-                    </a-col>
-                    <a-col :xs="24" :sm="12" :lg="8">
-                      <SettingsField label="Event retention (days)" helper="How long events are kept.">
-                        <a-input-number
-                          :value="alertConfig.storage?.eventRetentionDays"
-                          :min="1"
-                          :placeholder="String(alertConfig.storage?.retention ?? 30)"
-                          @change="(v: number) => { if (!alertConfig!.storage) alertConfig!.storage = { retention: 30, eventRetentionDays: v }; else alertConfig!.storage.eventRetentionDays = v }"
-                        />
-                      </SettingsField>
-                    </a-col>
-                    <a-col :xs="24" :sm="12" :lg="8">
-                      <SettingsField label="Incident retention (days)" helper="How long incidents are kept.">
-                        <a-input-number
-                          :value="alertConfig.storage?.incidentRetentionDays"
-                          :min="1"
-                          :placeholder="String(alertConfig.storage?.retention ?? 30)"
-                          @change="(v: number) => { if (!alertConfig!.storage) alertConfig!.storage = { retention: 30, incidentRetentionDays: v }; else alertConfig!.storage.incidentRetentionDays = v }"
-                        />
-                      </SettingsField>
-                    </a-col>
-                    <a-col :xs="24" :sm="12" :lg="8">
-                      <SettingsField label="Alert retention (days)" helper="How long alerts are kept.">
-                        <a-input-number
-                          :value="alertConfig.storage?.alertRetentionDays"
-                          :min="1"
-                          :placeholder="String(alertConfig.storage?.retention ?? 30)"
-                          @change="(v: number) => { if (!alertConfig!.storage) alertConfig!.storage = { retention: 30, alertRetentionDays: v }; else alertConfig!.storage.alertRetentionDays = v }"
-                        />
-                      </SettingsField>
-                    </a-col>
-                  </a-row>
-
-                  <a-alert
-                    type="info"
-                    show-icon
-                    message="Retention settings control how long data is kept. Items are automatically pruned based on age, regardless of whether they are open/active."
-                    class="settings-page__notice"
-                  />
-                </SettingsSection>
-
-                <div v-if="hasRole('operator')" class="settings-page__actions">
-                  <a-button @click="resetAlertDetectionDefaults">
-                    <template #icon><ReloadOutlined /></template>
-                    Reset to default
-                  </a-button>
-                  <a-button type="primary" :loading="alertConfigSaving" @click="saveAllAlertConfig">
-                    <template #icon><SaveOutlined /></template>
-                    Save configuration
-                  </a-button>
-                </div>
+              <div v-if="hasRole('operator')" class="save-bar">
+                <a-button @click="resetAlertDetectionDefaults">Reset to default</a-button>
+                <a-button type="primary" :loading="alertConfigSaving" @click="saveAllAlertConfig">
+                  <template #icon><SaveOutlined /></template>
+                  Save
+                </a-button>
               </div>
             </template>
 
@@ -1588,44 +1507,7 @@ async function saveAllAlertConfig() {
   padding-top: 16px;
 }
 
-.settings-page {
-  max-width: 1440px;
-  margin: 0;
-}
 
-.settings-page__notice {
-  margin-top: 20px;
-}
-
-.settings-page__actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 12px;
-  margin-top: 4px;
-  padding-top: 16px;
-  border-top: 1px solid rgba(5, 5, 5, 0.06);
-}
-
-.sensitivity-control {
-  width: 100%;
-  max-width: 320px;
-}
-
-.sensitivity-control__row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  width: 100%;
-}
-
-.sensitivity-control__scale {
-  display: flex;
-  justify-content: space-between;
-  font-size: 12.5px;
-  color: #767676;
-  margin-top: 5px;
-  line-height: 1.5;
-}
 
 .drift-enabled-toggle {
   display: flex;
@@ -1716,34 +1598,19 @@ async function saveAllAlertConfig() {
 .toggle-row :deep(.ant-switch) { flex-shrink: 0; }
 .toggle-label { font-size: 13px; font-weight: 650; color: #263448; }
 .toggle-desc { font-size: 12px; line-height: 1.55; color: #7c8795; max-width: 780px; margin-top: 3px; }
-.save-bar, .settings-page__actions { position: relative; display: flex; justify-content: flex-end; align-items: center; gap: 10px; flex-wrap: wrap; padding: 16px 0 4px; margin-top: 0; border-top: 0; }
-.settings-page { max-width: none; width: 100%; margin: 0; display: flex; flex-direction: column; gap: 14px; }
-.settings-page :deep(.ant-row) { row-gap: 20px; }
-.settings-page :deep(.ant-input-number),
-.settings-page :deep(.ant-select),
-.settings-page :deep(.ant-input) { width: 100%; }
-.settings-page :deep(.ant-card), .settings-page :deep(.settings-section) { max-width: 100%; }
-.settings-page__notice { margin-top: 14px; }
+.save-bar { position: relative; display: flex; justify-content: flex-end; align-items: center; gap: 10px; flex-wrap: wrap; padding: 16px 0 4px; margin-top: 0; border-top: 0; }
 .agent-descriptions :deep(.ant-descriptions-item-label) { width: 165px; min-width: 125px; background: #f7f9fc; font-weight: 600; font-size: 12px; }
 .agent-descriptions :deep(.ant-descriptions-item-content) { overflow-wrap: anywhere; font-size: 12px; }
 .settings-shell :deep(.ant-table-thead > tr > th) { background: #f7f9fc; font-weight: 650; font-size: 12px; }
 .settings-shell :deep(.ant-table-tbody > tr:hover > td) { background: #f5f9ff; }
-.sensitivity-control { max-width: 100%; }
 .drift-alert-on__group { row-gap: 12px; }
 @media (max-width: 767px) {
   .settings-shell { padding-bottom: 18px; }
   .settings-card :deep(.ant-card-body) { padding: 16px; }
   .settings-card :deep(.ant-card-head) { padding: 0 16px; }
   .agent-descriptions :deep(.ant-descriptions-item-label) { min-width: 105px; width: 115px; }
-  .settings-page__actions, .save-bar { justify-content: flex-start; }
+  .save-bar { justify-content: flex-start; }
   .settings-tabs :deep(.ant-tabs-nav) { margin-bottom: 14px; }
 }
 
-/* Detection & Alerts: unified vertical field layout even when child components use inline labels */
-.settings-page :deep(.settings-field) { min-width: 0; }
-.settings-page :deep(.ant-input-number),
-.settings-page :deep(.ant-select),
-.settings-page :deep(.ant-input) { width: 100%; }
-.settings-page :deep(.ant-alert) { border-radius: 7px; }
-.settings-page__actions { padding-top: 20px; border-top: 1px solid #edf0f4; }
 </style>
