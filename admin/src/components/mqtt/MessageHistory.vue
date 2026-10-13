@@ -97,7 +97,6 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
   align-items: center;
   gap: 16px;
   padding: 6px 8px;
-  font-family: 'SFMono-Regular', 'Consolas', 'Courier New', monospace;
   font-size: 12px;
   border-radius: 4px;
   cursor: pointer;

@@ -499,7 +499,7 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
 .age { display: inline-flex; align-items: center; gap: 7px; white-space: nowrap; }
 .status-dot { width: 7px; height: 7px; border-radius: 50%; background: #3cb77d; display: inline-block; }
 .age.stale .status-dot { background: #ed9a38; }
-.stats :deep(.ant-card) { border-radius: 9px; border-color: #e7ebf0; }
+.stats :deep(.ant-card) { border-radius: 9px; border-color: #e7ebf0; background: #fafafa; }
 .stats :deep(.ant-card-body) { padding: 17px 18px; }
 .browser-card { border-radius: 9px; }
 .browser-card :deep(.ant-table-thead > tr > th) { background: #f7f9fc; font-size: 12px; font-weight: 650; }

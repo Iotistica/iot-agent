@@ -87,7 +87,6 @@ function fmtCount(n: number) {
 <style scoped>
 .topic-tree {
   font-size: 12px;
-  font-family: 'SFMono-Regular', 'Consolas', monospace;
 }
 
 .topic-row {

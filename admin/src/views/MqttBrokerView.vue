@@ -254,7 +254,7 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
 .heading p { color: #777; margin: 0; }
 
 .stats { margin-bottom: 14px; }
-.stats :deep(.ant-card) { border-radius: 9px; border-color: #e7ebf0; }
+.stats :deep(.ant-card) { border-radius: 9px; border-color: #e7ebf0; background: #fafafa; }
 .stats :deep(.ant-card-body) { padding: 17px 18px; }
 .metric-inner { display: flex; align-items: center; gap: 15px; min-height: 66px; }
 .metric-icon { width: 50px; height: 50px; flex-shrink: 0; border-radius: 14px; display: inline-flex; align-items: center; justify-content: center; font-size: 23px; }
@@ -322,7 +322,6 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
 .broker-version {
   font-size: 10px;
   color: #bbb;
-  font-family: monospace;
 }
 
 .tree-filter {

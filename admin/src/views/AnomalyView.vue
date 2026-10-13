@@ -34,6 +34,7 @@ const SEVERITY_TAG_COLOR: Record<string, string> = {
   warning: 'orange',
   info: 'blue',
 }
+const SEVERITY_ORDER = ['info', 'warning', 'critical']
 
 // Strips every embedded "<uuid>_" occurrence from free-text strings (e.g. alert messages).
 const GUID_ANYWHERE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}_/gi
@@ -132,14 +133,14 @@ const edgeEventsPage = ref(1)
 const PAGE_SIZE = 50
 
 const edgeEventColumns = [
-  { title: 'Severity', key: 'severity', width: 100 },
-  { title: 'Device', key: 'device_name', width: 160, ellipsis: true },
-  { title: 'Point', key: 'metric', ellipsis: true },
-  { title: 'Value', key: 'value', width: 90 },
-  { title: 'Score', key: 'score', width: 80 },
-  { title: 'Conf', key: 'conf', width: 75 },
-  { title: 'Consecutive', key: 'consec', width: 90 },
-  { title: 'Time', key: 'time', width: 160 },
+  { title: 'Severity', key: 'severity', width: 100, sorter: (a: EdgeAnomalyEvent, b: EdgeAnomalyEvent) => SEVERITY_ORDER.indexOf(a.severity) - SEVERITY_ORDER.indexOf(b.severity) },
+  { title: 'Device', key: 'device_name', width: 160, ellipsis: true, sorter: (a: EdgeAnomalyEvent, b: EdgeAnomalyEvent) => a.device_name.localeCompare(b.device_name) },
+  { title: 'Point', key: 'metric', ellipsis: true, sorter: (a: EdgeAnomalyEvent, b: EdgeAnomalyEvent) => a.metric.localeCompare(b.metric) },
+  { title: 'Value', key: 'value', width: 90, sorter: (a: EdgeAnomalyEvent, b: EdgeAnomalyEvent) => (a.observed_value ?? 0) - (b.observed_value ?? 0) },
+  { title: 'Score', key: 'score', width: 80, sorter: (a: EdgeAnomalyEvent, b: EdgeAnomalyEvent) => a.anomaly_score - b.anomaly_score },
+  { title: 'Conf', key: 'conf', width: 75, sorter: (a: EdgeAnomalyEvent, b: EdgeAnomalyEvent) => a.confidence - b.confidence },
+  { title: 'Consecutive', key: 'consec', width: 90, sorter: (a: EdgeAnomalyEvent, b: EdgeAnomalyEvent) => a.consecutive_count - b.consecutive_count },
+  { title: 'Time', key: 'time', width: 160, sorter: (a: EdgeAnomalyEvent, b: EdgeAnomalyEvent) => a.timestamp_ms - b.timestamp_ms },
 ]
 
 async function loadEdgeEvents() {
@@ -167,14 +168,14 @@ const edgeIncidentsPage = ref(1)
 const resolvingId = ref<string | null>(null)
 
 const edgeIncidentColumns = [
-  { title: 'Severity', key: 'severity', width: 95 },
-  { title: 'Point', key: 'metric', ellipsis: true },
-  { title: 'Device', key: 'device_name', width: 160, ellipsis: true },
-  { title: 'Status', key: 'status', width: 90 },
-  { title: 'Events', dataIndex: 'event_count', key: 'event_count', width: 70 },
-  { title: 'Score', key: 'score', width: 80 },
-  { title: 'First seen', key: 'first_seen', width: 155 },
-  { title: 'Last seen', key: 'last_seen', width: 155 },
+  { title: 'Severity', key: 'severity', width: 95, sorter: (a: EdgeAnomalyIncident, b: EdgeAnomalyIncident) => SEVERITY_ORDER.indexOf(a.severity) - SEVERITY_ORDER.indexOf(b.severity) },
+  { title: 'Point', key: 'metric', ellipsis: true, sorter: (a: EdgeAnomalyIncident, b: EdgeAnomalyIncident) => a.metric.localeCompare(b.metric) },
+  { title: 'Device', key: 'device_name', width: 160, ellipsis: true, sorter: (a: EdgeAnomalyIncident, b: EdgeAnomalyIncident) => a.device_name.localeCompare(b.device_name) },
+  { title: 'Status', key: 'status', width: 90, sorter: (a: EdgeAnomalyIncident, b: EdgeAnomalyIncident) => a.status.localeCompare(b.status) },
+  { title: 'Events', dataIndex: 'event_count', key: 'event_count', width: 70, sorter: (a: EdgeAnomalyIncident, b: EdgeAnomalyIncident) => a.event_count - b.event_count },
+  { title: 'Score', key: 'score', width: 80, sorter: (a: EdgeAnomalyIncident, b: EdgeAnomalyIncident) => a.max_anomaly_score - b.max_anomaly_score },
+  { title: 'First seen', key: 'first_seen', width: 155, sorter: (a: EdgeAnomalyIncident, b: EdgeAnomalyIncident) => a.first_seen - b.first_seen },
+  { title: 'Last seen', key: 'last_seen', width: 155, sorter: (a: EdgeAnomalyIncident, b: EdgeAnomalyIncident) => a.last_seen - b.last_seen },
   { title: '', key: 'actions', width: 90, fixed: 'right' },
 ]
 
@@ -235,12 +236,12 @@ const edgeAlertsLoading = ref(false)
 const edgeAlertsPage = ref(1)
 
 const edgeAlertColumns = [
-  { title: 'Severity', key: 'severity', width: 100 },
-  { title: 'Point', key: 'metric', ellipsis: true },
-  { title: 'Device', key: 'device_name', width: 160, ellipsis: true },
-  { title: 'Score', key: 'score', width: 80 },
+  { title: 'Severity', key: 'severity', width: 100, sorter: (a: EdgeAnomalyAlert, b: EdgeAnomalyAlert) => SEVERITY_ORDER.indexOf(a.severity) - SEVERITY_ORDER.indexOf(b.severity) },
+  { title: 'Point', key: 'metric', ellipsis: true, sorter: (a: EdgeAnomalyAlert, b: EdgeAnomalyAlert) => a.metric.localeCompare(b.metric) },
+  { title: 'Device', key: 'device_name', width: 160, ellipsis: true, sorter: (a: EdgeAnomalyAlert, b: EdgeAnomalyAlert) => a.device_name.localeCompare(b.device_name) },
+  { title: 'Score', key: 'score', width: 80, sorter: (a: EdgeAnomalyAlert, b: EdgeAnomalyAlert) => a.max_anomaly_score - b.max_anomaly_score },
   { title: 'Message', dataIndex: 'message', key: 'message', width: 500 },
-  { title: 'Time', key: 'time', width: 160 },
+  { title: 'Time', key: 'time', width: 160, sorter: (a: EdgeAnomalyAlert, b: EdgeAnomalyAlert) => a.created_at - b.created_at },
 ]
 
 async function loadEdgeAlerts() {
@@ -279,16 +280,16 @@ watch(baselinesMetric, () => {
 })
 
 const baselineColumns = [
-  { title: 'Point', key: 'metric', ellipsis: true },
-  { title: 'Device', key: 'device_id', width: 160, ellipsis: true },
-  { title: 'State', dataIndex: 'device_state', key: 'device_state', width: 100 },
-  { title: 'Slot', dataIndex: 'time_slot', key: 'time_slot', width: 55 },
-  { title: 'Mean', key: 'mean', width: 90 },
-  { title: 'Std dev', key: 'std_dev', width: 90 },
-  { title: 'Median', key: 'median', width: 90 },
-  { title: 'MAD', key: 'mad', width: 90 },
-  { title: 'Samples', dataIndex: 'sample_count', key: 'sample_count', width: 80 },
-  { title: 'Calculated', key: 'calculated_at', width: 160 },
+  { title: 'Point', key: 'metric', ellipsis: true, sorter: (a: BaselineRow, b: BaselineRow) => a.metric.localeCompare(b.metric) },
+  { title: 'Device', key: 'device_id', width: 160, ellipsis: true, sorter: (a: BaselineRow, b: BaselineRow) => a.device_id.localeCompare(b.device_id) },
+  { title: 'State', dataIndex: 'device_state', key: 'device_state', width: 100, sorter: (a: BaselineRow, b: BaselineRow) => a.device_state.localeCompare(b.device_state) },
+  { title: 'Slot', dataIndex: 'time_slot', key: 'time_slot', width: 55, sorter: (a: BaselineRow, b: BaselineRow) => a.time_slot - b.time_slot },
+  { title: 'Mean', key: 'mean', width: 90, sorter: (a: BaselineRow, b: BaselineRow) => (a.mean ?? 0) - (b.mean ?? 0) },
+  { title: 'Std dev', key: 'std_dev', width: 90, sorter: (a: BaselineRow, b: BaselineRow) => (a.std_dev ?? 0) - (b.std_dev ?? 0) },
+  { title: 'Median', key: 'median', width: 90, sorter: (a: BaselineRow, b: BaselineRow) => (a.median ?? 0) - (b.median ?? 0) },
+  { title: 'MAD', key: 'mad', width: 90, sorter: (a: BaselineRow, b: BaselineRow) => (a.mad ?? 0) - (b.mad ?? 0) },
+  { title: 'Samples', dataIndex: 'sample_count', key: 'sample_count', width: 80, sorter: (a: BaselineRow, b: BaselineRow) => a.sample_count - b.sample_count },
+  { title: 'Calculated', key: 'calculated_at', width: 160, sorter: (a: BaselineRow, b: BaselineRow) => a.calculated_at - b.calculated_at },
 ]
 
 // Maps endpoint UUID → display name (for events/incidents/alerts/baselines metric prefix lookup)
@@ -635,12 +636,12 @@ function formatElapsed(ms: number): string {
 }
 
 const schemaDriftColumns = [
-  { title: 'Protocol', dataIndex: 'protocol', key: 'protocol', width: 120, ellipsis: true },
-  { title: 'Device', key: 'device', width: 200, ellipsis: true },
-  { title: 'Point', key: 'field', ellipsis: true },
-  { title: 'Status', key: 'status', width: 130 },
-  { title: 'Type', key: 'dominantType', width: 90 },
-  { title: 'Updated', key: 'updatedAt', width: 160 },
+  { title: 'Protocol', dataIndex: 'protocol', key: 'protocol', width: 120, ellipsis: true, sorter: (a: SchemaDriftBaselineRow, b: SchemaDriftBaselineRow) => a.protocol.localeCompare(b.protocol) },
+  { title: 'Device', key: 'device', width: 200, ellipsis: true, sorter: (a: SchemaDriftBaselineRow, b: SchemaDriftBaselineRow) => (a.device ?? '').localeCompare(b.device ?? '') },
+  { title: 'Point', key: 'field', ellipsis: true, sorter: (a: SchemaDriftBaselineRow, b: SchemaDriftBaselineRow) => a.field.localeCompare(b.field) },
+  { title: 'Status', key: 'status', width: 130, sorter: (a: SchemaDriftBaselineRow, b: SchemaDriftBaselineRow) => a.status.localeCompare(b.status) },
+  { title: 'Type', key: 'dominantType', width: 90, sorter: (a: SchemaDriftBaselineRow, b: SchemaDriftBaselineRow) => (a.dominantType ?? '').localeCompare(b.dominantType ?? '') },
+  { title: 'Updated', key: 'updatedAt', width: 160, sorter: (a: SchemaDriftBaselineRow, b: SchemaDriftBaselineRow) => a.updatedAt.localeCompare(b.updatedAt) },
 ]
 
 async function loadSchemaDriftBaselines() {
@@ -1117,12 +1118,12 @@ function blankMetric(): AnomalyMetricConfig {
 }
 
 const metricColumns: TableColumnType<AnomalyMetricConfig>[] = [
-  { title: 'Point name', key: 'name', ellipsis: true },
-  { title: 'Device', key: 'device', width: 160, ellipsis: true },
+  { title: 'Point name', key: 'name', ellipsis: true, sorter: (a: AnomalyMetricConfig, b: AnomalyMetricConfig) => a.name.localeCompare(b.name) },
+  { title: 'Device', key: 'device', width: 160, ellipsis: true, sorter: (a: AnomalyMetricConfig, b: AnomalyMetricConfig) => (a.deviceName ?? '').localeCompare(b.deviceName ?? '') },
   { title: 'Detection', key: 'methods', ellipsis: true },
-  { title: 'Sensitivity', key: 'sensitivity', width: 100 },
-  { title: 'Seasonality', key: 'seasonality', width: 110 },
-  { title: 'Enabled', key: 'enabled', width: 80 },
+  { title: 'Sensitivity', key: 'sensitivity', width: 100, sorter: (a: AnomalyMetricConfig, b: AnomalyMetricConfig) => a.threshold - b.threshold },
+  { title: 'Seasonality', key: 'seasonality', width: 110, sorter: (a: AnomalyMetricConfig, b: AnomalyMetricConfig) => (a.seasonality ?? '').localeCompare(b.seasonality ?? '') },
+  { title: 'Enabled', key: 'enabled', width: 80, sorter: (a: AnomalyMetricConfig, b: AnomalyMetricConfig) => Number(a.enabled) - Number(b.enabled) },
   { title: '', key: 'actions', width: 100, fixed: 'right' },
 ]
 

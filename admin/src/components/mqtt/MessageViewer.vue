@@ -283,7 +283,6 @@ watch(() => props.node?.fullTopic, (topic) => {
 }
 
 .topic-path {
-  font-family: 'SFMono-Regular', 'Consolas', monospace;
   font-size: 13px;
   font-weight: 600;
   word-break: break-all;

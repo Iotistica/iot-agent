@@ -272,7 +272,6 @@ function detailFor(row: PointRow) {
   align-self: center;
 }
 .detail-value {
-  font-family: 'SFMono-Regular', 'Consolas', 'Courier New', monospace;
   word-break: break-all;
 }
 .detail-empty {
