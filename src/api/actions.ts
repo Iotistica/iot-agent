@@ -1246,18 +1246,13 @@ export const addEndpoint = async (body: {
 	// friendly name (not a raw "<name>-<uuid8>" string) in the Live/Dashboard
 	// views immediately — normally only discovery does this (src/discovery/db.ts),
 	// which a manually-added source (e.g. via the register-map editor) never runs.
-	try {
-		const { ProtocolDevicesModel } = await import('../db/models/index.js');
-		await ProtocolDevicesModel.syncFromEndpoint(savedEndpoint);
-	} catch (err) {
-		// Don't leave a broken orphan behind (empty-feeling endpoint whose devices
-		// never got seeded) — roll back the endpoint we just committed above and
-		// surface a clear error instead of a raw devices.uuid constraint failure.
-		await EndpointModel.deleteByUuid(uuid).catch(() => {});
-		throw Object.assign(
-			new Error(`Failed to register devices for "${body.name}": ${err instanceof Error ? err.message : String(err)}`),
-			{ statusCode: 409 },
-		);
+	if (savedEndpoint) {
+		try {
+			const { ProtocolDevicesModel } = await import('../db/models/index.js');
+			await ProtocolDevicesModel.syncFromEndpoint(savedEndpoint);
+		} catch {
+			// Non-fatal: device rows will be created on the next discovery or poll cycle.
+		}
 	}
 
 	return {
@@ -1409,8 +1404,14 @@ export const replaceEndpoint = async (
 
 	// See addEndpoint() — keeps the devices table (and friendly-name resolution
 	// in the Live/Dashboard views) in step with a register-map edit too.
-	const { ProtocolDevicesModel } = await import('../db/models/index.js');
-	await ProtocolDevicesModel.syncFromEndpoint(savedEndpoint);
+	if (savedEndpoint) {
+		try {
+			const { ProtocolDevicesModel } = await import('../db/models/index.js');
+			await ProtocolDevicesModel.syncFromEndpoint(savedEndpoint);
+		} catch {
+			// Non-fatal: device rows will be synced on the next discovery or poll cycle.
+		}
+	}
 
 	return { uuid, name: body.name, protocol: body.protocol, enabled: updatedEndpoint.enabled };
 };

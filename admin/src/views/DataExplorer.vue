@@ -25,6 +25,7 @@ type DeviceRecord = { uuid: string; name: string; metadata?: Record<string, unkn
 const subscriptions = ref<SubscriptionActivity[]>([])
 const events = ref<ActivityEvent[]>([])
 const devices = ref<DeviceRecord[]>([])
+const observedPointCount = ref(0)
 const loading = ref(true)
 const error = ref('')
 const search = ref('')
@@ -36,6 +37,13 @@ const drawerOpen = ref(false)
 const paused = ref(false)
 const favorites = ref<string[]>([])
 function favKey(p: PointRow): string { return `${p.endpointName}::${p.metric}` }
+function normalizePointKey(key: string): string {
+  try {
+    const parts = JSON.parse(key)
+    if (Array.isArray(parts) && parts.length === 4) return JSON.stringify(parts.slice(0, 3))
+    return key
+  } catch { return key }
+}
 const favPointCache = ref(new Map<string, PointRow>())
 type SavedView = { id: string; name: string; description?: string; pointKeys: string[] }
 const savedViews = ref<SavedView[]>([])
@@ -52,7 +60,7 @@ const selectedPointKeys = ref<string[]>([])
 const saveSelected = ref(false)
 const viewMode = computed(() => activeTab.value === 'favorites' ? 'favorites' : 'all')
 const activeSavedView = computed(() => savedViews.value.find(v => v.id === activeTab.value))
-const activeViewIds = computed(() => new Set(activeSavedView.value?.pointKeys || []))
+const activeViewIds = computed(() => new Set((activeSavedView.value?.pointKeys || []).map(normalizePointKey)))
 const rowSelection = computed(() => ({
   selectedRowKeys: selectedPointKeys.value,
   onChange: (keys: (string | number)[]) => { selectedPointKeys.value = keys.map(String) },
@@ -99,11 +107,11 @@ function isStale(iso: string) {
   return Number.isFinite(t) && now.value - t > 60000
 }
 // Events are a bounded recent sample, not a historical database or a full point inventory.
-// Keep the most recent event per protocol/source/metric/destination combination.
+// Keep the most recent event per protocol/source/metric combination.
 const points = computed<PointRow[]>(() => {
   const byKey = new Map<string, PointRow>()
   for (const e of events.value) {
-    const key = JSON.stringify([e.protocol, e.endpointName, e.metric, e.destinationName])
+    const key = JSON.stringify([e.protocol, e.endpointName, e.metric])
     const row: PointRow = {
       key, protocol: e.protocol, endpointName: e.endpointName, metric: e.metric,
       normalizedName: e.normalizedName, rawPointName: e.rawPointName,
@@ -116,7 +124,7 @@ const points = computed<PointRow[]>(() => {
   // Subscription snapshots can contain a latest reading not present in the last 100 events.
   for (const s of subscriptions.value) {
     if (!s.lastMetric || !s.lastPublishTime) continue
-    const key = JSON.stringify([s.protocol, s.endpointName, s.lastMetric, s.destinationName])
+    const key = JSON.stringify([s.protocol, s.endpointName, s.lastMetric])
     const row: PointRow = {
       key, protocol: s.protocol, endpointName: s.endpointName, metric: s.lastMetric,
       normalizedName: s.normalizedName, rawPointName: s.rawPointName,
@@ -190,8 +198,9 @@ const filteredPoints = computed(() => {
   return filtered.sort(columnSort)
 })
 const favoriteCount = computed(() => favorites.value.length)
-const missingViewCount = computed(() => activeSavedView.value
-  ? activeSavedView.value.pointKeys.filter(key => !points.value.some(p => p.key === key)).length : 0)
+const normalizedViewKeys = computed(() => activeSavedView.value
+  ? [...new Set(activeSavedView.value.pointKeys.map(normalizePointKey))] : [])
+const missingViewCount = computed(() => normalizedViewKeys.value.filter(key => !points.value.some(p => p.key === key)).length)
 const candidatePoints = computed(() => saveSelected.value
   ? points.value.filter(p => selectedPointKeys.value.includes(p.key))
   : filteredPoints.value)
@@ -312,9 +321,10 @@ async function poll() {
   busy = true
   refreshing.value = true
   try {
-    const [subs, evts] = await Promise.all([pipelineApi.getSubscriptions(), pipelineApi.getEvents(100)])
+    const [subs, evts, overview] = await Promise.all([pipelineApi.getSubscriptions(), pipelineApi.getEvents(1000), pipelineApi.getOverview()])
     subscriptions.value = subs
     events.value = evts
+    observedPointCount.value = overview.activePoints
     error.value = ''
     lastSync.value = new Date().toLocaleTimeString()
     now.value = Date.now()
@@ -373,7 +383,7 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
       </div>
       <a-alert v-if="error"  type="warning" show-icon :message="error" style="margin-bottom: 14px" />
       <a-row :gutter="12" class="stats">
-        <a-col :xs="12" :md="6"><a-card size="small" class="metric-card"><div class="metric-inner"><span class="metric-icon icon-points"><BarChartOutlined /></span><a-statistic title="Observed points" :value="points.length" /></div></a-card></a-col>
+        <a-col :xs="12" :md="6"><a-card size="small" class="metric-card"><div class="metric-inner"><span class="metric-icon icon-points"><BarChartOutlined /></span><a-statistic title="Observed points" :value="observedPointCount" /></div></a-card></a-col>
         <a-col :xs="12" :md="6"><a-card size="small" class="metric-card"><div class="metric-inner"><span class="metric-icon icon-subscriptions"><WifiOutlined /></span><a-statistic title="Active subscriptions" :value="subscriptions.length" /></div></a-card></a-col>
         <a-col :xs="12" :md="6"><a-card size="small" class="metric-card"><div class="metric-inner"><span class="metric-icon icon-quality"><WarningOutlined /></span><a-statistic title="Bad quality" :value="badCount" /></div></a-card></a-col>
         <a-col :xs="12" :md="6"><a-card size="small" class="metric-card"><div class="metric-inner"><span class="metric-icon icon-stale"><ClockCircleOutlined /></span><a-statistic title="No update in 60s" :value="staleCount" /></div></a-card></a-col>
@@ -396,7 +406,7 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
             <button type="button" :class="['view-tab', { active: activeTab === 'all' }]" @click="activateTab('all')">All points ({{ points.length }})</button>
             <button type="button" :class="['view-tab', { active: activeTab === 'favorites' }]" @click="activateTab('favorites')">★ Favorites ({{ favoriteCount }})</button>
             <div v-for="view in savedViews.filter(v => openViewIds.includes(v.id))" :key="view.id" :class="['saved-view-tab', { active: activeTab === view.id }]">
-              <button type="button" @click="activateTab(view.id)">{{ view.name }} ({{ view.pointKeys.length }})</button>
+              <button type="button" @click="activateTab(view.id)">{{ view.name }} ({{ new Set(view.pointKeys.map(normalizePointKey)).size }})</button>
               <button type="button" class="close-view" :aria-label="`Close ${view.name} tab`" @click="closeSavedView(view.id)"><CloseOutlined /></button>
             </div>
           </div>
@@ -438,7 +448,7 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
     <a-modal v-model:open="manageModalOpen" title="Manage Views" :footer="null">
       <a-empty v-if="!savedViews.length" description="No saved views yet" />
       <div v-for="view in savedViews" :key="view.id" class="manage-row">
-        <div><strong>{{ view.name }}</strong><div class="modal-hint">{{ view.pointKeys.length }} points</div></div>
+        <div><strong>{{ view.name }}</strong><div class="modal-hint">{{ new Set(view.pointKeys.map(normalizePointKey)).size }} points</div></div>
         <div class="manage-actions"><a-button size="small" @click="openSavedView(view.id); manageModalOpen = false">Open</a-button>
           <a-popconfirm title="Delete this saved view permanently?" ok-text="Delete" @confirm="deleteSavedView(view.id)"><a-button size="small" danger>Delete</a-button></a-popconfirm>
         </div>

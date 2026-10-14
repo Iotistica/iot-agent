@@ -2592,7 +2592,6 @@ router.get('/v1/normalization-health', async (_req: Request, res: Response, next
 /**
  * GET /v1/units/canonical
  * The catalog's canonical units, for the admin "Resolve unit" picker.
- * Read-only — no endpoint to create units/dimensions/conversions in v1.
  */
 router.get('/v1/units/canonical', async (_req: Request, res: Response, next: NextFunction) => {
 	try {
@@ -2626,13 +2625,86 @@ router.get('/v1/units/custom-aliases', async (_req: Request, res: Response, next
 });
 
 /**
+ * POST /v1/units/canonical
+ * Create a custom canonical unit definition (passthrough — identity conversion).
+ * Admins use this when the seed catalog doesn't cover a unit they need.
+ * Custom units survive restarts (the seed only upserts its own known set).
+ */
+router.post('/v1/units/canonical', requireRole('operator'), async (req: Request, res: Response, next: NextFunction) => {
+	try {
+		const { canonical_unit, quantity, symbol, description } = req.body as {
+			canonical_unit?: string;
+			quantity?: string;
+			symbol?: string;
+			description?: string;
+		};
+
+		if (typeof canonical_unit !== 'string' || !canonical_unit.trim()) {
+			return res.status(400).json({ error: 'canonical_unit is required' });
+		}
+
+		const { UnitDefinitionsModel } = await import('../db/models/index.js');
+		const { getUnitCatalog } = await import('../units/catalog.js');
+
+		if (UnitDefinitionsModel.getByCanonicalUnit(canonical_unit)) {
+			return res.status(409).json({ error: `"${canonical_unit}" already exists` });
+		}
+
+		const unit = UnitDefinitionsModel.upsert({
+			canonical_unit: canonical_unit.trim(),
+			quantity: quantity?.trim() || 'custom',
+			symbol: symbol?.trim() || null,
+			description: description?.trim() || null,
+			base_unit: canonical_unit.trim(),
+			multiplier: 1,
+			offset: 0,
+		});
+
+		getUnitCatalog().reload();
+		return res.status(201).json(unit);
+	} catch (error) {
+		next(error);
+	}
+});
+
+/**
+ * DELETE /v1/units/canonical/:name
+ * Remove a custom canonical unit. Seed-defined units cannot be deleted.
+ * Cascades: also removes any custom_unit_aliases referencing it.
+ */
+router.delete('/v1/units/canonical/:name', requireRole('admin'), async (req: Request, res: Response, next: NextFunction) => {
+	try {
+		const { name } = req.params;
+
+		const { UnitDefinitionsModel, CustomUnitAliasesModel } = await import('../db/models/index.js');
+		const { UNIT_DEFINITIONS } = await import('../data/unit-catalog-seed.js');
+		const { getUnitCatalog } = await import('../units/catalog.js');
+
+		if (!UnitDefinitionsModel.getByCanonicalUnit(name)) {
+			return res.status(404).json({ error: `"${name}" not found` });
+		}
+
+		if (UNIT_DEFINITIONS.some((d) => d.canonical_unit === name)) {
+			return res.status(400).json({ error: `"${name}" is a built-in unit and cannot be deleted` });
+		}
+
+		CustomUnitAliasesModel.deleteByCanonicalUnit(name);
+		UnitDefinitionsModel.deleteByCanonicalUnit(name);
+		getUnitCatalog().reload();
+
+		return res.status(200).json({ ok: true });
+	} catch (error) {
+		next(error);
+	}
+});
+
+/**
  * POST /v1/normalization-health/resolve-unit
- * Maps a raw/unknown unit string to an existing canonical unit, so future
- * readings using it normalize automatically. Stored in custom_unit_aliases —
- * a separate, admin-owned table (src/db/models/custom-unit-aliases.model.ts)
- * that the built-in catalog's startup reseed never touches. A custom mapping
- * may only ever resolve a *currently unknown* alias: it can never override an
- * existing built-in alias for the same source-system scope (409 below).
+ * Maps a raw/unknown unit string to a canonical unit, so future readings
+ * using it normalize automatically. If the canonical unit doesn't exist yet,
+ * it is auto-created as a passthrough (identity conversion). Stored in
+ * custom_unit_aliases — a separate, admin-owned table that the built-in
+ * catalog's startup reseed never touches.
  */
 router.post('/v1/normalization-health/resolve-unit', requireRole('operator'), async (req: Request, res: Response, next: NextFunction) => {
 	try {
@@ -2652,7 +2724,15 @@ router.post('/v1/normalization-health/resolve-unit', requireRole('operator'), as
 		const { normalizeSourceSystem } = await import('../units/source-system.js');
 
 		if (!UnitDefinitionsModel.getByCanonicalUnit(canonicalUnit)) {
-			return res.status(400).json({ error: `"${canonicalUnit}" is not a known canonical unit` });
+			UnitDefinitionsModel.upsert({
+				canonical_unit: canonicalUnit,
+				quantity: 'custom',
+				symbol: null,
+				description: null,
+				base_unit: canonicalUnit,
+				multiplier: 1,
+				offset: 0,
+			});
 		}
 
 		const normalizedSourceSystem = normalizeSourceSystem(sourceSystem);
@@ -3007,7 +3087,7 @@ router.get('/v1/pipeline/subscriptions', (_req: Request, res: Response) => {
 });
 
 router.get('/v1/pipeline/events', (req: Request, res: Response) => {
-	const limit = Math.min(Math.max(parseInt(String(req.query.limit ?? '100'), 10) || 100, 1), 300);
+	const limit = Math.min(Math.max(parseInt(String(req.query.limit ?? '100'), 10) || 100, 1), 2000);
 	const protocol = typeof req.query.protocol === 'string' && req.query.protocol.trim() ? req.query.protocol.trim() : undefined;
 	res.json({ events: activityMonitor.getRecentEvents(limit, protocol) });
 });

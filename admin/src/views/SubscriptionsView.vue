@@ -41,7 +41,7 @@ const destFilter = ref<number | undefined>(undefined)
 const filteredRows = computed(() => rows.value.filter(r => {
   const q = search.value.trim().toLowerCase()
   const destName = destMap.value[r.publish_destination_id]?.name ?? ''
-  return (!q || [destName, r.publish_topic, r.payload_format].some(v => (v || '').toLowerCase().includes(q)))
+  return (!q || [destName, r.route_json?.topic, r.payload_format].some(v => (v || '').toLowerCase().includes(q)))
     && (!destFilter.value || r.publish_destination_id === destFilter.value)
 }))
 const destOptions = computed(() => destinations.value.map(d => ({ value: d.id, label: d.name })))
@@ -50,7 +50,7 @@ function clearFilters() { search.value = ''; destFilter.value = undefined }
 const columns: TableColumnType<Subscription>[] = [
   { title: 'Destination', key: 'destination', width: 180, sorter: (a, b) => (destMap.value[a.publish_destination_id]?.name ?? '').localeCompare(destMap.value[b.publish_destination_id]?.name ?? '') },
   { title: 'Type', key: 'dest_type', width: 120 },
-  { title: 'Topic', key: 'topic', sorter: (a, b) => (a.publish_topic ?? '').localeCompare(b.publish_topic ?? '') },
+  { title: 'Topic', key: 'topic', sorter: (a, b) => (a.route_json?.topic ?? '').localeCompare(b.route_json?.topic ?? '') },
   { title: 'Protocol', dataIndex: 'topics', key: 'topics', width: 160 },
   { title: 'Format', dataIndex: 'payload_format', key: 'payload_format', width: 100, sorter: (a, b) => (a.payload_format ?? '').localeCompare(b.payload_format ?? '') },
   { title: 'Compression', dataIndex: 'compression', key: 'compression', width: 160 },

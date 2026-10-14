@@ -1554,6 +1554,7 @@ export class PublishManager extends EventEmitter {
 	): Promise<Array<[IPublishPlugin, PublishBatchItem[]]>> {
 
 		const batchesByPlugin = new Map<IPublishPlugin, PublishBatchItem[]>();
+		const eventRecordedPoints = new Set<string>();
 		for (const binding of this.bindings) {
 			const destinationTopic = this.resolveDestinationTopic(binding, sourceTopic);
 			if (destinationTopic === null) {
@@ -1633,32 +1634,19 @@ export class PublishManager extends EventEmitter {
 				// everything this endpoint actually reported for this subscription, regardless
 				// of whether this tick's outgoing payload to the destination was itself
 				// throttled down to nothing.
-				const byMetric = new Map<string, ProtocolMessage>();
+				const byPoint = new Map<string, { metric: string; sourceName: string; record: ProtocolMessage }>();
 				for (const record of records) {
-					byMetric.set(this.resolveRecordMetric(record), record);
-				}
-				for (const [metric, record] of byMetric) {
-					// Prefer the reading's own device identity (the same field the actual
-					// outbound MQTT "node" name is resolved from, see resolveExternalNodeName)
-					// over the coarse protocol-group endpointName — a single protocol group
-					// batches readings from multiple devices, so "opcua"/"bacnet" alone tells
-					// an operator nothing about which device a row in the Data Flow page came
-					// from. Falls back to the group name when a reading has no device field.
+					const metric = this.resolveRecordMetric(record);
 					const sourceName = this.readExternalNodeCandidate(record) ?? endpointName;
-					// Reuses the same compact projection mapTagPayload()/attachMlEnrichment() already
-					// use for provisionalPointId/normalizedName. rulesVersion is read separately here
-					// (not via readPointIdentity()) because that helper's contract deliberately never
-					// carries rulesVersion into tag/ml payloads — see its doc comment above.
+					byPoint.set(JSON.stringify([sourceName, metric]), { metric, sourceName, record });
+				}
+				for (const [, { metric, sourceName, record }] of byPoint) {
 					const pointIdentityFields = this.readPointIdentity(record);
 					const rulesVersion = (record?.pointIdentity as PointIdentity | undefined)?.rulesVersion;
-					// True protocol-reported name (currently BACnet only — see plugins/types.ts's
-					// DeviceDataPoint.rawObjectName doc comment), when the adapter captured one
-					// separately from the sanitized `metric` identifier. Display-only.
 					const rawObjectName = typeof record?.rawObjectName === 'string' ? record.rawObjectName : undefined;
+					const rawPointName = typeof record?.rawPointName === 'string' ? record.rawPointName : undefined;
 
-					const rawPointName =typeof record?.rawPointName === 'string'? record.rawPointName: undefined;
-
-					activityMonitor.record({
+					const params = {
 						subscriptionId: binding.subscription.id ?? null,
 						destinationId: binding.publisher.id,
 						destinationName: binding.publisher.name,
@@ -1674,7 +1662,15 @@ export class PublishManager extends EventEmitter {
 						...(rulesVersion && { rulesVersion }),
 						...(rawObjectName && { rawObjectName }),
 						...(rawPointName && { rawPointName }),
-					});
+					};
+
+					const eventKey = JSON.stringify([this.protocol, sourceName, metric]);
+					if (eventRecordedPoints.has(eventKey)) {
+						activityMonitor.recordSubscriptionOnly(params);
+					} else {
+						activityMonitor.record(params);
+						eventRecordedPoints.add(eventKey);
+					}
 				}
 			}
 

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { message, Modal } from 'ant-design-vue'
-import { PlusOutlined, DeleteOutlined, KeyOutlined, StopOutlined, ReloadOutlined, CheckCircleOutlined } from '@ant-design/icons-vue'
+import { PlusOutlined, DeleteOutlined, KeyOutlined, StopOutlined, CheckCircleOutlined } from '@ant-design/icons-vue'
 import type { TableColumnType } from 'ant-design-vue'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import { usersApi, sessionsApi, type User, type Session } from '@/api/users'

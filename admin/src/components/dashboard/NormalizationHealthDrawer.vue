@@ -61,6 +61,11 @@ watch(
   },
 )
 
+const isNewUnit = computed(() => {
+  const v = selectedCanonicalUnit.value.trim()
+  return v !== '' && !canonicalUnits.value.some((u) => u.canonical_unit === v)
+})
+
 const resolveModalOpen = ref(false)
 const resolveTarget = ref<NormalizationIssue | null>(null)
 const selectedCanonicalUnit = ref('')
@@ -189,6 +194,9 @@ async function submitResolve(): Promise<void> {
         :options="canonicalUnitOptions"
         :filter-option="(input: string, option: any) => option.label.toLowerCase().includes(input.toLowerCase())"
       />
+      <div v-if="isNewUnit" style="font-size: 12px; color: #faad14; margin-top: 4px">
+        New unit — will be created as a passthrough (no conversion)
+      </div>
     </div>
   </a-modal>
 </template>

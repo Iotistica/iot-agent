@@ -38,6 +38,10 @@ export class CustomUnitAliasesModel {
 		return (row as unknown as CustomUnitAliasRecord | undefined) ?? null;
 	}
 
+	static deleteByCanonicalUnit(canonicalUnit: string): void {
+		this.getDb().prepare(`DELETE FROM ${this.table} WHERE canonical_unit = ?`).run(canonicalUnit);
+	}
+
 	static upsert(record: CustomUnitAliasRecord): CustomUnitAliasRecord {
 		const sourceSystem = record.source_system ?? null;
 		const existing = this.findExact(sourceSystem, record.alias);

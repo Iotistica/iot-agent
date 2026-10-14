@@ -65,12 +65,30 @@ export interface ActivityEvent {
 	rawPointName?: string;
 }
 
-// One event is now recorded per distinct metric per batch (not one per batch),
-// so a single BACnet endpoint with dozens of points fills this far faster than
-// when it was tuned for one row per publish tick. Capped per protocol (see
+// One event per distinct (source, metric) per publish tick — deduplicated across
+// destination bindings in collectRouteEntries(). Capped per protocol (see
 // eventsByProtocol below), not globally — a single shared buffer let a
 // high-volume protocol evict a quieter one's entire history within seconds.
-const MAX_EVENTS_PER_PROTOCOL = 500;
+const MAX_EVENTS_PER_PROTOCOL = 2000;
+
+interface RecordParams {
+	subscriptionId: number | null;
+	destinationId: number;
+	destinationName: string;
+	destinationType: string;
+	protocol: string;
+	endpointName: string;
+	metric: string;
+	value: unknown;
+	unit?: string;
+	quality?: string;
+	pointCount: number;
+	normalizedName?: string;
+	provisionalPointId?: string;
+	rulesVersion?: string;
+	rawObjectName?: string;
+	rawPointName?: string;
+}
 
 // Endpoint names are generated internally as "{protocol}-pipe" (see
 // init/features.ts) — "pipe" reflects internal plumbing (the endpoint's
@@ -138,28 +156,8 @@ class ActivityMonitor {
 	private qualityBuckets: Array<{ bucketStart: number; good: number; total: number }> =
 		Array.from({ length: ActivityMonitor.QUALITY_BUCKET_COUNT }, () => ({ bucketStart: 0, good: 0, total: 0 }));
 
-	record(params: {
-		subscriptionId: number | null;
-		destinationId: number;
-		destinationName: string;
-		destinationType: string;
-		protocol: string;
-		endpointName: string;
-		metric: string;
-		value: unknown;
-		unit?: string;
-		quality?: string;
-		pointCount: number;
-		normalizedName?: string;
-		provisionalPointId?: string;
-		rulesVersion?: string;
-		rawObjectName?: string;
-		rawPointName?: string;
-	}): void {
+	private _updateSnapshot(params: RecordParams, now: string, nowMs: number): void {
 		const key = `${params.subscriptionId ?? 'default'}:${params.destinationId}`;
-		const nowDate = new Date();
-		const now = nowDate.toISOString();
-
 		const existing = this.bySubscription.get(key);
 		this.bySubscription.set(key, {
 			key,
@@ -182,6 +180,21 @@ class ActivityMonitor {
 			rawObjectName: params.rawObjectName,
 			rawPointName: params.rawPointName,
 		});
+
+		const protocolKey = params.protocol.toLowerCase();
+		this.lastSeenByPoint.set(`${protocolKey}:${params.endpointName}:${params.metric}`, {
+			protocol: protocolKey,
+			deviceName: params.endpointName,
+			lastSeen: nowMs,
+		});
+	}
+
+	record(params: RecordParams): void {
+		const nowDate = new Date();
+		const now = nowDate.toISOString();
+		const nowMs = nowDate.getTime();
+
+		this._updateSnapshot(params, now, nowMs);
 
 		const event: ActivityEvent = {
 			id: this.nextEventId++,
@@ -212,12 +225,10 @@ class ActivityMonitor {
 		this.eventsByProtocol.set(protocolKey, bucket);
 
 		this.totalPointsByProtocol.set(protocolKey, (this.totalPointsByProtocol.get(protocolKey) ?? 0) + 1);
+	}
 
-		this.lastSeenByPoint.set(`${protocolKey}:${params.endpointName}:${params.metric}`, {
-			protocol: protocolKey,
-			deviceName: params.endpointName,
-			lastSeen: nowDate.getTime(),
-		});
+	recordSubscriptionOnly(params: RecordParams): void {
+		this._updateSnapshot(params, new Date().toISOString(), Date.now());
 	}
 
 	getSubscriptions(): SubscriptionActivity[] {

@@ -71,4 +71,10 @@ export const dashboardApi = {
       .post<NormalizationHealth>('/v1/normalization-health/resolve-unit', { rawUnit, sourceSystem, canonicalUnit })
       .then((r) => r.data)
   },
+  createCanonicalUnit(data: { canonical_unit: string; quantity?: string; symbol?: string; description?: string }): Promise<CanonicalUnit> {
+    return client.post<CanonicalUnit>('/v1/units/canonical', data).then((r) => r.data)
+  },
+  deleteCanonicalUnit(name: string): Promise<void> {
+    return client.delete(`/v1/units/canonical/${encodeURIComponent(name)}`).then(() => {})
+  },
 }

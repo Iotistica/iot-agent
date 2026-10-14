@@ -55,7 +55,10 @@ export class UnitDefinitionsModel {
 		return mapDefinitionRow(row);
 	}
 
-	/** Internal use only (the seed loader) — no admin API route calls this. */
+	static deleteByCanonicalUnit(canonicalUnit: string): void {
+		this.getDb().prepare(`DELETE FROM ${this.table} WHERE canonical_unit = ?`).run(canonicalUnit);
+	}
+
 	static upsert(record: UnitDefinitionRecord): UnitDefinitionRecord {
 		this.getDb().prepare(`
 			INSERT INTO ${this.table} (canonical_unit, quantity, symbol, description, base_unit, multiplier, offset_value)
