@@ -37,6 +37,7 @@ export interface Subscription {
   route_json: SubscriptionRoute | null
   payload_format: PayloadFormat
   compression: Compression | null
+  ml_dataset_id: string | null
   enabled: boolean
   created_at: string
   updated_at: string

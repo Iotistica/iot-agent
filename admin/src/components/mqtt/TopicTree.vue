@@ -1,16 +1,37 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { ref, computed } from 'vue'
 import type { TopicNode } from '@/api/mqtt'
 
 const props = defineProps<{
   nodes: Record<string, TopicNode>
   selectedTopic: string | null
   depth?: number
+  collapsed?: Set<string>
 }>()
 
 const emit = defineEmits<{
   (e: 'select', node: TopicNode): void
+  (e: 'toggle', topic: string): void
 }>()
+
+const localCollapsed = ref(new Set<string>())
+const collapsedSet = computed(() => props.collapsed ?? localCollapsed.value)
+
+function toggle(topic: string) {
+  if (props.collapsed) {
+    emit('toggle', topic)
+  } else {
+    if (localCollapsed.value.has(topic)) {
+      localCollapsed.value.delete(topic)
+    } else {
+      localCollapsed.value.add(topic)
+    }
+  }
+}
+
+function isExpanded(node: TopicNode) {
+  return !collapsedSet.value.has(node.fullTopic)
+}
 
 const sorted = computed(() =>
   Object.values(props.nodes).sort((a, b) => {
@@ -54,7 +75,12 @@ function fmtCount(n: number) {
       >
         <span class="topic-indent" :style="{ width: `${(depth ?? 0) * 14}px` }" />
         <span class="topic-icon">
-          <span v-if="hasChildren(node)" class="folder-icon">▾</span>
+          <span
+            v-if="hasChildren(node)"
+            class="folder-icon"
+            :class="{ collapsed: !isExpanded(node) }"
+            @click.stop="toggle(node.fullTopic)"
+          >▾</span>
           <span v-else class="leaf-icon" :style="{ background: typeColor(node.messageType) }" />
         </span>
         <span class="topic-name">{{ node.name }}</span>
@@ -66,19 +92,24 @@ function fmtCount(n: number) {
       <div
         v-else
         class="topic-row topic-folder"
+        @click="toggle(node.fullTopic)"
       >
         <span class="topic-indent" :style="{ width: `${(depth ?? 0) * 14}px` }" />
-        <span class="topic-icon"><span class="folder-icon">▾</span></span>
+        <span class="topic-icon">
+          <span class="folder-icon" :class="{ collapsed: !isExpanded(node) }">▾</span>
+        </span>
         <span class="topic-name topic-name--dim">{{ node.name }}</span>
       </div>
 
       <!-- Recurse -->
       <TopicTree
-        v-if="hasChildren(node)"
+        v-if="hasChildren(node) && isExpanded(node)"
         :nodes="node.children"
         :selected-topic="selectedTopic"
         :depth="(depth ?? 0) + 1"
+        :collapsed="collapsedSet"
         @select="emit('select', $event)"
+        @toggle="toggle($event)"
       />
     </div>
   </div>
@@ -110,7 +141,6 @@ function fmtCount(n: number) {
 }
 
 .topic-folder {
-  cursor: default;
   opacity: 0.7;
 }
 
@@ -129,6 +159,13 @@ function fmtCount(n: number) {
 .folder-icon {
   font-size: 11px;
   color: #999;
+  cursor: pointer;
+  transition: transform 0.15s;
+  display: inline-block;
+}
+
+.folder-icon.collapsed {
+  transform: rotate(-90deg);
 }
 
 .leaf-icon {

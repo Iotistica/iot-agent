@@ -81,3 +81,7 @@ export type { PointNameMappingRecord } from './point-name.model';
 // Data Explorer saved views (per-user named point collections)
 export { DataExplorerViewModel } from './data-explorer-view.model';
 export type { DataExplorerViewRecord } from './data-explorer-view.model';
+
+// ML Dataset definitions (per-user dataset configurations for the ML Dataset Builder)
+export { MlDatasetModel } from './ml-dataset.model';
+export type { MlDatasetRecord } from './ml-dataset.model';

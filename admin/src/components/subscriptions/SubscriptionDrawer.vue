@@ -4,6 +4,7 @@ import { message } from 'ant-design-vue'
 import type { FormInstance } from 'ant-design-vue'
 import type { Destination, Subscription, SubscriptionFormData, SubscriptionRoute } from '@/types'
 import { subscriptionsApi } from '@/api/subscriptions'
+import { datasetsApi, type MlDataset } from '@/api/ml-datasets'
 
 const props = defineProps<{
   open: boolean
@@ -75,6 +76,25 @@ function seedCustomIntervalFromMs(ms: number | null | undefined) {
 const formRef = ref<FormInstance>()
 const saving = ref(false)
 const showAdvanced = ref(false)
+const datasets = ref<MlDataset[]>([])
+const datasetsLoading = ref(false)
+
+async function loadDatasets() {
+  datasetsLoading.value = true
+  try {
+    datasets.value = await datasetsApi.list()
+  } catch { /* ignore */ }
+  datasetsLoading.value = false
+}
+
+const selectedDataset = computed(() =>
+  datasets.value.find((d) => d.id === form.value.ml_dataset_id) ?? null,
+)
+
+function formatDatasetInterval(secs: number): string {
+  if (secs >= 60) return `${secs / 60}-minute`
+  return `${secs}-second`
+}
 
 const blankRoute = (): SubscriptionRoute => ({
   includeMetrics: [],
@@ -93,6 +113,7 @@ const blankForm = (): SubscriptionFormData => ({
   route_json: blankRoute(),
   payload_format: 'tags',
   compression: null,
+  ml_dataset_id: null,
   enabled: true,
 })
 
@@ -167,6 +188,7 @@ watch(
   (open) => {
     if (!open) return
     showAdvanced.value = false
+    loadDatasets()
     if (props.editing) {
       form.value = {
         publish_destination_id: props.editing.publish_destination_id,
@@ -174,6 +196,7 @@ watch(
         route_json: props.editing.route_json ?? blankRoute(),
         payload_format: props.editing.payload_format,
         compression: props.editing.compression ?? null,
+        ml_dataset_id: props.editing.ml_dataset_id ?? null,
         enabled: props.editing.enabled,
       }
     } else {
@@ -188,6 +211,12 @@ watch(
     seedCustomIntervalFromMs(form.value.route_json?.minIntervalMs)
   },
 )
+
+watch(() => form.value.payload_format, (fmt) => {
+  if (fmt !== 'ml') {
+    form.value.ml_dataset_id = null
+  }
+})
 
 async function submit() {
   await formRef.value?.validate()
@@ -317,6 +346,38 @@ function close() {
           <a-select-option v-for="f in PAYLOAD_FORMATS" :key="f.value" :value="f.value">{{ f.label }}</a-select-option>
         </a-select>
       </a-form-item>
+
+      <!-- Dataset (ML format only) -->
+      <template v-if="form.payload_format === 'ml'">
+        <a-form-item
+          label="Dataset"
+          name="ml_dataset_id"
+          extra="Select a dataset created in Data Explorer."
+        >
+          <a-select
+            v-model:value="form.ml_dataset_id"
+            placeholder="None (publish all points)"
+            :loading="datasetsLoading"
+            allow-clear
+          >
+            <a-select-option v-for="d in datasets" :key="d.id" :value="d.id">
+              {{ d.name }} ({{ d.pointKeys.length }} points)
+            </a-select-option>
+          </a-select>
+        </a-form-item>
+        <a-alert
+          v-if="selectedDataset"
+          type="info"
+          show-icon
+          style="margin-bottom: 16px"
+        >
+          <template #message>Dataset settings</template>
+          <template #description>
+            {{ selectedDataset.pointKeys.length }} selected points · {{ formatDatasetInterval(selectedDataset.samplingIntervalSecs) }} publish interval<br>
+            <span style="color: var(--color-text-tertiary)">Preprocessing settings are included as metadata for the cloud.</span>
+          </template>
+        </a-alert>
+      </template>
 
       <!-- Compression -->
       <a-form-item label="Compression" name="compression">

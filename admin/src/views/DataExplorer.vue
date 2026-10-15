@@ -1,11 +1,14 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import type { TableColumnType } from 'ant-design-vue'
+import { Modal } from 'ant-design-vue'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import { client } from '@/api/client'
 import { pipelineApi, type SubscriptionActivity, type ActivityEvent } from '@/api/pipeline'
+import { datasetsApi, type MlDataset, type DatasetDraftState } from '@/api/ml-datasets'
 import { protocolColor, protocolLabel } from '@/utils/protocol'
-import { BarChartOutlined, WifiOutlined, WarningOutlined, ClockCircleOutlined, SaveOutlined, SettingOutlined, CloseOutlined } from '@ant-design/icons-vue'
+import { BarChartOutlined, WifiOutlined, WarningOutlined, ClockCircleOutlined, SaveOutlined, SettingOutlined, CloseOutlined, DatabaseOutlined, CopyOutlined, EditOutlined, DeleteOutlined } from '@ant-design/icons-vue'
+import CreateDatasetDrawer from '@/components/CreateDatasetDrawer.vue'
 
 type PointRow = {
   key: string
@@ -271,6 +274,99 @@ function toggleFavorite(key: string) {
   }
   persistFavorites()
 }
+
+// ── ML Datasets ──────────────────────────────────────────────────────────────
+const datasets = ref<MlDataset[]>([])
+const datasetsLoading = ref(false)
+const datasetDrawerOpen = ref(false)
+const editingDataset = ref<MlDataset | null>(null)
+const pendingDatasetDraft = ref<DatasetDraftState | null>(null)
+const datasetDrawerRef = ref<InstanceType<typeof CreateDatasetDrawer> | null>(null)
+
+const candidateDatasetPoints = computed(() =>
+  points.value.filter(p => selectedPointKeys.value.includes(p.key)))
+
+async function loadDatasets() {
+  datasetsLoading.value = true
+  try {
+    datasets.value = await datasetsApi.list()
+  } catch { /* datasets API may not be available yet */ }
+  finally { datasetsLoading.value = false }
+}
+
+function openCreateDataset() {
+  editingDataset.value = null
+  datasetDrawerOpen.value = true
+}
+
+function openEditDataset(ds: MlDataset) {
+  editingDataset.value = ds
+  datasetDrawerOpen.value = true
+}
+
+async function duplicateDataset(ds: MlDataset) {
+  try {
+    await datasetsApi.create({
+      name: ds.name + ' (copy)',
+      description: ds.description,
+      pointKeys: ds.pointKeys,
+      samplingIntervalSecs: ds.samplingIntervalSecs,
+      windowSecs: ds.windowSecs,
+      missingValues: ds.missingValues,
+      normalization: ds.normalization,
+      excludeBadQuality: ds.excludeBadQuality,
+      removeOutliers: ds.removeOutliers,
+      outlierMethod: ds.removeOutliers ? ds.outlierMethod : undefined,
+      outputFormat: ds.outputFormat,
+    })
+    await loadDatasets()
+  } catch { /* error handled by interceptor */ }
+}
+
+function deleteDataset(id: string) {
+  Modal.confirm({
+    title: 'Delete this dataset?',
+    okType: 'danger',
+    okText: 'Delete',
+    async onOk() {
+      await datasetsApi.remove(id)
+      await loadDatasets()
+    },
+  })
+}
+
+function onDatasetSaved() {
+  loadDatasets()
+}
+
+function onEditSelection(draft: DatasetDraftState) {
+  pendingDatasetDraft.value = draft
+  selectedPointKeys.value = draft.selectedKeys.filter(k => points.value.some(p => p.key === k))
+  activeTab.value = 'all'
+}
+
+function continueDataset() {
+  if (!pendingDatasetDraft.value) return
+  const draft = pendingDatasetDraft.value
+  editingDataset.value = draft.editingDataset
+  datasetDrawerOpen.value = true
+  setTimeout(() => {
+    datasetDrawerRef.value?.restoreFromDraft(draft, [...selectedPointKeys.value])
+    pendingDatasetDraft.value = null
+  }, 50)
+}
+
+function cancelEditSelection() {
+  pendingDatasetDraft.value = null
+  selectedPointKeys.value = []
+}
+
+function formatInterval(secs: number): string {
+  if (secs < 60) return `${secs}s`
+  if (secs < 3600) return `${secs / 60}m`
+  return `${secs / 3600}h`
+}
+
 function exportCsv() {
   const quote = (v: unknown) => '"' + String(v ?? '').replace(/"/g, '""') + '"'
   const rows = filteredPoints.value.map(p => [
@@ -304,6 +400,16 @@ const columns = computed<TableColumnType<PointRow>[]>(() => {
   )
   return cols
 })
+const datasetColumns: TableColumnType<MlDataset>[] = [
+  { title: 'Name', key: 'name', ellipsis: true },
+  { title: 'Points', key: 'points', width: 80 },
+  { title: 'Sampling', key: 'sampling', width: 100 },
+  { title: 'Window', key: 'window', width: 100 },
+  { title: 'Format', key: 'format', width: 90 },
+  { title: 'Updated', key: 'updated', width: 110 },
+  { title: 'Actions', key: 'actions', width: 130, fixed: 'right' },
+]
+
 function onTableChange(_pagination: unknown, _filters: unknown, sorter: { field?: string; columnKey?: string; order?: 'ascend' | 'descend' | null }) {
   if (!sorter || (!sorter.columnKey && !sorter.field)) return
   const key = sorter.columnKey as string || sorter.field as string || null
@@ -356,6 +462,7 @@ onMounted(async () => {
     }
   } catch { /* ignore invalid cache */ }
   loadDevices()
+  loadDatasets()
   await loadViews()
   await poll()
   for (const p of points.value) {
@@ -400,6 +507,7 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
           </a-select>
           <a-button @click="resetFilters">Clear</a-button>
           <a-button class="save-view-button" :disabled="!filteredPoints.length" @click="openSaveView(false)"><SaveOutlined /> Save as View</a-button>
+          <a-button type="primary" :disabled="!filteredPoints.length" @click="openCreateDataset()"><DatabaseOutlined /> Create Dataset</a-button>
         </div>
         <div class="views-bar">
           <div class="views-list">
@@ -409,6 +517,7 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
               <button type="button" @click="activateTab(view.id)">{{ view.name }} ({{ new Set(view.pointKeys.map(normalizePointKey)).size }})</button>
               <button type="button" class="close-view" :aria-label="`Close ${view.name} tab`" @click="closeSavedView(view.id)"><CloseOutlined /></button>
             </div>
+            <button type="button" :class="['view-tab', { active: activeTab === 'datasets' }]" @click="activateTab('datasets')">Datasets ({{ datasets.length }})</button>
           </div>
           <a-button type="text" class="manage-views" @click="manageModalOpen = true"><SettingOutlined /> Manage Views</a-button>
         </div>
@@ -416,11 +525,42 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
         <a-alert v-if="activeSavedView && missingViewCount" type="info" show-icon :message="`${missingViewCount} saved point(s) are not in the recent sample. They remain saved in this view.`" style="margin-bottom: 10px" />
         <div class="table-meta">
           <div>
-            <a-button v-if="selectedPointKeys.length" size="small" @click="openSaveView(true)"><SaveOutlined /> Save selected ({{ selectedPointKeys.length }})</a-button>
+            <template v-if="pendingDatasetDraft">
+              <a-button type="primary" size="small" @click="continueDataset()"><DatabaseOutlined /> Continue Dataset ({{ selectedPointKeys.length }} selected)</a-button>
+              <a-button size="small" style="margin-left: 8px" @click="cancelEditSelection()">Cancel</a-button>
+            </template>
+            <a-button v-else-if="selectedPointKeys.length" size="small" @click="openSaveView(true)"><SaveOutlined /> Save selected ({{ selectedPointKeys.length }})</a-button>
           </div>
-          <span class="toolbar-info">Showing {{ filteredPoints.length }} points<template v-if="lastSync"> · Last sync {{ lastSync }}</template></span>
+          <span class="toolbar-info">Showing {{ activeTab === 'datasets' ? datasets.length + ' datasets' : filteredPoints.length + ' points' }}<template v-if="lastSync"> · Last sync {{ lastSync }}</template></span>
         </div>
-        <a-table :columns="columns" :data-source="filteredPoints" :loading="loading" row-key="key" :row-selection="rowSelection" size="small" :pagination="{ pageSize, showSizeChanger: true, pageSizeOptions: ['10', '20', '50'], onShowSizeChange: (_: number, size: number) => { pageSize = size } }" :scroll="{ x: 1250 }" @change="onTableChange">
+
+        <!-- Datasets tab content -->
+        <template v-if="activeTab === 'datasets'">
+          <a-table :columns="datasetColumns" :data-source="datasets" :loading="datasetsLoading" row-key="id" size="small" :pagination="{ pageSize: 20, showSizeChanger: true, pageSizeOptions: ['10', '20', '50'] }">
+            <template #bodyCell="{ column, record: ds }">
+              <template v-if="column.key === 'name'">
+                <div class="point-primary">{{ ds.name }}</div>
+                <div v-if="ds.description" class="point-secondary">{{ ds.description }}</div>
+              </template>
+              <template v-else-if="column.key === 'points'">{{ ds.pointKeys.length }}</template>
+              <template v-else-if="column.key === 'sampling'">{{ formatInterval(ds.samplingIntervalSecs) }}</template>
+              <template v-else-if="column.key === 'window'">{{ formatInterval(ds.windowSecs) }}</template>
+              <template v-else-if="column.key === 'format'"><a-tag>{{ ds.outputFormat }}</a-tag></template>
+              <template v-else-if="column.key === 'updated'"><span class="age">{{ age(ds.updatedAt) }}</span></template>
+              <template v-else-if="column.key === 'actions'">
+                <a-space>
+                  <a-tooltip title="Edit"><a-button size="small" @click="openEditDataset(ds)"><template #icon><EditOutlined /></template></a-button></a-tooltip>
+                  <a-tooltip title="Duplicate"><a-button size="small" @click="duplicateDataset(ds)"><template #icon><CopyOutlined /></template></a-button></a-tooltip>
+                  <a-tooltip title="Delete"><a-button size="small" danger @click="deleteDataset(ds.id)"><template #icon><DeleteOutlined /></template></a-button></a-tooltip>
+                </a-space>
+              </template>
+            </template>
+            <template #emptyText>No datasets yet — select points and click Create Dataset.</template>
+          </a-table>
+        </template>
+
+        <!-- Points table -->
+        <a-table v-else :columns="columns" :data-source="filteredPoints" :loading="loading" row-key="key" :row-selection="rowSelection" size="small" :pagination="{ pageSize, showSizeChanger: true, pageSizeOptions: ['10', '20', '50'], onShowSizeChange: (_: number, size: number) => { pageSize = size } }" :scroll="{ x: 1250 }" @change="onTableChange">
           <template #bodyCell="{ column, record }">
             <template v-if="column.key === 'protocol'"><a-tag :color="protocolColor(record.protocol)">{{ protocolLabel(record.protocol) }}</a-tag></template>
             <template v-else-if="column.key === 'source'">{{ friendlySource(record.endpointName) }}</template>
@@ -470,6 +610,14 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
         </a-descriptions>
       </template>
     </a-drawer>
+    <CreateDatasetDrawer
+      ref="datasetDrawerRef"
+      v-model:open="datasetDrawerOpen"
+      :point-rows="candidateDatasetPoints"
+      :editing-dataset="editingDataset"
+      @saved="onDatasetSaved"
+      @edit-selection="onEditSelection"
+    />
   </AppLayout>
 </template>
 

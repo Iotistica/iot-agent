@@ -19,8 +19,8 @@ import { SchemaDriftModel } from '../../db/models/schema-drift.model.js';
 import type { AnomalyEventPayload } from '../../db/models/anomaly-event.model.js';
 import type { DictionaryManager } from '../../mqtt/dictionary.js';
 import type { PublishDestinationInfo, PublishBatchItem } from './types.js';
-import { PublishDestinationsModel, PublishSubscriptionsModel } from '../../db/models/index.js';
-import type { PublisherRecord, PublishSubscriptionRecord, PublishSubscriptionRoute } from '../../db/models/index.js';
+import { MlDatasetModel, PublishDestinationsModel, PublishSubscriptionsModel } from '../../db/models/index.js';
+import type { MlDatasetRecord, PublisherRecord, PublishSubscriptionRecord, PublishSubscriptionRoute } from '../../db/models/index.js';
 import { activityMonitor } from './activity-monitor.js';
 import { cleanDriftFieldName, prettifyDriftDeviceId, cleanProtocolPipeName, stripFieldDevicePrefix } from '../../db/models/drift-labels.js';
 import { buildCompactIssueCodes } from '../../quality/index.js';
@@ -151,6 +151,9 @@ interface HostBinding {
 	subscription: PublishSubscriptionRecord;
 	publisher: PublisherRecord;
 	plugin: IPublishPlugin;
+	datasetPointKeys?: Set<string>;
+	datasetSamplingIntervalMs?: number;
+	datasetConfig?: MlDatasetRecord;
 }
 
 export class PublishManager extends EventEmitter {
@@ -724,7 +727,7 @@ export class PublishManager extends EventEmitter {
 		return this.enricher.enrich(messages, endpointName) as ProtocolMessage[];
 	}
 
-	private buildPayload(endpointName: string, messages: ProtocolMessage[], payloadFormat: PayloadFormat, filterBadQuality = false): {
+	private buildPayload(endpointName: string, messages: ProtocolMessage[], payloadFormat: PayloadFormat, filterBadQuality = false, datasetConfig?: MlDatasetRecord): {
     data: PublishPayload;
     msgId: string;
     baselineSize: number;
@@ -753,13 +756,27 @@ export class PublishManager extends EventEmitter {
 			// batch — no dedup by name — since each reading is a separate observation.
 			const features = tagRecords.map((message, index) => this.mapMlFeaturePayload(message, index));
 
-			const data = {
+			const data: Record<string, unknown> = {
 				timestamp: timestampMs,
 				node: externalNodeName,
 				group: externalGroupName,
-				schema: 'iotistica.ml.v1',
+				schema: datasetConfig ? 'iotistica.ml.v2' : 'iotistica.ml.v1',
 				features,
 			};
+
+			if (datasetConfig) {
+				data.dataset = {
+					id: datasetConfig.id,
+					name: datasetConfig.name,
+					windowSecs: datasetConfig.window_secs,
+					missingValues: datasetConfig.missing_values,
+					normalization: datasetConfig.normalization,
+					excludeBadQuality: !!datasetConfig.exclude_bad_quality,
+					removeOutliers: !!datasetConfig.remove_outliers,
+					outlierMethod: datasetConfig.outlier_method,
+					outputFormat: datasetConfig.output_format,
+				};
+			}
 
 			const baselineSize = Buffer.byteLength(JSON.stringify(data), 'utf8');
 			return { data, msgId, baselineSize };
@@ -1037,6 +1054,7 @@ export class PublishManager extends EventEmitter {
 		compressionInfoCache: Map<string, CompressionInfo>,
 		overrideOpts?: CompressorOptions,
 		filterBadQuality = false,
+		datasetConfig?: MlDatasetRecord,
 	): Promise<{ payload: string | Buffer; info?: CompressionInfo }> {
 		const cachedPayload = compressedPayloadCache.get(cacheKey);
 		if (cachedPayload !== undefined) {
@@ -1045,7 +1063,7 @@ export class PublishManager extends EventEmitter {
 			return { payload: cachedPayload, info: compressionInfoCache.get(cacheKey) };
 		}
 
-		const { data, baselineSize } = this.buildPayload(endpointName, messages, payloadFormat, filterBadQuality);
+		const { data, baselineSize } = this.buildPayload(endpointName, messages, payloadFormat, filterBadQuality, datasetConfig);
 		const { payload, info } = await this.compressor.compress(data, baselineSize, this.stats.data.messagesPublished, overrideOpts);
 		compressedPayloadCache.set(cacheKey, payload);
 		compressionInfoCache.set(cacheKey, info);
@@ -1147,6 +1165,22 @@ export class PublishManager extends EventEmitter {
 		// 'custom'-format subscription the moment a Publish Interval is set. 'tags'/'ecp'/'ml'
 		// are unaffected either way since buildPayload() re-flattens via collectTagRecords()
 		// internally, which is idempotent on an already-flat array.
+		const rebuilt: ProtocolMessage[] = [];
+		for (const message of messages) {
+			if (Array.isArray(message.readings)) {
+				const keptReadings = message.readings.filter((reading) => allowed.has(reading));
+				if (keptReadings.length === 0) continue;
+				rebuilt.push(
+					keptReadings.length === message.readings.length ? message : { ...message, readings: keptReadings },
+				);
+				continue;
+			}
+			if (allowed.has(message)) rebuilt.push(message);
+		}
+		return rebuilt;
+	}
+
+	private rebuildMessagesFromAllowed(messages: ProtocolMessage[], allowed: Set<ProtocolMessage>): ProtocolMessage[] {
 		const rebuilt: ProtocolMessage[] = [];
 		for (const message of messages) {
 			if (Array.isArray(message.readings)) {
@@ -1566,28 +1600,53 @@ export class PublishManager extends EventEmitter {
 			const qualities = Array.isArray(route?.qualities) ? route.qualities : [];
 			// Only drop bad-quality readings when the subscription explicitly restricts to
 			// specific qualities and 'BAD' is not in that list.
-			const filterBadQuality = qualities.length > 0 && !qualities.includes('BAD');
+			let filterBadQuality = qualities.length > 0 && !qualities.includes('BAD');
+			if (binding.datasetConfig?.exclude_bad_quality) {
+				filterBadQuality = true;
+			}
 			const subscriptionCompression = (binding.subscription.compression ?? null);
+
+			// Dataset point filtering: narrow the batch to only the readings whose
+			// [source, metric] key appears in the linked dataset's point_keys.
+			let bindingMessages = messages;
+			if (binding.datasetPointKeys) {
+				const allowedKeys = binding.datasetPointKeys;
+				const allRecords = this.collectTagRecords(messages);
+				const allowed = new Set<ProtocolMessage>();
+				for (const record of allRecords) {
+					const sourceName = this.readExternalNodeCandidate(record) ?? endpointName;
+					const metric = this.resolveRecordMetric(record);
+					if (allowedKeys.has(JSON.stringify([sourceName, metric]))) {
+						allowed.add(record);
+					}
+				}
+				if (allowed.size === 0) {
+					continue;
+				}
+				if (allowed.size < allRecords.length) {
+					bindingMessages = this.rebuildMessagesFromAllowed(messages, allowed);
+				}
+			}
 
 			// "Publish interval" throttle. `records` is computed eagerly whenever either the
 			// throttle needs it OR the activityMonitor loop below needs it — preserves the
 			// previous lazy-computation cost for the common case where neither applies.
-			const minIntervalMs = typeof route?.minIntervalMs === 'number' && route.minIntervalMs > 0
+			const routeMinIntervalMs = typeof route?.minIntervalMs === 'number' && route.minIntervalMs > 0
 				? route.minIntervalMs
 				: 0;
+			const minIntervalMs = binding.datasetSamplingIntervalMs ?? routeMinIntervalMs;
 			const records = (minIntervalMs > 0 || binding.publisher.id !== undefined)
-				? this.collectTagRecords(messages)
+				? this.collectTagRecords(bindingMessages)
 				: [];
 			const effectiveMessages = minIntervalMs > 0
-				? this.filterMessagesForPublishInterval(messages, records, binding.subscription.id ?? null, endpointName, minIntervalMs)
-				: messages;
+				? this.filterMessagesForPublishInterval(bindingMessages, records, binding.subscription.id ?? null, endpointName, minIntervalMs)
+				: bindingMessages;
 
-			// Throttled subscriptions build their payload from a per-binding-filtered subset of
-			// `messages`, so they can never safely share a compressedPayloadCache entry with
-			// another binding — make the key unique to this subscription. The non-throttled
-			// (common) branch is byte-for-byte the pre-existing cacheKey shape, so
-			// cache-sharing/perf for ordinary subscriptions is unaffected.
-			const cacheKey = minIntervalMs > 0
+			// Dataset-linked or throttled subscriptions build their payload from a
+			// per-binding-filtered subset of `messages`, so they can never safely share
+			// a compressedPayloadCache entry with another binding — make the key unique.
+			const hasPerBindingFilter = minIntervalMs > 0 || binding.datasetPointKeys;
+			const cacheKey = hasPerBindingFilter
 				? `${payloadFormat}::${subscriptionCompression ?? 'global'}::fq=${filterBadQuality}::sub=${binding.subscription.id ?? 'none'}`
 				: subscriptionCompression
 					? `${payloadFormat}::${subscriptionCompression}::fq=${filterBadQuality}`
@@ -1597,7 +1656,7 @@ export class PublishManager extends EventEmitter {
 			// Every point for this binding currently throttled → send nothing this tick,
 			// mirroring SocketServer.routeAndSendToSocket()'s "filteredPoints.length === 0 →
 			// return" precedent, instead of publishing an empty/near-empty batch.
-			const allThrottledOut = minIntervalMs > 0 && effectiveMessages.length === 0 && messages.length > 0;
+			const allThrottledOut = minIntervalMs > 0 && effectiveMessages.length === 0 && bindingMessages.length > 0;
 			let payload: string | Buffer | null = null;
 			let compressionInfo: CompressionInfo | undefined;
 			if (!allThrottledOut) {
@@ -1610,6 +1669,7 @@ export class PublishManager extends EventEmitter {
 					compressionInfoCache,
 					overrideOpts,
 					filterBadQuality,
+					binding.datasetConfig,
 				);
 				payload = compressed.payload;
 				compressionInfo = compressed.info;
@@ -1625,8 +1685,9 @@ export class PublishManager extends EventEmitter {
 				payloadFormat,
 				compression: subscriptionCompression ?? 'global',
 				subscriptionId: binding.subscription.id ?? null,
-				messageCount: messages.length,
+				messageCount: bindingMessages.length,
 				...(minIntervalMs > 0 && { publishIntervalMs: minIntervalMs, throttledOut: allThrottledOut }),
+				...(binding.datasetConfig && { datasetId: binding.datasetConfig.id }),
 			});
 
 			if (binding.publisher.id !== undefined) {
@@ -1759,7 +1820,35 @@ export class PublishManager extends EventEmitter {
 				this.pluginByDestinationId.set(subscription.publish_destination_id, { plugin, snapshot });
 			}
 
-			bindings.push({ subscription, publisher: destination, plugin });
+			const binding: HostBinding = { subscription, publisher: destination, plugin };
+
+			if (subscription.ml_dataset_id) {
+				const dataset = MlDatasetModel.getByIdUnscoped(subscription.ml_dataset_id);
+				if (!dataset) {
+					continue;
+				}
+				let rawKeys: unknown[];
+				try {
+					rawKeys = JSON.parse(dataset.point_keys);
+				} catch {
+					continue;
+				}
+				const keys = new Set<string>();
+				for (const rawKey of rawKeys) {
+					const key = typeof rawKey === 'string' ? JSON.parse(rawKey) : rawKey;
+					if (Array.isArray(key) && key.length >= 3 && key[0] === this.protocol) {
+						keys.add(JSON.stringify([key[1], key[2]]));
+					}
+				}
+				if (keys.size === 0) {
+					continue;
+				}
+				binding.datasetPointKeys = keys;
+				binding.datasetSamplingIntervalMs = dataset.sampling_interval_secs * 1000;
+				binding.datasetConfig = dataset;
+			}
+
+			bindings.push(binding);
 		}
 
 		const hasConfiguredIotisticaBinding = bindings.some((binding) => {

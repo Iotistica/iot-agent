@@ -22,14 +22,16 @@ export interface PublishSubscriptionRecord {
 	route_json?: PublishSubscriptionRoute | null;
 	payload_format: PublishPayloadFormat;
 	compression?: SubscriptionCompression | null;
+	ml_dataset_id?: string | null;
 	enabled: boolean;
 	created_at?: Date;
 	updated_at?: Date;
 }
 
-type PublishSubscriptionRow = Omit<PublishSubscriptionRecord, 'topics' | 'route_json' | 'enabled' | 'created_at' | 'updated_at'> & {
+type PublishSubscriptionRow = Omit<PublishSubscriptionRecord, 'topics' | 'route_json' | 'ml_dataset_id' | 'enabled' | 'created_at' | 'updated_at'> & {
 	topics: string;
 	route_json?: string | null;
+	ml_dataset_id?: string | null;
 	enabled: number;
 	created_at?: string | Date;
 	updated_at?: string | Date;
@@ -72,6 +74,7 @@ export class PublishSubscriptionsModel {
 			...row,
 			topics: this.parseJsonArray(row.topics),
 			route_json: route,
+			ml_dataset_id: row.ml_dataset_id ?? null,
 			enabled: !!row.enabled,
 			created_at: row.created_at ? new Date(row.created_at) : undefined,
 			updated_at: row.updated_at ? new Date(row.updated_at) : undefined,
@@ -114,16 +117,18 @@ export class PublishSubscriptionsModel {
 				route_json,
 				payload_format,
 				compression,
+				ml_dataset_id,
 				enabled,
 				created_at,
 				updated_at
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 		`).run(
 			input.publish_destination_id,
 			JSON.stringify(input.topics || []),
 			input.route_json ? JSON.stringify(input.route_json) : null,
 			input.payload_format,
 			input.compression ?? null,
+			input.ml_dataset_id ?? null,
 			input.enabled ? 1 : 0,
 			now,
 			now,
@@ -142,6 +147,7 @@ export class PublishSubscriptionsModel {
 		if (updates.route_json !== undefined) payload.route_json = updates.route_json ? JSON.stringify(updates.route_json) : null;
 		if (updates.payload_format !== undefined) payload.payload_format = updates.payload_format;
 		if (updates.compression !== undefined) payload.compression = updates.compression ?? null;
+		if (updates.ml_dataset_id !== undefined) payload.ml_dataset_id = updates.ml_dataset_id ?? null;
 		if (updates.enabled !== undefined) payload.enabled = updates.enabled ? 1 : 0;
 
 		const columns = Object.keys(payload);

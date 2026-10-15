@@ -17,7 +17,7 @@ import type { StateManager } from '../core/state';
 import { LogComponents } from '../logging/types';
 import type { HealthReport } from '../health/arbiter';
 import { MessageBufferModel } from '../db/models/buffer.model';
-import { PublishDestinationsModel, PublishSubscriptionsModel } from '../db/models/index.js';
+import { MlDatasetModel, PublishDestinationsModel, PublishSubscriptionsModel } from '../db/models/index.js';
 import { generateModbusFingerprint } from '../plugins/modbus/discovery.js';
 import { getDatabasePath } from '../db/db-path';
 import { getDatabase } from '../db/sqlite';
@@ -1607,6 +1607,7 @@ export const createPublishSubscription = async (body: {
 	route_json?: Record<string, unknown> | null;
 	payload_format?: 'custom' | 'tags' | 'ecp' | 'ml';
 	compression?: 'json' | 'msgpack' | 'json+deflate' | 'msgpack+deflate' | null;
+	ml_dataset_id?: string | null;
 	enabled?: boolean;
 }) => {
 	if (!body || !Number.isFinite(body.publish_destination_id)) {
@@ -1642,12 +1643,24 @@ export const createPublishSubscription = async (body: {
 		}
 	}
 
+	const mlDatasetId = body.ml_dataset_id ?? null;
+	if (mlDatasetId) {
+		if (format !== 'ml') {
+			throw new Error('ml_dataset_id can only be used with payload_format "ml"');
+		}
+		const dataset = MlDatasetModel.getByIdUnscoped(mlDatasetId);
+		if (!dataset) {
+			throw Object.assign(new Error(`Dataset not found: ${mlDatasetId}`), { statusCode: 404 });
+		}
+	}
+
 	const created = PublishSubscriptionsModel.create({
 		publish_destination_id: body.publish_destination_id,
 		topics: body.topics ?? [],
 		route_json: (body.route_json as any) ?? null,
 		payload_format: format,
 		compression: (body.compression as any) ?? null,
+		ml_dataset_id: mlDatasetId,
 		enabled: body.enabled !== false,
 	});
 
@@ -1673,6 +1686,7 @@ export const updatePublishSubscription = async (id: number, body: {
 	route_json?: Record<string, unknown> | null;
 	payload_format?: 'custom' | 'tags' | 'ecp' | 'ml';
 	compression?: 'json' | 'msgpack' | 'json+deflate' | 'msgpack+deflate' | null;
+	ml_dataset_id?: string | null;
 	enabled?: boolean;
 }) => {
 	const existing = PublishSubscriptionsModel.getById(id);
@@ -1716,6 +1730,20 @@ export const updatePublishSubscription = async (id: number, body: {
 		const destinationTopic = typeof effectiveRoute?.topic === 'string' ? effectiveRoute.topic.trim() : '';
 		if (!destinationTopic) {
 			throw new Error('route_json.topic is required for external destinations');
+		}
+	}
+
+	if (body.ml_dataset_id !== undefined) {
+		const effectiveFormat = body.payload_format ?? existing.payload_format;
+		const mlDatasetId = body.ml_dataset_id;
+		if (mlDatasetId) {
+			if (effectiveFormat !== 'ml') {
+				throw new Error('ml_dataset_id can only be used with payload_format "ml"');
+			}
+			const dataset = MlDatasetModel.getByIdUnscoped(mlDatasetId);
+			if (!dataset) {
+				throw Object.assign(new Error(`Dataset not found: ${mlDatasetId}`), { statusCode: 404 });
+			}
 		}
 	}
 
