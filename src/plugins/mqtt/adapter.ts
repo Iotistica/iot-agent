@@ -9,6 +9,7 @@ import { DeviceModel } from "../../db/models/device.model.js";
 import { MqttBrokerClient } from "./client.js";
 import { convertUnit } from "../../units/convert-unit.js";
 import { getNormalizationHealthTracker } from "../../units/normalization-health-tracker.js";
+import { getUnitCatalog } from "../../units/catalog.js";
 
 // MQTT's own short-code canonical vocabulary (set by canonicalizeUnit()
 // below) translated to the shared catalog's canonical unit names
@@ -822,9 +823,14 @@ export class MqttAdapter extends BaseProtocolAdapter {
 				return "A";
 			case "rpm":
 				return "RPM";
-			default:
-				this.logger.warn("Unknown unit encountered", { unit: trimmed });
+			default: {
+				const catalogAlias = getUnitCatalog().resolveAlias(trimmed, "mqtt");
+				if (catalogAlias) return catalogAlias.canonical_unit;
+				const globalAlias = getUnitCatalog().resolveAlias(trimmed);
+				if (globalAlias) return globalAlias.canonical_unit;
+				try { getNormalizationHealthTracker().recordUnknownUnit(trimmed, "mqtt"); } catch { /* best-effort */ }
 				return trimmed;
+			}
 		}
 	}
 

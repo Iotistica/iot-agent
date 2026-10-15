@@ -451,9 +451,9 @@ describe('MqttAdapter', () => {
       );
 
       expect(dataSpy).toHaveBeenCalledTimes(1);
-      expect(mockLogger.warn).toHaveBeenCalledWith(
-        'Unknown unit encountered',
-        expect.objectContaining({ unit: 'celcuis' })
+      const emittedPoints = dataSpy.mock.calls[0][0];
+      expect(emittedPoints[0]).toEqual(
+        expect.objectContaining({ metric: 'temperature', value: 22 })
       );
     });
 
