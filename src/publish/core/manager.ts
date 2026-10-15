@@ -162,13 +162,17 @@ interface AccumulatedFeature {
 	observedAt: number;
 }
 
-interface DatasetAccumulatorEntry {
+export interface DatasetAccumulatorEntry {
 	features: Map<string, AccumulatedFeature>;
 	lastFlushedAt: number;
 	binding: HostBinding;
 	destinationTopic: string;
-	expectedPointCount: number;
 	flushing: boolean;
+	perProtocolKeys: Map<string, Set<string>>;
+	allExpectedPointKeys: Set<string>;
+	samplingIntervalMs: number;
+	datasetConfig: MlDatasetRecord;
+	endpointName: string;
 }
 
 export class PublishManager extends EventEmitter {
@@ -223,7 +227,7 @@ export class PublishManager extends EventEmitter {
 	// (a) two bindings with different/no throttle settings never collide and (b) two devices
 	// reporting a same-named metric don't collide.
 	private lastAllowedAtByPoint = new Map<string, number>();
-	private datasetAccumulator = new Map<number, DatasetAccumulatorEntry>();
+	private sharedDatasetAccumulators: Map<number, DatasetAccumulatorEntry> | null = null;
 
 	private readonly onConnected = (): void => {
 		if (this.needStop) return;
@@ -432,6 +436,10 @@ export class PublishManager extends EventEmitter {
 		this.liveDataInterceptor = interceptor;
 	}
 
+	public setSharedDatasetAccumulators(map: Map<number, DatasetAccumulatorEntry>): void {
+		this.sharedDatasetAccumulators = map;
+	}
+
 	async start(): Promise<void> {
 		const name = this.config.name || 'unknown';
 		if (!this.config.enabled) {
@@ -538,7 +546,18 @@ export class PublishManager extends EventEmitter {
 
 		this.bindings = [];
 		this.pluginByDestinationId.clear();
-		this.datasetAccumulator.clear();
+		if (this.sharedDatasetAccumulators) {
+			for (const entry of this.sharedDatasetAccumulators.values()) {
+				entry.perProtocolKeys.delete(this.protocol);
+				entry.allExpectedPointKeys.clear();
+				for (const keys of entry.perProtocolKeys.values()) {
+					for (const key of keys) entry.allExpectedPointKeys.add(key);
+				}
+			}
+			for (const [id, entry] of this.sharedDatasetAccumulators) {
+				if (entry.perProtocolKeys.size === 0) this.sharedDatasetAccumulators.delete(id);
+			}
+		}
 	}
 
 	async reloadBindings(): Promise<void> {
@@ -597,17 +616,50 @@ export class PublishManager extends EventEmitter {
 	}
 
 	private initializeDatasetAccumulators(): void {
-		this.datasetAccumulator.clear();
+		const accumulators = this.sharedDatasetAccumulators;
+		if (!accumulators) return;
+
+		for (const entry of accumulators.values()) {
+			entry.perProtocolKeys.delete(this.protocol);
+			entry.allExpectedPointKeys.clear();
+			for (const keys of entry.perProtocolKeys.values()) {
+				for (const key of keys) entry.allExpectedPointKeys.add(key);
+			}
+		}
+		for (const [id, entry] of accumulators) {
+			if (entry.perProtocolKeys.size === 0) accumulators.delete(id);
+		}
+
 		for (const binding of this.bindings) {
 			if (!binding.datasetPointKeys || binding.subscription.id === undefined) continue;
-			this.datasetAccumulator.set(binding.subscription.id, {
-				features: new Map(),
-				lastFlushedAt: Date.now(),
-				binding,
-				destinationTopic: '',
-				expectedPointCount: binding.datasetPointKeys.size,
-				flushing: false,
-			});
+			if (!binding.datasetConfig) continue;
+			const subId = binding.subscription.id;
+
+			let entry = accumulators.get(subId);
+			if (entry) {
+				entry.perProtocolKeys.set(this.protocol, binding.datasetPointKeys);
+				entry.allExpectedPointKeys.clear();
+				for (const keys of entry.perProtocolKeys.values()) {
+					for (const key of keys) entry.allExpectedPointKeys.add(key);
+				}
+				entry.binding = binding;
+				entry.datasetConfig = binding.datasetConfig;
+				entry.samplingIntervalMs = binding.datasetSamplingIntervalMs ?? 60_000;
+			} else {
+				const allKeys = new Set(binding.datasetPointKeys);
+				accumulators.set(subId, {
+					features: new Map(),
+					lastFlushedAt: Date.now(),
+					binding,
+					destinationTopic: '',
+					flushing: false,
+					perProtocolKeys: new Map([[this.protocol, binding.datasetPointKeys]]),
+					allExpectedPointKeys: allKeys,
+					samplingIntervalMs: binding.datasetSamplingIntervalMs ?? 60_000,
+					datasetConfig: binding.datasetConfig,
+					endpointName: this.endpointName,
+				});
+			}
 		}
 	}
 
@@ -851,7 +903,7 @@ export class PublishManager extends EventEmitter {
 		const msgId = this.mqttConnection.getMessageIdGenerator?.()?.generate()
 			?? `${this.deviceUuid}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 
-		const externalGroupName = this.normalizeExternalGroupName(endpointName);
+		const externalGroupName = datasetConfig.name || this.normalizeExternalGroupName(endpointName);
 		const features: Record<string, unknown>[] = [];
 		const sourceNameSet = new Set<string>();
 
@@ -922,13 +974,13 @@ export class PublishManager extends EventEmitter {
 		entry.features = new Map();
 
 		try {
-			if (!binding.datasetPointKeys || !binding.datasetConfig) return;
+			if (entry.allExpectedPointKeys.size === 0 || !entry.datasetConfig) return;
 
 			const { data, baselineSize } = this.buildAccumulatedMlPayload(
-				endpointName,
+				entry.endpointName || endpointName,
 				snapshot,
-				binding.datasetConfig,
-				binding.datasetPointKeys,
+				entry.datasetConfig,
+				entry.allExpectedPointKeys,
 			);
 
 			const subscriptionCompression = binding.subscription.compression ?? null;
@@ -954,9 +1006,9 @@ export class PublishManager extends EventEmitter {
 				protocol: this.protocol,
 				endpoint: this.endpointName,
 				subscriptionId: binding.subscription.id,
-				datasetId: binding.datasetConfig.id,
+				datasetId: entry.datasetConfig?.id,
 				collectedFeatures: snapshot.size,
-				expectedFeatures: entry.expectedPointCount,
+				expectedFeatures: entry.allExpectedPointKeys.size,
 			});
 		} catch (err) {
 			this.logger?.error('Failed to flush dataset accumulator', err instanceof Error ? err : new Error(String(err)), {
@@ -964,7 +1016,7 @@ export class PublishManager extends EventEmitter {
 				protocol: this.protocol,
 				endpoint: this.endpointName,
 				subscriptionId: binding.subscription.id,
-				datasetId: binding.datasetConfig?.id,
+				datasetId: entry.datasetConfig?.id,
 			});
 		} finally {
 			entry.lastFlushedAt = Date.now();
@@ -974,6 +1026,7 @@ export class PublishManager extends EventEmitter {
 
 	private flushPendingDatasetAccumulators(): void {
 		if (this.needStop) return;
+		if (!this.sharedDatasetAccumulators) return;
 		let sourceTopic: string;
 		try {
 			sourceTopic = agentTopic(this.deviceUuid, 'endpoints', this.config.mqttTopic);
@@ -981,9 +1034,8 @@ export class PublishManager extends EventEmitter {
 			sourceTopic = `local/${this.deviceUuid}/${this.config.mqttTopic || 'data'}`;
 		}
 		const now = Date.now();
-		for (const entry of this.datasetAccumulator.values()) {
-			const samplingMs = entry.binding.datasetSamplingIntervalMs ?? 60_000;
-			if (now - entry.lastFlushedAt < samplingMs) continue;
+		for (const entry of this.sharedDatasetAccumulators.values()) {
+			if (now - entry.lastFlushedAt < entry.samplingIntervalMs) continue;
 			if (entry.flushing) continue;
 			let { destinationTopic } = entry;
 			if (!destinationTopic) {
@@ -996,7 +1048,7 @@ export class PublishManager extends EventEmitter {
 				entry,
 				entry.binding,
 				destinationTopic,
-				this.endpointName,
+				entry.endpointName || this.endpointName,
 				sourceTopic,
 			).catch((err) => {
 				this.logger?.error('Dataset accumulator flush failed', err instanceof Error ? err : new Error(String(err)));
@@ -1809,7 +1861,8 @@ export class PublishManager extends EventEmitter {
 			// message when the sampling interval elapses.
 			if (binding.datasetPointKeys && binding.subscription.id !== undefined) {
 				const subscriptionId = binding.subscription.id;
-				const entry = this.datasetAccumulator.get(subscriptionId);
+				if (!this.sharedDatasetAccumulators) continue;
+				const entry = this.sharedDatasetAccumulators.get(subscriptionId);
 				if (!entry) continue;
 				entry.destinationTopic = destinationTopic;
 
@@ -1872,8 +1925,7 @@ export class PublishManager extends EventEmitter {
 				}
 
 				const now = Date.now();
-				const samplingMs = binding.datasetSamplingIntervalMs ?? 60_000;
-				if (now - entry.lastFlushedAt >= samplingMs && !entry.flushing) {
+				if (now - entry.lastFlushedAt >= entry.samplingIntervalMs && !entry.flushing) {
 					await this.flushDatasetAccumulatorEntry(entry, binding, destinationTopic, endpointName, sourceTopic, batchesByPlugin);
 				}
 

@@ -8,7 +8,7 @@ import {
 	type MqttConnection,
 	type Logger,
 } from './core/types.js';
-import { PublishManager } from './core/manager.js';
+import { PublishManager, type DatasetAccumulatorEntry } from './core/manager.js';
 import { CloudMqttClient } from '../mqtt/manager.js';
 import type { DictionaryManager } from '../mqtt/dictionary.js';
 import { EventEmitter } from 'events';
@@ -46,6 +46,7 @@ export class DevicePublish extends EventEmitter {
 	private incidentCorrelator?: { processEvent: (payload: AnomalyEventPayload) => void };
 	private liveDataInterceptor?: (messages: any[], endpointName: string) => Promise<any[]> | any[];
 	private proPlugins: { azure?: any; aws?: any; gcp?: any; influxdb?: any } = {};
+	private readonly sharedDatasetAccumulators = new Map<number, DatasetAccumulatorEntry>();
 
 	constructor(
 		config: DevicePublishConfig & { enabled: boolean },
@@ -204,6 +205,7 @@ export class DevicePublish extends EventEmitter {
 			const config = deviceConfig.endpoints[i];
 
 			const device = this.createDeviceManager(config, i, deviceConfig.endpoints.length);
+			device.setSharedDatasetAccumulators(this.sharedDatasetAccumulators);
 			if (this.liveDataInterceptor) device.setLiveDataInterceptor(this.liveDataInterceptor);
 			if (this.incidentCorrelator) device.setIncidentCorrelator(this.incidentCorrelator);
 			this.attachDeviceEventHandlers(device, config.name!);
@@ -215,8 +217,9 @@ export class DevicePublish extends EventEmitter {
 	private async onStop(): Promise<void> {
 		// Stop all devices
 		await Promise.all(this.devices.map(device => device.stop()));
-    
+
 		this.devices = [];
+		this.sharedDatasetAccumulators.clear();
 	}
 
 	public async start(): Promise<void> {
