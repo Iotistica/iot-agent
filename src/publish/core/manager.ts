@@ -156,6 +156,21 @@ interface HostBinding {
 	datasetConfig?: MlDatasetRecord;
 }
 
+interface AccumulatedFeature {
+	feature: MlFeaturePayload;
+	sourceName: string;
+	observedAt: number;
+}
+
+interface DatasetAccumulatorEntry {
+	features: Map<string, AccumulatedFeature>;
+	lastFlushedAt: number;
+	binding: HostBinding;
+	destinationTopic: string;
+	expectedPointCount: number;
+	flushing: boolean;
+}
+
 export class PublishManager extends EventEmitter {
 	// eslint-disable-next-line @typescript-eslint/consistent-type-imports
 	private messageBufferModel?: typeof import('../../db/models/buffer.model.js').MessageBufferModel;
@@ -208,6 +223,7 @@ export class PublishManager extends EventEmitter {
 	// (a) two bindings with different/no throttle settings never collide and (b) two devices
 	// reporting a same-named metric don't collide.
 	private lastAllowedAtByPoint = new Map<string, number>();
+	private datasetAccumulator = new Map<number, DatasetAccumulatorEntry>();
 
 	private readonly onConnected = (): void => {
 		if (this.needStop) return;
@@ -435,6 +451,8 @@ export class PublishManager extends EventEmitter {
 			}
 		}
 
+		this.initializeDatasetAccumulators();
+
 		// Try to start plugins and fall back to default if all fail
 		const startedPlugins = new Set<IPublishPlugin>();
 		const failures: Array<{ plugin: IPublishPlugin; error: Error }> = [];
@@ -520,6 +538,7 @@ export class PublishManager extends EventEmitter {
 
 		this.bindings = [];
 		this.pluginByDestinationId.clear();
+		this.datasetAccumulator.clear();
 	}
 
 	async reloadBindings(): Promise<void> {
@@ -573,7 +592,23 @@ export class PublishManager extends EventEmitter {
 			}
 		}
 
+		this.initializeDatasetAccumulators();
 		this.logger?.info('Reloaded publish bindings', { bindingCount: this.bindings.length });
+	}
+
+	private initializeDatasetAccumulators(): void {
+		this.datasetAccumulator.clear();
+		for (const binding of this.bindings) {
+			if (!binding.datasetPointKeys || binding.subscription.id === undefined) continue;
+			this.datasetAccumulator.set(binding.subscription.id, {
+				features: new Map(),
+				lastFlushedAt: Date.now(),
+				binding,
+				destinationTopic: '',
+				expectedPointCount: binding.datasetPointKeys.size,
+				flushing: false,
+			});
+		}
 	}
 
 	getStats(): DeviceStats {
@@ -805,6 +840,168 @@ export class PublishManager extends EventEmitter {
 
 		const baselineSize = Buffer.byteLength(JSON.stringify(data), 'utf8');
 		return { data, msgId, baselineSize };
+	}
+
+	private buildAccumulatedMlPayload(
+		endpointName: string,
+		snapshot: Map<string, AccumulatedFeature>,
+		datasetConfig: MlDatasetRecord,
+		configuredPointKeys: Set<string>,
+	): { data: PublishPayload; msgId: string; baselineSize: number } {
+		const msgId = this.mqttConnection.getMessageIdGenerator?.()?.generate()
+			?? `${this.deviceUuid}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+
+		const externalGroupName = this.normalizeExternalGroupName(endpointName);
+		const features: Record<string, unknown>[] = [];
+		const sourceNameSet = new Set<string>();
+
+		for (const pointKey of configuredPointKeys) {
+			let parsed: [string, string];
+			try { parsed = JSON.parse(pointKey); } catch { continue; }
+			const [sourceName, metric] = parsed;
+			sourceNameSet.add(sourceName);
+
+			const accumulated = snapshot.get(pointKey);
+			if (accumulated) {
+				const feat: Record<string, unknown> = { ...accumulated.feature, sourceName: accumulated.sourceName, observedAt: accumulated.observedAt };
+				features.push(feat);
+			} else {
+				features.push({
+					name: metric,
+					sourceName,
+					value: null,
+					status: 'missing',
+					observedAt: null,
+				});
+			}
+		}
+
+		const collectedFeatures = snapshot.size;
+		const expectedFeatures = configuredPointKeys.size;
+		const data: Record<string, unknown> = {
+			timestamp: Date.now(),
+			node: datasetConfig.name,
+			group: externalGroupName,
+			schema: 'iotistica.ml.v2',
+			sources: [...sourceNameSet].sort(),
+			features,
+			dataset: {
+				id: datasetConfig.id,
+				name: datasetConfig.name,
+				expectedFeatures,
+				collectedFeatures,
+				missingFeatures: expectedFeatures - collectedFeatures,
+				complete: collectedFeatures === expectedFeatures,
+				samplingIntervalSecs: datasetConfig.sampling_interval_secs,
+				windowSecs: datasetConfig.window_secs,
+				missingValues: datasetConfig.missing_values,
+				normalization: datasetConfig.normalization,
+				excludeBadQuality: !!datasetConfig.exclude_bad_quality,
+				removeOutliers: !!datasetConfig.remove_outliers,
+				outlierMethod: datasetConfig.outlier_method,
+				outputFormat: datasetConfig.output_format,
+			},
+		};
+
+		const baselineSize = Buffer.byteLength(JSON.stringify(data), 'utf8');
+		return { data, msgId, baselineSize };
+	}
+
+	private async flushDatasetAccumulatorEntry(
+		entry: DatasetAccumulatorEntry,
+		binding: HostBinding,
+		destinationTopic: string,
+		endpointName: string,
+		sourceTopic: string,
+		batchesByPlugin?: Map<IPublishPlugin, PublishBatchItem[]>,
+	): Promise<void> {
+		if (entry.flushing) return;
+		entry.flushing = true;
+
+		const snapshot = entry.features;
+		entry.features = new Map();
+
+		try {
+			if (!binding.datasetPointKeys || !binding.datasetConfig) return;
+
+			const { data, baselineSize } = this.buildAccumulatedMlPayload(
+				endpointName,
+				snapshot,
+				binding.datasetConfig,
+				binding.datasetPointKeys,
+			);
+
+			const subscriptionCompression = binding.subscription.compression ?? null;
+			const overrideOpts = subscriptionCompression ? compressionToOpts(subscriptionCompression) : undefined;
+			const { payload } = await this.compressor.compress(data, baselineSize, this.stats.data.messagesPublished, overrideOpts);
+
+			const item: PublishBatchItem = {
+				topic: sourceTopic,
+				payload,
+				options: { qos: 1, destinationTopic },
+			};
+
+			if (batchesByPlugin) {
+				const items = batchesByPlugin.get(binding.plugin) || [];
+				items.push(item);
+				batchesByPlugin.set(binding.plugin, items);
+			} else {
+				await binding.plugin.publishBatch([item]);
+			}
+
+			this.logger?.debug('Flushed dataset accumulator', {
+				component: 'PublishManager',
+				protocol: this.protocol,
+				endpoint: this.endpointName,
+				subscriptionId: binding.subscription.id,
+				datasetId: binding.datasetConfig.id,
+				collectedFeatures: snapshot.size,
+				expectedFeatures: entry.expectedPointCount,
+			});
+		} catch (err) {
+			this.logger?.error('Failed to flush dataset accumulator', err instanceof Error ? err : new Error(String(err)), {
+				component: 'PublishManager',
+				protocol: this.protocol,
+				endpoint: this.endpointName,
+				subscriptionId: binding.subscription.id,
+				datasetId: binding.datasetConfig?.id,
+			});
+		} finally {
+			entry.lastFlushedAt = Date.now();
+			entry.flushing = false;
+		}
+	}
+
+	private flushPendingDatasetAccumulators(): void {
+		if (this.needStop) return;
+		let sourceTopic: string;
+		try {
+			sourceTopic = agentTopic(this.deviceUuid, 'endpoints', this.config.mqttTopic);
+		} catch {
+			sourceTopic = `local/${this.deviceUuid}/${this.config.mqttTopic || 'data'}`;
+		}
+		const now = Date.now();
+		for (const entry of this.datasetAccumulator.values()) {
+			const samplingMs = entry.binding.datasetSamplingIntervalMs ?? 60_000;
+			if (now - entry.lastFlushedAt < samplingMs) continue;
+			if (entry.flushing) continue;
+			let { destinationTopic } = entry;
+			if (!destinationTopic) {
+				const resolved = this.resolveDestinationTopic(entry.binding, sourceTopic);
+				if (resolved === null) continue;
+				destinationTopic = resolved;
+				entry.destinationTopic = resolved;
+			}
+			this.flushDatasetAccumulatorEntry(
+				entry,
+				entry.binding,
+				destinationTopic,
+				this.endpointName,
+				sourceTopic,
+			).catch((err) => {
+				this.logger?.error('Dataset accumulator flush failed', err instanceof Error ? err : new Error(String(err)));
+			});
+		}
 	}
 
 	private collectTagRecords(messages: ProtocolMessage[]): ProtocolMessage[] {
@@ -1431,6 +1628,7 @@ export class PublishManager extends EventEmitter {
 		this.bufferTimer = setInterval(() => {
 			if (this.needStop) return;
 			if (this.batcher.messageCount > 0) this.publishBatch();
+			else this.flushPendingDatasetAccumulators();
 		}, this.config.bufferTimeMs);
 	}
 
@@ -1606,27 +1804,84 @@ export class PublishManager extends EventEmitter {
 			}
 			const subscriptionCompression = (binding.subscription.compression ?? null);
 
-			// Dataset point filtering: narrow the batch to only the readings whose
-			// [source, metric] key appears in the linked dataset's point_keys.
-			let bindingMessages = messages;
-			if (binding.datasetPointKeys) {
+			// Dataset-linked subscriptions use windowed aggregation: accumulate matching
+			// readings across buffer ticks, then flush all features as one combined
+			// message when the sampling interval elapses.
+			if (binding.datasetPointKeys && binding.subscription.id !== undefined) {
+				const subscriptionId = binding.subscription.id;
+				const entry = this.datasetAccumulator.get(subscriptionId);
+				if (!entry) continue;
+				entry.destinationTopic = destinationTopic;
+
 				const allowedKeys = binding.datasetPointKeys;
 				const allRecords = this.collectTagRecords(messages);
-				const allowed = new Set<ProtocolMessage>();
 				for (const record of allRecords) {
 					const sourceName = this.readExternalNodeCandidate(record) ?? endpointName;
 					const metric = this.resolveRecordMetric(record);
-					if (allowedKeys.has(JSON.stringify([sourceName, metric]))) {
-						allowed.add(record);
+					const pointKey = JSON.stringify([sourceName, metric]);
+					if (!allowedKeys.has(pointKey)) continue;
+					if (filterBadQuality) {
+						const quality = typeof record.quality === 'string' ? record.quality.toUpperCase() : undefined;
+						if (quality === 'BAD') continue;
+					}
+					const feature = this.mapMlFeaturePayload(record, 0);
+					const ts = typeof record.timestamp === 'string' ? new Date(record.timestamp).getTime() : Date.now();
+					entry.features.set(pointKey, {
+						feature,
+						sourceName,
+						observedAt: Number.isFinite(ts) ? ts : Date.now(),
+					});
+				}
+
+				// Activity monitor recording for dataset points
+				if (binding.publisher.id !== undefined) {
+					for (const record of allRecords) {
+						const sourceName = this.readExternalNodeCandidate(record) ?? endpointName;
+						const metric = this.resolveRecordMetric(record);
+						const pointKey = JSON.stringify([sourceName, metric]);
+						if (!allowedKeys.has(pointKey)) continue;
+						const pointIdentityFields = this.readPointIdentity(record);
+						const rulesVersion = (record?.pointIdentity as PointIdentity | undefined)?.rulesVersion;
+						const rawObjectName = typeof record?.rawObjectName === 'string' ? record.rawObjectName : undefined;
+						const rawPointName = typeof record?.rawPointName === 'string' ? record.rawPointName : undefined;
+						const params = {
+							subscriptionId: binding.subscription.id ?? null,
+							destinationId: binding.publisher.id,
+							destinationName: binding.publisher.name,
+							destinationType: binding.publisher.type,
+							protocol: this.protocol,
+							endpointName: sourceName,
+							metric,
+							value: record?.value ?? record?.rawValue ?? null,
+							unit: typeof record?.unit === 'string' ? record.unit : undefined,
+							quality: typeof record?.quality === 'string' ? record.quality : undefined,
+							pointCount: allRecords.length,
+							...pointIdentityFields,
+							...(rulesVersion && { rulesVersion }),
+							...(rawObjectName && { rawObjectName }),
+							...(rawPointName && { rawPointName }),
+						};
+						const eventKey = JSON.stringify([this.protocol, sourceName, metric]);
+						if (eventRecordedPoints.has(eventKey)) {
+							activityMonitor.recordSubscriptionOnly(params);
+						} else {
+							activityMonitor.record(params);
+							eventRecordedPoints.add(eventKey);
+						}
 					}
 				}
-				if (allowed.size === 0) {
-					continue;
+
+				const now = Date.now();
+				const samplingMs = binding.datasetSamplingIntervalMs ?? 60_000;
+				if (now - entry.lastFlushedAt >= samplingMs && !entry.flushing) {
+					await this.flushDatasetAccumulatorEntry(entry, binding, destinationTopic, endpointName, sourceTopic, batchesByPlugin);
 				}
-				if (allowed.size < allRecords.length) {
-					bindingMessages = this.rebuildMessagesFromAllowed(messages, allowed);
-				}
+
+				continue;
 			}
+
+			// Non-dataset binding: standard point filtering and throttle path.
+			let bindingMessages = messages;
 
 			// "Publish interval" throttle. `records` is computed eagerly whenever either the
 			// throttle needs it OR the activityMonitor loop below needs it — preserves the
@@ -1634,7 +1889,7 @@ export class PublishManager extends EventEmitter {
 			const routeMinIntervalMs = typeof route?.minIntervalMs === 'number' && route.minIntervalMs > 0
 				? route.minIntervalMs
 				: 0;
-			const minIntervalMs = binding.datasetSamplingIntervalMs ?? routeMinIntervalMs;
+			const minIntervalMs = routeMinIntervalMs;
 			const records = (minIntervalMs > 0 || binding.publisher.id !== undefined)
 				? this.collectTagRecords(bindingMessages)
 				: [];
@@ -1642,10 +1897,10 @@ export class PublishManager extends EventEmitter {
 				? this.filterMessagesForPublishInterval(bindingMessages, records, binding.subscription.id ?? null, endpointName, minIntervalMs)
 				: bindingMessages;
 
-			// Dataset-linked or throttled subscriptions build their payload from a
-			// per-binding-filtered subset of `messages`, so they can never safely share
-			// a compressedPayloadCache entry with another binding — make the key unique.
-			const hasPerBindingFilter = minIntervalMs > 0 || binding.datasetPointKeys;
+			// Throttled subscriptions build their payload from a per-binding-filtered
+			// subset of `messages`, so they can never safely share a compressedPayloadCache
+			// entry with another binding — make the key unique.
+			const hasPerBindingFilter = minIntervalMs > 0;
 			const cacheKey = hasPerBindingFilter
 				? `${payloadFormat}::${subscriptionCompression ?? 'global'}::fq=${filterBadQuality}::sub=${binding.subscription.id ?? 'none'}`
 				: subscriptionCompression
@@ -1687,7 +1942,6 @@ export class PublishManager extends EventEmitter {
 				subscriptionId: binding.subscription.id ?? null,
 				messageCount: bindingMessages.length,
 				...(minIntervalMs > 0 && { publishIntervalMs: minIntervalMs, throttledOut: allThrottledOut }),
-				...(binding.datasetConfig && { datasetId: binding.datasetConfig.id }),
 			});
 
 			if (binding.publisher.id !== undefined) {
