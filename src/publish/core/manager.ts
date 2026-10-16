@@ -635,7 +635,7 @@ export class PublishManager extends EventEmitter {
 			if (!binding.datasetConfig) continue;
 			const subId = binding.subscription.id;
 
-			let entry = accumulators.get(subId);
+			const entry = accumulators.get(subId);
 			if (entry) {
 				entry.perProtocolKeys.set(this.protocol, binding.datasetPointKeys);
 				entry.allExpectedPointKeys.clear();
@@ -1933,7 +1933,7 @@ export class PublishManager extends EventEmitter {
 			}
 
 			// Non-dataset binding: standard point filtering and throttle path.
-			let bindingMessages = messages;
+			const bindingMessages = messages;
 
 			// "Publish interval" throttle. `records` is computed eagerly whenever either the
 			// throttle needs it OR the activityMonitor loop below needs it — preserves the
