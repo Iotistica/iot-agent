@@ -4,7 +4,7 @@ import { ModbusAdapter } from '../plugins/modbus/adapter.js';
 import { OPCUAAdapter } from '../plugins/opcua/adapter.js';
 import { DeviceModel } from '../db/models/device.model.js';
 import { EndpointModel } from '../db/models/endpoint.model.js';
-import { CommandError } from './command-errors.js';
+import { CommandError } from './errors.js';
 import { CommandErrorCode } from './types.js';
 
 interface WriteTarget {

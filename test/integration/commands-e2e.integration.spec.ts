@@ -11,7 +11,7 @@
  * the destination lookup (PublishDestinationsModel), and the MQTT client
  * built from that destination's config (ExternalMqttClient). Commands ride
  * whichever publish destination an admin flags `use_for_commands` (not the
- * cloud/provisioning-gated CloudMqttClient — see command-destination.ts), so
+ * cloud/provisioning-gated CloudMqttClient — see destination.ts), so
  * that's the boundary this test fakes instead.
  *
  * Raw MQTT bytes are fed straight into CommandService.handleMessage() rather
@@ -21,10 +21,10 @@
  */
 
 import { EventEmitter } from 'events';
-import { CommandService } from '../../src/commands/command-service';
-import { CommandDeduplicator } from '../../src/commands/command-deduplicator';
-import { CommandResultPublisher } from '../../src/commands/command-result-publisher';
-import { CommandDestination } from '../../src/commands/command-destination';
+import { CommandService } from '../../src/commands/service';
+import { CommandDeduplicator } from '../../src/commands/deduplicator';
+import { CommandResultPublisher } from '../../src/commands/result-publisher';
+import { CommandDestination } from '../../src/commands/destination';
 import { OPCUAAdapter } from '../../src/plugins/opcua/adapter';
 import { OPCUADeviceClient } from '../../src/plugins/opcua/client';
 import { PublishDestinationsModel, type PublishDestinationRecord } from '../../src/db/models/publish-destinations.model';

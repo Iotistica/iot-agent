@@ -1,17 +1,17 @@
 import { getAdapterManager as getAdapterManagerFromActions } from '../api/actions.js';
 import type { AgentLogger } from '../logging/agent-logger.js';
 import { LogComponents } from '../logging/types.js';
-import { CommandDeduplicator } from './command-deduplicator.js';
-import { CommandResultPublisher } from './command-result-publisher.js';
-import { CommandService } from './command-service.js';
-import { MqttCommandConsumer } from './mqtt-command-consumer.js';
+import { CommandDeduplicator } from './deduplicator.js';
+import { CommandResultPublisher } from './result-publisher.js';
+import { CommandService } from './service.js';
+import { MqttCommandConsumer } from './mqtt-consumer.js';
 import type { CommandServiceConfig } from './types.js';
 
-export { CommandService } from './command-service.js';
-export { CommandDeduplicator } from './command-deduplicator.js';
-export { CommandResultPublisher } from './command-result-publisher.js';
-export { MqttCommandConsumer } from './mqtt-command-consumer.js';
-export { CommandError } from './command-errors.js';
+export { CommandService } from './service.js';
+export { CommandDeduplicator } from './deduplicator.js';
+export { CommandResultPublisher } from './result-publisher.js';
+export { MqttCommandConsumer } from './mqtt-consumer.js';
+export { CommandError } from './errors.js';
 export * from './types.js';
 
 function readConfigFromEnv(): CommandServiceConfig {

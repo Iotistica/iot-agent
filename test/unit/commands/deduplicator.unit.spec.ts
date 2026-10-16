@@ -1,4 +1,4 @@
-import { CommandDeduplicator } from '../../../src/commands/command-deduplicator';
+import { CommandDeduplicator } from '../../../src/commands/deduplicator';
 import type { CommandResult } from '../../../src/commands/types';
 
 function makeResult(commandId: string): CommandResult {

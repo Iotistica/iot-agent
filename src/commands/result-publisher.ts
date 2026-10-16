@@ -1,4 +1,4 @@
-import { CommandDestination } from './command-destination.js';
+import { CommandDestination } from './destination.js';
 import type { AgentLogger } from '../logging/agent-logger.js';
 import { LogComponents } from '../logging/types.js';
 import type { CommandResult } from './types.js';

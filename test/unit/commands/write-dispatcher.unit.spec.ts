@@ -2,7 +2,7 @@ import { BACnetAdapter } from '../../../src/plugins/bacnet/adapter';
 import { ModbusAdapter } from '../../../src/plugins/modbus/adapter';
 import { OPCUAAdapter } from '../../../src/plugins/opcua/adapter';
 import type { AdapterManager } from '../../../src/plugins/index';
-import { CommandError } from '../../../src/commands/command-errors';
+import { CommandError } from '../../../src/commands/errors';
 import { CommandErrorCode } from '../../../src/commands/types';
 import { dispatchWrite } from '../../../src/commands/write-dispatcher';
 import { DeviceModel } from '../../../src/db/models/device.model';

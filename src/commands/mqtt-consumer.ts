@@ -1,7 +1,7 @@
-import { CommandDestination } from './command-destination.js';
+import { CommandDestination } from './destination.js';
 import type { AgentLogger } from '../logging/agent-logger.js';
 import { LogComponents } from '../logging/types.js';
-import type { CommandService } from './command-service.js';
+import type { CommandService } from './service.js';
 
 /**
  * Subscribes to the agent's own command topic (on whichever publish

@@ -20,7 +20,7 @@ export abstract class BaseMqttClient extends EventEmitter implements MqttConnect
 	protected readonly maxPublishRetries = 3;
 
 	// Subscribe support — used by destinations flagged use_for_commands (see
-	// src/commands/command-destination.ts). Destinations were outbound-publish-only
+	// src/commands/destination.ts). Destinations were outbound-publish-only
 	// until GitHub issues #4/#5/#6; kept here (rather than a separate class) so any
 	// destination type built on BaseMqttClient gets it, and so reconnects (mqtt.js's
 	// own `resubscribe`, default true) don't need special-casing.

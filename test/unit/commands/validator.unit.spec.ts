@@ -1,5 +1,5 @@
-import { CommandError } from '../../../src/commands/command-errors';
-import { checkExpiry, parseCommand } from '../../../src/commands/command-validator';
+import { CommandError } from '../../../src/commands/errors';
+import { checkExpiry, parseCommand } from '../../../src/commands/validator';
 import { CommandErrorCode } from '../../../src/commands/types';
 
 function validCommandJson(overrides: Record<string, unknown> = {}): Buffer {

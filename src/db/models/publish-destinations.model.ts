@@ -12,7 +12,7 @@ export interface PublishDestinationRecord {
 	config_json?: Record<string, unknown> | null;
 	enabled: boolean;
 	/** Marks this (at most one, mqtt-type) destination as the transport for
-	 *  inbound device-write commands — see src/commands/command-destination.ts. */
+	 *  inbound device-write commands — see src/commands/destination.ts. */
 	use_for_commands: boolean;
 	last_error?: string | null;
 	last_error_at?: Date | null;

@@ -1,4 +1,4 @@
-import { CommandError } from './command-errors.js';
+import { CommandError } from './errors.js';
 import { CommandErrorCode, WriteCommandSchema, type WriteCommand } from './types.js';
 
 const MAX_PAYLOAD_BYTES = 64 * 1024;

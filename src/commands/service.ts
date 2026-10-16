@@ -1,10 +1,10 @@
 import type { AgentLogger } from '../logging/agent-logger.js';
 import { LogComponents } from '../logging/types.js';
 import type { AdapterManager } from '../plugins/index.js';
-import { CommandError } from './command-errors.js';
-import type { CommandDeduplicator } from './command-deduplicator.js';
-import type { CommandResultPublisher } from './command-result-publisher.js';
-import { checkExpiry, parseCommand } from './command-validator.js';
+import { CommandError } from './errors.js';
+import type { CommandDeduplicator } from './deduplicator.js';
+import type { CommandResultPublisher } from './result-publisher.js';
+import { checkExpiry, parseCommand } from './validator.js';
 import { CommandErrorCode, type CommandResult, type CommandServiceConfig, type WriteCommand } from './types.js';
 import { dispatchWrite } from './write-dispatcher.js';
 

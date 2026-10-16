@@ -1,9 +1,9 @@
 jest.mock('../../../src/commands/write-dispatcher');
 
-import { CommandService } from '../../../src/commands/command-service';
-import { CommandDeduplicator } from '../../../src/commands/command-deduplicator';
-import { CommandResultPublisher } from '../../../src/commands/command-result-publisher';
-import { CommandError } from '../../../src/commands/command-errors';
+import { CommandService } from '../../../src/commands/service';
+import { CommandDeduplicator } from '../../../src/commands/deduplicator';
+import { CommandResultPublisher } from '../../../src/commands/result-publisher';
+import { CommandError } from '../../../src/commands/errors';
 import { CommandErrorCode, type CommandServiceConfig } from '../../../src/commands/types';
 import { dispatchWrite } from '../../../src/commands/write-dispatcher';
 

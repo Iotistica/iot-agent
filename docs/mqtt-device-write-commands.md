@@ -153,20 +153,20 @@ layer, but there's no way to request it via a command today.
 MQTT command topic
         │
         ▼
-MqttCommandConsumer          (src/commands/mqtt-command-consumer.ts)
+MqttCommandConsumer          (src/commands/mqtt-consumer.ts)
         │ retain? -> drop
         ▼
-CommandService.handleMessage (src/commands/command-service.ts)
-        │ parse + schema validate (command-validator.ts)
+CommandService.handleMessage (src/commands/service.ts)
+        │ parse + schema validate (validator.ts)
         │ expiry check
-        │ dedup check (command-deduplicator.ts)
+        │ dedup check (deduplicator.ts)
         │ bounded FIFO queue, sequential execution
         ▼
 dispatchWrite()               (src/commands/write-dispatcher.ts)
         │ resolve deviceName -> owning adapter
         │ OPCUAAdapter.writeNode() / ModbusAdapter.writeRegister()
         ▼
-CommandResultPublisher.publish (src/commands/command-result-publisher.ts)
+CommandResultPublisher.publish (src/commands/result-publisher.ts)
         │
         ▼
 MQTT result topic
