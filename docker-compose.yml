@@ -11,6 +11,9 @@ services:
     environment:
       STANDALONE: "true"
       API_SECURITY_MODE: "LOCAL_NETWORK"
+      MQTT_BROKER_URL: "mqtt://iotistic-mosquitto-agent:1883"
+      MQTT_USERNAME: "admin"
+      MQTT_PASSWORD: "iotistic42!"
     networks:
       - iotistica-net
 

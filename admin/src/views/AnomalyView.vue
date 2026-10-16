@@ -1146,7 +1146,7 @@ function blankMetric(): AnomalyMetricConfig {
 const metricColumns: TableColumnType<AnomalyMetricConfig>[] = [
   { title: 'Point name', key: 'name', ellipsis: true, sorter: (a: AnomalyMetricConfig, b: AnomalyMetricConfig) => a.name.localeCompare(b.name) },
   { title: 'Device', key: 'device', width: 160, ellipsis: true, sorter: (a: AnomalyMetricConfig, b: AnomalyMetricConfig) => (a.deviceName ?? '').localeCompare(b.deviceName ?? '') },
-  { title: 'Detection', key: 'methods', ellipsis: true },
+  { title: 'Detection Type', key: 'methods', ellipsis: true },
   { title: 'Sensitivity', key: 'sensitivity', width: 100, sorter: (a: AnomalyMetricConfig, b: AnomalyMetricConfig) => a.threshold - b.threshold },
   { title: 'Seasonality', key: 'seasonality', width: 110, sorter: (a: AnomalyMetricConfig, b: AnomalyMetricConfig) => (a.seasonality ?? '').localeCompare(b.seasonality ?? '') },
   { title: 'Enabled', key: 'enabled', width: 80, sorter: (a: AnomalyMetricConfig, b: AnomalyMetricConfig) => Number(a.enabled) - Number(b.enabled) },

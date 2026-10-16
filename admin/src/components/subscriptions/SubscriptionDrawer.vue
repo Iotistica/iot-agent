@@ -218,6 +218,10 @@ watch(() => form.value.payload_format, (fmt) => {
   }
 })
 
+watch(() => form.value.ml_dataset_id, (id) => {
+  if (id) form.value.topics = []
+})
+
 async function submit() {
   await formRef.value?.validate()
   saving.value = true
@@ -323,8 +327,9 @@ function close() {
         style="margin-bottom: 16px"
       />
 
-      <!-- Source Protocols -->
+      <!-- Source Protocols (hidden when a dataset is selected — the dataset's point keys already define protocol scope) -->
       <a-form-item
+        v-if="!selectedDataset"
         label="Source Protocols"
         name="topics"
         extra="Which protocol endpoints feed this subscription. Leave empty to receive from all."

@@ -128,7 +128,6 @@ interface DisplayPoint {
   primaryName: string
   secondaryLine: string
   unit: string
-  available: boolean
   fullIdentifier: string
 }
 
@@ -147,15 +146,12 @@ const displayPoints = computed<DisplayPoint[]>(() => {
   return selectedKeys.value.map(key => {
     const row = pointRowMap.value.get(key)
     if (row) {
-      const primary = bestPointName(row)
-      const secondary = `${row.endpointName} · ${row.metric}`
       return {
         key,
         protocol: row.protocol,
-        primaryName: truncate(primary, 40),
-        secondaryLine: truncate(secondary, 60),
+        primaryName: truncate(bestPointName(row), 40),
+        secondaryLine: row.endpointName,
         unit: row.unit || '',
-        available: true,
         fullIdentifier: `${row.endpointName} / ${row.metric}`,
       }
     }
@@ -165,9 +161,8 @@ const displayPoints = computed<DisplayPoint[]>(() => {
         key,
         protocol: parts[0] || '',
         primaryName: truncate(parts[2] || 'Unknown', 40),
-        secondaryLine: `${parts[1] || 'Unknown'} · ${parts[2] || ''}`,
+        secondaryLine: parts[1] || '',
         unit: '',
-        available: false,
         fullIdentifier: `${parts[0]} / ${parts[1]} / ${parts[2]}`,
       }
     } catch {
@@ -175,9 +170,8 @@ const displayPoints = computed<DisplayPoint[]>(() => {
         key,
         protocol: '',
         primaryName: 'Unknown point',
-        secondaryLine: key,
+        secondaryLine: '',
         unit: '',
-        available: false,
         fullIdentifier: key,
       }
     }
@@ -333,11 +327,8 @@ defineExpose({ restoreFromDraft })
           <div v-for="dp in visiblePoints" :key="dp.key" class="point-row">
             <a-tag :color="protocolColor(dp.protocol)" class="proto-tag">{{ protocolLabel(dp.protocol) }}</a-tag>
             <div class="point-info" :title="dp.fullIdentifier">
-              <div :class="['point-name', { unavailable: !dp.available }]">
-                {{ dp.primaryName }}
-                <span v-if="!dp.available" class="unavail-badge">unavailable</span>
-              </div>
-              <div class="point-meta">{{ dp.secondaryLine }}</div>
+              <div class="point-name">{{ dp.primaryName }}</div>
+              <div v-if="dp.secondaryLine" class="point-meta">{{ dp.secondaryLine }}</div>
             </div>
             <span v-if="dp.unit" class="unit-badge">{{ dp.unit }}</span>
             <a-button type="text" size="small" class="remove-btn" @click="removePoint(dp.key)">
@@ -438,8 +429,6 @@ defineExpose({ restoreFromDraft })
 .proto-tag { flex-shrink: 0; margin: 0; font-size: 11px; min-width: 58px; text-align: center; }
 .point-info { flex: 1; min-width: 0; overflow: hidden; }
 .point-name { font-size: 13px; font-weight: 500; color: #1a2332; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.point-name.unavailable { color: #999; font-style: italic; }
-.unavail-badge { font-size: 10px; font-weight: 400; color: #d4380d; background: #fff2e8; border-radius: 4px; padding: 1px 5px; margin-left: 6px; font-style: normal; }
 .point-meta { font-size: 11px; color: #8a94a3; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 1px; }
 .unit-badge { flex-shrink: 0; font-size: 11px; color: #555; background: #f5f5f5; border: 1px solid #e8e8e8; border-radius: 4px; padding: 1px 6px; white-space: nowrap; }
 .remove-btn { color: #bbb; flex-shrink: 0; }
