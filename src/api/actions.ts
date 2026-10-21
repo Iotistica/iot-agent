@@ -584,12 +584,14 @@ export const stopService = async (appId: number, serviceName?: string, _force: b
 		} as any);
 	}
 
-	// Stop the container
+	// Stop the container (ignore 304 = already stopped)
 	if (service.containerId) {
 		const docker = containerManager.getDocker();
 		if (docker) {
 			const container = docker.getContainer(service.containerId);
-			await container.stop();
+			try { await container.stop(); } catch (e: any) {
+				if (e?.statusCode !== 304) throw e;
+			}
 		}
 	}
 
@@ -631,12 +633,14 @@ export const startService = async (appId: number, serviceName?: string, _force: 
 		} as any);
 	}
 
-	// Start the container
+	// Start the container (ignore 304 = already running)
 	if (service.containerId) {
 		const docker = containerManager.getDocker();
 		if (docker) {
 			const container = docker.getContainer(service.containerId);
-			await container.start();
+			try { await container.start(); } catch (e: any) {
+				if (e?.statusCode !== 304) throw e;
+			}
 		}
 	}
 
@@ -1025,9 +1029,13 @@ export const serviceAction = async (
 		const docker = containerManager.getDocker();
 		if (!docker) throw new Error('Docker not available');
 		const container = docker.getContainer(containerId);
-		if (action === 'start') await container.start();
-		else if (action === 'stop') await container.stop();
-		else await container.restart();
+		try {
+			if (action === 'start') await container.start();
+			else if (action === 'stop') await container.stop();
+			else await container.restart();
+		} catch (e: any) {
+			if (e?.statusCode !== 304) throw e;
+		}
 	} else {
 		if (action === 'start' || action === 'restart') {
 			await containerManager.applyTargetState();
