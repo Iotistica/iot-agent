@@ -10,85 +10,85 @@ export interface JSONSchema {
 }
 
 class SchemaGenerator {
-  private static getObjectType(obj: any): string {
-    let type: string = typeof obj;
-    if (type === 'object') {
-      if (Array.isArray(obj)) {
-        type = 'array';
-      } else if (obj === null) {
-        type = 'null';
-      }
-    }
-    return type;
-  }
+	private static getObjectType(obj: any): string {
+		let type: string = typeof obj;
+		if (type === 'object') {
+			if (Array.isArray(obj)) {
+				type = 'array';
+			} else if (obj === null) {
+				type = 'null';
+			}
+		}
+		return type;
+	}
 
-  private static handleArray(obj: any[]): JSONSchema {
-    const schema: JSONSchema = { type: 'array' };
+	private static handleArray(obj: any[]): JSONSchema {
+		const schema: JSONSchema = { type: 'array' };
 
-    if (obj.length === 0) return schema;
+		if (obj.length === 0) return schema;
 
-    let arrayType: string | undefined;
-    let multipleTypes = false;
-    let itemsSchema: any;
+		let arrayType: string | undefined;
+		let multipleTypes = false;
+		let itemsSchema: any;
 
-    for (let i = 0; i < obj.length; i++) {
-      const elementSchema = this.generateSchema(obj[i]);
-      const elementType = elementSchema.type;
+		for (let i = 0; i < obj.length; i++) {
+			const elementSchema = this.generateSchema(obj[i]);
+			const elementType = elementSchema.type;
 
-      if (i > 0 && elementType !== arrayType) {
-        multipleTypes = true;
-        break;
-      } else {
-        arrayType = elementType;
-        if (elementType === 'object') {
-          if (!itemsSchema) {
-            itemsSchema = elementSchema;
-          } else {
-            const keys = Object.keys(elementSchema.properties || {});
-            keys.forEach(key => {
-              if (!itemsSchema.properties![key]) {
+			if (i > 0 && elementType !== arrayType) {
+				multipleTypes = true;
+				break;
+			} else {
+				arrayType = elementType;
+				if (elementType === 'object') {
+					if (!itemsSchema) {
+						itemsSchema = elementSchema;
+					} else {
+						const keys = Object.keys(elementSchema.properties || {});
+						keys.forEach(key => {
+							if (!itemsSchema.properties![key]) {
                 itemsSchema.properties![key] = elementSchema.properties![key];
-              }
-            });
-          }
-        } else {
-          itemsSchema = this.generateSchema(obj[i]);
-        }
-      }
-    }
+							}
+						});
+					}
+				} else {
+					itemsSchema = this.generateSchema(obj[i]);
+				}
+			}
+		}
 
-    if (!multipleTypes && arrayType) {
-      schema.items = itemsSchema;
-    }
+		if (!multipleTypes && arrayType) {
+			schema.items = itemsSchema;
+		}
 
-    return schema;
-  }
+		return schema;
+	}
 
-  private static handleObject(obj: Record<string, any>): JSONSchema {
-    const schema: JSONSchema = {
-      type: 'object',
-      properties: Object.create(null)
-    };
+	private static handleObject(obj: Record<string, any>): JSONSchema {
+		const schema: JSONSchema = {
+			type: 'object',
+			properties: Object.create(null)
+		};
 
-    for (const [key, value] of Object.entries(obj)) {
+		for (const [key, value] of Object.entries(obj)) {
       schema.properties![key] = this.generateSchema(value);
-    }
+		}
 
-    return schema;
-  }
+		return schema;
+	}
 
-  static generateSchema(obj: any): JSONSchema {
-    const type = this.getObjectType(obj);
+	static generateSchema(obj: any): JSONSchema {
+		const type = this.getObjectType(obj);
 
-    switch (type) {
-      case 'object':
-        return this.handleObject(obj);
-      case 'array':
-        return this.handleArray(obj);
-      default:
-        return { type };
-    }
-  }
+		switch (type) {
+			case 'object':
+				return this.handleObject(obj);
+			case 'array':
+				return this.handleArray(obj);
+			default:
+				return { type };
+		}
+	}
 }
 
 export interface TopicNode {

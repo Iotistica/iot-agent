@@ -2310,7 +2310,7 @@ router.patch('/v1/protocol-outputs/drift', requireRole('operator'), async (req: 
 router.get('/v1/schema-drift/baselines', async (req: Request, res: Response, next: NextFunction) => {
 	try {
 		const { SchemaDriftModel } = await import('../db/models/schema-drift.model.js');
-		const { cleanDriftFieldName, prettifyDriftDeviceId, prettifyDriftFieldName, cleanProtocolPipeName, stripFieldDevicePrefix } = await import('../db/models/drift-labels.js');
+		const { prettifyDriftDeviceId, cleanProtocolPipeName } = await import('../db/models/drift-labels.js');
 		const q = typeof req.query.q === 'string' ? req.query.q.trim().toLowerCase() : undefined;
 
 		const rows: Array<{
@@ -3074,7 +3074,7 @@ router.get('/v1/mqtt/broker/history', (req: Request, res: Response) => {
 	if (!topic.trim()) return res.status(400).json({ error: '"topic" query param is required' });
 	const monitor = BrokerMonitorService.getInstance();
 	monitor.watchTopic(topic);
-	const entries = monitor.getHistory(topic).map(({ text, ...rest }) => rest);
+	const entries = monitor.getHistory(topic).map(({ text: _text, ...rest }) => rest);
 	res.json({ topic, entries });
 });
 
