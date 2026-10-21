@@ -38,6 +38,37 @@ export const DriftOptionsSchema = z.object({
 
 export type DriftOptions = z.infer<typeof DriftOptionsSchema>;
 
+const DriftTypeEnum = z.enum(['new-field', 'missing-field', 'type-drift', 'rename-candidate']);
+const DriftSeverityEnum = z.enum(['warning', 'critical']);
+
+export const DriftRuleConfigSchema = z.object({
+	enabled: z.boolean(),
+	priority: z.number().int().default(0),
+	fieldPattern: z.string().min(1).optional(),
+	devicePattern: z.string().min(1).optional(),
+	endpointPattern: z.string().min(1).optional(),
+	suppressDriftTypes: z.array(DriftTypeEnum).optional(),
+	alertOnDriftTypes: z.array(DriftTypeEnum).optional(),
+	severityOverrides: z.record(DriftTypeEnum, DriftSeverityEnum).optional(),
+	consecutiveMissingThreshold: z.number().int().min(1).optional(),
+	alertCooldownMs: z.number().min(0).optional(),
+	pinAsBaseline: z.boolean().optional(),
+	allowedTypes: z.array(z.string()).optional(),
+	adaptivePromotionBatches: z.number().int().min(1).optional(),
+	adaptivePromotionMinElapsedMs: z.number().min(0).optional(),
+	adaptiveRetireBatches: z.number().int().min(1).optional(),
+	name: z.string().max(200).optional(),
+	description: z.string().max(1000).optional(),
+}).refine(d => d.fieldPattern || d.devicePattern || d.endpointPattern, {
+	message: 'At least one scope pattern (fieldPattern, devicePattern, or endpointPattern) is required',
+});
+
+export type DriftRuleConfig = z.infer<typeof DriftRuleConfigSchema> & {
+	id?: string;
+	createdAt?: string;
+	updatedAt?: string;
+};
+
 export const DeviceConfigSchema = z.object({
 	name: z.string().optional(),
 	protocol: z.string().optional(),

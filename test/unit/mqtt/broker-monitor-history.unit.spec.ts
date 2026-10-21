@@ -33,6 +33,39 @@ function send(instance: any, topic: string, body: unknown, packet: { qos?: numbe
 }
 
 describe('BrokerMonitorService topic history', () => {
+	it('exposes inferred JSON schemas through both topic APIs and clears stale schemas', () => {
+		const instance = makeInstance();
+		send(instance, 'sensor', { value: 42, active: true, metadata: null, readings: [1, 2] });
+		const schema = {
+			type: 'object',
+			properties: {
+				value: { type: 'number' }, active: { type: 'boolean' },
+				metadata: { type: 'null' }, readings: { type: 'array', items: { type: 'number' } },
+			},
+		};
+		expect(instance.getTopicTree().sensor.schema).toEqual(schema);
+		expect(instance.getTopics()[0].schema).toEqual(schema);
+		instance.handleMessage('sensor', Buffer.from('plain text'), {});
+		expect(instance.getTopics()[0].schema).toBeUndefined();
+	});
+
+	it('infers array object fields and leaves mixed and empty array items unspecified', () => {
+		const instance = makeInstance();
+		send(instance, 'sensor', { rows: [{ a: 1 }, { b: 'two' }], mixed: [1, 'two'], empty: [] });
+		expect(instance.getTopics()[0].schema.properties).toEqual({
+			rows: { type: 'array', items: { type: 'object', properties: { a: { type: 'number' }, b: { type: 'string' } } } },
+			mixed: { type: 'array' }, empty: { type: 'array' },
+		});
+	});
+
+	it('keeps oversized JSON classified but omits its schema', () => {
+		const instance = makeInstance();
+		send(instance, 'sensor', { value: 1 });
+		send(instance, 'sensor', { value: 'x'.repeat(256 * 1024) });
+		expect(instance.getTopics()[0]).toMatchObject({ messageType: 'json', truncated: true });
+		expect(instance.getTopics()[0].schema).toBeUndefined();
+	});
+
 	it('tracks nothing for a topic that was never watched, even after messages arrive', () => {
 		const instance = makeInstance();
 		send(instance, 'sensors/test_1', { value: 1 });

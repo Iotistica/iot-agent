@@ -3,6 +3,94 @@ import { EventEmitter } from 'events';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
+export interface JSONSchema {
+  type: string;
+  properties?: Record<string, JSONSchema>;
+  items?: JSONSchema;
+}
+
+class SchemaGenerator {
+  private static getObjectType(obj: any): string {
+    let type: string = typeof obj;
+    if (type === 'object') {
+      if (Array.isArray(obj)) {
+        type = 'array';
+      } else if (obj === null) {
+        type = 'null';
+      }
+    }
+    return type;
+  }
+
+  private static handleArray(obj: any[]): JSONSchema {
+    const schema: JSONSchema = { type: 'array' };
+
+    if (obj.length === 0) return schema;
+
+    let arrayType: string | undefined;
+    let multipleTypes = false;
+    let itemsSchema: any;
+
+    for (let i = 0; i < obj.length; i++) {
+      const elementSchema = this.generateSchema(obj[i]);
+      const elementType = elementSchema.type;
+
+      if (i > 0 && elementType !== arrayType) {
+        multipleTypes = true;
+        break;
+      } else {
+        arrayType = elementType;
+        if (elementType === 'object') {
+          if (!itemsSchema) {
+            itemsSchema = elementSchema;
+          } else {
+            const keys = Object.keys(elementSchema.properties || {});
+            keys.forEach(key => {
+              if (!itemsSchema.properties![key]) {
+                itemsSchema.properties![key] = elementSchema.properties![key];
+              }
+            });
+          }
+        } else {
+          itemsSchema = this.generateSchema(obj[i]);
+        }
+      }
+    }
+
+    if (!multipleTypes && arrayType) {
+      schema.items = itemsSchema;
+    }
+
+    return schema;
+  }
+
+  private static handleObject(obj: Record<string, any>): JSONSchema {
+    const schema: JSONSchema = {
+      type: 'object',
+      properties: Object.create(null)
+    };
+
+    for (const [key, value] of Object.entries(obj)) {
+      schema.properties![key] = this.generateSchema(value);
+    }
+
+    return schema;
+  }
+
+  static generateSchema(obj: any): JSONSchema {
+    const type = this.getObjectType(obj);
+
+    switch (type) {
+      case 'object':
+        return this.handleObject(obj);
+      case 'array':
+        return this.handleArray(obj);
+      default:
+        return { type };
+    }
+  }
+}
+
 export interface TopicNode {
   name: string;
   fullTopic: string;
@@ -15,6 +103,8 @@ export interface TopicNode {
   truncated: boolean;
   retain: boolean;
   qos: number;
+  /** Inferred from the latest JSON payload; descriptive, not a validation contract. */
+  schema?: JSONSchema;
   children: Record<string, TopicNode>;
 }
 
@@ -179,13 +269,13 @@ export class BrokerMonitorService extends EventEmitter {
 		// Skip our own monitor client's messages
 		if (topic.startsWith(`$`)) return;
 
-		const { text, type, truncated } = this.decodePayload(payload);
-		this.upsertTopic(topic, text, type, truncated, payload.length, packet);
+		const { text, type, truncated, schema } = this.decodePayload(payload);
+		this.upsertTopic(topic, text, type, truncated, payload.length, packet, schema);
 		if (this.watchedTopics.has(topic)) this.recordHistory(topic, text, type, truncated, payload.length, packet);
 		this.totalMessages++;
 	}
 
-	private decodePayload(payload: Buffer): { text: string; type: 'json' | 'string' | 'binary'; truncated: boolean } {
+	private decodePayload(payload: Buffer): { text: string; type: 'json' | 'string' | 'binary'; truncated: boolean; schema?: JSONSchema } {
 		if (payload.length === 0) return { text: '', type: 'string', truncated: false };
 
 		const truncated = payload.length > MAX_MESSAGE_SIZE;
@@ -200,8 +290,13 @@ export class BrokerMonitorService extends EventEmitter {
 		// still bounded to the sample — only classification sees the full buffer.
 		const fullStr = truncated ? payload.toString('utf8') : str;
 		try {
-			JSON.parse(fullStr);
-			return { text: str, type: 'json', truncated };
+			const value = JSON.parse(fullStr);
+			// Bound inference to payloads we can store in full.
+			let schema: JSONSchema | undefined;
+			if (!truncated) {
+				try { schema = SchemaGenerator.generateSchema(value); } catch { /* Deep JSON may exceed the recursion limit. */ }
+			}
+			return { text: str, type: 'json', truncated, schema };
 		} catch { /* not JSON */ }
 
 		// Printable string check
@@ -221,6 +316,7 @@ export class BrokerMonitorService extends EventEmitter {
 		truncated: boolean,
 		bytes: number,
 		packet: any,
+		schema?: JSONSchema,
 	): void {
 		const parts = topic.split('/');
 		let node = this.topicTree;
@@ -254,6 +350,7 @@ export class BrokerMonitorService extends EventEmitter {
 				current.lastMessage = message;
 				current.lastMessageAt = Date.now();
 				current.messageType = messageType;
+				current.schema = schema;
 				current.truncated = truncated;
 				current.retain = packet.retain ?? false;
 				current.qos = packet.qos ?? 0;

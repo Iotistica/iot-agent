@@ -5,10 +5,12 @@ import { Modal } from 'ant-design-vue'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import { client } from '@/api/client'
 import { pipelineApi, type SubscriptionActivity, type ActivityEvent } from '@/api/pipeline'
-import { datasetsApi, type MlDataset, type DatasetDraftState } from '@/api/ml-datasets'
+import { datasetsApi, type MlDataset } from '@/api/ml-datasets'
 import { protocolColor, protocolLabel } from '@/utils/protocol'
-import { BarChartOutlined, WifiOutlined, WarningOutlined, ClockCircleOutlined, SaveOutlined, SettingOutlined, CloseOutlined, DatabaseOutlined, CopyOutlined, EditOutlined, DeleteOutlined } from '@ant-design/icons-vue'
+import { BarChartOutlined, WifiOutlined, WarningOutlined, ClockCircleOutlined, SaveOutlined, CloseOutlined, DatabaseOutlined, CopyOutlined, EditOutlined, DeleteOutlined, DownloadOutlined, ReloadOutlined } from '@ant-design/icons-vue'
 import CreateDatasetDrawer from '@/components/CreateDatasetDrawer.vue'
+import CreateViewDrawer from '@/components/CreateViewDrawer.vue'
+import { viewsApi, type SavedView as SavedViewType } from '@/api/views'
 
 type PointRow = {
   key: string
@@ -48,19 +50,15 @@ function normalizePointKey(key: string): string {
   } catch { return key }
 }
 const favPointCache = ref(new Map<string, PointRow>())
-type SavedView = { id: string; name: string; description?: string; pointKeys: string[] }
+type SavedView = SavedViewType
 const savedViews = ref<SavedView[]>([])
 const activeTab = ref('all')
 const openViewIds = ref<string[]>([])
 const viewsLoading = ref(false)
 const viewError = ref('')
-const saveModalOpen = ref(false)
-const manageModalOpen = ref(false)
-const newViewName = ref('')
-const newViewDescription = ref('')
-const savingView = ref(false)
 const selectedPointKeys = ref<string[]>([])
-const saveSelected = ref(false)
+const viewDrawerOpen = ref(false)
+const editingView = ref<SavedView | null>(null)
 const viewMode = computed(() => activeTab.value === 'favorites' ? 'favorites' : 'all')
 const activeSavedView = computed(() => savedViews.value.find(v => v.id === activeTab.value))
 const activeViewIds = computed(() => new Set((activeSavedView.value?.pointKeys || []).map(normalizePointKey)))
@@ -204,47 +202,26 @@ const favoriteCount = computed(() => favorites.value.length)
 const normalizedViewKeys = computed(() => activeSavedView.value
   ? [...new Set(activeSavedView.value.pointKeys.map(normalizePointKey))] : [])
 const missingViewCount = computed(() => normalizedViewKeys.value.filter(key => !points.value.some(p => p.key === key)).length)
-const candidatePoints = computed(() => saveSelected.value
-  ? points.value.filter(p => selectedPointKeys.value.includes(p.key))
-  : filteredPoints.value)
-function openSaveView(selectedOnly = false) {
-  saveSelected.value = selectedOnly
-  newViewName.value = !selectedOnly && sourceFilter.value ? friendlySource(sourceFilter.value) : ''
-  newViewDescription.value = ''
-  viewError.value = ''
-  saveModalOpen.value = true
+const candidateViewPoints = computed(() =>
+  points.value.filter(p => selectedPointKeys.value.includes(p.key)))
+function openCreateView(_selectedOnly = false) {
+  editingView.value = null
+  viewDrawerOpen.value = true
+}
+function openEditView(view: SavedView) {
+  editingView.value = view
+  viewDrawerOpen.value = true
 }
 async function loadViews() {
   viewsLoading.value = true
   try {
-    const { data } = await client.get<{ views: SavedView[] }>('/v1/data-explorer/views')
-    savedViews.value = Array.isArray(data.views) ? data.views : []
+    savedViews.value = await viewsApi.list()
     viewError.value = ''
-  } catch { viewError.value = 'Saved views API is unavailable. Database persistence requires the backend endpoints.' }
+  } catch { viewError.value = 'Saved views API is unavailable.' }
   finally { viewsLoading.value = false }
 }
-async function saveView() {
-  const name = newViewName.value.trim()
-  if (!name || name.length > 100) { viewError.value = 'Enter a view name (1–100 characters).'; return }
-  if (!candidatePoints.value.length) { viewError.value = 'There are no points to save.'; return }
-  savingView.value = true
-  viewError.value = ''
-  try {
-    const payload = {
-      name, description: newViewDescription.value.trim(),
-      pointKeys: [...new Set(candidatePoints.value.map(p => p.key))],
-      filters: { search: search.value, protocol: protocolFilter.value || null,
-        source: sourceFilter.value || null, quality: qualityFilter.value || null },
-    }
-    const { data } = await client.post<{ view: SavedView }>('/v1/data-explorer/views', payload)
-    if (!data.view?.id) throw new Error('Invalid API response')
-    await loadViews()
-    if (!openViewIds.value.includes(data.view.id)) openViewIds.value.push(data.view.id)
-    activeTab.value = data.view.id
-    selectedPointKeys.value = []
-    saveModalOpen.value = false
-  } catch { viewError.value = 'Unable to save. Database-backed Views API is required.' }
-  finally { savingView.value = false }
+function onViewSaved() {
+  loadViews()
 }
 function activateTab(id: string) { activeTab.value = id }
 function openSavedView(id: string) {
@@ -257,7 +234,7 @@ function closeSavedView(id: string) {
 }
 async function deleteSavedView(id: string) {
   try {
-    await client.delete(`/v1/data-explorer/views/${encodeURIComponent(id)}`)
+    await viewsApi.remove(id)
     closeSavedView(id)
     await loadViews()
   } catch { viewError.value = 'Unable to delete the saved view.' }
@@ -280,9 +257,6 @@ const datasets = ref<MlDataset[]>([])
 const datasetsLoading = ref(false)
 const datasetDrawerOpen = ref(false)
 const editingDataset = ref<MlDataset | null>(null)
-const pendingDatasetDraft = ref<DatasetDraftState | null>(null)
-const datasetDrawerRef = ref<InstanceType<typeof CreateDatasetDrawer> | null>(null)
-
 const candidateDatasetPoints = computed(() =>
   points.value.filter(p => selectedPointKeys.value.includes(p.key)))
 
@@ -339,27 +313,6 @@ function onDatasetSaved() {
   loadDatasets()
 }
 
-function onEditSelection(draft: DatasetDraftState) {
-  pendingDatasetDraft.value = draft
-  selectedPointKeys.value = draft.selectedKeys.filter(k => points.value.some(p => p.key === k))
-  activeTab.value = 'all'
-}
-
-function continueDataset() {
-  if (!pendingDatasetDraft.value) return
-  const draft = pendingDatasetDraft.value
-  editingDataset.value = draft.editingDataset
-  datasetDrawerOpen.value = true
-  setTimeout(() => {
-    datasetDrawerRef.value?.restoreFromDraft(draft, [...selectedPointKeys.value])
-    pendingDatasetDraft.value = null
-  }, 50)
-}
-
-function cancelEditSelection() {
-  pendingDatasetDraft.value = null
-  selectedPointKeys.value = []
-}
 
 function formatInterval(secs: number): string {
   if (secs < 60) return `${secs}s`
@@ -367,20 +320,25 @@ function formatInterval(secs: number): string {
   return `${secs / 3600}h`
 }
 
-function exportCsv() {
+function downloadCsv(rows: PointRow[], filename: string) {
   const quote = (v: unknown) => '"' + String(v ?? '').replace(/"/g, '""') + '"'
-  const rows = filteredPoints.value.map(p => [
+  const data = rows.map(p => [
     protocolLabel(p.protocol), friendlySource(p.endpointName), pointName(p), originalName(p),
     valueText(p.value), p.unit || '', p.quality || '', p.timestamp, p.destinationName
   ])
   const header = ['Protocol','Source','Point','Original','Value','Unit','Quality','Timestamp','Destination']
-  const csv = '\uFEFF' + [header, ...rows].map(r => r.map(quote).join(',')).join('\r\n')
+  const csv = '\uFEFF' + [header, ...data].map(r => r.map(quote).join(',')).join('\r\n')
   const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }))
   const link = document.createElement('a')
   link.href = url
-  link.download = 'data-explorer.csv'
+  link.download = filename
   link.click()
   setTimeout(() => URL.revokeObjectURL(url), 1000)
+}
+function exportViewCsv(view: SavedView) {
+  const viewKeys = new Set(view.pointKeys.map(normalizePointKey))
+  const viewPoints = points.value.filter(p => viewKeys.has(p.key))
+  downloadCsv(viewPoints, `${view.name.replace(/[^a-zA-Z0-9_-]/g, '_')}.csv`)
 }
 const badCount = computed(() => points.value.filter(p => p.quality === 'BAD').length)
 const staleCount = computed(() => points.value.filter(p => isStale(p.timestamp)).length)
@@ -400,6 +358,11 @@ const columns = computed<TableColumnType<PointRow>[]>(() => {
   )
   return cols
 })
+const viewColumns: TableColumnType<SavedView>[] = [
+  { title: 'Name', key: 'name', ellipsis: true },
+  { title: 'Points', key: 'points', width: 80 },
+  { title: 'Actions', key: 'actions', width: 200, fixed: 'right' },
+]
 const datasetColumns: TableColumnType<MlDataset>[] = [
   { title: 'Name', key: 'name', ellipsis: true },
   { title: 'Points', key: 'points', width: 80 },
@@ -481,12 +444,6 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
 
       <div class="heading">
         <p>Search, inspect and export the latest readings across your connected sources.</p>
-        <div class="header-actions">
-          <a-tag :color="error ? 'orange' : paused ? 'default' : 'green'">{{ error ? 'Refresh error' : paused ? 'Paused' : 'Auto-refresh · 5s' }}</a-tag>
-          <a-button @click="paused = !paused">{{ paused ? 'Resume' : 'Pause' }}</a-button>
-          <a-button :loading="refreshing" @click="poll">Refresh now</a-button>
-          <a-button type="primary" @click="exportCsv">Export CSV</a-button>
-        </div>
       </div>
       <a-alert v-if="error"  type="warning" show-icon :message="error" style="margin-bottom: 14px" />
       <a-row :gutter="12" class="stats">
@@ -506,36 +463,57 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
             <a-select-option value="STALE">No update in 60s</a-select-option>
           </a-select>
           <a-button @click="resetFilters">Clear</a-button>
-          <a-button class="save-view-button" :disabled="!filteredPoints.length" @click="openSaveView(false)"><SaveOutlined /> Save as View</a-button>
-          <a-button type="primary" :disabled="!filteredPoints.length" @click="openCreateDataset()"><DatabaseOutlined /> Create Dataset</a-button>
+          <div class="filters-actions">
+            <a-button @click="poll"><ReloadOutlined :spin="refreshing" /> Refresh</a-button>
+            <a-button class="save-view-button" @click="openCreateView(false)"><SaveOutlined /> Save as View</a-button>
+            <a-button type="primary" :disabled="!filteredPoints.length" @click="openCreateDataset()"><DatabaseOutlined /> Create Dataset</a-button>
+          </div>
         </div>
         <div class="views-bar">
           <div class="views-list">
             <button type="button" :class="['view-tab', { active: activeTab === 'all' }]" @click="activateTab('all')">All points ({{ points.length }})</button>
-            <button type="button" :class="['view-tab', { active: activeTab === 'favorites' }]" @click="activateTab('favorites')">★ Favorites ({{ favoriteCount }})</button>
+            <button type="button" :class="['view-tab', { active: activeTab === 'favorites' }]" @click="activateTab('favorites')"> Favorites ({{ favoriteCount }})</button>
             <div v-for="view in savedViews.filter(v => openViewIds.includes(v.id))" :key="view.id" :class="['saved-view-tab', { active: activeTab === view.id }]">
               <button type="button" @click="activateTab(view.id)">{{ view.name }} ({{ new Set(view.pointKeys.map(normalizePointKey)).size }})</button>
               <button type="button" class="close-view" :aria-label="`Close ${view.name} tab`" @click="closeSavedView(view.id)"><CloseOutlined /></button>
             </div>
+            <button type="button" :class="['view-tab', { active: activeTab === 'views' }]" @click="activateTab('views')">Views ({{ savedViews.length }})</button>
             <button type="button" :class="['view-tab', { active: activeTab === 'datasets' }]" @click="activateTab('datasets')">Datasets ({{ datasets.length }})</button>
           </div>
-          <a-button type="text" class="manage-views" @click="manageModalOpen = true"><SettingOutlined /> Manage Views</a-button>
         </div>
-        <a-alert v-if="viewError && !saveModalOpen" type="warning" show-icon :message="viewError" style="margin-bottom: 10px" />
+        <a-alert v-if="viewError" type="warning" show-icon :message="viewError" style="margin-bottom: 10px" />
         <a-alert v-if="activeSavedView && missingViewCount" type="info" show-icon :message="`${missingViewCount} saved point(s) are not in the recent sample. They remain saved in this view.`" style="margin-bottom: 10px" />
         <div class="table-meta">
           <div>
-            <template v-if="pendingDatasetDraft">
-              <a-button type="primary" size="small" @click="continueDataset()"><DatabaseOutlined /> Continue Dataset ({{ selectedPointKeys.length }} selected)</a-button>
-              <a-button size="small" style="margin-left: 8px" @click="cancelEditSelection()">Cancel</a-button>
-            </template>
-            <a-button v-else-if="selectedPointKeys.length" size="small" @click="openSaveView(true)"><SaveOutlined /> Save selected ({{ selectedPointKeys.length }})</a-button>
+            <a-button v-if="selectedPointKeys.length" size="small" @click="openCreateView(true)"><SaveOutlined /> Save selected ({{ selectedPointKeys.length }})</a-button>
           </div>
-          <span class="toolbar-info">Showing {{ activeTab === 'datasets' ? datasets.length + ' datasets' : filteredPoints.length + ' points' }}<template v-if="lastSync"> · Last sync {{ lastSync }}</template></span>
+          <span class="toolbar-info">Showing {{ activeTab === 'datasets' ? datasets.length + ' datasets' : activeTab === 'views' ? savedViews.length + ' views' : filteredPoints.length + ' points' }}<template v-if="lastSync"> · Last sync {{ lastSync }}</template></span>
         </div>
 
+        <!-- Views tab content -->
+        <template v-if="activeTab === 'views'">
+          <a-table :columns="viewColumns" :data-source="savedViews" :loading="viewsLoading" row-key="id" size="small" :pagination="{ pageSize: 20, showSizeChanger: true, pageSizeOptions: ['10', '20', '50'] }">
+            <template #bodyCell="{ column, record: view }">
+              <template v-if="column.key === 'name'">
+                <div class="point-primary">{{ view.name }}</div>
+                <div v-if="view.description" class="point-secondary">{{ view.description }}</div>
+              </template>
+              <template v-else-if="column.key === 'points'">{{ new Set(view.pointKeys.map(normalizePointKey)).size }}</template>
+              <template v-else-if="column.key === 'actions'">
+                <a-space>
+                  <a-tooltip title="Open"><a-button size="small" @click="openSavedView(view.id); activeTab = view.id"><template #icon><BarChartOutlined /></template></a-button></a-tooltip>
+                  <a-tooltip title="Export CSV"><a-button size="small" @click="exportViewCsv(view)"><template #icon><DownloadOutlined /></template></a-button></a-tooltip>
+                  <a-tooltip title="Edit"><a-button size="small" @click="openEditView(view)"><template #icon><EditOutlined /></template></a-button></a-tooltip>
+                  <a-popconfirm title="Delete this saved view permanently?" ok-text="Delete" @confirm="deleteSavedView(view.id)"><a-button size="small" danger><template #icon><DeleteOutlined /></template></a-button></a-popconfirm>
+                </a-space>
+              </template>
+            </template>
+            <template #emptyText>No saved views yet — filter points and click Save as View.</template>
+          </a-table>
+        </template>
+
         <!-- Datasets tab content -->
-        <template v-if="activeTab === 'datasets'">
+        <template v-else-if="activeTab === 'datasets'">
           <a-table :columns="datasetColumns" :data-source="datasets" :loading="datasetsLoading" row-key="id" size="small" :pagination="{ pageSize: 20, showSizeChanger: true, pageSizeOptions: ['10', '20', '50'] }">
             <template #bodyCell="{ column, record: ds }">
               <template v-if="column.key === 'name'">
@@ -560,7 +538,7 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
         </template>
 
         <!-- Points table -->
-        <a-table v-else :columns="columns" :data-source="filteredPoints" :loading="loading" row-key="key" :row-selection="rowSelection" size="small" :pagination="{ pageSize, showSizeChanger: true, pageSizeOptions: ['10', '20', '50'], onShowSizeChange: (_: number, size: number) => { pageSize = size } }" :scroll="{ x: 1250 }" @change="onTableChange">
+        <a-table v-else :columns="columns" :data-source="filteredPoints" :loading="loading" row-key="key" :row-selection="rowSelection" size="small" :pagination="{ pageSize, showSizeChanger: true, pageSizeOptions: ['10', '20', '50'], onShowSizeChange: (_: number, size: number) => { pageSize = size } }" :scroll="{ x: 1390 }" table-layout="fixed" @change="onTableChange">
           <template #bodyCell="{ column, record }">
             <template v-if="column.key === 'protocol'"><a-tag :color="protocolColor(record.protocol)">{{ protocolLabel(record.protocol) }}</a-tag></template>
             <template v-else-if="column.key === 'source'">{{ friendlySource(record.endpointName) }}</template>
@@ -576,24 +554,12 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
       </a-card>
       <p class="note">This view uses the latest 100 activity events plus subscription snapshots. It is not a complete point inventory or historical archive. “Stale” means no observed update for 60 seconds, not necessarily a device failure.</p>
     </div>
-    <a-modal v-model:open="saveModalOpen" title="Save as View" :confirm-loading="savingView" ok-text="Save View" @ok="saveView">
-      <p class="modal-hint">Create a named view from {{ candidatePoints.length }} {{ saveSelected ? 'selected' : 'filtered' }} points.</p>
-      <label class="modal-label">View name <span class="required">*</span></label>
-      <a-input v-model:value="newViewName" placeholder="e.g. VAV-1 Controller" :maxlength="100" @pressEnter="saveView" />
-      <label class="modal-label">Description (optional)</label>
-      <a-textarea v-model:value="newViewDescription" placeholder="What does this view monitor?" :rows="2" :maxlength="500" />
-      <a-alert v-if="viewError" type="error" :message="viewError" show-icon style="margin-top: 12px" />
-      <p class="modal-hint" style="margin-top: 12px">Saved views capture point identities, not live search rules. Database API required.</p>
-    </a-modal>
-    <a-modal v-model:open="manageModalOpen" title="Manage Views" :footer="null">
-      <a-empty v-if="!savedViews.length" description="No saved views yet" />
-      <div v-for="view in savedViews" :key="view.id" class="manage-row">
-        <div><strong>{{ view.name }}</strong><div class="modal-hint">{{ new Set(view.pointKeys.map(normalizePointKey)).size }} points</div></div>
-        <div class="manage-actions"><a-button size="small" @click="openSavedView(view.id); manageModalOpen = false">Open</a-button>
-          <a-popconfirm title="Delete this saved view permanently?" ok-text="Delete" @confirm="deleteSavedView(view.id)"><a-button size="small" danger>Delete</a-button></a-popconfirm>
-        </div>
-      </div>
-    </a-modal>
+    <CreateViewDrawer
+      v-model:open="viewDrawerOpen"
+      :point-rows="selectedPointKeys.length ? candidateViewPoints : filteredPoints"
+      :editing-view="editingView"
+      @saved="onViewSaved"
+    />
     <a-drawer v-model:open="drawerOpen" title="Point details" :width="440">
       <template v-if="selected">
         <a-descriptions :column="1" bordered size="small">
@@ -611,12 +577,10 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
       </template>
     </a-drawer>
     <CreateDatasetDrawer
-      ref="datasetDrawerRef"
       v-model:open="datasetDrawerOpen"
       :point-rows="candidateDatasetPoints"
       :editing-dataset="editingDataset"
       @saved="onDatasetSaved"
-      @edit-selection="onEditSelection"
     />
   </AppLayout>
 </template>
@@ -637,13 +601,7 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
 .saved-view-tab { display: flex; gap: 10px; align-items: center; }
 .saved-view-tab button { color: inherit; background: none; border: 0; cursor: pointer; padding: 0; font: inherit; }
 .saved-view-tab .close-view { color: #8895a7; }
-.manage-views { color: #1677ff; white-space: nowrap; flex-shrink: 0; }
 .table-meta { display: flex; justify-content: space-between; align-items: center; min-height: 28px; margin-bottom: 10px; gap: 8px; }
-.modal-label { display: block; font-size: 12px; font-weight: 600; margin: 14px 0 7px; }
-.modal-hint { color: #8a94a3; font-size: 12px; margin: 0; }
-.required { color: #f04452; }
-.manage-row { display: flex; align-items: center; justify-content: space-between; padding: 12px 0; border-bottom: 1px solid #edf0f5; gap: 10px; }
-.manage-actions { display: flex; gap: 8px; }
 @media (max-width: 850px) { .views-bar { align-items: flex-start; flex-direction: column; } .metric-inner { gap: 8px; } .metric-icon { width: 38px; height: 38px; } }
 
 .eyebrow { font-size: 10px; letter-spacing: 1.3px; font-weight: 700; color: #8a95a5; margin-bottom: 7px; }
@@ -666,9 +624,11 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
 .heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 16px; }
 .heading p { color: #777; margin: 0; }
 .stats { margin-bottom: 14px; }
-.filters { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
-.search { width: 300px; max-width: 100%; }
-.filter { width: 170px; max-width: 100%; }
+.filters { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-bottom: 12px; }
+.search { width: 240px; flex-shrink: 0; }
+.filter { width: 160px; flex-shrink: 0; }
+.filter :deep(.ant-select) { width: 100% !important; }
+.filters-actions { display: flex; gap: 8px; margin-left: auto; flex-shrink: 0; }
 .toolbar-info { color: #888; font-size: 12px; }
 .note { color: #888; font-size: 12px; margin-top: 12px; }
 .point-primary { font-size: 13px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

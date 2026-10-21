@@ -2016,6 +2016,10 @@ export const reconfigureSchemaDrift = async (protocol: string, driftOptions: Dri
 	});
 };
 
+export const reloadDriftRules = (): void => {
+	devicePublish?.reloadDriftRules();
+};
+
 /**
  * Query stored anomaly baselines from SQLite
  * Used by: GET /v1/anomaly/baselines

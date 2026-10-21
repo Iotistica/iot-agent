@@ -11,7 +11,7 @@ import AppLayout from '@/components/layout/AppLayout.vue'
 import { useProStatus } from '@/composables/useProStatus'
 
 const { proInstalled } = useProStatus()
-import { anomalyApi, RESOLUTION_REASON_LABELS, type BadActor, type ResolutionReason, type SchemaDriftBaselineRow } from '@/api/anomaly'
+import { anomalyApi, driftRulesApi, RESOLUTION_REASON_LABELS, type BadActor, type ResolutionReason } from '@/api/anomaly'
 import { client as apiClient } from '@/api/client'
 import { sourcesApi } from '@/api/sources'
 import { BUILTIN_ANOMALY_TEMPLATES, type BuiltinAnomalyTemplate } from '@/data/anomalyTemplates'
@@ -24,7 +24,10 @@ import type {
   EdgeAnomalyEvent,
   EdgeAnomalyIncident,
   EdgeAnomalyAlert,
+  DriftRuleConfig,
 } from '@/types'
+import DriftRuleDrawer, { DRIFT_TYPE_LABELS, DRIFT_TYPE_TAG_COLORS } from '@/components/DriftRuleDrawer.vue'
+import { PROTOCOL_LABELS, protocolLabel } from '@/utils/protocol'
 
 // ── Shared ────────────────────────────────────────────────────────────────────
 const activeTab = ref('incidents')
@@ -609,71 +612,97 @@ async function clearAllBaselines() {
 }
 
 // ── Schema Drift tab ─────────────────────────────────────────────────────────
-// Flattened per-field view of the Pro schema drift detector's persisted state:
-// established baseline fields alongside fields still accumulating toward
-// promotion (see SchemaDriftDetector.handleNewField in iot-agent-pro).
-const schemaDriftRows = ref<SchemaDriftBaselineRow[]>([])
-const schemaDriftTotal = ref(0)
-const schemaDriftLoading = ref(false)
-const schemaDriftQuery = ref('')
+// ── Schema Drift Rules ────────────────────────────────────────────────────────
+const driftRules = ref<DriftRuleConfig[]>([])
+const driftRulesLoading = ref(false)
+const driftRuleDrawerOpen = ref(false)
+const editingDriftRule = ref<DriftRuleConfig | null>(null)
+const driftRulePrefill = ref<{ fieldPattern?: string; devicePattern?: string; endpointPattern?: string } | undefined>(undefined)
 
-watch(schemaDriftQuery, () => {
-  debounce('schema-drift-filter', () => loadSchemaDriftBaselines())
-})
-
-// Matches SchemaDriftDetector's DEFAULT_OPTIONS.adaptivePromotionBatches/
-// adaptivePromotionMinElapsedMs — the real thresholds for every source
-// unless overridden in the Configuration tab below (not per-protocol).
-// Promotion requires BOTH: stableBatches >= BATCHES and elapsed time since
-// first seen >= MIN_ELAPSED_MS.
-const SCHEMA_DRIFT_PROMOTION_BATCHES = 50
-const SCHEMA_DRIFT_PROMOTION_MIN_ELAPSED_MS = 10 * 60 * 1000
-
-function formatElapsed(ms: number): string {
-  if (ms < 60000) return `${Math.round(ms / 1000)}s`
-  if (ms < 3600000) return `${Math.round(ms / 60000)}m`
-  return `${Math.round(ms / 3600000)}h`
+async function loadDriftRules() {
+  driftRulesLoading.value = true
+  try {
+    driftRules.value = await driftRulesApi.getRules()
+  } catch { /* silent */ } finally {
+    driftRulesLoading.value = false
+  }
 }
 
-const schemaDriftColumns = [
-  { title: 'Protocol', dataIndex: 'protocol', key: 'protocol', width: 120, ellipsis: true, sorter: (a: SchemaDriftBaselineRow, b: SchemaDriftBaselineRow) => a.protocol.localeCompare(b.protocol) },
-  { title: 'Device', key: 'device', width: 200, ellipsis: true, sorter: (a: SchemaDriftBaselineRow, b: SchemaDriftBaselineRow) => (a.device ?? '').localeCompare(b.device ?? '') },
-  { title: 'Point', key: 'field', ellipsis: true, sorter: (a: SchemaDriftBaselineRow, b: SchemaDriftBaselineRow) => a.field.localeCompare(b.field) },
-  { title: 'Status', key: 'status', width: 130, sorter: (a: SchemaDriftBaselineRow, b: SchemaDriftBaselineRow) => a.status.localeCompare(b.status) },
-  { title: 'Type', key: 'dominantType', width: 90, sorter: (a: SchemaDriftBaselineRow, b: SchemaDriftBaselineRow) => (a.dominantType ?? '').localeCompare(b.dominantType ?? '') },
-  { title: 'Updated', key: 'updatedAt', width: 160, sorter: (a: SchemaDriftBaselineRow, b: SchemaDriftBaselineRow) => a.updatedAt.localeCompare(b.updatedAt) },
+function openNewDriftRule(prefill?: { fieldPattern?: string; devicePattern?: string; endpointPattern?: string }) {
+  editingDriftRule.value = null
+  driftRulePrefill.value = prefill
+  driftRuleDrawerOpen.value = true
+}
+
+function editDriftRule(rule: DriftRuleConfig) {
+  editingDriftRule.value = rule
+  driftRulePrefill.value = undefined
+  driftRuleDrawerOpen.value = true
+}
+
+async function deleteDriftRule(rule: DriftRuleConfig) {
+  if (!rule.id) return
+  try {
+    await driftRulesApi.deleteRule(rule.id)
+    message.success('Rule deleted')
+    loadDriftRules()
+  } catch (err: any) {
+    message.error(err?.message ?? 'Delete failed')
+  }
+}
+
+function driftRuleScopeLabel(rule: DriftRuleConfig): string {
+  const hasDev = !!rule.devicePattern
+  const hasEp = !!rule.endpointPattern
+  const hasField = !!rule.fieldPattern
+
+  if (hasDev && rule.devicePattern === '*' && !hasEp && !hasField) return 'All devices'
+
+  if (hasDev && rule.devicePattern !== '*' && !hasEp) return rule.devicePattern!
+
+  if (hasEp && !hasDev) {
+    const m = rule.endpointPattern!.match(/^\*(\w+)\*$/)
+    if (m && m[1] in PROTOCOL_LABELS) return protocolLabel(m[1])
+  }
+
+  const parts: string[] = []
+  if (hasField) parts.push(`field: ${rule.fieldPattern}`)
+  if (hasDev) parts.push(`device: ${rule.devicePattern}`)
+  if (hasEp) parts.push(`endpoint: ${rule.endpointPattern}`)
+  return parts.join(', ') || '—'
+}
+
+function driftRuleSeverityLabel(rule: DriftRuleConfig): string {
+  if (!rule.severityOverrides) return '—'
+  const vals = [...new Set(Object.values(rule.severityOverrides))]
+  if (vals.length === 0) return '—'
+  if (vals.length === 1) return vals[0].charAt(0).toUpperCase() + vals[0].slice(1)
+  return 'Mixed'
+}
+
+function driftRuleDriftTypeTags(rule: DriftRuleConfig): Array<{ label: string; color: string }> {
+  const types = [...new Set([...(rule.alertOnDriftTypes ?? []), ...(rule.suppressDriftTypes ?? [])])]
+  return types.map(t => ({ label: DRIFT_TYPE_LABELS[t] ?? t, color: DRIFT_TYPE_TAG_COLORS[t] ?? 'default' }))
+}
+
+async function toggleDriftRuleEnabled(rule: DriftRuleConfig) {
+  if (!rule.id) return
+  try {
+    await driftRulesApi.updateRule(rule.id, { enabled: !rule.enabled })
+    rule.enabled = !rule.enabled
+  } catch (err: any) {
+    message.error(err?.message ?? 'Failed to toggle rule')
+  }
+}
+
+const driftRuleColumns: TableColumnType[] = [
+  { title: 'Rule name', dataIndex: 'name', key: 'name', ellipsis: true },
+  { title: 'Applies to', key: 'scope', width: 160, ellipsis: true },
+  { title: 'Detection Type', key: 'driftType' },
+  { title: 'Severity', key: 'severity', width: 100 },
+  { title: 'Enabled', key: 'enabled', width: 80 },
+  { title: '', key: 'actions', width: 100, align: 'right' as const },
 ]
-
-async function loadSchemaDriftBaselines() {
-  schemaDriftLoading.value = true
-  try {
-    const r = await anomalyApi.getSchemaDriftBaselines({ q: schemaDriftQuery.value.trim() || undefined })
-    schemaDriftRows.value = r.baselines
-    schemaDriftTotal.value = r.total
-  } catch (err: unknown) {
-    message.error((err as { message?: string })?.message ?? 'Failed to load schema drift baselines')
-  } finally {
-    schemaDriftLoading.value = false
-  }
-}
-
-const clearingSchemaDrift = ref(false)
-const resetSchemaDriftModalOpen = ref(false)
-
-async function clearAllSchemaDriftBaselines() {
-  clearingSchemaDrift.value = true
-  try {
-    const { deleted } = await anomalyApi.clearSchemaDriftBaselines()
-    message.success(`Cleared ${deleted} schema-drift baseline${deleted !== 1 ? 's' : ''}`)
-    schemaDriftRows.value = []
-    schemaDriftTotal.value = 0
-    resetSchemaDriftModalOpen.value = false
-  } catch (err: unknown) {
-    message.error((err as { message?: string })?.message ?? 'Clear failed')
-  } finally {
-    clearingSchemaDrift.value = false
-  }
-}
 
 // ── Config tab ─────────────────────────────────────────────────────────────────
 const config = ref<AnomalyConfig | null>(null)
@@ -1298,7 +1327,7 @@ function onTabChange(tab: string) {
   else if (tab === 'incidents') { loadEdgeIncidents(); startTabAutoRefresh(loadEdgeIncidents, edgeIncidentsLoading) }
   else if (tab === 'alerts') { loadEdgeAlerts(); startTabAutoRefresh(loadEdgeAlerts, edgeAlertsLoading) }
   else if (tab === 'baselines') { loadBaselines(); startTabAutoRefresh(loadBaselines, baselinesLoading) }
-  else if (tab === 'schema-drift') { loadSchemaDriftBaselines(); startTabAutoRefresh(loadSchemaDriftBaselines, schemaDriftLoading) }
+  else if (tab === 'schema-drift') { loadDriftRules() }
   else if (tab === 'rules') { loadConfig(); loadMetricSuggestions(); loadBadActors(); ensureEndpointMaps() }
 }
 
@@ -1607,59 +1636,79 @@ onUnmounted(() => {
           style="margin-bottom: 12px"
         />
         <a-card size="small" class="list-card">
-        <div class="filters">
-          <a-input
-            v-model:value="schemaDriftQuery"
-            placeholder="Search by protocol, device, or field…"
-            allow-clear
-            class="search"
+          <div class="toolbar-info" style="display: flex; justify-content: space-between; align-items: center">
+            <span>{{ driftRules.length }} rule{{ driftRules.length !== 1 ? 's' : '' }}</span>
+            <a-button type="primary" size="small" @click="openNewDriftRule()">
+              <template #icon><PlusOutlined /></template>
+              Add rule
+            </a-button>
+          </div>
+          <div style="font-size: 12px; color: #888; margin-bottom: 8px">
+            Alerts fire only for devices and types covered by a rule.
+          </div>
+
+          <a-table
+            :columns="driftRuleColumns"
+            :data-source="driftRules"
+            :loading="driftRulesLoading"
+            :pagination="{ pageSize: 20, showSizeChanger: true, pageSizeOptions: ['10', '20', '50'] }"
+            :row-key="(r: DriftRuleConfig) => r.id ?? ''"
+            size="small"
           >
-            <template #prefix><SearchOutlined style="color: #bbb" /></template>
-          </a-input>
-          <a-button danger :loading="clearingSchemaDrift" @click="resetSchemaDriftModalOpen = true">Reset</a-button>
-        </div>
-        <div class="toolbar-info">{{ schemaDriftTotal }} total · auto-refresh 5s</div>
-        <a-table
-          :columns="schemaDriftColumns"
-          :data-source="schemaDriftRows"
-          :loading="schemaDriftLoading"
-          :pagination="{ pageSize: PAGE_SIZE, showSizeChanger: false }"
-          :row-key="(record: SchemaDriftBaselineRow) => `${record.protocol}::${record.device ?? ''}::${record.field}`"
-          size="small"
-          :scroll="{ x: true }"
-        >
-          <template #bodyCell="{ column, record }">
-            <template v-if="column.key === 'device'">
-              <span style="font-size: 12px">{{ record.device ?? '—' }}</span>
+            <template #bodyCell="{ column, record }">
+              <template v-if="column.key === 'name'">
+                <a style="font-size: 12px" @click="editDriftRule(record as DriftRuleConfig)">
+                  {{ (record as DriftRuleConfig).name || '(unnamed)' }}
+                </a>
+              </template>
+              <template v-else-if="column.key === 'scope'">
+                <span style="font-size: 11px; color: #888">{{ driftRuleScopeLabel(record as DriftRuleConfig) }}</span>
+              </template>
+              <template v-else-if="column.key === 'driftType'">
+                <a-tag
+                  v-for="tag of driftRuleDriftTypeTags(record as DriftRuleConfig)"
+                  :key="tag.label"
+                  :color="tag.color"
+                  style="font-size: 11px; margin: 1px"
+                >{{ tag.label }}</a-tag>
+                <span v-if="driftRuleDriftTypeTags(record as DriftRuleConfig).length === 0" style="color: #aaa; font-size: 11px">—</span>
+              </template>
+              <template v-else-if="column.key === 'severity'">
+                <span style="font-size: 12px">{{ driftRuleSeverityLabel(record as DriftRuleConfig) }}</span>
+              </template>
+              <template v-else-if="column.key === 'enabled'">
+                <a-switch
+                  :checked="(record as DriftRuleConfig).enabled"
+                  size="small"
+                  @change="toggleDriftRuleEnabled(record as DriftRuleConfig)"
+                />
+              </template>
+              <template v-else-if="column.key === 'actions'">
+                <a-space>
+                  <a-button size="small" @click="editDriftRule(record as DriftRuleConfig)">Edit</a-button>
+                  <a-popconfirm title="Delete this rule?" @confirm="deleteDriftRule(record as DriftRuleConfig)">
+                    <a-button size="small" danger>
+                      <template #icon><DeleteOutlined /></template>
+                    </a-button>
+                  </a-popconfirm>
+                </a-space>
+              </template>
             </template>
-            <template v-else-if="column.key === 'field'">
-              <span :title="record.field" style="font-size: 12px">{{ record.field.replace(DRIFT_FIELD_PREFIX_RE, '') }}</span>
+            <template #emptyText>
+              <div style="padding: 24px 0; text-align: center; color: #aaa; font-size: 13px">
+                No schema drift alert rules configured. Add a rule to receive alerts when device schemas change.
+              </div>
             </template>
-            <template v-else-if="column.key === 'status'">
-              <a-tag v-if="record.status === 'baseline'" color="green" style="font-size: 10px">Baseline</a-tag>
-              <a-tooltip
-                v-else
-                :title="`Seen ${record.stableBatches} time(s), first appeared ${record.elapsedMs != null ? formatElapsed(record.elapsedMs) : '?'} ago. Promotes once occurrence count reaches ${SCHEMA_DRIFT_PROMOTION_BATCHES} AND elapsed time reaches ${formatElapsed(SCHEMA_DRIFT_PROMOTION_MIN_ELAPSED_MS)} — a field that appeared once in a burst and hasn't been seen since can stay pending indefinitely even past ${SCHEMA_DRIFT_PROMOTION_BATCHES} occurrences, until it's evicted as stale.`"
-              >
-                <a-tag color="blue" style="font-size: 10px">
-                  Pending {{ record.elapsedMs != null ? formatElapsed(record.elapsedMs) : `${record.stableBatches}/${SCHEMA_DRIFT_PROMOTION_BATCHES}` }}
-                </a-tag>
-              </a-tooltip>
-            </template>
-            <template v-else-if="column.key === 'dominantType'">
-              <span style="font-size: 12px; color: #888">{{ record.dominantType ?? '—' }}</span>
-            </template>
-            <template v-else-if="column.key === 'updatedAt'">
-              <span style="color: #888; font-size: 12px">{{ record.updatedAt ? fmtTs(record.updatedAt) : '—' }}</span>
-            </template>
-          </template>
-          <template #emptyText>
-            <div style="padding: 24px 0; text-align: center; color: #aaa; font-size: 13px">
-              No schema drift baselines yet — agent is still learning.
-            </div>
-          </template>
-        </a-table>
+          </a-table>
         </a-card>
+
+        <DriftRuleDrawer
+          :open="driftRuleDrawerOpen"
+          :editing-rule="editingDriftRule"
+          :prefill="driftRulePrefill"
+          @update:open="driftRuleDrawerOpen = $event"
+          @saved="loadDriftRules()"
+        />
       </a-tab-pane>
 
       <!-- ══ RULES ══════════════════════════════════════════════════════════ -->
@@ -1841,18 +1890,6 @@ onUnmounted(() => {
       <p>Deletes saved baselines and clears live buffers — the detection engine relearns from scratch.</p>
     </a-modal>
 
-    <!-- ── Reset schema-drift baselines modal ───────────────────────────────── -->
-    <a-modal
-      :open="resetSchemaDriftModalOpen"
-      title="Reset all schema-drift baselines?"
-      ok-text="Reset"
-      ok-type="danger"
-      :confirm-loading="clearingSchemaDrift"
-      @ok="clearAllSchemaDriftBaselines"
-      @cancel="resetSchemaDriftModalOpen = false"
-    >
-      <p>Deletes saved schema-drift baselines and clears every endpoint's live state — every device relearns its schema from scratch (fresh warmup window per device).</p>
-    </a-modal>
 
     <!-- ── Metric config drawer ─────────────────────────────────────────────── -->
     <a-drawer

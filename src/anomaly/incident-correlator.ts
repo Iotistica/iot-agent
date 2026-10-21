@@ -169,7 +169,7 @@ export class IncidentCorrelator {
 		const parts = [`${incident.severity.toUpperCase()}: Schema drift on ${incident.device_name}`];
 
 		if (payload.drift_endpoint) {
-			parts.push(`(endpoint '${payload.drift_endpoint}').`);
+			parts.push(`('${payload.drift_endpoint}').`);
 		} else {
 			parts[0] += '.';
 		}

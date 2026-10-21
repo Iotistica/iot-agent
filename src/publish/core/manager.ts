@@ -16,6 +16,7 @@ import { HeartbeatManager } from './heartbeat.js';
 import { createHash } from 'crypto';
 import { loadSchemaDrift } from '../../pro/loader.js';
 import { SchemaDriftModel } from '../../db/models/schema-drift.model.js';
+import { SchemaDriftRuleModel } from '../../db/models/schema-drift-rule.model.js';
 import type { AnomalyEventPayload } from '../../db/models/anomaly-event.model.js';
 import type { DictionaryManager } from '../../mqtt/dictionary.js';
 import type { PublishDestinationInfo, PublishBatchItem } from './types.js';
@@ -52,6 +53,7 @@ type DriftAlertEvent = {
 	endpointName: string;
 	device?: string;
 	driftType: 'new-field' | 'missing-field' | 'type-drift' | 'rename-candidate';
+	severity?: 'warning' | 'critical';
 	fieldName?: string;
 	expectedType?: string;
 	observedTypes?: string[];
@@ -164,6 +166,7 @@ interface AccumulatedFeature {
 
 export interface DatasetAccumulatorEntry {
 	features: Map<string, AccumulatedFeature>;
+	lastKnownValues: Map<string, AccumulatedFeature>;
 	lastFlushedAt: number;
 	binding: HostBinding;
 	destinationTopic: string;
@@ -332,6 +335,8 @@ export class PublishManager extends EventEmitter {
 			SchemaDriftModel,
 		);
 
+		this.schemaDriftDetector.setRules?.(SchemaDriftRuleModel.getAll());
+
 		// setIncidentCorrelator() may already have been called before this resolved
 		// (it's async, called from the constructor) — re-apply now that there's
 		// finally a detector instance to wire it into.
@@ -352,6 +357,10 @@ export class PublishManager extends EventEmitter {
 	public async reconfigureSchemaDrift(driftOptions: DriftOptions | undefined): Promise<void> {
 		this.config.driftOptions = driftOptions;
 		await this.initSchemaDrift();
+	}
+
+	public reloadDriftRules(): void {
+		this.schemaDriftDetector?.setRules?.(SchemaDriftRuleModel.getAll());
 	}
 
 	public setAnomalyService(service?: any): void {
@@ -391,12 +400,10 @@ export class PublishManager extends EventEmitter {
 		// rename-candidate has no single fieldName — it's a from/to pair — so
 		// fall back to the "to" field for the metric label and fingerprint.
 		const rawField = event.fieldName ?? event.renameCandidateTo ?? 'unknown';
-		// Only missing-field/type-drift indicate real breakage; new-field and
-		// rename-candidate are still just informational even when the user has
-		// opted into alerting on them.
-		const severity = event.driftType === 'missing-field' || event.driftType === 'type-drift'
-			? 'critical' as const
-			: 'warning' as const;
+		const severity = event.severity
+			?? (event.driftType === 'missing-field' || event.driftType === 'type-drift'
+				? 'critical' as const
+				: 'warning' as const);
 
 		// Stable per (endpoint, device, drift type, field) so repeated occurrences
 		// of the SAME problem escalate one incident instead of creating a new one
@@ -649,6 +656,7 @@ export class PublishManager extends EventEmitter {
 				const allKeys = new Set(binding.datasetPointKeys);
 				accumulators.set(subId, {
 					features: new Map(),
+					lastKnownValues: new Map(),
 					lastFlushedAt: Date.now(),
 					binding,
 					destinationTopic: '',
@@ -899,10 +907,12 @@ export class PublishManager extends EventEmitter {
 		snapshot: Map<string, AccumulatedFeature>,
 		datasetConfig: MlDatasetRecord,
 		configuredPointKeys: Set<string>,
-	): { data: PublishPayload; msgId: string; baselineSize: number } {
+		lastKnownValues: Map<string, AccumulatedFeature>,
+	): { data: PublishPayload; msgId: string; baselineSize: number } | null {
 		const msgId = this.mqttConnection.getMessageIdGenerator?.()?.generate()
 			?? `${this.deviceUuid}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 
+		const missingPolicy = datasetConfig.missing_values || 'keep_null';
 		const externalGroupName = datasetConfig.name || this.normalizeExternalGroupName(endpointName);
 		const features: Record<string, unknown>[] = [];
 		const sourceNameSet = new Set<string>();
@@ -917,19 +927,27 @@ export class PublishManager extends EventEmitter {
 			if (accumulated) {
 				const feat: Record<string, unknown> = { ...accumulated.feature, sourceName: accumulated.sourceName, observedAt: accumulated.observedAt };
 				features.push(feat);
+			} else if (missingPolicy === 'skip_missing') {
+				// omit entirely
+			} else if (missingPolicy === 'forward_fill') {
+				const lastKnown = lastKnownValues.get(pointKey);
+				if (lastKnown) {
+					features.push({ ...lastKnown.feature, sourceName: lastKnown.sourceName, status: 'forwarded', observedAt: lastKnown.observedAt });
+				} else {
+					features.push({ name: metric, sourceName, value: null, status: 'missing', observedAt: null });
+				}
 			} else {
-				features.push({
-					name: metric,
-					sourceName,
-					value: null,
-					status: 'missing',
-					observedAt: null,
-				});
+				features.push({ name: metric, sourceName, value: null, status: 'missing', observedAt: null });
 			}
 		}
 
 		const collectedFeatures = snapshot.size;
 		const expectedFeatures = configuredPointKeys.size;
+
+		if (missingPolicy === 'drop_incomplete' && collectedFeatures < expectedFeatures) {
+			return null;
+		}
+
 		const data: Record<string, unknown> = {
 			timestamp: Date.now(),
 			node: datasetConfig.name,
@@ -973,15 +991,34 @@ export class PublishManager extends EventEmitter {
 		const snapshot = entry.features;
 		entry.features = new Map();
 
+		for (const [key, feat] of snapshot) {
+			entry.lastKnownValues.set(key, feat);
+		}
+
 		try {
 			if (entry.allExpectedPointKeys.size === 0 || !entry.datasetConfig) return;
 
-			const { data, baselineSize } = this.buildAccumulatedMlPayload(
+			const result = this.buildAccumulatedMlPayload(
 				entry.endpointName || endpointName,
 				snapshot,
 				entry.datasetConfig,
 				entry.allExpectedPointKeys,
+				entry.lastKnownValues,
 			);
+
+			if (!result) {
+				this.logger?.debug('Dataset flush suppressed (drop_incomplete)', {
+					component: 'PublishManager',
+					protocol: this.protocol,
+					subscriptionId: binding.subscription.id,
+					datasetId: entry.datasetConfig?.id,
+					collectedFeatures: snapshot.size,
+					expectedFeatures: entry.allExpectedPointKeys.size,
+				});
+				return;
+			}
+
+			const { data, baselineSize } = result;
 
 			const subscriptionCompression = binding.subscription.compression ?? null;
 			const overrideOpts = subscriptionCompression ? compressionToOpts(subscriptionCompression) : undefined;
@@ -1869,8 +1906,9 @@ export class PublishManager extends EventEmitter {
 				const allowedKeys = binding.datasetPointKeys;
 				const allRecords = this.collectTagRecords(messages);
 				for (const record of allRecords) {
+					const pi = record.pointIdentity as PointIdentity | undefined;
 					const sourceName = this.readExternalNodeCandidate(record) ?? endpointName;
-					const metric = this.resolveRecordMetric(record);
+					const metric = pi?.normalizedName ?? this.resolveRecordMetric(record);
 					const pointKey = JSON.stringify([sourceName, metric]);
 					if (!allowedKeys.has(pointKey)) continue;
 					if (filterBadQuality) {
@@ -1889,8 +1927,9 @@ export class PublishManager extends EventEmitter {
 				// Activity monitor recording for dataset points
 				if (binding.publisher.id !== undefined) {
 					for (const record of allRecords) {
+						const pi = record.pointIdentity as PointIdentity | undefined;
 						const sourceName = this.readExternalNodeCandidate(record) ?? endpointName;
-						const metric = this.resolveRecordMetric(record);
+						const metric = pi?.normalizedName ?? this.resolveRecordMetric(record);
 						const pointKey = JSON.stringify([sourceName, metric]);
 						if (!allowedKeys.has(pointKey)) continue;
 						const pointIdentityFields = this.readPointIdentity(record);

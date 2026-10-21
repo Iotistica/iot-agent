@@ -154,6 +154,7 @@ export async function initDeviceAPI(ctx: AgentInitContext): Promise<void> {
 	const { anomalyRouter } = await import('../api/anomaly.js');
 	const { dataExplorerViewsRouter } = await import('../api/data-explorer-views.js');
 	const { mlDatasetsRouter } = await import('../api/ml-datasets.js');
+	const { pointCatalogRouter } = await import('../api/point-catalog.js');
 	const { DeviceAPI } = await import('../api/index.js');
 	const { healthcheck: memoryHealthcheck, setMemoryLogger } = await import('../system/memory.js');
 
@@ -173,7 +174,7 @@ export async function initDeviceAPI(ctx: AgentInitContext): Promise<void> {
 	];
 
 	ctx.agentAPI = new DeviceAPI({
-		routers: [v1Router, anomalyRouter, dataExplorerViewsRouter, mlDatasetsRouter],
+		routers: [v1Router, anomalyRouter, dataExplorerViewsRouter, mlDatasetsRouter, pointCatalogRouter],
 		healthchecks,
 		logger: ctx.agentLogger,
 	});

@@ -31,20 +31,6 @@ export interface CreateMlDatasetInput {
   outputFormat: string
 }
 
-export interface DatasetDraftState {
-  name: string
-  description: string
-  samplingIntervalSecs: number
-  windowSecs: number
-  missingValues: string
-  normalization: string
-  excludeBadQuality: boolean
-  removeOutliers: boolean
-  outlierMethod: string
-  outputFormat: string
-  selectedKeys: string[]
-  editingDataset: MlDataset | null
-}
 
 const BASE = '/v1/ml-datasets'
 

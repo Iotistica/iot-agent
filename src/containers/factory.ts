@@ -46,12 +46,7 @@ export async function createOrchestratorDriver(
 			break;
 		}
 
-		case 'k3s': {
-			// Lazy load K3s driver
-			const { K3sDriver } = await import('./k3s.js');
-			driver = new K3sDriver(logger);
-			break;
-		}
+		
 
 		default:
 			throw new Error(`Unsupported orchestrator type: ${orchestrator}`);
@@ -127,23 +122,6 @@ export async function detectOrchestrator(logger?: AgentLogger): Promise<'docker'
 		return 'docker';
 	} catch (error) {
 		logger?.debugSync('Docker not available', {
-			component: LogComponents.driverFactory,
-			error: error instanceof Error ? error.message : String(error)
-		});
-	}
-
-	// Try K3s
-	try {
-		const { K3sDriver } = await import('./k3s.js');
-		const testDriver = new K3sDriver(logger);
-		await testDriver.init();
-		await testDriver.shutdown();
-		logger?.infoSync('K3s detected and available', {
-			component: LogComponents.driverFactory
-		});
-		return 'k3s';
-	} catch (error) {
-		logger?.debugSync('K3s not available', {
 			component: LogComponents.driverFactory,
 			error: error instanceof Error ? error.message : String(error)
 		});

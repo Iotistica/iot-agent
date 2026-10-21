@@ -2496,6 +2496,87 @@ router.post('/v1/schema-drift/config/reset-advanced', requireRole('operator'), a
 	}
 });
 
+// ── Schema Drift Rules CRUD ──────────────────────────────────────
+
+router.get('/v1/schema-drift/rules', async (_req: Request, res: Response, next: NextFunction) => {
+	try {
+		const { SchemaDriftRuleModel } = await import('../db/models/schema-drift-rule.model.js');
+		res.json({ rules: SchemaDriftRuleModel.getAll() });
+	} catch (err) { next(err); }
+});
+
+router.post('/v1/schema-drift/rules', requireRole('operator'), async (req: Request, res: Response, next: NextFunction) => {
+	try {
+		const { DriftRuleConfigSchema } = await import('../publish/core/types.js');
+		const parsed = DriftRuleConfigSchema.parse(req.body);
+		const { SchemaDriftRuleModel } = await import('../db/models/schema-drift-rule.model.js');
+		const rule = SchemaDriftRuleModel.create(parsed);
+		actions.reloadDriftRules();
+		res.status(201).json({ rule });
+	} catch (err: any) {
+		if (err?.name === 'ZodError') {
+			res.status(400).json({ error: 'Validation failed', details: err.issues });
+			return;
+		}
+		next(err);
+	}
+});
+
+router.patch('/v1/schema-drift/rules/:uuid', requireRole('operator'), async (req: Request, res: Response, next: NextFunction) => {
+	try {
+		const { SchemaDriftRuleModel } = await import('../db/models/schema-drift-rule.model.js');
+		const rule = SchemaDriftRuleModel.update(req.params.uuid, req.body);
+		if (!rule) { res.status(404).json({ error: 'Rule not found' }); return; }
+		actions.reloadDriftRules();
+		res.json({ rule });
+	} catch (err) { next(err); }
+});
+
+router.delete('/v1/schema-drift/rules/:uuid', requireRole('operator'), async (req: Request, res: Response, next: NextFunction) => {
+	try {
+		const { SchemaDriftRuleModel } = await import('../db/models/schema-drift-rule.model.js');
+		const deleted = SchemaDriftRuleModel.delete(req.params.uuid);
+		if (!deleted) { res.status(404).json({ error: 'Rule not found' }); return; }
+		actions.reloadDriftRules();
+		res.status(204).end();
+	} catch (err) { next(err); }
+});
+
+// ── Schema Drift Rule Templates CRUD ─────────────────────────────
+
+router.get('/v1/schema-drift/templates', async (_req: Request, res: Response, next: NextFunction) => {
+	try {
+		const { SchemaDriftRuleTemplateModel } = await import('../db/models/schema-drift-rule-template.model.js');
+		res.json({ templates: SchemaDriftRuleTemplateModel.getAll() });
+	} catch (err) { next(err); }
+});
+
+router.post('/v1/schema-drift/templates', requireRole('operator'), async (req: Request, res: Response, next: NextFunction) => {
+	try {
+		const { SchemaDriftRuleTemplateModel } = await import('../db/models/schema-drift-rule-template.model.js');
+		const template = SchemaDriftRuleTemplateModel.create(req.body);
+		res.status(201).json({ template });
+	} catch (err) { next(err); }
+});
+
+router.patch('/v1/schema-drift/templates/:uuid', requireRole('operator'), async (req: Request, res: Response, next: NextFunction) => {
+	try {
+		const { SchemaDriftRuleTemplateModel } = await import('../db/models/schema-drift-rule-template.model.js');
+		const template = SchemaDriftRuleTemplateModel.update(req.params.uuid, req.body);
+		if (!template) { res.status(404).json({ error: 'Template not found' }); return; }
+		res.json({ template });
+	} catch (err) { next(err); }
+});
+
+router.delete('/v1/schema-drift/templates/:uuid', requireRole('operator'), async (req: Request, res: Response, next: NextFunction) => {
+	try {
+		const { SchemaDriftRuleTemplateModel } = await import('../db/models/schema-drift-rule-template.model.js');
+		const deleted = SchemaDriftRuleTemplateModel.delete(req.params.uuid);
+		if (!deleted) { res.status(404).json({ error: 'Template not found' }); return; }
+		res.status(204).end();
+	} catch (err) { next(err); }
+});
+
 /**
  * GET /v1/settings
  * Return the user-editable agent settings (logging, features, intervals, runtime,

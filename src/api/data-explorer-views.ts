@@ -29,7 +29,7 @@ function isValidPointKey(key: unknown): boolean {
 	try {
 		const parsed = JSON.parse(key);
 		return Array.isArray(parsed)
-			&& parsed.length === 4
+			&& (parsed.length === 3 || parsed.length === 4)
 			&& parsed.every((v: unknown) => typeof v === 'string' && v.length > 0);
 	} catch {
 		return false;
@@ -89,6 +89,53 @@ dataExplorerViewsRouter.post(
 			);
 
 			return res.status(201).json({ view: toResponse(record) });
+		} catch (error) {
+			next(error);
+		}
+	},
+);
+
+dataExplorerViewsRouter.patch(
+	'/v1/data-explorer/views/:id',
+	requireRole('viewer'),
+	(req: Request, res: Response, next: NextFunction) => {
+		try {
+			const username = (req as any).adminUser as string;
+			const { name, description, pointKeys } = req.body ?? {};
+
+			if (name !== undefined && (typeof name !== 'string' || name.trim().length === 0 || name.trim().length > 100)) {
+				return res.status(400).json({ error: 'name must be 1–100 characters' });
+			}
+
+			if (pointKeys !== undefined) {
+				if (!Array.isArray(pointKeys) || pointKeys.length === 0) {
+					return res.status(400).json({ error: 'pointKeys must be a non-empty array' });
+				}
+				if (pointKeys.length > 500) {
+					return res.status(400).json({ error: 'A view may contain at most 500 points' });
+				}
+				for (let i = 0; i < pointKeys.length; i++) {
+					if (!isValidPointKey(pointKeys[i])) {
+						return res.status(400).json({ error: `Invalid pointKey at index ${i}` });
+					}
+				}
+			}
+
+			const updated = DataExplorerViewModel.update(
+				req.params.id,
+				{
+					name: typeof name === 'string' ? name.trim() : undefined,
+					description: typeof description === 'string' ? description.trim().slice(0, 500) : undefined,
+					pointKeys: pointKeys ? JSON.stringify(pointKeys) : undefined,
+				},
+				username,
+			);
+
+			if (!updated) {
+				return res.status(404).json({ error: 'View not found' });
+			}
+
+			return res.status(200).json({ view: toResponse(updated) });
 		} catch (error) {
 			next(error);
 		}

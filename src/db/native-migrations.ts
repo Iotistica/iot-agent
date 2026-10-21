@@ -38,6 +38,8 @@ import { migration as addCustomUnitAliases } from './migrations/20261004000000_a
 import { migration as addDataExplorerViews } from './migrations/20261012000000_add_data_explorer_views.js';
 import { migration as addMlDatasets } from './migrations/20261015000000_add_ml_datasets.js';
 import { migration as addDatasetToSubscriptions } from './migrations/20261016000000_add_dataset_to_subscriptions.js';
+import { migration as addSchemaDriftRules } from './migrations/20261017000000_add_schema_drift_rules.js';
+import { migration as addSchemaDriftRuleTemplates } from './migrations/20261017010000_add_schema_drift_rule_templates.js';
 import type { NativeSqliteMigration } from './migration-types.js';
 
 export const nativeMigrations: NativeSqliteMigration[] = [
@@ -81,4 +83,6 @@ export const nativeMigrations: NativeSqliteMigration[] = [
 	addDataExplorerViews,
 	addMlDatasets,
 	addDatasetToSubscriptions,
+	addSchemaDriftRules,
+	addSchemaDriftRuleTemplates,
 ];

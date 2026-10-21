@@ -28,11 +28,10 @@ const PAYLOAD_FORMATS = [
   { value: 'ml',     label: 'ML / Training' },
 ]
 const COMPRESSIONS = [
-  { label: 'None', value: null },
-  { label: 'JSON', value: 'json' },
-  { label: 'MessagePack', value: 'msgpack' },
-  { label: 'JSON + Deflate', value: 'json+deflate' },
-  { label: 'MessagePack + Deflate', value: 'msgpack+deflate' },
+  { label: 'None', value: null, hint: '' },
+  { label: 'Deflate', value: 'json+deflate', hint: '~40–60% smaller' },
+  { label: 'MessagePack', value: 'msgpack', hint: '~20–30% smaller' },
+  { label: 'MessagePack + Deflate', value: 'msgpack+deflate', hint: '~50–70% smaller' },
 ]
 const QUALITIES = ['GOOD', 'BAD', 'UNCERTAIN']
 
@@ -388,7 +387,7 @@ function close() {
       <a-form-item label="Compression" name="compression">
         <a-select v-model:value="form.compression">
           <a-select-option v-for="c in COMPRESSIONS" :key="String(c.value)" :value="c.value">
-            {{ c.label }}
+            {{ c.label }} <span v-if="c.hint" style="color: var(--color-text-tertiary)">{{ c.hint }}</span>
           </a-select-option>
         </a-select>
       </a-form-item>

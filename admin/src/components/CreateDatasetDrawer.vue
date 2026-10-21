@@ -2,8 +2,9 @@
 import { ref, computed, watch } from 'vue'
 import { message } from 'ant-design-vue'
 import { DeleteOutlined, EditOutlined } from '@ant-design/icons-vue'
-import { datasetsApi, type MlDataset, type CreateMlDatasetInput, type DatasetDraftState } from '@/api/ml-datasets'
+import { datasetsApi, type MlDataset, type CreateMlDatasetInput } from '@/api/ml-datasets'
 import { protocolColor, protocolLabel } from '@/utils/protocol'
+import PointPickerModal from './PointPickerModal.vue'
 
 type PointRow = {
   key: string
@@ -29,7 +30,6 @@ const props = defineProps<{
 const emit = defineEmits<{
   'update:open': [val: boolean]
   saved: []
-  'edit-selection': [draft: DatasetDraftState]
 }>()
 
 const SAMPLING_OPTIONS = [
@@ -54,7 +54,7 @@ const WINDOW_OPTIONS = [
 const MISSING_VALUE_OPTIONS = [
   { value: 'keep_null', label: 'Keep null' },
   { value: 'forward_fill', label: 'Forward fill' },
-  { value: 'linear_interpolation', label: 'Linear interpolation' },
+  { value: 'skip_missing', label: 'Skip missing points' },
   { value: 'drop_incomplete', label: 'Drop incomplete rows' },
 ]
 
@@ -82,6 +82,7 @@ const outlierMethod = ref('iqr')
 const outputFormat = ref<string>('jsonl')
 const saving = ref(false)
 const showAllPoints = ref(false)
+const pickerOpen = ref(false)
 
 const isEdit = computed(() => props.editingDataset !== null)
 const VISIBLE_LIMIT = 4
@@ -215,36 +216,11 @@ const previewText = computed(() => {
 const canSave = computed(() => name.value.trim().length > 0 && selectedKeys.value.length > 0)
 
 function onEditSelection() {
-  const draft: DatasetDraftState = {
-    name: name.value,
-    description: description.value,
-    samplingIntervalSecs: samplingIntervalSecs.value,
-    windowSecs: windowSecs.value,
-    missingValues: missingValues.value,
-    normalization: normalization.value,
-    excludeBadQuality: excludeBadQuality.value,
-    removeOutliers: removeOutliers.value,
-    outlierMethod: outlierMethod.value,
-    outputFormat: outputFormat.value,
-    selectedKeys: [...selectedKeys.value],
-    editingDataset: props.editingDataset,
-  }
-  emit('edit-selection', draft)
-  emit('update:open', false)
+  pickerOpen.value = true
 }
 
-function restoreFromDraft(draft: DatasetDraftState, newKeys: string[]) {
-  name.value = draft.name
-  description.value = draft.description
-  samplingIntervalSecs.value = draft.samplingIntervalSecs
-  windowSecs.value = draft.windowSecs
-  missingValues.value = draft.missingValues
-  normalization.value = draft.normalization
-  excludeBadQuality.value = draft.excludeBadQuality
-  removeOutliers.value = draft.removeOutliers
-  outlierMethod.value = draft.outlierMethod
-  outputFormat.value = draft.outputFormat
-  selectedKeys.value = newKeys
+function onPickerConfirm(keys: string[]) {
+  selectedKeys.value = keys
 }
 
 async function save() {
@@ -282,7 +258,6 @@ async function save() {
   }
 }
 
-defineExpose({ restoreFromDraft })
 </script>
 
 <template>
@@ -403,6 +378,12 @@ defineExpose({ restoreFromDraft })
       </div>
     </template>
   </a-drawer>
+
+  <PointPickerModal
+    v-model:open="pickerOpen"
+    :selected-keys="selectedKeys"
+    @confirm="onPickerConfirm"
+  />
 </template>
 
 <style scoped>

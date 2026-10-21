@@ -555,6 +555,12 @@ export class DevicePublish extends EventEmitter {
 		await this.devices[index]?.reconfigureSchemaDrift(driftOptions);
 	}
 
+	public reloadDriftRules(): void {
+		for (const device of this.devices) {
+			device?.reloadDriftRules();
+		}
+	}
+
 	/**
    * Check if MQTT is connected
    */

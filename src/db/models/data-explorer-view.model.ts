@@ -55,6 +55,29 @@ export class DataExplorerViewModel {
 		return this.getById(id, username)!;
 	}
 
+	static update(
+		id: string,
+		data: { name?: string; description?: string; pointKeys?: string },
+		username: string,
+	): DataExplorerViewRecord | null {
+		const existing = this.getById(id, username);
+		if (!existing) return null;
+
+		const name = data.name ?? existing.name;
+		const description = data.description ?? existing.description;
+		const pointKeys = data.pointKeys ?? existing.point_keys;
+		const now = new Date().toISOString();
+
+		this.getDb()
+			.prepare(
+				`UPDATE ${this.table} SET name = ?, description = ?, point_keys = ?, updated_at = ?
+				 WHERE id = ? AND owner_username = ?`,
+			)
+			.run(name, description, pointKeys, now, id, username);
+
+		return this.getById(id, username)!;
+	}
+
 	static delete(id: string, username: string): number {
 		const result = this.getDb()
 			.prepare(`DELETE FROM ${this.table} WHERE id = ? AND owner_username = ?`)

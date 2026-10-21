@@ -8,6 +8,8 @@ import type {
   EdgeAnomalyEvent,
   EdgeAnomalyIncident,
   EdgeAnomalyAlert,
+  DriftRuleConfig,
+  DriftRuleTemplate,
 } from '@/types'
 
 const BASE = '/v1/anomaly'
@@ -246,5 +248,43 @@ export const anomalyApi = {
 
   deleteTemplate(uuid: string): Promise<void> {
     return client.delete(`${BASE}/templates/${uuid}`).then(() => undefined)
+  },
+}
+
+// ── Schema Drift Rules API ─────────────────────────────────────────────────
+
+const DRIFT_BASE = '/v1/schema-drift'
+
+export const driftRulesApi = {
+  getRules(): Promise<DriftRuleConfig[]> {
+    return client.get<{ rules: DriftRuleConfig[] }>(`${DRIFT_BASE}/rules`).then((r) => r.data.rules)
+  },
+
+  createRule(data: Omit<DriftRuleConfig, 'id' | 'createdAt' | 'updatedAt'>): Promise<DriftRuleConfig> {
+    return client.post<{ rule: DriftRuleConfig }>(`${DRIFT_BASE}/rules`, data).then((r) => r.data.rule)
+  },
+
+  updateRule(uuid: string, patch: Partial<DriftRuleConfig>): Promise<DriftRuleConfig> {
+    return client.patch<{ rule: DriftRuleConfig }>(`${DRIFT_BASE}/rules/${uuid}`, patch).then((r) => r.data.rule)
+  },
+
+  deleteRule(uuid: string): Promise<void> {
+    return client.delete(`${DRIFT_BASE}/rules/${uuid}`).then(() => undefined)
+  },
+
+  getTemplates(): Promise<DriftRuleTemplate[]> {
+    return client.get<{ templates: DriftRuleTemplate[] }>(`${DRIFT_BASE}/templates`).then((r) => r.data.templates)
+  },
+
+  createTemplate(data: Omit<DriftRuleTemplate, 'uuid' | 'createdAt' | 'updatedAt'>): Promise<DriftRuleTemplate> {
+    return client.post<{ template: DriftRuleTemplate }>(`${DRIFT_BASE}/templates`, data).then((r) => r.data.template)
+  },
+
+  updateTemplate(uuid: string, patch: Partial<DriftRuleTemplate>): Promise<DriftRuleTemplate> {
+    return client.patch<{ template: DriftRuleTemplate }>(`${DRIFT_BASE}/templates/${uuid}`, patch).then((r) => r.data.template)
+  },
+
+  deleteTemplate(uuid: string): Promise<void> {
+    return client.delete(`${DRIFT_BASE}/templates/${uuid}`).then(() => undefined)
   },
 }

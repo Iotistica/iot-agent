@@ -579,3 +579,50 @@ export interface EdgeAnomalyAlert {
   message: string
   created_at: number
 }
+
+// ── Schema drift rules ─────────────────────────────────────────────────────
+
+export type DriftType = 'new-field' | 'missing-field' | 'type-drift' | 'rename-candidate'
+export type DriftSeverity = 'warning' | 'critical'
+
+export interface DriftRuleConfig {
+  id?: string
+  enabled: boolean
+  priority: number
+  name?: string
+  description?: string
+  fieldPattern?: string
+  devicePattern?: string
+  endpointPattern?: string
+  suppressDriftTypes?: DriftType[]
+  alertOnDriftTypes?: DriftType[]
+  severityOverrides?: Partial<Record<DriftType, DriftSeverity>>
+  consecutiveMissingThreshold?: number
+  alertCooldownMs?: number
+  pinAsBaseline?: boolean
+  allowedTypes?: string[]
+  adaptivePromotionBatches?: number
+  adaptivePromotionMinElapsedMs?: number
+  adaptiveRetireBatches?: number
+  createdAt?: string
+  updatedAt?: string
+}
+
+export interface DriftRuleTemplate {
+  uuid: string
+  name: string
+  category: string | null
+  description: string | null
+  suppressDriftTypes?: DriftType[]
+  alertOnDriftTypes?: DriftType[]
+  severityOverrides?: Partial<Record<DriftType, DriftSeverity>>
+  consecutiveMissingThreshold?: number
+  alertCooldownMs?: number
+  pinAsBaseline?: boolean
+  allowedTypes?: string[]
+  adaptivePromotionBatches?: number
+  adaptivePromotionMinElapsedMs?: number
+  adaptiveRetireBatches?: number
+  createdAt?: string
+  updatedAt?: string
+}

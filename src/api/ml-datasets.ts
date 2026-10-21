@@ -9,7 +9,7 @@ export const mlDatasetsRouter = express.Router();
 
 const VALID_SAMPLING_INTERVALS = [1, 5, 10, 30, 60, 300, 900];
 const VALID_WINDOWS = [300, 900, 1800, 3600, 21600, 86400];
-const VALID_MISSING_VALUES = ['keep_null', 'forward_fill', 'linear_interpolation', 'drop_incomplete'];
+const VALID_MISSING_VALUES = ['keep_null', 'forward_fill', 'skip_missing', 'drop_incomplete'];
 const VALID_NORMALIZATIONS = ['none', 'min_max', 'standard'];
 const VALID_OUTPUT_FORMATS = ['jsonl', 'csv'];
 const VALID_OUTLIER_METHODS = ['iqr'];
