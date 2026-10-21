@@ -633,15 +633,21 @@ export const startService = async (appId: number, serviceName?: string, _force: 
 		} as any);
 	}
 
-	// Start the container (ignore 304 = already running)
+	// Start the container (ignore 304 = already running, 404 = container gone → reconcile)
+	let needsReconcile = !service.containerId;
 	if (service.containerId) {
 		const docker = containerManager.getDocker();
 		if (docker) {
 			const container = docker.getContainer(service.containerId);
 			try { await container.start(); } catch (e: any) {
-				if (e?.statusCode !== 304) throw e;
+				if (e?.statusCode === 304) { /* already running */ }
+				else if (e?.statusCode === 404) { needsReconcile = true; }
+				else throw e;
 			}
 		}
+	}
+	if (needsReconcile) {
+		await containerManager.applyTargetState();
 	}
 
 	return service;
@@ -1025,6 +1031,7 @@ export const serviceAction = async (
 		}
 	}
 
+	let needsReconcile = !containerId && (action === 'start' || action === 'restart');
 	if (containerId) {
 		const docker = containerManager.getDocker();
 		if (!docker) throw new Error('Docker not available');
@@ -1034,12 +1041,13 @@ export const serviceAction = async (
 			else if (action === 'stop') await container.stop();
 			else await container.restart();
 		} catch (e: any) {
-			if (e?.statusCode !== 304) throw e;
+			if (e?.statusCode === 304) { /* already in desired state */ }
+			else if (e?.statusCode === 404 && (action === 'start' || action === 'restart')) { needsReconcile = true; }
+			else if (e?.statusCode !== 304) throw e;
 		}
-	} else {
-		if (action === 'start' || action === 'restart') {
-			await containerManager.applyTargetState();
-		}
+	}
+	if (needsReconcile) {
+		await containerManager.applyTargetState();
 	}
 
 	return { appId, serviceName, action };
