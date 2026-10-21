@@ -14,7 +14,7 @@ import { LogComponents } from '../logging/types';
  * Driver factory configuration
  */
 export interface DriverFactoryConfig {
-	orchestrator?: 'docker' | 'k3s';
+	orchestrator?: 'docker';
 	logger?: AgentLogger;
 	targetState?: TargetState;
 }
@@ -91,11 +91,6 @@ export function getAvailableDrivers(): Array<{
 			description: 'Docker container runtime',
 			available: true
 		},
-		{
-			name: 'k3s',
-			description: 'Lightweight Kubernetes (K3s)',
-			available: true // Will be false if @kubernetes/client-node not installed
-		}
 	];
 }
 
@@ -105,7 +100,7 @@ export function getAvailableDrivers(): Array<{
  * 
  * @returns Recommended orchestrator type
  */
-export async function detectOrchestrator(logger?: AgentLogger): Promise<'docker' | 'k3s'> {
+export async function detectOrchestrator(logger?: AgentLogger): Promise<'docker'> {
 	logger?.debugSync('Detecting available orchestrator', {
 		component: LogComponents.driverFactory
 	});

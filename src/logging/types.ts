@@ -35,7 +35,6 @@ export const LogComponents = {
 	containerManager: 'ContainerManager',
 	dockerManager: 'DockerManager',
 	dockerDriver: 'DockerDriver',
-	k3sDriver: 'K3sDriver',
 	orchestratorDriver: 'OrchestratorDriver',
 	driverFactory: 'DriverFactory',
   

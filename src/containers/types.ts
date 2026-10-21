@@ -376,15 +376,8 @@ export interface TargetState {
 	config?: {
 		settings?: {
 			// Orchestrator selection
-			orchestrator?: 'docker' | 'k3s';
-			
-			// Orchestrator-specific config
-			k3s?: {
-				kubeconfigPath?: string;
-				namespace?: string;
-				inCluster?: boolean;
-			};
-			
+			orchestrator?: 'docker';
+
 			// Legacy interval fields (DEPRECATED - use config.intervals instead)
 			reconciliationIntervalMs?: number;
 			targetStatePollIntervalMs?: number;
@@ -552,7 +545,7 @@ export interface ReconciliationResult {
  */
 export interface IOrchestratorDriver extends EventEmitter {
 	/**
-	* Driver name (e.g., 'docker', 'k3s')
+	* Driver name (e.g., 'docker')
 	*/
 	readonly name: string;
 
