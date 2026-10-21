@@ -94,6 +94,15 @@ export function markServiceAsRunning(
 			serviceName: service.serviceName,
 		});
 	}
+
+	const targetApp = ctx.targetState.apps[appId];
+	if (targetApp) {
+		const targetSvc = targetApp.services.find((s: any) => s.serviceId === serviceId);
+		if (targetSvc?.error) {
+			delete targetSvc.error;
+			delete targetSvc.serviceStatus;
+		}
+	}
 }
 
 export function removeServiceFromCurrentState(
