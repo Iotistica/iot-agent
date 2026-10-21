@@ -200,8 +200,8 @@ body {
   border-top-color: var(--border-color);
 }
 
-/* Ant tag overrides */
-[data-theme="dark"] .ant-tag {
+/* Ant default (uncolored) tags only */
+[data-theme="dark"] .ant-tag.ant-tag-default {
   background: var(--bg-subtle);
   border-color: var(--border-color);
   color: var(--text-secondary);
