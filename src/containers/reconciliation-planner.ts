@@ -264,7 +264,8 @@ export function planStepsToUpdateApp(
 		}
 
 		if (currentSvc && targetSvc) {
-			const currentState = currentSvc.state || 'running';
+			const rawCurrentState = currentSvc.state || 'running';
+			const currentState = (rawCurrentState === 'exited' || rawCurrentState === 'dead') ? 'stopped' : rawCurrentState;
 			const targetState = targetSvc.state || 'running';
 			const stateChanged = currentState !== targetState;
 
@@ -423,7 +424,8 @@ export function planStepsToUpdateApp(
 
 			const status = currentSvc.status?.toLowerCase();
 			const containerStopped =
-				status === 'exited' || status === 'stopped' || status === 'dead';
+				(status === 'exited' || status === 'stopped' || status === 'dead')
+				&& targetState === 'running';
 
 			const needsUpdate = imageChanged || configChanged || containerStopped;
 			if (needsUpdate) {
