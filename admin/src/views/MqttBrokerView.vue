@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import TopicTree from '@/components/mqtt/TopicTree.vue'
@@ -86,11 +86,20 @@ function countTopics(tree: Record<string, TopicNode>, count = 0): number {
   return count
 }
 
+function startPolling() {
+  if (timer) return
+  poll()
+  timer = setInterval(poll, POLL_MS)
+}
+
 onMounted(() => {
   if (proInstalled.value) {
-    poll()
-    timer = setInterval(poll, POLL_MS)
+    startPolling()
   }
+})
+
+watch(proInstalled, (v) => {
+  if (v) startPolling()
 })
 onUnmounted(() => { if (timer) clearInterval(timer) })
 </script>

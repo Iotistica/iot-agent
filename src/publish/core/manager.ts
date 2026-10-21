@@ -53,7 +53,7 @@ type DriftAlertEvent = {
 	endpointName: string;
 	device?: string;
 	driftType: 'new-field' | 'missing-field' | 'type-drift' | 'rename-candidate';
-	severity?: 'warning' | 'critical';
+	severity: 'warning' | 'critical';
 	fieldName?: string;
 	expectedType?: string;
 	observedTypes?: string[];
@@ -400,10 +400,7 @@ export class PublishManager extends EventEmitter {
 		// rename-candidate has no single fieldName — it's a from/to pair — so
 		// fall back to the "to" field for the metric label and fingerprint.
 		const rawField = event.fieldName ?? event.renameCandidateTo ?? 'unknown';
-		const severity = event.severity
-			?? (event.driftType === 'missing-field' || event.driftType === 'type-drift'
-				? 'critical' as const
-				: 'warning' as const);
+		const severity = event.severity;
 
 		// Stable per (endpoint, device, drift type, field) so repeated occurrences
 		// of the SAME problem escalate one incident instead of creating a new one
@@ -944,6 +941,10 @@ export class PublishManager extends EventEmitter {
 		const collectedFeatures = snapshot.size;
 		const expectedFeatures = configuredPointKeys.size;
 
+		if (collectedFeatures === 0) {
+			return null;
+		}
+
 		if (missingPolicy === 'drop_incomplete' && collectedFeatures < expectedFeatures) {
 			return null;
 		}
@@ -1007,7 +1008,7 @@ export class PublishManager extends EventEmitter {
 			);
 
 			if (!result) {
-				this.logger?.debug('Dataset flush suppressed (drop_incomplete)', {
+				this.logger?.debug('Dataset flush suppressed (empty or incomplete)', {
 					component: 'PublishManager',
 					protocol: this.protocol,
 					subscriptionId: binding.subscription.id,
