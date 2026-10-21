@@ -775,13 +775,17 @@ export const getAllApps = async () => {
 			const cur = (current?.services as any[] | undefined)?.find(
 				(s: any) => s.serviceName === targetSvc.serviceName,
 			);
+			const serviceStatus = cur?.serviceStatus ?? targetSvc.serviceStatus;
+			const error = serviceStatus === 'running'
+				? undefined
+				: (cur?.error ?? targetSvc.error);
 			return {
 				...targetSvc,
 				containerId: cur?.containerId ?? targetSvc.containerId,
 				state: cur?.state ?? targetSvc.state,
 				status: cur?.status ?? targetSvc.status,
-				serviceStatus: cur?.serviceStatus ?? targetSvc.serviceStatus,
-				error: cur?.error ?? targetSvc.error,
+				serviceStatus,
+				error,
 			};
 		});
 
