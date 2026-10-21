@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { LogoutOutlined, UserOutlined } from '@ant-design/icons-vue'
+import { LogoutOutlined, UserOutlined, BulbOutlined, BulbFilled } from '@ant-design/icons-vue'
 import AppSidebar from './AppSidebar.vue'
 import { useAuth } from '@/composables/useAuth'
 import { useProStatus } from '@/composables/useProStatus'
 import { useDockerStatus } from '@/composables/useDockerStatus'
+import { useTheme } from '@/composables/useTheme'
 import { settingsApi } from '@/api/settings'
 
 defineProps<{ title?: string; flex?: boolean }>()
@@ -14,6 +15,7 @@ const router = useRouter()
 const { currentUser, logout } = useAuth()
 const { fetchProStatus } = useProStatus()
 const { fetchDockerStatus } = useDockerStatus()
+const { isDark, toggle: toggleTheme } = useTheme()
 
 const agentVersion = ref<string | null>(null)
 
@@ -43,6 +45,12 @@ onMounted(async () => {
           <h2>{{ title }}</h2>
         </div>
         <div class="header-right">
+          <a-button type="text" size="small" class="theme-btn" :title="isDark ? 'Switch to light mode' : 'Switch to dark mode'" @click="toggleTheme">
+            <template #icon>
+              <BulbFilled v-if="isDark" />
+              <BulbOutlined v-else />
+            </template>
+          </a-button>
           <a-tag v-if="agentVersion" class="version-badge">v{{ agentVersion }}</a-tag>
           <span class="header-user">
             <UserOutlined style="margin-right: 6px; font-size: 13px" />
@@ -105,6 +113,15 @@ onMounted(async () => {
   border-color: var(--border-color);
   color: var(--text-tertiary);
   font-weight: 500;
+}
+
+.theme-btn {
+  color: var(--text-tertiary);
+  font-size: 16px;
+}
+
+.theme-btn:hover {
+  color: #faad14 !important;
 }
 
 .logout-btn {
