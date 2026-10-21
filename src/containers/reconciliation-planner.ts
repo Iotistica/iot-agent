@@ -264,7 +264,7 @@ export function planStepsToUpdateApp(
 		}
 
 		if (currentSvc && targetSvc) {
-			const rawCurrentState = currentSvc.state || 'running';
+			const rawCurrentState: string = currentSvc.state || 'running';
 			const currentState = (rawCurrentState === 'exited' || rawCurrentState === 'dead') ? 'stopped' : rawCurrentState;
 			const targetState = targetSvc.state || 'running';
 			const stateChanged = currentState !== targetState;
