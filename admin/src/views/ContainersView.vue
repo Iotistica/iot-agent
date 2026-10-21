@@ -485,13 +485,13 @@ async function confirmDeployTarget() {
       })
     }
     message.success(`${tpl.name} added to ${apps.value.find(a => a.appId === targetAppId)?.appName ?? 'app'}`)
-    deployTargetOpen.value = false
-    marketOpen.value = false
-    await load()
   } catch (e: unknown) {
     message.error((e as any)?.message ?? 'Failed to add services')
   } finally {
     deployTargetBusy.value = false
+    deployTargetOpen.value = false
+    marketOpen.value = false
+    load()
   }
 }
 
