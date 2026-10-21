@@ -140,26 +140,36 @@ function isInFlight(appId: number, serviceName: string, action: string) {
   return !!actionInFlight.value[actionKey(appId, serviceName, action)]
 }
 
-// ── Rename app ───────────────────────────────────────────────────────────────
+// ── App details drawer ───────────────────────────────────────────────────────
 
-const editingAppId = ref<number | null>(null)
-const editingAppName = ref('')
+const appDetailsOpen = ref(false)
+const appDetailsTarget = ref<ContainerApp | null>(null)
+const appDetailsName = ref('')
+const appDetailsSaving = ref(false)
 
-function startEditAppName(app: ContainerApp) {
-  editingAppId.value = app.appId
-  editingAppName.value = app.appName
+function openAppDetails(app: ContainerApp) {
+  appDetailsTarget.value = app
+  appDetailsName.value = app.appName
+  appDetailsOpen.value = true
 }
 
-async function saveAppName(app: ContainerApp) {
-  const name = editingAppName.value.trim()
-  editingAppId.value = null
-  if (!name || name === app.appName) return
+async function saveAppDetails() {
+  const app = appDetailsTarget.value
+  if (!app) return
+  const name = appDetailsName.value.trim()
+  if (!name) { message.error('Application name is required'); return }
+  appDetailsSaving.value = true
   try {
-    await containersApi.renameApp(app.appId, name)
-    message.success(`Renamed to "${name}"`)
+    if (name !== app.appName) {
+      await containersApi.renameApp(app.appId, name)
+    }
+    message.success('Application updated')
+    appDetailsOpen.value = false
     await load()
   } catch (e: unknown) {
-    message.error((e as any)?.message ?? 'Rename failed')
+    message.error((e as any)?.message ?? 'Update failed')
+  } finally {
+    appDetailsSaving.value = false
   }
 }
 
@@ -575,21 +585,16 @@ async function deploy() {
           <div class="card-header">
             <div class="card-header-left">
               <AppstoreOutlined class="card-icon" />
-              <a-input
-                v-if="editingAppId === app.appId"
-                :value="editingAppName"
-                size="small"
-                style="width: 160px"
-                @change="(e: any) => editingAppName = e.target.value"
-                @blur="saveAppName(app)"
-                @pressEnter="saveAppName(app)"
-                @vue:mounted="(vnode: any) => vnode.el?.querySelector('input')?.focus()"
-              />
-              <span v-else class="app-name" style="cursor: pointer" @dblclick="startEditAppName(app)">{{ app.appName }} <EditOutlined style="font-size: 11px; opacity: 0.4" /></span>
+              <span class="app-name">{{ app.appName }}</span>
             </div>
-            <a-button size="small" danger @click="confirmRemoveApp(app)">
-              <template #icon><DeleteOutlined /></template>
-            </a-button>
+            <div style="display: flex; gap: 4px">
+              <a-button size="small" title="Edit application" @click="openAppDetails(app)">
+                <template #icon><EditOutlined /></template>
+              </a-button>
+              <a-button size="small" danger title="Remove application" @click="confirmRemoveApp(app)">
+                <template #icon><DeleteOutlined /></template>
+              </a-button>
+            </div>
           </div>
 
           <!-- Running summary -->
@@ -781,6 +786,53 @@ async function deploy() {
           <a-button @click="editSvcDrawerOpen = false">Cancel</a-button>
           <a-button type="primary" :loading="editSvcSaving" @click="submitEditService">
             <template #icon><EditOutlined /></template>
+            Save Changes
+          </a-button>
+        </div>
+      </template>
+    </a-drawer>
+
+    <!-- App Details drawer -->
+    <a-drawer
+      v-model:open="appDetailsOpen"
+      :title="`Edit — ${appDetailsTarget?.appName ?? ''}`"
+      width="480"
+      :body-style="{ paddingBottom: '80px' }"
+      placement="right"
+    >
+      <a-form layout="vertical">
+        <a-form-item label="Application name" required>
+          <a-input v-model:value="appDetailsName" />
+        </a-form-item>
+
+        <a-divider orientation="left" style="font-size: 13px; margin: 20px 0 12px">Services</a-divider>
+
+        <div v-if="appDetailsTarget" style="display: flex; flex-direction: column; gap: 8px">
+          <div
+            v-for="svc in appDetailsTarget.services"
+            :key="svc.serviceId ?? svc.serviceName"
+            style="display: flex; align-items: center; gap: 8px; padding: 8px 12px; border: 1px solid #f0f0f0; border-radius: 6px"
+          >
+            <div style="flex: 1; min-width: 0">
+              <div style="font-weight: 500">{{ svc.serviceName }}</div>
+              <div style="font-size: 12px; color: #888; font-family: monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">{{ svc.imageName }}</div>
+            </div>
+            <a-tag :color="STATUS_COLOR[resolveState(svc)]" style="margin: 0; font-size: 11px">
+              {{ STATUS_LABEL[resolveState(svc)] }}
+            </a-tag>
+            <a-button size="small" @click="appDetailsOpen = false; openEditService(appDetailsTarget!, svc)">
+              <template #icon><EditOutlined /></template>
+            </a-button>
+          </div>
+          <div v-if="appDetailsTarget.services.length === 0" style="color: #999; padding: 12px 0">
+            No services configured
+          </div>
+        </div>
+      </a-form>
+      <template #footer>
+        <div style="display: flex; justify-content: flex-end; gap: 8px">
+          <a-button @click="appDetailsOpen = false">Cancel</a-button>
+          <a-button type="primary" :loading="appDetailsSaving" @click="saveAppDetails">
             Save Changes
           </a-button>
         </div>
