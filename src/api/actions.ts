@@ -570,6 +570,20 @@ export const stopService = async (appId: number, serviceName?: string, _force: b
 		throw new Error(`Service not found`);
 	}
 
+	// Update target state so reconciliation doesn't restart the container
+	const targetState = containerManager.getTargetState();
+	const targetApp = (targetState.apps ?? {} as any)[appId];
+	if (targetApp) {
+		const svcName = service.serviceName;
+		const updatedServices = (targetApp.services as any[]).map((s: any) =>
+			s.serviceName === svcName ? { ...s, state: 'stopped' } : s,
+		);
+		await containerManager.setTarget({
+			...targetState,
+			apps: { ...targetState.apps, [appId]: { ...targetApp, services: updatedServices } },
+		} as any);
+	}
+
 	// Stop the container
 	if (service.containerId) {
 		const docker = containerManager.getDocker();
@@ -589,18 +603,32 @@ export const stopService = async (appId: number, serviceName?: string, _force: b
 export const startService = async (appId: number, serviceName?: string, _force: boolean = false) => {
 	const currentState = await containerManager.getCurrentState();
 	const app = currentState.apps[appId];
-	
+
 	if (!app) {
 		throw new Error(`Application with ID ${appId} not found`);
 	}
 
 	// For single-container apps, start the first service
-	const service = serviceName 
+	const service = serviceName
 		? app.services.find(s => s.serviceName === serviceName)
 		: app.services[0];
 
 	if (!service) {
 		throw new Error(`Service not found`);
+	}
+
+	// Update target state so reconciliation knows we want it running
+	const targetState = containerManager.getTargetState();
+	const targetApp = (targetState.apps ?? {} as any)[appId];
+	if (targetApp) {
+		const svcName = service.serviceName;
+		const updatedServices = (targetApp.services as any[]).map((s: any) =>
+			s.serviceName === svcName ? { ...s, state: 'running' } : s,
+		);
+		await containerManager.setTarget({
+			...targetState,
+			apps: { ...targetState.apps, [appId]: { ...targetApp, services: updatedServices } },
+		} as any);
 	}
 
 	// Start the container
@@ -979,6 +1007,20 @@ export const serviceAction = async (
 
 	const containerId: string | undefined = currentSvc?.containerId;
 
+	if (action === 'stop' || action === 'start') {
+		const desiredState = action === 'stop' ? 'stopped' : 'running';
+		if (targetSvc && targetApp) {
+			const updatedServices = (targetApp.services as any[]).map((s: any) =>
+				s.serviceName === serviceName ? { ...s, state: desiredState } : s,
+			);
+			const updatedApp = { ...targetApp, services: updatedServices };
+			await containerManager.setTarget({
+				...targetState,
+				apps: { ...targetState.apps, [appId]: updatedApp },
+			} as any);
+		}
+	}
+
 	if (containerId) {
 		const docker = containerManager.getDocker();
 		if (!docker) throw new Error('Docker not available');
@@ -987,7 +1029,6 @@ export const serviceAction = async (
 		else if (action === 'stop') await container.stop();
 		else await container.restart();
 	} else {
-		// Container not created yet — reconcile to create/start it
 		if (action === 'start' || action === 'restart') {
 			await containerManager.applyTargetState();
 		}
