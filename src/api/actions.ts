@@ -658,6 +658,7 @@ export const startService = async (appId: number, serviceName?: string, _force: 
  * Used by: GET /v1/apps/:appId
  */
 export const getApp = async (appId: number) => {
+	if (!containerManager) throw new Error('Container manager not initialized');
 	const currentState = await containerManager.getCurrentState();
 	const app = currentState.apps[appId];
 	
@@ -749,13 +750,14 @@ export const getServiceContainerId = async (appId: number, serviceName: string):
 /**
  * Expose the Docker instance for streaming operations in routes
  */
-export const getDockerInstance = () => containerManager.getDocker();
+export const getDockerInstance = () => containerManager?.getDocker();
 
 /**
  * List all apps merged from current + target state
  * Used by: GET /v1/apps
  */
 export const getAllApps = async () => {
+	if (!containerManager) return [];
 	const currentState = await containerManager.getCurrentState();
 	const targetState = containerManager.getTargetState();
 
