@@ -1410,7 +1410,7 @@ onUnmounted(() => {
         >
           <template #bodyCell="{ column, record }">
             <template v-if="column.key === 'severity'">
-              <a-tag :color="SEVERITY_TAG_COLOR[record.severity]" :class="record.severity === 'critical' ? 'severity-critical' : ''" style="font-size: 11px; margin: 0">{{ record.severity }}</a-tag>
+              <a-tag :color="SEVERITY_TAG_COLOR[record.severity]" :class="record.severity === 'critical' && record.status !== 'resolved' ? 'severity-critical' : ''" style="font-size: 11px; margin: 0">{{ record.severity }}</a-tag>
             </template>
             <template v-else-if="column.key === 'metric'">
               <span :title="record.metric">{{ friendlyLabel(record.metric) }}</span>
@@ -1471,7 +1471,7 @@ onUnmounted(() => {
         >
           <template #bodyCell="{ column, record }">
             <template v-if="column.key === 'severity'">
-              <a-tag :color="SEVERITY_TAG_COLOR[record.severity]" :class="record.severity === 'critical' ? 'severity-critical' : ''" style="font-size: 11px; margin: 0">{{ record.severity }}</a-tag>
+              <a-tag :color="SEVERITY_TAG_COLOR[record.severity]" :class="record.severity === 'critical' && record.status !== 'resolved' ? 'severity-critical' : ''" style="font-size: 11px; margin: 0">{{ record.severity }}</a-tag>
             </template>
             <template v-else-if="column.key === 'metric'">
               <span :title="record.metric">{{ friendlyLabel(record.metric) }}</span>
@@ -1525,7 +1525,7 @@ onUnmounted(() => {
         >
           <template #bodyCell="{ column, record }">
             <template v-if="column.key === 'severity'">
-              <a-tag :color="SEVERITY_TAG_COLOR[record.severity]" :class="record.severity === 'critical' ? 'severity-critical' : ''" style="font-size: 11px; margin: 0">{{ record.severity }}</a-tag>
+              <a-tag :color="SEVERITY_TAG_COLOR[record.severity]" :class="record.severity === 'critical' && record.status !== 'resolved' ? 'severity-critical' : ''" style="font-size: 11px; margin: 0">{{ record.severity }}</a-tag>
             </template>
             <template v-else-if="column.key === 'metric'">
               <span :title="record.metric">{{ friendlyLabel(record.metric) }}</span>
