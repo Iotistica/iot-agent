@@ -222,19 +222,19 @@ function onMenuClick({ key }: { key: string }) {
 
 <style scoped>
 .logo {
-  min-height: 48px;
+  height: 52px;
   display: flex;
   flex-direction: column;
   justify-content: center;
   gap: 4px;
-  padding: 8px 16px 8px 24px;
+  padding: 0 16px 0 24px;
   color: rgba(255, 255, 255, 0.85);
   font-size: 16px;
   font-weight: 600;
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-  margin-bottom: 8px;
   flex-shrink: 0;
   overflow: hidden;
+  background: #0a0a0a;
 }
 
 .logo--collapsed {

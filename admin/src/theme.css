@@ -98,8 +98,16 @@ body {
   background: var(--bg-body);
 }
 
+[data-theme="dark"] .ant-layout-header {
+  background: var(--bg-container);
+}
+
 [data-theme="dark"] .ant-layout-content {
   background: transparent;
+}
+
+[data-theme="dark"] .ant-layout-sider {
+  background: #0a0a0a !important;
 }
 
 /* Ant table overrides for dark mode */
