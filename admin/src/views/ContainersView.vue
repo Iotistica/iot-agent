@@ -490,7 +490,6 @@ async function confirmDeployTarget() {
   } finally {
     deployTargetBusy.value = false
     deployTargetOpen.value = false
-    marketOpen.value = false
     load()
   }
 }
