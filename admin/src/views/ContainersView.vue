@@ -1074,12 +1074,19 @@ async function deploy() {
 }
 
 .app-card {
-  border: 1px solid #e8e8e8;
+  border: 1px solid #e4e8ee;
   border-radius: 10px;
   overflow: hidden;
   background: #fff;
   display: flex;
   flex-direction: column;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
+  transition: box-shadow 0.2s, border-color 0.2s;
+}
+
+.app-card:hover {
+  box-shadow: 0 3px 12px rgba(0, 0, 0, 0.09);
+  border-color: #d0d7e0;
 }
 
 /* ── Card header ─────────────────────────────────────────── */
@@ -1087,27 +1094,36 @@ async function deploy() {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 12px 14px 8px;
+  padding: 14px 16px 10px;
   gap: 8px;
+  background: #f7f9fb;
+  border-bottom: 1px solid #eef1f5;
 }
 
 .card-header-left {
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: 8px;
   min-width: 0;
 }
 
 .card-icon {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  background: #e6f0ff;
   color: #1677ff;
-  font-size: 15px;
+  font-size: 14px;
   flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .app-name {
   font-weight: 600;
   font-size: 14px;
-  color: rgba(0, 0, 0, 0.85);
+  color: rgba(0, 0, 0, 0.88);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1118,7 +1134,7 @@ async function deploy() {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 0 14px 10px;
+  padding: 8px 16px 10px;
   font-size: 12px;
   color: #888;
   border-bottom: 1px solid #f0f0f0;
@@ -1130,7 +1146,7 @@ async function deploy() {
 }
 
 .service-row {
-  padding: 8px 14px;
+  padding: 8px 16px;
   border-bottom: 1px solid #fafafa;
 }
 
@@ -1196,7 +1212,7 @@ async function deploy() {
 }
 
 .card-footer {
-  padding: 8px 14px 12px;
+  padding: 8px 16px 12px;
   border-top: 1px solid #f0f0f0;
 }
 
