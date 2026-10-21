@@ -495,7 +495,7 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
           <a-table :columns="viewColumns" :data-source="savedViews" :loading="viewsLoading" row-key="id" size="small" :pagination="{ pageSize: 20, showSizeChanger: true, pageSizeOptions: ['10', '20', '50'] }">
             <template #bodyCell="{ column, record: view }">
               <template v-if="column.key === 'name'">
-                <div class="point-primary">{{ view.name }}</div>
+                <div class="point-primary" style="font-weight: 400">{{ view.name }}</div>
                 <div v-if="view.description" class="point-secondary">{{ view.description }}</div>
               </template>
               <template v-else-if="column.key === 'points'">{{ new Set(view.pointKeys.map(normalizePointKey)).size }}</template>
@@ -517,7 +517,7 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
           <a-table :columns="datasetColumns" :data-source="datasets" :loading="datasetsLoading" row-key="id" size="small" :pagination="{ pageSize: 20, showSizeChanger: true, pageSizeOptions: ['10', '20', '50'] }">
             <template #bodyCell="{ column, record: ds }">
               <template v-if="column.key === 'name'">
-                <div class="point-primary">{{ ds.name }}</div>
+                <div class="point-primary" style="font-weight: 400">{{ ds.name }}</div>
                 <div v-if="ds.description" class="point-secondary">{{ ds.description }}</div>
               </template>
               <template v-else-if="column.key === 'points'">{{ ds.pointKeys.length }}</template>
