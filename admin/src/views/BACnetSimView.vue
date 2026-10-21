@@ -307,7 +307,7 @@
     >
       <div v-if="setValueTarget" style="margin-bottom: 12px;">
         <strong>{{ setValueTarget.name }}</strong>
-        <span style="color: #888; margin-left: 8px;">{{ setValueTarget.object_type }},{{ setValueTarget.object_instance }}</span>
+        <span style="color: var(--text-tertiary); margin-left: 8px;">{{ setValueTarget.object_type }},{{ setValueTarget.object_instance }}</span>
       </div>
       <a-input-number
         v-if="setValueTarget && isAnalog(setValueTarget.object_type)"
@@ -740,7 +740,7 @@ async function confirmSetValue() {
 
 <style scoped>
 .heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 16px; }
-.heading p { color: #777; margin: 0; }
+.heading p { color: var(--text-tertiary); margin: 0; }
 .header-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .status-tag {
   font-size: 11px;

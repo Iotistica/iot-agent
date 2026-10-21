@@ -195,12 +195,12 @@ onUnmounted(() => { if (refreshTimer) clearInterval(refreshTimer) })
 
 <style scoped>
 .heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 16px; }
-.heading p { color: #777; margin: 0; }
+.heading p { color: var(--text-tertiary); margin: 0; }
 .header-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .filters { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
 .search { width: 300px; max-width: 100%; }
 .filter { width: 170px; max-width: 100%; }
 .filter-small { width: 120px; max-width: 100%; }
-.toolbar-info { color: #888; font-size: 12px; margin-bottom: 10px; }
+.toolbar-info { color: var(--text-tertiary); font-size: 12px; margin-bottom: 10px; }
 </style>
 

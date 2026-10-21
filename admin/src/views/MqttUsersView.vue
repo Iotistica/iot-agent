@@ -124,7 +124,7 @@ onMounted(load)
       <p>Manage credentials for clients connecting to the local MQTT broker.</p>
       <div class="header-actions">
         <template v-if="selectedUsernames.length > 0">
-          <span style="font-size: 13px; color: #666">{{ selectedUsernames.length }} selected</span>
+          <span style="font-size: 13px; color: var(--text-secondary)">{{ selectedUsernames.length }} selected</span>
           <a-button danger :loading="deleting" @click="confirmDeleteSelected"><template #icon><DeleteOutlined /></template>Delete</a-button>
         </template>
         <a-button type="primary" @click="openCreate"><template #icon><PlusOutlined /></template>Add User</a-button>
@@ -156,7 +156,7 @@ onMounted(load)
           <span v-if="record.superuser" style="color: #faad14; display: flex; align-items: center; gap: 4px;">
             <CrownOutlined /> Admin
           </span>
-          <span v-else style="color: rgba(255,255,255,0.45);">Client</span>
+          <span v-else style="color: var(--text-tertiary);">Client</span>
         </template>
 
         <template v-else-if="column.key === 'actions'">
@@ -223,11 +223,11 @@ onMounted(load)
 
 <style scoped>
 .heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 16px; }
-.heading p { color: #777; margin: 0; }
+.heading p { color: var(--text-tertiary); margin: 0; }
 .header-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .list-card { border-radius: 9px; }
-.list-card :deep(.ant-table-thead > tr > th) { background: #f7f9fc; font-size: 12px; font-weight: 650; }
-.list-card :deep(.ant-table-tbody > tr:hover > td) { background: #f5f9ff; }
+.list-card :deep(.ant-table-thead > tr > th) { background: var(--bg-table-header); font-size: 12px; font-weight: 650; }
+.list-card :deep(.ant-table-tbody > tr:hover > td) { background: var(--bg-table-hover); }
 
 .drawer-footer {
   position: absolute;
@@ -235,7 +235,7 @@ onMounted(load)
   left: 0;
   right: 0;
   padding: 16px 24px;
-  border-top: 1px solid #f0f0f0;
+  border-top: 1px solid var(--border-color);
   display: flex;
   justify-content: flex-end;
 }

@@ -85,7 +85,7 @@ function auth(key: string): unknown {
         style="width: 100%"
         @update:value="set('batchSize', $event)"
       />
-      <div style="color: #999; font-size: 12px; margin-top: 4px">Points buffered before auto-flush (default: 1000)</div>
+      <div style="color: var(--text-muted); font-size: 12px; margin-top: 4px">Points buffered before auto-flush (default: 1000)</div>
     </a-form-item>
     <a-form-item label="Flush interval (ms)" :name="['config_json', 'flushInterval']">
       <a-input-number
@@ -96,7 +96,7 @@ function auth(key: string): unknown {
         style="width: 100%"
         @update:value="set('flushInterval', $event)"
       />
-      <div style="color: #999; font-size: 12px; margin-top: 4px">Max ms between flushes (default: 10 000)</div>
+      <div style="color: var(--text-muted); font-size: 12px; margin-top: 4px">Max ms between flushes (default: 10 000)</div>
     </a-form-item>
     <a-form-item label="Timeout (ms)" :name="['config_json', 'timeout']">
       <a-input-number
@@ -136,7 +136,7 @@ function auth(key: string): unknown {
     </a-form-item>
     <a-form-item label="Password" :name="['config_json', 'password']">
       <a-input-password :value="(cfg.password as string) ?? ''" autocomplete="new-password" @update:value="set('password', $event)" />
-      <div style="color: #999; font-size: 12px; margin-top: 4px">Leave blank if the server uses trust/peer/mTLS authentication</div>
+      <div style="color: var(--text-muted); font-size: 12px; margin-top: 4px">Leave blank if the server uses trust/peer/mTLS authentication</div>
     </a-form-item>
     <a-form-item label="Use SSL" :name="['config_json', 'ssl']">
       <a-switch :checked="(cfg.ssl as boolean) === true" @change="set('ssl', $event)" />
@@ -152,7 +152,7 @@ function auth(key: string): unknown {
         style="width: 100%"
         @update:value="set('maxRowsPerInsert', $event)"
       />
-      <div style="color: #999; font-size: 12px; margin-top: 4px">Rows written per bulk INSERT. Higher values can improve import performance.</div>
+      <div style="color: var(--text-muted); font-size: 12px; margin-top: 4px">Rows written per bulk INSERT. Higher values can improve import performance.</div>
     </a-form-item>
   </template>
 
@@ -172,7 +172,7 @@ function auth(key: string): unknown {
         @update:value="set('deviceId', $event)"
       />
     </a-form-item>
-    <a-divider orientation="left" orientation-margin="0" style="font-size: 12px; color: #888">Authentication (SAS)</a-divider>
+    <a-divider orientation="left" orientation-margin="0" style="font-size: 12px; color: var(--text-tertiary)">Authentication (SAS)</a-divider>
     <a-form-item label="Shared Access Key" :rules="[{ required: true, message: 'Required' }]">
       <a-input-password
         :value="(auth('sharedAccessKey') as string) ?? ''"
@@ -190,7 +190,7 @@ function auth(key: string): unknown {
         style="width: 100%"
         @update:value="setIn('auth', 'tokenTtlSeconds', $event)"
       />
-      <div style="color: #999; font-size: 12px; margin-top: 4px">SAS token lifetime — agent auto-renews at 80% (default: 3600s)</div>
+      <div style="color: var(--text-muted); font-size: 12px; margin-top: 4px">SAS token lifetime — agent auto-renews at 80% (default: 3600s)</div>
     </a-form-item>
   </template>
 
@@ -224,9 +224,9 @@ function auth(key: string): unknown {
         :value="(cfg.topicTemplate as string) ?? 'devices/{deviceId}/messages/events/{endpoint}'"
         @update:value="set('topicTemplate', $event)"
       />
-      <div style="color: #999; font-size: 12px; margin-top: 4px">Supports <code>{deviceId}</code> and <code>{endpoint}</code> placeholders</div>
+      <div style="color: var(--text-muted); font-size: 12px; margin-top: 4px">Supports <code>{deviceId}</code> and <code>{endpoint}</code> placeholders</div>
     </a-form-item>
-    <a-divider orientation="left" orientation-margin="0" style="font-size: 12px; color: #888">Authentication (mTLS)</a-divider>
+    <a-divider orientation="left" orientation-margin="0" style="font-size: 12px; color: var(--text-tertiary)">Authentication (mTLS)</a-divider>
     <a-form-item label="Client Certificate (PEM)" :rules="[{ required: true, message: 'Required' }]">
       <a-textarea
         :value="(auth('cert') as string) ?? ''"
@@ -279,16 +279,16 @@ function auth(key: string): unknown {
         placeholder="projects/{project}/locations/{region}/registries/{registry}/devices/{deviceId}"
         @update:value="set('clientId', $event)"
       />
-      <div style="color: #999; font-size: 12px; margin-top: 4px">Full GCP resource path for the device</div>
+      <div style="color: var(--text-muted); font-size: 12px; margin-top: 4px">Full GCP resource path for the device</div>
     </a-form-item>
     <a-form-item label="Topic Template">
       <a-input
         :value="(cfg.topicTemplate as string) ?? '/devices/{deviceId}/events/{endpoint}'"
         @update:value="set('topicTemplate', $event)"
       />
-      <div style="color: #999; font-size: 12px; margin-top: 4px">Supports <code>{deviceId}</code> and <code>{endpoint}</code> placeholders</div>
+      <div style="color: var(--text-muted); font-size: 12px; margin-top: 4px">Supports <code>{deviceId}</code> and <code>{endpoint}</code> placeholders</div>
     </a-form-item>
-    <a-divider orientation="left" orientation-margin="0" style="font-size: 12px; color: #888">Authentication (JWT)</a-divider>
+    <a-divider orientation="left" orientation-margin="0" style="font-size: 12px; color: var(--text-tertiary)">Authentication (JWT)</a-divider>
     <a-form-item label="JWT Token" :rules="[{ required: true, message: 'Required' }]">
       <a-textarea
         :value="(auth('jwt') as string) ?? ''"
@@ -297,7 +297,7 @@ function auth(key: string): unknown {
         placeholder="eyJ..."
         @update:value="setIn('auth', 'jwt', $event)"
       />
-      <div style="color: #999; font-size: 12px; margin-top: 4px">RS256 or ES256 signed JWT — must be renewed manually when it expires</div>
+      <div style="color: var(--text-muted); font-size: 12px; margin-top: 4px">RS256 or ES256 signed JWT — must be renewed manually when it expires</div>
     </a-form-item>
     <a-form-item label="CA Certificate (PEM)">
       <a-textarea

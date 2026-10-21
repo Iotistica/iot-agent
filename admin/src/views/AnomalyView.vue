@@ -1428,14 +1428,14 @@ onUnmounted(() => {
               <span style="font-size: 12px">{{ Math.round(record.confidence * 100) }}%</span>
             </template>
             <template v-else-if="column.key === 'consec'">
-              <span style="font-size: 12px; color: #888">{{ record.consecutive_count }}×</span>
+              <span style="font-size: 12px; color: var(--text-tertiary)">{{ record.consecutive_count }}×</span>
             </template>
             <template v-else-if="column.key === 'time'">
-              <span style="color: #888; font-size: 12px">{{ fmtTs(record.timestamp_ms) }}</span>
+              <span style="color: var(--text-tertiary); font-size: 12px">{{ fmtTs(record.timestamp_ms) }}</span>
             </template>
           </template>
           <template #emptyText>
-            <div style="padding: 24px 0; text-align: center; color: #aaa; font-size: 13px">
+            <div style="padding: 24px 0; text-align: center; color: var(--text-muted); font-size: 13px">
               No anomaly events yet. Events are recorded when the anomaly detection engine triggers.
             </div>
           </template>
@@ -1486,10 +1486,10 @@ onUnmounted(() => {
               <span style="font-variant-numeric: tabular-nums; font-size: 12px">{{ fmtNum(record.max_anomaly_score, 3) }}</span>
             </template>
             <template v-else-if="column.key === 'first_seen'">
-              <span style="color: #888; font-size: 12px">{{ fmtTs(record.first_seen) }}</span>
+              <span style="color: var(--text-tertiary); font-size: 12px">{{ fmtTs(record.first_seen) }}</span>
             </template>
             <template v-else-if="column.key === 'last_seen'">
-              <span style="color: #888; font-size: 12px">{{ fmtTs(record.last_seen) }}</span>
+              <span style="color: var(--text-tertiary); font-size: 12px">{{ fmtTs(record.last_seen) }}</span>
             </template>
             <template v-else-if="column.key === 'actions'">
               <a-button
@@ -1498,11 +1498,11 @@ onUnmounted(() => {
                 :loading="resolvingId === record.incident_id"
                 @click="openResolveModal(record)"
               >Resolve</a-button>
-              <span v-else style="color: #888; font-size: 12px">—</span>
+              <span v-else style="color: var(--text-tertiary); font-size: 12px">—</span>
             </template>
           </template>
           <template #emptyText>
-            <div style="padding: 24px 0; text-align: center; color: #aaa; font-size: 13px">
+            <div style="padding: 24px 0; text-align: center; color: var(--text-muted); font-size: 13px">
               No incidents yet. Incidents are created when multiple anomaly events share the same fingerprint.
             </div>
           </template>
@@ -1540,11 +1540,11 @@ onUnmounted(() => {
               <span :title="record.message" style="white-space: normal; word-break: break-word">{{ stripGuids(record.message) }}</span>
             </template>
             <template v-else-if="column.key === 'time'">
-              <span style="color: #888; font-size: 12px">{{ fmtTs(record.created_at) }}</span>
+              <span style="color: var(--text-tertiary); font-size: 12px">{{ fmtTs(record.created_at) }}</span>
             </template>
           </template>
           <template #emptyText>
-            <div style="padding: 24px 0; text-align: center; color: #aaa; font-size: 13px">
+            <div style="padding: 24px 0; text-align: center; color: var(--text-muted); font-size: 13px">
               No alerts promoted yet. Alerts are raised when an incident accumulates enough events (critical: 1, warning: 3, info: 5).
             </div>
           </template>
@@ -1562,7 +1562,7 @@ onUnmounted(() => {
             allow-clear
             class="search"
           >
-            <template #prefix><SearchOutlined style="color: #bbb" /></template>
+            <template #prefix><SearchOutlined style="color: var(--text-placeholder)" /></template>
           </a-input>
           <a-button danger :loading="clearingBaselines" @click="resetBaselinesModalOpen = true">Reset</a-button>
         </div>
@@ -1614,11 +1614,11 @@ onUnmounted(() => {
               <span style="font-variant-numeric: tabular-nums; font-size: 12px">{{ fmtNum(record.mad, 3) }}</span>
             </template>
             <template v-else-if="column.key === 'calculated_at'">
-              <span style="color: #888; font-size: 12px">{{ record.isSynthetic ? '—' : fmtTs(record.calculated_at) }}</span>
+              <span style="color: var(--text-tertiary); font-size: 12px">{{ record.isSynthetic ? '—' : fmtTs(record.calculated_at) }}</span>
             </template>
           </template>
           <template #emptyText>
-            <div style="padding: 24px 0; text-align: center; color: #aaa; font-size: 13px">
+            <div style="padding: 24px 0; text-align: center; color: var(--text-muted); font-size: 13px">
               No baselines yet — baselines are built up as metric data flows through the anomaly detection engine.
             </div>
           </template>
@@ -1643,7 +1643,7 @@ onUnmounted(() => {
               Add rule
             </a-button>
           </div>
-          <div style="font-size: 12px; color: #888; margin-bottom: 8px">
+          <div style="font-size: 12px; color: var(--text-tertiary); margin-bottom: 8px">
             Alerts fire only for devices and types covered by a rule.
           </div>
 
@@ -1662,7 +1662,7 @@ onUnmounted(() => {
                 </a>
               </template>
               <template v-else-if="column.key === 'scope'">
-                <span style="font-size: 11px; color: #888">{{ driftRuleScopeLabel(record as DriftRuleConfig) }}</span>
+                <span style="font-size: 11px; color: var(--text-tertiary)">{{ driftRuleScopeLabel(record as DriftRuleConfig) }}</span>
               </template>
               <template v-else-if="column.key === 'driftType'">
                 <a-tag
@@ -1671,7 +1671,7 @@ onUnmounted(() => {
                   :color="tag.color"
                   style="font-size: 11px; margin: 1px"
                 >{{ tag.label }}</a-tag>
-                <span v-if="driftRuleDriftTypeTags(record as DriftRuleConfig).length === 0" style="color: #aaa; font-size: 11px">—</span>
+                <span v-if="driftRuleDriftTypeTags(record as DriftRuleConfig).length === 0" style="color: var(--text-muted); font-size: 11px">—</span>
               </template>
               <template v-else-if="column.key === 'severity'">
                 <span style="font-size: 12px">{{ driftRuleSeverityLabel(record as DriftRuleConfig) }}</span>
@@ -1695,7 +1695,7 @@ onUnmounted(() => {
               </template>
             </template>
             <template #emptyText>
-              <div style="padding: 24px 0; text-align: center; color: #aaa; font-size: 13px">
+              <div style="padding: 24px 0; text-align: center; color: var(--text-muted); font-size: 13px">
                 No schema drift alert rules configured. Add a rule to receive alerts when device schemas change.
               </div>
             </template>
@@ -1716,7 +1716,7 @@ onUnmounted(() => {
         <!-- Hidden for now (device/metric name resolution needs more work first) — v-if="false", not deleted. -->
         <a-card v-if="false" size="small" class="list-card" style="margin-bottom: 16px">
           <div class="toolbar">
-            <span style="color: #888; font-size: 13px">
+            <span style="color: var(--text-tertiary); font-size: 13px">
               <strong>Noisy Metrics (Bad Actors)</strong> — Metrics ranked by incident frequency, regardless of incident validity.
               Frequently firing metrics are candidates for tuning under ISA-18.2 alarm rationalization principles.
             </span>
@@ -1753,7 +1753,7 @@ onUnmounted(() => {
             </a-table-column>
             <a-table-column key="fpRate" title="False Positive Rate">
               <template #default="{ record }">
-                <span v-if="fpRate(record) === null" style="color: #ccc">— no reasons recorded yet</span>
+                <span v-if="fpRate(record) === null" style="color: var(--text-placeholder)">— no reasons recorded yet</span>
                 <a-tag v-else :color="fpRate(record)! >= 50 ? 'red' : fpRate(record)! >= 20 ? 'orange' : 'green'">
                   {{ fpRate(record) }}%
                 </a-tag>
@@ -1763,7 +1763,7 @@ onUnmounted(() => {
               <template #default="{ record }">{{ fmtTs(record.last_seen) }}</template>
             </a-table-column>
             <template #emptyText>
-              <div style="padding: 24px 0; text-align: center; color: #aaa; font-size: 13px">
+              <div style="padding: 24px 0; text-align: center; color: var(--text-muted); font-size: 13px">
                 No incidents in this window — nothing to rank yet.
               </div>
             </template>
@@ -1817,7 +1817,7 @@ onUnmounted(() => {
                 </template>
 
                 <template v-else-if="column.key === 'seasonality'">
-                  <span style="color: #888; font-size: 12px">{{ record.seasonality || 'none' }}</span>
+                  <span style="color: var(--text-tertiary); font-size: 12px">{{ record.seasonality || 'none' }}</span>
                 </template>
 
                 <template v-else-if="column.key === 'actions'">
@@ -1830,7 +1830,7 @@ onUnmounted(() => {
                 </template>
               </template>
               <template #emptyText>
-                <div style="padding: 24px 0; text-align: center; color: #aaa; font-size: 13px">
+                <div style="padding: 24px 0; text-align: center; color: var(--text-muted); font-size: 13px">
                   No metric rules yet — click "Add rule" to define anomaly detection for a metric.
                 </div>
               </template>
@@ -1838,7 +1838,7 @@ onUnmounted(() => {
             </a-card>
           </template>
 
-          <div v-else-if="!configLoading" style="padding: 48px 0; text-align: center; color: #aaa; font-size: 13px">
+          <div v-else-if="!configLoading" style="padding: 48px 0; text-align: center; color: var(--text-muted); font-size: 13px">
             No configuration loaded — check the agent connection.
           </div>
         </a-spin>
@@ -1867,7 +1867,7 @@ onUnmounted(() => {
               {{ label }}
             </a-select-option>
           </a-select>
-          <div style="font-size: 12px; color: #888; margin-top: 4px">
+          <div style="font-size: 12px; color: var(--text-tertiary); margin-top: 4px">
             Used to spot noisy rules later (see Bad Actors on the Rules tab) — not shown anywhere else right now.
           </div>
         </a-form-item>
@@ -1948,7 +1948,7 @@ onUnmounted(() => {
               </div>
             </template>
           </a-auto-complete>
-          <div style="font-size: 11px; color: #888; margin-top: 4px">
+          <div style="font-size: 11px; color: var(--text-tertiary); margin-top: 4px">
             <a-spin v-if="metricSuggestionsLoading" size="small" />
             <template v-else-if="metricSuggestions.length">
               {{ metricSuggestions.length }} metric{{ metricSuggestions.length !== 1 ? 's' : '' }} found —
@@ -2142,24 +2142,24 @@ onUnmounted(() => {
       <a-spin v-if="templatesLoading" />
       <template v-else>
         <div v-for="[category, templates] in templatesByCategory" :key="category" style="margin-bottom: 20px">
-          <div style="font-weight: 600; font-size: 12px; color: #888; text-transform: uppercase; margin-bottom: 8px">
+          <div style="font-weight: 600; font-size: 12px; color: var(--text-tertiary); text-transform: uppercase; margin-bottom: 8px">
             {{ category }}
           </div>
           <div
             v-for="t in templates"
             :key="t.builtin ? t.id : t.uuid"
-            style="border: 1px solid #eee; border-radius: 6px; padding: 10px 12px; margin-bottom: 8px; cursor: pointer"
+            style="border: 1px solid var(--border-color); border-radius: 6px; padding: 10px 12px; margin-bottom: 8px; cursor: pointer"
             @click="applyTemplate(t)"
           >
             <div style="display: flex; align-items: center; justify-content: space-between">
               <span style="font-weight: 500">{{ t.name }}</span>
               <DeleteOutlined
                 v-if="!t.builtin"
-                style="color: #999"
+                style="color: var(--text-muted)"
                 @click.stop="deleteTemplate(t.uuid)"
               />
             </div>
-            <div v-if="t.purpose" style="font-size: 12px; color: #888; margin: 4px 0">{{ t.purpose }}</div>
+            <div v-if="t.purpose" style="font-size: 12px; color: var(--text-tertiary); margin: 4px 0">{{ t.purpose }}</div>
             <div style="display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px">
               <a-tag v-for="label in uniqueCategoryLabels(t.methods)" :key="label" :color="categoryLabelColor(label)" style="font-size: 10px">{{ label }}</a-tag>
             </div>
@@ -2187,7 +2187,7 @@ onUnmounted(() => {
           />
         </a-form-item>
       </a-form>
-      <p style="font-size: 12px; color: #888">
+      <p style="font-size: 12px; color: var(--text-tertiary)">
         Saves the current methods, threshold, window size, min confidence, cooldown, seasonality,
         and expected range as a reusable template under "My templates".
       </p>
@@ -2197,14 +2197,14 @@ onUnmounted(() => {
 
 <style scoped>
 .heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 16px; }
-.heading p { color: #777; margin: 0; }
+.heading p { color: var(--text-tertiary); margin: 0; }
 .list-card { border-radius: 9px; }
-.list-card :deep(.ant-table-thead > tr > th) { background: #f7f9fc; font-size: 12px; font-weight: 650; }
-.list-card :deep(.ant-table-tbody > tr:hover > td) { background: #f5f9ff; }
+.list-card :deep(.ant-table-thead > tr > th) { background: var(--bg-table-header); font-size: 12px; font-weight: 650; }
+.list-card :deep(.ant-table-tbody > tr:hover > td) { background: var(--bg-table-hover); }
 .filters { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
 .search { width: 300px; max-width: 100%; }
 .filter { width: 170px; max-width: 100%; }
-.toolbar-info { color: #888; font-size: 12px; margin-bottom: 10px; }
+.toolbar-info { color: var(--text-tertiary); font-size: 12px; margin-bottom: 10px; }
 .toolbar {
   display: flex;
   justify-content: space-between;
@@ -2226,22 +2226,22 @@ onUnmounted(() => {
 .detection-category-cards { display: flex; flex-direction: column; gap: 8px; }
 .detection-category-card {
   display: flex; align-items: flex-start; gap: 12px;
-  padding: 12px; border: 1px solid #d9d9d9; border-radius: 6px;
+  padding: 12px; border: 1px solid var(--border-color-strong); border-radius: 6px;
   cursor: pointer; transition: all 0.2s;
 }
 .detection-category-card:hover { border-color: #1677ff; }
-.detection-category-card--active { border-color: #1677ff; background: #e6f4ff; }
+.detection-category-card--active { border-color: #1677ff; background: var(--bg-selected); }
 .detection-category-card__title { font-weight: 600; font-size: 13px; }
-.detection-category-card__desc { font-size: 12px; color: #666; margin-top: 2px; }
+.detection-category-card__desc { font-size: 12px; color: var(--text-secondary); margin-top: 2px; }
 .detection-method-warning { margin-top: 8px; color: #cf1322; font-size: 12px; }
-.limits-inputs { margin-top: 8px; padding: 10px 12px; background: #fafafa; border: 1px solid #f0f0f0; border-radius: 6px; }
-.multi-category-note { margin-top: 8px; font-size: 12px; color: #888; }
-.sensitivity-description { margin-top: 6px; font-size: 12px; color: #888; }
+.limits-inputs { margin-top: 8px; padding: 10px 12px; background: var(--bg-subtle); border: 1px solid var(--border-color); border-radius: 6px; }
+.multi-category-note { margin-top: 8px; font-size: 12px; color: var(--text-tertiary); }
+.sensitivity-description { margin-top: 6px; font-size: 12px; color: var(--text-tertiary); }
 :deep(.ant-segmented-item-selected) { background: #1677ff !important; color: #fff !important; }
 :deep(.ant-segmented-item-selected .ant-segmented-item-label) { color: #fff !important; }
 .advanced-settings-collapse { margin: 0 -12px 16px; }
-.advanced-settings-collapse :deep(.ant-collapse-header) { font-size: 13px; color: #555; padding: 8px 12px !important; }
+.advanced-settings-collapse :deep(.ant-collapse-header) { font-size: 13px; color: var(--text-secondary); padding: 8px 12px !important; }
 .advanced-settings-collapse :deep(.ant-collapse-content-box) { padding: 0 12px !important; }
-.advanced-setting-help { font-size: 12px; color: #888; margin-top: 4px; }
+.advanced-setting-help { font-size: 12px; color: var(--text-tertiary); margin-top: 4px; }
 
 </style>

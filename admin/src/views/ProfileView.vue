@@ -108,7 +108,7 @@ function cancelPasswordChange() {
                 placeholder="New password"
                 autocomplete="new-password"
               >
-                <template #prefix><LockOutlined style="color: #555" /></template>
+                <template #prefix><LockOutlined style="color: var(--text-secondary)" /></template>
               </a-input-password>
             </a-form-item>
 
@@ -123,7 +123,7 @@ function cancelPasswordChange() {
                 placeholder="Confirm new password"
                 autocomplete="new-password"
               >
-                <template #prefix><LockOutlined style="color: #555" /></template>
+                <template #prefix><LockOutlined style="color: var(--text-secondary)" /></template>
               </a-input-password>
             </a-form-item>
 
@@ -149,7 +149,7 @@ function cancelPasswordChange() {
 
 <style scoped>
 .heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 16px; }
-.heading p { color: #777; margin: 0; }
+.heading p { color: var(--text-tertiary); margin: 0; }
 
 .profile-page {
   max-width: 640px;
@@ -163,7 +163,7 @@ function cancelPasswordChange() {
   align-items: center;
   gap: 2rem;
   padding: 0.6rem 0;
-  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+  border-bottom: 1px solid var(--border-color);
 }
 
 .profile-field:last-child {
@@ -173,7 +173,7 @@ function cancelPasswordChange() {
 .field-label {
   width: 100px;
   font-size: 0.88rem;
-  color: rgba(0, 0, 0, 0.45);
+  color: var(--text-tertiary);
   flex-shrink: 0;
 }
 
@@ -185,11 +185,11 @@ function cancelPasswordChange() {
 }
 
 .field-icon {
-  color: rgba(0, 0, 0, 0.25);
+  color: var(--text-placeholder);
 }
 
 .password-hint {
-  color: rgba(0, 0, 0, 0.45);
+  color: var(--text-tertiary);
   font-size: 0.9rem;
   margin-bottom: 1rem;
 }

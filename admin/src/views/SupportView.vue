@@ -68,7 +68,7 @@ const resources = [
         <CustomerServiceOutlined style="margin-right: 8px" />
         Priority Support
       </template>
-      <p style="color: #666; margin-bottom: 20px">
+      <p style="color: var(--text-secondary); margin-bottom: 20px">
         As an Agent Pro customer you have direct access to our engineering team.
         We aim to respond within one business day.
       </p>
@@ -114,5 +114,5 @@ const resources = [
 
 <style scoped>
 .heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 16px; }
-.heading p { color: #777; margin: 0; }
+.heading p { color: var(--text-tertiary); margin: 0; }
 </style>

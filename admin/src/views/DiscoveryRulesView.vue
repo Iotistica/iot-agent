@@ -237,7 +237,7 @@ onUnmounted(() => { if (refreshTimer) clearInterval(refreshTimer) })
       <p>Scheduled protocol scans — runs automatically, or trigger manually.</p>
       <div class="header-actions">
         <template v-if="selectedUuids.length > 0">
-          <span style="font-size: 13px; color: #666">{{ selectedUuids.length }} selected</span>
+          <span style="font-size: 13px; color: var(--text-secondary)">{{ selectedUuids.length }} selected</span>
           <a-button :loading="bulkEnabling" @click="bulkEnable"><template #icon><CheckCircleOutlined /></template>Enable</a-button>
           <a-button :loading="bulkDisabling" @click="bulkDisable"><template #icon><StopOutlined /></template>Disable</a-button>
           <a-button danger :loading="deleting" @click="confirmDeleteSelected"><template #icon><DeleteOutlined /></template>Delete</a-button>
@@ -270,7 +270,7 @@ onUnmounted(() => { if (refreshTimer) clearInterval(refreshTimer) })
             </template>
 
             <template v-else-if="column.key === 'interval_seconds'">
-              <span style="color: #888; font-size: 12px">{{ fmtInterval(record.interval_seconds) }}</span>
+              <span style="color: var(--text-tertiary); font-size: 12px">{{ fmtInterval(record.interval_seconds) }}</span>
             </template>
 
             <template v-else-if="column.key === 'auto_enable'">
@@ -284,17 +284,17 @@ onUnmounted(() => { if (refreshTimer) clearInterval(refreshTimer) })
             </template>
 
             <template v-else-if="column.key === 'last_run_at'">
-              <span style="color: #888; font-size: 12px">{{ fmtDate(record.last_run_at) }}</span>
+              <span style="color: var(--text-tertiary); font-size: 12px">{{ fmtDate(record.last_run_at) }}</span>
             </template>
 
             <template v-else-if="column.key === 'next_run_at'">
-              <span style="color: #888; font-size: 12px">
+              <span style="color: var(--text-tertiary); font-size: 12px">
                 {{ record.enabled ? fmtDate(record.next_run_at) : '—' }}
               </span>
             </template>
 
             <template v-else-if="column.key === 'last_result_json'">
-              <span :style="{ color: record.last_result_json?.error ? '#cf1322' : '#888', fontSize: '12px' }">
+              <span :style="{ color: record.last_result_json?.error ? '#cf1322' : 'var(--text-tertiary)', fontSize: '12px' }">
                 {{ resultSummary(record) }}
               </span>
             </template>
@@ -345,10 +345,10 @@ onUnmounted(() => { if (refreshTimer) clearInterval(refreshTimer) })
               </a-tag>
             </template>
             <template v-else-if="column.key === 'started_at'">
-              <span style="font-size: 12px; color: #888">{{ fmtDate(record.started_at) }}</span>
+              <span style="font-size: 12px; color: var(--text-tertiary)">{{ fmtDate(record.started_at) }}</span>
             </template>
             <template v-else-if="column.key === 'duration_ms'">
-              <span style="font-size: 12px; color: #888">{{ fmtDuration(record.duration_ms) }}</span>
+              <span style="font-size: 12px; color: var(--text-tertiary)">{{ fmtDuration(record.duration_ms) }}</span>
             </template>
             <template v-else-if="column.key === 'status'">
               <a-badge :status="STATUS_COLOR[record.status]" :text="record.status" />
@@ -360,7 +360,7 @@ onUnmounted(() => { if (refreshTimer) clearInterval(refreshTimer) })
             </template>
             <template v-else-if="column.key === 'result'">
               <span v-if="record.error" style="font-size: 11px; color: #cf1322">{{ record.error }}</span>
-              <span v-else style="font-size: 12px; color: #888">
+              <span v-else style="font-size: 12px; color: var(--text-tertiary)">
                 found {{ record.found }}
                 <template v-if="record.saved > 0"> · {{ record.saved }} auto-added</template>
                 <template v-if="record.skipped > 0"> · {{ record.skipped }} skipped</template>
@@ -368,7 +368,7 @@ onUnmounted(() => { if (refreshTimer) clearInterval(refreshTimer) })
             </template>
           </template>
           <template #emptyText>
-            <div style="padding: 24px 0; text-align: center; color: #aaa; font-size: 13px">
+            <div style="padding: 24px 0; text-align: center; color: var(--text-muted); font-size: 13px">
               No runs yet — rules will appear here once they execute.
             </div>
           </template>
@@ -399,10 +399,10 @@ onUnmounted(() => { if (refreshTimer) clearInterval(refreshTimer) })
 
 <style scoped>
 .heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 16px; }
-.heading p { color: #777; margin: 0; }
+.heading p { color: var(--text-tertiary); margin: 0; }
 .header-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .list-card { border-radius: 9px; }
-.list-card :deep(.ant-table-thead > tr > th) { background: #f7f9fc; font-size: 12px; font-weight: 650; }
-.list-card :deep(.ant-table-tbody > tr:hover > td) { background: #f5f9ff; }
-.toolbar-info { color: #888; font-size: 12px; margin-bottom: 10px; }
+.list-card :deep(.ant-table-thead > tr > th) { background: var(--bg-table-header); font-size: 12px; font-weight: 650; }
+.list-card :deep(.ant-table-tbody > tr:hover > td) { background: var(--bg-table-hover); }
+.toolbar-info { color: var(--text-tertiary); font-size: 12px; margin-bottom: 10px; }
 </style>

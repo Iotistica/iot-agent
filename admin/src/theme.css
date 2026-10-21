@@ -1,0 +1,267 @@
+:root {
+  --bg-body: #f0f2f5;
+  --bg-container: #ffffff;
+  --bg-elevated: #ffffff;
+  --bg-subtle: #f5f5f5;
+  --bg-hover: #fafafa;
+  --bg-card-header: #f7f9fb;
+  --bg-code: #f6f6f6;
+  --bg-table-header: #f7f9fc;
+  --bg-table-hover: #f5f9ff;
+  --bg-stat-card: #fafafa;
+  --bg-panel: #fafafa;
+  --bg-selected: #e6f4ff;
+  --bg-selected-light: #f0f7ff;
+
+  --text-primary: rgba(0, 0, 0, 0.88);
+  --text-secondary: rgba(0, 0, 0, 0.65);
+  --text-tertiary: rgba(0, 0, 0, 0.45);
+  --text-heading: rgba(0, 0, 0, 0.85);
+  --text-muted: #999;
+  --text-placeholder: #bbb;
+
+  --border-color: #f0f0f0;
+  --border-color-strong: #d9d9d9;
+  --border-color-card: #e7ebf0;
+
+  --shadow-card: 0 1px 4px rgba(0, 0, 0, 0.06);
+  --shadow-card-hover: 0 4px 12px rgba(0, 0, 0, 0.1);
+
+  --scrollbar-thumb: rgba(0, 0, 0, 0.15);
+  --scrollbar-track: transparent;
+
+  --icon-bg-blue: #edf4ff;
+  --icon-bg-green: #eefbf4;
+  --icon-bg-purple: #f5f0ff;
+  --icon-bg-red: #fff1f2;
+
+  --badge-running-bg: #e6f4ff;
+  --badge-running-color: #1677ff;
+  --badge-running-border: #bae0ff;
+  --badge-stopped-bg: #fff2f0;
+  --badge-stopped-color: #ff4d4f;
+  --badge-stopped-border: #ffccc7;
+}
+
+[data-theme="dark"] {
+  --bg-body: #141414;
+  --bg-container: #1f1f1f;
+  --bg-elevated: #262626;
+  --bg-subtle: #262626;
+  --bg-hover: #303030;
+  --bg-card-header: #262626;
+  --bg-code: #2a2a2a;
+  --bg-table-header: #1a1a1a;
+  --bg-table-hover: #262626;
+  --bg-stat-card: #1a1a1a;
+  --bg-panel: #1a1a1a;
+  --bg-selected: #111d2c;
+  --bg-selected-light: #111a2c;
+
+  --text-primary: rgba(255, 255, 255, 0.88);
+  --text-secondary: rgba(255, 255, 255, 0.65);
+  --text-tertiary: rgba(255, 255, 255, 0.45);
+  --text-heading: rgba(255, 255, 255, 0.85);
+  --text-muted: rgba(255, 255, 255, 0.35);
+  --text-placeholder: rgba(255, 255, 255, 0.25);
+
+  --border-color: #303030;
+  --border-color-strong: #434343;
+  --border-color-card: #303030;
+
+  --shadow-card: 0 1px 4px rgba(0, 0, 0, 0.3);
+  --shadow-card-hover: 0 4px 12px rgba(0, 0, 0, 0.5);
+
+  --scrollbar-thumb: rgba(255, 255, 255, 0.15);
+  --scrollbar-track: transparent;
+
+  --icon-bg-blue: rgba(22, 119, 255, 0.15);
+  --icon-bg-green: rgba(82, 196, 26, 0.15);
+  --icon-bg-purple: rgba(114, 46, 209, 0.15);
+  --icon-bg-red: rgba(240, 68, 82, 0.15);
+
+  --badge-running-bg: rgba(22, 119, 255, 0.15);
+  --badge-running-color: #4096ff;
+  --badge-running-border: rgba(22, 119, 255, 0.3);
+  --badge-stopped-bg: rgba(255, 77, 79, 0.15);
+  --badge-stopped-color: #ff7875;
+  --badge-stopped-border: rgba(255, 77, 79, 0.3);
+}
+
+body {
+  background: var(--bg-body);
+  color: var(--text-primary);
+  transition: background-color 0.3s, color 0.3s;
+}
+
+[data-theme="dark"] .ant-layout {
+  background: var(--bg-body);
+}
+
+[data-theme="dark"] .ant-layout-content {
+  background: transparent;
+}
+
+/* Ant table overrides for dark mode */
+[data-theme="dark"] .ant-table {
+  background: var(--bg-container);
+  color: var(--text-primary);
+}
+
+[data-theme="dark"] .ant-table-thead > tr > th,
+[data-theme="dark"] .ant-table-thead > tr > td {
+  background: var(--bg-table-header) !important;
+  color: var(--text-secondary) !important;
+  border-bottom-color: var(--border-color) !important;
+}
+
+[data-theme="dark"] .ant-table-tbody > tr > td {
+  border-bottom-color: var(--border-color) !important;
+}
+
+[data-theme="dark"] .ant-table-tbody > tr:hover > td {
+  background: var(--bg-table-hover) !important;
+}
+
+[data-theme="dark"] .ant-table-cell-row-hover {
+  background: var(--bg-table-hover) !important;
+}
+
+/* Ant card overrides */
+[data-theme="dark"] .ant-card {
+  background: var(--bg-container);
+  border-color: var(--border-color);
+}
+
+[data-theme="dark"] .ant-card-head {
+  border-bottom-color: var(--border-color);
+}
+
+/* Ant drawer overrides */
+[data-theme="dark"] .ant-drawer-content {
+  background: var(--bg-container);
+}
+
+[data-theme="dark"] .ant-drawer-header {
+  border-bottom-color: var(--border-color);
+}
+
+[data-theme="dark"] .ant-drawer-footer {
+  border-top-color: var(--border-color);
+}
+
+/* Ant modal overrides */
+[data-theme="dark"] .ant-modal-content {
+  background: var(--bg-container);
+}
+
+[data-theme="dark"] .ant-modal-header {
+  background: var(--bg-container);
+  border-bottom-color: var(--border-color);
+}
+
+/* Ant form overrides */
+[data-theme="dark"] .ant-form-item-label > label {
+  color: var(--text-primary);
+}
+
+/* Ant input/select overrides */
+[data-theme="dark"] .ant-input,
+[data-theme="dark"] .ant-input-affix-wrapper,
+[data-theme="dark"] .ant-select-selector,
+[data-theme="dark"] .ant-picker,
+[data-theme="dark"] .ant-input-number {
+  background: var(--bg-elevated) !important;
+  border-color: var(--border-color-strong) !important;
+  color: var(--text-primary) !important;
+}
+
+[data-theme="dark"] .ant-select-dropdown {
+  background: var(--bg-elevated);
+}
+
+/* Ant tabs overrides */
+[data-theme="dark"] .ant-tabs-nav::before {
+  border-bottom-color: var(--border-color) !important;
+}
+
+/* Ant collapse overrides */
+[data-theme="dark"] .ant-collapse {
+  background: var(--bg-subtle);
+  border-color: var(--border-color);
+}
+
+[data-theme="dark"] .ant-collapse-item {
+  border-bottom-color: var(--border-color) !important;
+}
+
+[data-theme="dark"] .ant-collapse-content {
+  background: var(--bg-container);
+  border-top-color: var(--border-color);
+}
+
+/* Ant tag overrides */
+[data-theme="dark"] .ant-tag {
+  background: var(--bg-subtle);
+  border-color: var(--border-color);
+  color: var(--text-secondary);
+}
+
+/* Ant pagination */
+[data-theme="dark"] .ant-pagination-item {
+  background: var(--bg-container);
+  border-color: var(--border-color-strong);
+}
+
+[data-theme="dark"] .ant-pagination-item a {
+  color: var(--text-primary);
+}
+
+/* Ant empty */
+[data-theme="dark"] .ant-empty-description {
+  color: var(--text-tertiary);
+}
+
+/* Ant alert */
+[data-theme="dark"] .ant-alert {
+  border-color: var(--border-color);
+}
+
+/* Ant descriptions */
+[data-theme="dark"] .ant-descriptions-bordered .ant-descriptions-item-label {
+  background: var(--bg-subtle);
+}
+
+/* Ant segmented */
+[data-theme="dark"] .ant-segmented {
+  background: var(--bg-subtle);
+}
+
+/* Ant tooltip */
+[data-theme="dark"] .ant-tooltip-inner {
+  background: var(--bg-elevated);
+}
+
+/* Ant switch when checked stays blue */
+[data-theme="dark"] .ant-switch {
+  background: var(--bg-subtle);
+}
+
+/* Ant progress track */
+[data-theme="dark"] .ant-progress-inner {
+  background: var(--bg-subtle) !important;
+}
+
+/* Ant statistic */
+[data-theme="dark"] .ant-statistic-title {
+  color: var(--text-tertiary);
+}
+
+[data-theme="dark"] .ant-statistic-content {
+  color: var(--text-primary);
+}
+
+/* Ant spin */
+[data-theme="dark"] .ant-spin-container::after {
+  background: var(--bg-container);
+}

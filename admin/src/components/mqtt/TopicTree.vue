@@ -158,7 +158,7 @@ function fmtCount(n: number) {
 
 .folder-icon {
   font-size: 11px;
-  color: #999;
+  color: var(--text-muted);
   cursor: pointer;
   transition: transform 0.15s;
   display: inline-block;
@@ -183,13 +183,13 @@ function fmtCount(n: number) {
 }
 
 .topic-name--dim {
-  color: #aaa;
+  color: var(--text-muted);
 }
 
 .topic-count {
   font-size: 10px;
-  color: #999;
-  background: rgba(0,0,0,0.06);
+  color: var(--text-muted);
+  background: var(--bg-subtle);
   border-radius: 8px;
   padding: 0 5px;
   flex-shrink: 0;

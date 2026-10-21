@@ -423,7 +423,7 @@ async function setEnergyStatus(row: EnergyRecommendation, status: Recommendation
             </template>
 
             <template v-else-if="column.key === 'metrics'">
-              <span style="color: #888; font-size: 12px">{{ record.metrics.length }}</span>
+              <span style="color: var(--text-tertiary); font-size: 12px">{{ record.metrics.length }}</span>
             </template>
 
             <template v-else-if="column.key === 'manufacturer'">
@@ -441,7 +441,7 @@ async function setEnergyStatus(row: EnergyRecommendation, status: Recommendation
           </template>
 
           <template #emptyText>
-            <div style="padding: 24px 0; text-align: center; color: #aaa; font-size: 13px">
+            <div style="padding: 24px 0; text-align: center; color: var(--text-muted); font-size: 13px">
               No assets yet — add one to start tying metrics to real equipment.
             </div>
           </template>
@@ -481,7 +481,7 @@ async function setEnergyStatus(row: EnergyRecommendation, status: Recommendation
                 </template>
               </template>
               <template #emptyText>
-                <div style="padding: 24px 0; text-align: center; color: #aaa; font-size: 13px">
+                <div style="padding: 24px 0; text-align: center; color: var(--text-muted); font-size: 13px">
                   No maintenance rules yet — add one against an asset to start getting recommendations.
                 </div>
               </template>
@@ -498,7 +498,7 @@ async function setEnergyStatus(row: EnergyRecommendation, status: Recommendation
                   <a-tag :color="CRITICALITY_TAG_COLOR[record.criticality]">{{ record.criticality }}</a-tag>
                 </template>
                 <template v-else-if="column.key === 'due_by'">
-                  <span style="font-size: 12px; color: #888">{{ fmtDate(record.due_by) }}</span>
+                  <span style="font-size: 12px; color: var(--text-tertiary)">{{ fmtDate(record.due_by) }}</span>
                 </template>
                 <template v-else-if="column.key === 'status'">
                   <a-badge :status="STATUS_TAG_COLOR[record.status] as any" :text="record.status" />
@@ -512,7 +512,7 @@ async function setEnergyStatus(row: EnergyRecommendation, status: Recommendation
                 </template>
               </template>
               <template #emptyText>
-                <div style="padding: 24px 0; text-align: center; color: #aaa; font-size: 13px">
+                <div style="padding: 24px 0; text-align: center; color: var(--text-muted); font-size: 13px">
                   No open recommendations — nothing has crossed a rule threshold yet.
                 </div>
               </template>
@@ -598,7 +598,7 @@ async function setEnergyStatus(row: EnergyRecommendation, status: Recommendation
                 </template>
               </template>
               <template #emptyText>
-                <div style="padding: 24px 0; text-align: center; color: #aaa; font-size: 13px">
+                <div style="padding: 24px 0; text-align: center; color: var(--text-muted); font-size: 13px">
                   No energy rules yet — add one against an asset to start getting recommendations.
                 </div>
               </template>
@@ -626,7 +626,7 @@ async function setEnergyStatus(row: EnergyRecommendation, status: Recommendation
                 </template>
               </template>
               <template #emptyText>
-                <div style="padding: 24px 0; text-align: center; color: #aaa; font-size: 13px">
+                <div style="padding: 24px 0; text-align: center; color: var(--text-muted); font-size: 13px">
                   No open recommendations — nothing has crossed a rule threshold yet.
                 </div>
               </template>
@@ -689,12 +689,12 @@ async function setEnergyStatus(row: EnergyRecommendation, status: Recommendation
 
 <style scoped>
 .heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 16px; }
-.heading p { color: #777; margin: 0; }
+.heading p { color: var(--text-tertiary); margin: 0; }
 .header-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .list-card { border-radius: 9px; }
-.list-card :deep(.ant-table-thead > tr > th) { background: #f7f9fc; font-size: 12px; font-weight: 650; }
-.list-card :deep(.ant-table-tbody > tr:hover > td) { background: #f5f9ff; }
-.toolbar-info { color: #888; font-size: 12px; margin-bottom: 10px; }
+.list-card :deep(.ant-table-thead > tr > th) { background: var(--bg-table-header); font-size: 12px; font-weight: 650; }
+.list-card :deep(.ant-table-tbody > tr:hover > td) { background: var(--bg-table-hover); }
+.toolbar-info { color: var(--text-tertiary); font-size: 12px; margin-bottom: 10px; }
 
 .pro-badge {
   margin-left: 6px;

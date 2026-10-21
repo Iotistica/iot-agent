@@ -35,9 +35,9 @@ onMounted(async () => {
 </script>
 
 <template>
-  <a-layout style="height: 100vh; overflow: hidden">
+  <a-layout style="height: 100vh; overflow: hidden; background: var(--bg-body)">
     <AppSidebar />
-    <a-layout style="overflow: hidden">
+    <a-layout style="overflow: hidden; background: var(--bg-body)">
       <a-layout-header class="page-header">
         <div class="header-left">
           <h2>{{ title }}</h2>
@@ -63,12 +63,12 @@ onMounted(async () => {
 
 <style scoped>
 .page-header {
-  background: #fff;
+  background: var(--bg-container);
   padding: 0 24px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  border-bottom: 1px solid #f0f0f0;
+  border-bottom: 1px solid var(--border-color);
   height: 52px;
   line-height: 52px;
 }
@@ -93,7 +93,7 @@ onMounted(async () => {
 
 .header-user {
   font-size: 13px;
-  color: #666;
+  color: var(--text-tertiary);
 }
 
 .version-badge {
@@ -101,14 +101,14 @@ onMounted(async () => {
   line-height: 18px;
   padding: 0 7px;
   height: 20px;
-  background: #f5f5f5;
-  border-color: #e8e8e8;
-  color: #888;
+  background: var(--bg-subtle);
+  border-color: var(--border-color);
+  color: var(--text-tertiary);
   font-weight: 500;
 }
 
 .logout-btn {
-  color: #888;
+  color: var(--text-tertiary);
 }
 
 .logout-btn:hover {
@@ -118,7 +118,7 @@ onMounted(async () => {
 .page-content {
   margin: 24px;
   padding: 24px;
-  background: #fff;
+  background: var(--bg-container);
   border-radius: 8px;
   min-height: 360px;
   overflow-y: auto;

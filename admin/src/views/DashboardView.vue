@@ -339,7 +339,7 @@ const netIface   = computed(() => stats.value ? (primaryNet(stats.value.network)
           <a-col :xs="12" :sm="6">
             <div class="widget widget-clickable" @click="router.push('/anomaly')">
               <div class="widget-title">Resolved</div>
-              <div class="widget-value" style="color:#888">{{ incidentStats.resolved }}</div>
+              <div class="widget-value" style="color:var(--text-tertiary)">{{ incidentStats.resolved }}</div>
               <div class="widget-sub">closed incidents</div>
             </div>
           </a-col>
@@ -384,13 +384,13 @@ const netIface   = computed(() => stats.value ? (primaryNet(stats.value.network)
                 <span style="font-size:13px">{{ deviceLabel(record) }}</span>
               </template>
               <template v-else-if="column.key === 'message'">
-                <span style="font-size:12px; color:#595959" :title="record.message">{{ stripGuids(record.message) }}</span>
+                <span style="font-size:12px; color:var(--text-secondary)" :title="record.message">{{ stripGuids(record.message) }}</span>
               </template>
               <template v-else-if="column.key === 'score'">
-                <span style="font-variant-numeric:tabular-nums; font-size:12px; color:#595959">{{ record.max_anomaly_score.toFixed(2) }}</span>
+                <span style="font-variant-numeric:tabular-nums; font-size:12px; color:var(--text-secondary)">{{ record.max_anomaly_score.toFixed(2) }}</span>
               </template>
               <template v-else-if="column.key === 'time'">
-                <span style="font-size:11px; color:#bbb">{{ fmtRelTime(record.created_at) }}</span>
+                <span style="font-size:11px; color:var(--text-tertiary)">{{ fmtRelTime(record.created_at) }}</span>
               </template>
             </template>
           </a-table>
@@ -436,7 +436,7 @@ const netIface   = computed(() => stats.value ? (primaryNet(stats.value.network)
                 <span :title="record.label" style="font-size:13px">{{ record.label }}</span>
               </template>
               <template v-else-if="column.key === 'protocol'">
-                <span style="font-size:12px; color:#888">{{ record.protocol ?? '—' }}</span>
+                <span style="font-size:12px; color:var(--text-tertiary)">{{ record.protocol ?? '—' }}</span>
               </template>
             </template>
           </a-table>
@@ -669,7 +669,7 @@ const netIface   = computed(() => stats.value ? (primaryNet(stats.value.network)
                   {{ fmtMb(stats.storage_used!) }} / {{ fmtMb(stats.storage_total!) }}
                 </div>
               </template>
-              <div v-else class="widget-value" style="color:#aaa">—</div>
+              <div v-else class="widget-value" style="color:var(--text-tertiary)">—</div>
             </div>
           </a-col>
 
@@ -700,10 +700,10 @@ const netIface   = computed(() => stats.value ? (primaryNet(stats.value.network)
               <span style="color:#722ed1">{{ fmtBytes(record.tx_sec / 1024) }}</span>
             </template>
             <template v-else-if="column.key === 'rx_bytes'">
-              <span style="color:#888; font-size:12px">{{ fmtBytesTotal(record.rx_bytes) }}</span>
+              <span style="color:var(--text-tertiary); font-size:12px">{{ fmtBytesTotal(record.rx_bytes) }}</span>
             </template>
             <template v-else-if="column.key === 'tx_bytes'">
-              <span style="color:#888; font-size:12px">{{ fmtBytesTotal(record.tx_bytes) }}</span>
+              <span style="color:var(--text-tertiary); font-size:12px">{{ fmtBytesTotal(record.tx_bytes) }}</span>
             </template>
           </template>
         </a-table>
@@ -722,7 +722,7 @@ const netIface   = computed(() => stats.value ? (primaryNet(stats.value.network)
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  color: #aaa;
+  color: var(--text-tertiary);
   margin-bottom: 10px;
   display: flex;
   align-items: center;
@@ -749,13 +749,13 @@ const netIface   = computed(() => stats.value ? (primaryNet(stats.value.network)
 }
 
 .widget-clickable:hover {
-  border-color: #d9d9d9;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+  border-color: var(--border-color-strong);
+  box-shadow: var(--shadow-card-hover);
 }
 
 .widget {
-  background: #fafafa;
-  border: 1px solid #f0f0f0;
+  background: var(--bg-subtle);
+  border: 1px solid var(--border-color);
   border-radius: 8px;
   padding: 16px 18px 12px;
   height: 100%;
@@ -763,7 +763,7 @@ const netIface   = computed(() => stats.value ? (primaryNet(stats.value.network)
 
 .widget-title {
   font-size: 12px;
-  color: #888;
+  color: var(--text-tertiary);
   margin-bottom: 6px;
   font-weight: 500;
 }
@@ -778,7 +778,7 @@ const netIface   = computed(() => stats.value ? (primaryNet(stats.value.network)
 
 .widget-sub {
   font-size: 11px;
-  color: #aaa;
+  color: var(--text-tertiary);
   margin-top: 6px;
 }
 
@@ -802,7 +802,7 @@ const netIface   = computed(() => stats.value ? (primaryNet(stats.value.network)
 
 .chart-sub {
   font-size: 11px;
-  color: #aaa;
+  color: var(--text-tertiary);
   font-weight: 400;
   margin-left: 6px;
 }

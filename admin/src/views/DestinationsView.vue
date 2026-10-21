@@ -155,7 +155,7 @@ onMounted(async () => {
       <p>Configure where your data is published.</p>
       <div class="header-actions">
         <template v-if="selectedIds.length > 0">
-          <span style="font-size: 13px; color: #666">{{ selectedIds.length }} selected</span>
+          <span style="font-size: 13px; color: var(--text-secondary)">{{ selectedIds.length }} selected</span>
           <a-button :loading="bulkEnabling" @click="bulkEnable"><template #icon><CheckCircleOutlined /></template>Enable</a-button>
           <a-button :loading="bulkDisabling" @click="bulkDisable"><template #icon><StopOutlined /></template>Disable</a-button>
           <a-button danger :loading="deleting" @click="confirmDeleteSelected"><template #icon><DeleteOutlined /></template>Delete</a-button>
@@ -204,7 +204,7 @@ onMounted(async () => {
               {{ record.last_error }}
             </a-tag>
           </a-tooltip>
-          <span v-else style="color: #999">—</span>
+          <span v-else style="color: var(--text-muted)">—</span>
         </template>
 
         <template v-else-if="column.key === 'actions'">
@@ -232,13 +232,13 @@ onMounted(async () => {
 
 <style scoped>
 .heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 16px; }
-.heading p { color: #777; margin: 0; }
+.heading p { color: var(--text-tertiary); margin: 0; }
 .header-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .list-card { border-radius: 9px; }
-.list-card :deep(.ant-table-thead > tr > th) { background: #f7f9fc; font-size: 12px; font-weight: 650; }
-.list-card :deep(.ant-table-tbody > tr:hover > td) { background: #f5f9ff; }
+.list-card :deep(.ant-table-thead > tr > th) { background: var(--bg-table-header); font-size: 12px; font-weight: 650; }
+.list-card :deep(.ant-table-tbody > tr:hover > td) { background: var(--bg-table-hover); }
 .filters { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
 .search { width: 300px; max-width: 100%; }
 .filter { width: 170px; max-width: 100%; }
-.toolbar-info { color: #888; font-size: 12px; margin-bottom: 10px; }
+.toolbar-info { color: var(--text-tertiary); font-size: 12px; margin-bottom: 10px; }
 </style>

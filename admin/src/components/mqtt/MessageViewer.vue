@@ -261,7 +261,7 @@ watch(() => props.node?.fullTopic, (topic) => {
   align-items: center;
   justify-content: center;
   height: 100%;
-  color: #bbb;
+  color: var(--text-placeholder);
   font-size: 13px;
   gap: 10px;
 }
@@ -279,7 +279,7 @@ watch(() => props.node?.fullTopic, (topic) => {
 
 .viewer-header {
   padding: 14px 16px 10px;
-  border-bottom: 1px solid #f0f0f0;
+  border-bottom: 1px solid var(--border-color);
 }
 
 .topic-path {
@@ -309,20 +309,20 @@ watch(() => props.node?.fullTopic, (topic) => {
 }
 
 .qos {
-  background: #f0f0f0;
-  color: #666;
+  background: var(--bg-subtle);
+  color: var(--text-secondary);
 }
 
 .stats-row {
   display: flex;
   gap: 0;
-  border-bottom: 1px solid #f0f0f0;
+  border-bottom: 1px solid var(--border-color);
 }
 
 .stat {
   flex: 1;
   padding: 10px 16px;
-  border-right: 1px solid #f0f0f0;
+  border-right: 1px solid var(--border-color);
 }
 
 .stat:last-child {
@@ -333,7 +333,7 @@ watch(() => props.node?.fullTopic, (topic) => {
   font-size: 10px;
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  color: #aaa;
+  color: var(--text-muted);
   margin-bottom: 2px;
 }
 
@@ -345,7 +345,7 @@ watch(() => props.node?.fullTopic, (topic) => {
 
 .stat-sub {
   font-size: 10px;
-  color: #999;
+  color: var(--text-muted);
   margin-top: 1px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -353,7 +353,7 @@ watch(() => props.node?.fullTopic, (topic) => {
 }
 
 .stat--suggested .stat-value {
-  color: #888;
+  color: var(--text-tertiary);
 }
 
 .suggested-badge {
@@ -420,7 +420,7 @@ watch(() => props.node?.fullTopic, (topic) => {
   font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  color: #aaa;
+  color: var(--text-muted);
 }
 
 .copy-btn {
@@ -428,12 +428,12 @@ watch(() => props.node?.fullTopic, (topic) => {
   align-items: center;
   gap: 4px;
   background: none;
-  border: 1px solid #e8e8e8;
+  border: 1px solid var(--border-color);
   border-radius: 4px;
   padding: 2px 8px;
   font-size: 11px;
   cursor: pointer;
-  color: #666;
+  color: var(--text-secondary);
   transition: all 0.15s;
 }
 

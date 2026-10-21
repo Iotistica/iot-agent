@@ -197,7 +197,7 @@ function close() {
               v-if="PRO_DESTINATION_TYPES.has(t) && !proInstalled"
               title="Requires Pro — install @iotistica/agent-pro to enable"
             >
-              <span style="color: #bbb">{{ t }}</span>
+              <span style="color: var(--text-placeholder)">{{ t }}</span>
               <a-tag color="gold" style="font-size:10px;padding:0 4px;height:16px;line-height:16px;margin-left:4px;border-radius:3px">Pro</a-tag>
             </a-tooltip>
             <template v-else>
@@ -224,7 +224,7 @@ function close() {
         <template #label>
           Use for device-write commands
           <a-tooltip title="Subscribes on this broker for inbound device-write commands and publishes results back on it. Only one destination can be flagged at a time — enabling it here clears the flag on any other destination.">
-            <QuestionCircleOutlined style="margin-left: 4px; color: #999" />
+            <QuestionCircleOutlined style="margin-left: 4px; color: var(--text-muted)" />
           </a-tooltip>
         </template>
         <a-switch v-model:checked="form.use_for_commands" />

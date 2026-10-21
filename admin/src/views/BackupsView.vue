@@ -363,12 +363,12 @@ onMounted(() => { load(); loadSchedule() })
 }
 
 .heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 16px; }
-.heading p { color: #777; margin: 0; }
+.heading p { color: var(--text-tertiary); margin: 0; }
 .header-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .list-card { border-radius: 9px; }
-.list-card :deep(.ant-table-thead > tr > th) { background: #f7f9fc; font-size: 12px; font-weight: 650; }
-.list-card :deep(.ant-table-tbody > tr:hover > td) { background: #f5f9ff; }
-.toolbar-info { color: #888; font-size: 12px; margin-bottom: 10px; }
+.list-card :deep(.ant-table-thead > tr > th) { background: var(--bg-table-header); font-size: 12px; font-weight: 650; }
+.list-card :deep(.ant-table-tbody > tr:hover > td) { background: var(--bg-table-hover); }
+.toolbar-info { color: var(--text-tertiary); font-size: 12px; margin-bottom: 10px; }
 
 .migrate-steps {
   margin: 4px 0 0;
@@ -385,11 +385,11 @@ onMounted(() => { load(); loadSchedule() })
 }
 
 .checksum {
-  color: #888;
+  color: var(--text-tertiary);
 }
 
 .muted {
-  color: #555;
+  color: var(--text-secondary);
 }
 
 .schedule-body {
@@ -400,7 +400,7 @@ onMounted(() => { load(); loadSchedule() })
 
 .field-label {
   font-size: 13px;
-  color: rgba(0, 0, 0, 0.65);
+  color: var(--text-secondary);
   white-space: nowrap;
 }
 
@@ -415,10 +415,10 @@ onMounted(() => { load(); loadSchedule() })
   display: flex;
   gap: 24px;
   font-size: 12px;
-  color: #888;
+  color: var(--text-tertiary);
 }
 
 .meta-item strong {
-  color: rgba(255, 255, 255, 0.65);
+  color: var(--text-secondary);
 }
 </style>

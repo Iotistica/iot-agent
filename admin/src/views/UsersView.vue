@@ -223,7 +223,7 @@ onMounted(loadUsers)
       <p>Manage admin panel accounts and active sessions.</p>
       <div class="header-actions">
         <template v-if="selectedUsernames.length > 0">
-          <span style="font-size: 13px; color: #666">{{ selectedUsernames.length }} selected</span>
+          <span style="font-size: 13px; color: var(--text-secondary)">{{ selectedUsernames.length }} selected</span>
           <a-button :loading="bulkActivating" @click="bulkActivate"><template #icon><CheckCircleOutlined /></template>Activate</a-button>
           <a-button :loading="bulkDeactivating" @click="bulkDeactivate"><template #icon><StopOutlined /></template>Deactivate</a-button>
           <a-button danger :loading="deletingUsers" @click="confirmDeleteSelectedUsers"><template #icon><DeleteOutlined /></template>Delete</a-button>
@@ -348,7 +348,7 @@ onMounted(loadUsers)
               </div>
             </a-select-option>
           </a-select>
-          <div style="font-size: 12px; color: #888; margin-top: 6px">
+          <div style="font-size: 12px; color: var(--text-tertiary); margin-top: 6px">
             {{ ROLE_OPTIONS.find(o => o.value === createForm.role)?.hint }}
           </div>
         </a-form-item>
@@ -381,10 +381,10 @@ onMounted(loadUsers)
 
 <style scoped>
 .heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 16px; }
-.heading p { color: #777; margin: 0; }
+.heading p { color: var(--text-tertiary); margin: 0; }
 .header-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .list-card { border-radius: 9px; }
-.list-card :deep(.ant-table-thead > tr > th) { background: #f7f9fc; font-size: 12px; font-weight: 650; }
-.list-card :deep(.ant-table-tbody > tr:hover > td) { background: #f5f9ff; }
-.toolbar-info { color: #888; font-size: 12px; margin-bottom: 10px; }
+.list-card :deep(.ant-table-thead > tr > th) { background: var(--bg-table-header); font-size: 12px; font-weight: 650; }
+.list-card :deep(.ant-table-tbody > tr:hover > td) { background: var(--bg-table-hover); }
+.toolbar-info { color: var(--text-tertiary); font-size: 12px; margin-bottom: 10px; }
 </style>

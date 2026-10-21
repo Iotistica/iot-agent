@@ -185,7 +185,7 @@ onUnmounted(() => {
       <p>Physical and logical devices discovered through protocol endpoints.</p>
       <div class="header-actions">
         <template v-if="selectedUuids.length > 0">
-          <span style="font-size: 13px; color: #666">{{ selectedUuids.length }} selected</span>
+          <span style="font-size: 13px; color: var(--text-secondary)">{{ selectedUuids.length }} selected</span>
           <a-button :loading="bulkEnabling" @click="bulkEnable"><template #icon><CheckCircleOutlined /></template>Enable</a-button>
           <a-button :loading="bulkDisabling" @click="bulkDisable"><template #icon><StopOutlined /></template>Disable</a-button>
           <a-button danger :loading="deleting" @click="confirmDeleteSelected"><template #icon><DeleteOutlined /></template>Delete</a-button>
@@ -265,15 +265,15 @@ onUnmounted(() => {
 
 <style scoped>
 .heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 16px; }
-.heading p { color: #777; margin: 0; }
+.heading p { color: var(--text-tertiary); margin: 0; }
 .header-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .list-card { border-radius: 9px; }
-.list-card :deep(.ant-table-thead > tr > th) { background: #f7f9fc; font-size: 12px; font-weight: 650; }
-.list-card :deep(.ant-table-tbody > tr:hover > td) { background: #f5f9ff; }
+.list-card :deep(.ant-table-thead > tr > th) { background: var(--bg-table-header); font-size: 12px; font-weight: 650; }
+.list-card :deep(.ant-table-tbody > tr:hover > td) { background: var(--bg-table-hover); }
 .filters { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
 .search { width: 300px; max-width: 100%; }
 .filter { width: 170px; max-width: 100%; }
-.toolbar-info { color: #888; font-size: 12px; margin-bottom: 10px; }
+.toolbar-info { color: var(--text-tertiary); font-size: 12px; margin-bottom: 10px; }
 
 .device-name {
   font-weight: 400;
@@ -282,11 +282,11 @@ onUnmounted(() => {
 .mono-text {
   font-family: 'JetBrains Mono', 'Fira Code', monospace;
   font-size: 12px;
-  color: #555;
+  color: var(--text-secondary);
 }
 
 .uuid-chip {
-  background: #f0f0f0;
+  background: var(--bg-subtle);
   padding: 1px 6px;
   border-radius: 4px;
   cursor: default;
@@ -296,7 +296,7 @@ onUnmounted(() => {
 .uuid-copy-btn {
   margin-left: 4px;
   padding: 0 4px;
-  color: #999;
+  color: var(--text-muted);
 }
 
 .uuid-copy-btn:hover {
@@ -308,10 +308,10 @@ onUnmounted(() => {
 }
 
 .lastseen.has-time {
-  color: #666;
+  color: var(--text-secondary);
 }
 
 .lastseen.no-time {
-  color: #bbb;
+  color: var(--text-placeholder);
 }
 </style>

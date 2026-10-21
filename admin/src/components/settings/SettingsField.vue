@@ -41,7 +41,7 @@ defineProps<{
   height: auto;
   font-size: 13px;
   font-weight: 500;
-  color: rgba(0, 0, 0, 0.85);
+  color: var(--text-primary);
 }
 
 .settings-field__label {
@@ -52,7 +52,7 @@ defineProps<{
 }
 
 .settings-field__info {
-  color: #999;
+  color: var(--text-muted);
   font-size: 13px;
   cursor: help;
 }
@@ -83,7 +83,7 @@ defineProps<{
    aligned when only some of them have helper text. */
 .settings-field__helper {
   font-size: 12.5px;
-  color: #767676;
+  color: var(--text-tertiary);
   margin-top: 5px;
   line-height: 1.5;
   min-height: 18px;

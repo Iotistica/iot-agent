@@ -260,26 +260,26 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
 
 <style scoped>
 .heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 16px; }
-.heading p { color: #777; margin: 0; }
+.heading p { color: var(--text-tertiary); margin: 0; }
 
 .stats { margin-bottom: 14px; }
-.stats :deep(.ant-card) { border-radius: 9px; border-color: #e7ebf0; background: #fafafa; }
+.stats :deep(.ant-card) { border-radius: 9px; border-color: var(--border-color-card); background: var(--bg-subtle); }
 .stats :deep(.ant-card-body) { padding: 17px 18px; }
 .metric-inner { display: flex; align-items: center; gap: 15px; min-height: 66px; }
 .metric-icon { width: 50px; height: 50px; flex-shrink: 0; border-radius: 14px; display: inline-flex; align-items: center; justify-content: center; font-size: 23px; }
-.icon-clients { background: #eefbf4; color: #52c41a; }
-.icon-topics { background: #edf4ff; color: #1677ff; }
-.icon-in { background: #edf4ff; color: #1677ff; }
-.icon-out { background: #f5f0ff; color: #722ed1; }
-.metric-card :deep(.ant-statistic-title) { color: #8390a3; }
+.icon-clients { background: var(--icon-bg-green); color: #52c41a; }
+.icon-topics { background: var(--icon-bg-blue); color: #1677ff; }
+.icon-in { background: var(--icon-bg-blue); color: #1677ff; }
+.icon-out { background: var(--icon-bg-purple); color: #722ed1; }
+.metric-card :deep(.ant-statistic-title) { color: var(--text-tertiary); }
 .metric-card :deep(.ant-statistic-content) { font-size: 23px; }
-.metric-sub { font-size: 11px; color: #bbb; margin-left: 4px; }
+.metric-sub { font-size: 11px; color: var(--text-placeholder); margin-left: 4px; }
 @media (max-width: 850px) { .metric-inner { gap: 8px; } .metric-icon { width: 38px; height: 38px; } }
 
 .split-panel {
   display: flex;
   gap: 0;
-  border: 1px solid #f0f0f0;
+  border: 1px solid var(--border-color);
   border-radius: 8px;
   overflow: hidden;
   height: calc(100vh - 52px - 48px - 140px - 32px);
@@ -289,10 +289,10 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
 .tree-pane {
   width: 340px;
   flex-shrink: 0;
-  border-right: 1px solid #f0f0f0;
+  border-right: 1px solid var(--border-color);
   display: flex;
   flex-direction: column;
-  background: #fafafa;
+  background: var(--bg-subtle);
 }
 
 .viewer-pane {
@@ -307,35 +307,35 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
   align-items: center;
   justify-content: space-between;
   padding: 10px 14px;
-  border-bottom: 1px solid #f0f0f0;
-  background: #fff;
+  border-bottom: 1px solid var(--border-color);
+  background: var(--bg-container);
   flex-shrink: 0;
 }
 
 .pane-title {
   font-size: 12px;
   font-weight: 600;
-  color: #555;
+  color: var(--text-secondary);
   text-transform: uppercase;
   letter-spacing: 0.06em;
 }
 
 .pane-count {
   font-size: 11px;
-  color: #aaa;
-  background: #f0f0f0;
+  color: var(--text-muted);
+  background: var(--bg-subtle);
   border-radius: 8px;
   padding: 1px 7px;
 }
 
 .broker-version {
   font-size: 10px;
-  color: #bbb;
+  color: var(--text-placeholder);
 }
 
 .tree-filter {
   padding: 8px 10px;
-  border-bottom: 1px solid #f0f0f0;
+  border-bottom: 1px solid var(--border-color);
   flex-shrink: 0;
 }
 
@@ -348,7 +348,7 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
 .tree-empty {
   padding: 24px 14px;
   font-size: 12px;
-  color: #bbb;
+  color: var(--text-placeholder);
   text-align: center;
   line-height: 1.6;
 }

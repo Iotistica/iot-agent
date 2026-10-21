@@ -250,10 +250,10 @@ onMounted(loadEndpoints)
     </a-form>
 
     <!-- ── Metric bindings ─────────────────────────────────────────────── -->
-    <a-divider orientation="left" style="font-size: 13px; color: #888">Metrics</a-divider>
+    <a-divider orientation="left" style="font-size: 13px; color: var(--text-tertiary)">Metrics</a-divider>
 
     <template v-if="!editing">
-      <span style="color: #888; font-size: 13px">Save the asset first, then bind the metrics that describe its condition.</span>
+      <span style="color: var(--text-tertiary); font-size: 13px">Save the asset first, then bind the metrics that describe its condition.</span>
     </template>
     <template v-else>
       <a-list :data-source="metrics" size="small" style="margin-bottom: 12px">
@@ -261,7 +261,7 @@ onMounted(loadEndpoints)
           <a-list-item>
             <span style="font-size: 13px">
               {{ item.metric }}
-              <span style="color: #888"> — {{ endpointName(item.device_uuid) }}</span>
+              <span style="color: var(--text-tertiary)"> — {{ endpointName(item.device_uuid) }}</span>
             </span>
             <template #actions>
               <a-button size="small" danger @click="removeBinding(item)">
@@ -271,7 +271,7 @@ onMounted(loadEndpoints)
           </a-list-item>
         </template>
         <template #emptyText>
-          <span style="font-size: 12px; color: #aaa">No metrics bound yet.</span>
+          <span style="font-size: 12px; color: var(--text-muted)">No metrics bound yet.</span>
         </template>
       </a-list>
 

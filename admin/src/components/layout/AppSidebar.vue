@@ -25,16 +25,20 @@ import {
   NodeIndexOutlined,
   MenuFoldOutlined,
   MenuUnfoldOutlined,
+  BulbOutlined,
+  BulbFilled,
 } from '@ant-design/icons-vue'
 import IotisticaLogo from '@/components/IotisticaLogo.vue'
 import { useSidebar } from '@/composables/useSidebar'
 import { useAuth } from '@/composables/useAuth'
+import { useTheme } from '@/composables/useTheme'
 
 const route = useRoute()
 const router = useRouter()
 
 const { collapsed, toggle } = useSidebar()
 const { hasRole } = useAuth()
+const { isDark, toggle: toggleTheme } = useTheme()
 
 const selectedKey = computed(() => route.path)
 
@@ -209,6 +213,12 @@ function onMenuClick({ key }: { key: string }) {
     </div>
 
     <div class="sidebar-footer">
+      <a-button type="text" size="small" class="collapse-btn" @click="toggleTheme" :title="isDark ? 'Switch to light mode' : 'Switch to dark mode'">
+        <template #icon>
+          <BulbFilled v-if="isDark" />
+          <BulbOutlined v-else />
+        </template>
+      </a-button>
       <a-button type="text" size="small" class="collapse-btn" @click="toggle">
         <template #icon>
           <MenuUnfoldOutlined v-if="collapsed" />
@@ -270,7 +280,7 @@ function onMenuClick({ key }: { key: string }) {
   flex-shrink: 0;
   padding: 8px;
   display: flex;
-  justify-content: flex-end;
+  justify-content: space-between;
   border-top: 1px solid rgba(255, 255, 255, 0.08);
   background: #141414;
 }

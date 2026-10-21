@@ -400,7 +400,7 @@ watch(selectedRuleUuid, () => {
 
     <!-- Rule picker -->
     <div style="margin-bottom: 20px">
-      <div style="font-size: 12px; color: #888; margin-bottom: 6px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.04em">
+      <div style="font-size: 12px; color: var(--text-tertiary); margin-bottom: 6px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.04em">
         Discovery Rule
       </div>
       <a-select
@@ -554,12 +554,12 @@ watch(selectedRuleUuid, () => {
           <template #icon><ThunderboltOutlined /></template>
           {{ running ? `Scanning… (${fmtElapsed(scanElapsedSec)})` : hasRun ? 'Run Again' : 'Run Scan' }}
         </a-button>
-        <span v-else style="color: #888; font-size: 13px">Viewers cannot run discovery scans.</span>
+        <span v-else style="color: var(--text-tertiary); font-size: 13px">Viewers cannot run discovery scans.</span>
         <a-button v-if="running" danger @click="stopScan">
           <template #icon><StopOutlined /></template>
           Stop
         </a-button>
-        <span style="color: #aaa; font-size: 12px; margin-left: 4px">
+        <span style="color: var(--text-muted); font-size: 12px; margin-left: 4px">
           <template v-if="running && runInBackground">Large scans can take a few minutes — you can close this panel, the scan keeps running.</template>
           <template v-else-if="running">Large scans (hundreds of devices) can take a few minutes — this isn't frozen.</template>
           <template v-else>Results are shown below — sources are not added automatically.</template>
@@ -570,7 +570,7 @@ watch(selectedRuleUuid, () => {
           Run in background
         </a-checkbox>
         <a-tooltip title="Keep the scan running on the agent after you close this panel — reopen this rule to see the results.">
-          <span style="color: #aaa; font-size: 12px; margin-left: 6px; cursor: help">(?)</span>
+          <span style="color: var(--text-muted); font-size: 12px; margin-left: 6px; cursor: help">(?)</span>
         </a-tooltip>
       </div>
       <div style="margin-top: 10px">
@@ -578,9 +578,9 @@ watch(selectedRuleUuid, () => {
           Disable sources not found in this scan
         </a-checkbox>
         <a-tooltip title="After the scan, previously-added sources for this protocol that no longer show up (renamed, removed, or reassigned) get disabled — not deleted. You'll see exactly what would be disabled and confirm before anything changes.">
-          <span style="color: #aaa; font-size: 12px; margin-left: 6px; cursor: help">(?)</span>
+          <span style="color: var(--text-muted); font-size: 12px; margin-left: 6px; cursor: help">(?)</span>
         </a-tooltip>
-        <div v-if="lastPrunedCount !== null" style="color: #888; font-size: 12px; margin-top: 4px">
+        <div v-if="lastPrunedCount !== null" style="color: var(--text-tertiary); font-size: 12px; margin-top: 4px">
           Last run disabled {{ lastPrunedCount }} source{{ lastPrunedCount !== 1 ? 's' : '' }}.
         </div>
       </div>
@@ -593,19 +593,19 @@ watch(selectedRuleUuid, () => {
       style="margin: 40px 0"
     >
       <template #extra>
-        <span style="color: #888; font-size: 13px">Go to the Discovery page to create a rule first.</span>
+        <span style="color: var(--text-tertiary); font-size: 13px">Go to the Discovery page to create a rule first.</span>
       </template>
     </a-empty>
 
     <!-- ── Results ───────────────────────────────────────────────────── -->
     <template v-if="hasRun">
       <a-divider />
-      <div v-if="!results.length" style="color: #999; padding: 24px 0; text-align: center">
+      <div v-if="!results.length" style="color: var(--text-muted); padding: 24px 0; text-align: center">
         No devices found. Try expanding the scan range or checking network connectivity.
       </div>
       <template v-else>
         <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px">
-          <span style="color: #666; font-size: 13px">
+          <span style="color: var(--text-secondary); font-size: 13px">
             Found {{ results.length }} device{{ results.length !== 1 ? 's' : '' }}
           </span>
           <a-button
@@ -631,7 +631,7 @@ watch(selectedRuleUuid, () => {
               <a-tag :color="protocolColor(record.protocol)">{{ protocolLabel(record.protocol) }}</a-tag>
             </template>
             <template v-else-if="column.key === 'connection'">
-              <span style="font-size: 12px; color: #555">{{ connSummary(record) }}</span>
+              <span style="font-size: 12px; color: var(--text-secondary)">{{ connSummary(record) }}</span>
             </template>
             <template v-else-if="column.key === 'confidence'">
               <a-tag :color="CONFIDENCE_COLORS[record.confidence]">{{ record.confidence }}</a-tag>
@@ -690,15 +690,15 @@ watch(selectedRuleUuid, () => {
 <style scoped>
 .conn-box {
   padding: 12px 14px;
-  background: #fafafa;
-  border: 1px solid #f0f0f0;
+  background: var(--bg-subtle);
+  border: 1px solid var(--border-color);
   border-radius: 6px;
 }
 
 .conn-box-title {
   font-size: 11px;
   font-weight: 600;
-  color: #888;
+  color: var(--text-tertiary);
   text-transform: uppercase;
   letter-spacing: 0.05em;
   margin-bottom: 10px;
@@ -719,14 +719,14 @@ watch(selectedRuleUuid, () => {
 .conn-label {
   width: 84px;
   flex-shrink: 0;
-  color: #888;
+  color: var(--text-tertiary);
   font-size: 12px;
   padding-top: 2px;
 }
 
 .conn-value {
   flex: 1;
-  color: #333;
+  color: var(--text-primary);
   line-height: 1.5;
 }
 
@@ -736,7 +736,7 @@ watch(selectedRuleUuid, () => {
 }
 
 .conn-default {
-  color: #aaa;
+  color: var(--text-muted);
   font-style: italic;
 }
 </style>

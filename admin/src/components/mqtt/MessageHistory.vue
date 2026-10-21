@@ -88,7 +88,7 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
 .history-empty {
   padding: 24px 0;
   text-align: center;
-  color: #aaa;
+  color: var(--text-muted);
   font-size: 13px;
 }
 
@@ -102,7 +102,7 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
   cursor: pointer;
 }
 .history-row:hover {
-  background: #fafafa;
+  background: var(--bg-subtle);
 }
 .history-row.selected {
   background: rgba(22, 119, 255, 0.14);
@@ -116,12 +116,12 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
 .history-bytes {
   width: 80px;
   flex-shrink: 0;
-  color: #888;
+  color: var(--text-tertiary);
 }
 .history-qos {
   width: 60px;
   flex-shrink: 0;
-  color: #888;
+  color: var(--text-tertiary);
 }
 .history-retain {
   font-size: 10px;

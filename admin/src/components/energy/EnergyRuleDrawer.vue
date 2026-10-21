@@ -222,7 +222,7 @@ onMounted(loadAssets)
         <a-switch v-model:checked="form.enabled" />
       </a-form-item>
 
-      <a-divider orientation="left" style="font-size: 13px; color: #888">Rule config</a-divider>
+      <a-divider orientation="left" style="font-size: 13px; color: var(--text-tertiary)">Rule config</a-divider>
 
       <!-- Standby waste -->
       <template v-if="form.rule_type === 'standby_waste'">

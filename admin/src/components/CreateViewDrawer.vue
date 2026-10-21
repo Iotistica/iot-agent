@@ -221,27 +221,27 @@ async function save() {
 
 <style scoped>
 .drawer-body { display: flex; flex-direction: column; gap: 20px; }
-.section { border: 1px solid #edf0f5; border-radius: 8px; padding: 16px; }
+.section { border: 1px solid var(--border-color-card); border-radius: 8px; padding: 16px; }
 .section-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
-.section-title { font-size: 14px; font-weight: 650; color: #1a2332; margin-bottom: 12px; }
-.section-subtitle { font-size: 12px; color: #8a94a3; margin: 0; }
+.section-title { font-size: 14px; font-weight: 650; color: var(--text-primary); margin-bottom: 12px; }
+.section-subtitle { font-size: 12px; color: var(--text-tertiary); margin: 0; }
 .edit-selection-btn { color: #1677ff; border-color: #1677ff; flex-shrink: 0; }
 .field { margin-bottom: 10px; }
 .field:last-child { margin-bottom: 0; }
-.field-label { display: block; font-size: 12px; font-weight: 600; color: #555; margin-bottom: 5px; }
+.field-label { display: block; font-size: 12px; font-weight: 600; color: var(--text-secondary); margin-bottom: 5px; }
 .required { color: #f04452; }
 
-.empty-state { text-align: center; padding: 20px 12px; color: #8a94a3; font-size: 13px; }
+.empty-state { text-align: center; padding: 20px 12px; color: var(--text-tertiary); font-size: 13px; }
 .empty-state p { margin: 0 0 4px; }
 
 .points-list { display: flex; flex-direction: column; }
-.point-row { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px solid #f0f2f5; }
+.point-row { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--border-color); }
 .point-row:last-of-type { border-bottom: none; }
 .proto-tag { flex-shrink: 0; margin: 0; font-size: 11px; min-width: 58px; text-align: center; }
 .point-info { flex: 1; min-width: 0; overflow: hidden; }
-.point-name { font-size: 13px; font-weight: 500; color: #1a2332; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.point-meta { font-size: 11px; color: #8a94a3; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 1px; }
-.remove-btn { color: #bbb; flex-shrink: 0; }
+.point-name { font-size: 13px; font-weight: 500; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.point-meta { font-size: 11px; color: var(--text-tertiary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 1px; }
+.remove-btn { color: var(--text-placeholder); flex-shrink: 0; }
 .remove-btn:hover { color: #f04452; }
 .toggle-link { padding: 8px 0 2px; }
 

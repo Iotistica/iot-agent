@@ -416,12 +416,12 @@ function filterDevice(input: string, option: any) {
               {{ label }}
             </a-select-option>
           </a-select>
-          <div v-if="selectedProtocol" style="font-size: 11px; color: #888; margin-top: 4px">
+          <div v-if="selectedProtocol" style="font-size: 11px; color: var(--text-tertiary); margin-top: 4px">
             Matches endpoints named with the {{ protocolLabel(selectedProtocol) }}-… convention
           </div>
         </template>
 
-        <div v-if="scopeMode === 'custom'" style="font-size: 11px; color: #888">
+        <div v-if="scopeMode === 'custom'" style="font-size: 11px; color: var(--text-tertiary)">
           This rule uses custom scope patterns — edit them in Advanced Settings below.
         </div>
       </a-form-item>
@@ -569,20 +569,20 @@ function filterDevice(input: string, option: any) {
 .detection-category-cards { display: flex; flex-direction: column; gap: 8px; }
 .detection-category-card {
   display: flex; align-items: flex-start; gap: 12px;
-  padding: 12px; border: 1px solid #d9d9d9; border-radius: 6px;
+  padding: 12px; border: 1px solid var(--border-color-strong); border-radius: 6px;
   cursor: pointer; transition: all 0.2s;
 }
 .detection-category-card:hover { border-color: #1677ff; }
-.detection-category-card--active { border-color: #1677ff; background: #e6f4ff; }
+.detection-category-card--active { border-color: #1677ff; background: var(--bg-selected); }
 .detection-category-card__title { font-weight: 600; font-size: 13px; }
-.detection-category-card__desc { font-size: 12px; color: #666; margin-top: 2px; }
+.detection-category-card__desc { font-size: 12px; color: var(--text-secondary); margin-top: 2px; }
 .detection-method-warning { margin-top: 8px; color: #cf1322; font-size: 12px; }
-.suppress-only-note { margin-bottom: 8px; font-size: 12px; color: #888; }
-.severity-mixed-note { margin-top: 6px; font-size: 12px; color: #888; }
+.suppress-only-note { margin-bottom: 8px; font-size: 12px; color: var(--text-tertiary); }
+.severity-mixed-note { margin-top: 6px; font-size: 12px; color: var(--text-tertiary); }
 .advanced-settings-collapse { margin: 0 -12px 16px; }
-.advanced-settings-collapse :deep(.ant-collapse-header) { font-size: 13px; color: #555; padding: 8px 12px !important; }
+.advanced-settings-collapse :deep(.ant-collapse-header) { font-size: 13px; color: var(--text-secondary); padding: 8px 12px !important; }
 .advanced-settings-collapse :deep(.ant-collapse-content-box) { padding: 0 12px !important; }
-.advanced-setting-help { font-size: 12px; color: #888; margin-top: 4px; }
+.advanced-setting-help { font-size: 12px; color: var(--text-tertiary); margin-top: 4px; }
 :deep(.ant-segmented-item-selected) { background: #1677ff !important; color: #fff !important; }
 :deep(.ant-segmented-item-selected .ant-segmented-item-label) { color: #fff !important; }
 </style>

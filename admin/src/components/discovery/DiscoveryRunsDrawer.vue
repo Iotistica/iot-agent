@@ -71,7 +71,7 @@ watch(() => props.open, (open) => {
     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px">
       <span v-if="rule">
         <a-tag :color="protocolColor(rule.protocol)">{{ rule.protocol }}</a-tag>
-        <span style="color: #888; font-size: 12px">Last {{ runs.length }} runs</span>
+        <span style="color: var(--text-tertiary); font-size: 12px">Last {{ runs.length }} runs</span>
       </span>
       <a-button size="small" :loading="loading" @click="load">
         <template #icon><ReloadOutlined /></template>
@@ -89,11 +89,11 @@ watch(() => props.open, (open) => {
     >
       <template #bodyCell="{ column, record }">
         <template v-if="column.key === 'started_at'">
-          <span style="font-size: 12px; color: #555">{{ fmtDate(record.started_at) }}</span>
+          <span style="font-size: 12px; color: var(--text-secondary)">{{ fmtDate(record.started_at) }}</span>
         </template>
 
         <template v-else-if="column.key === 'duration_ms'">
-          <span style="font-size: 12px; color: #888">{{ fmtDuration(record.duration_ms) }}</span>
+          <span style="font-size: 12px; color: var(--text-tertiary)">{{ fmtDuration(record.duration_ms) }}</span>
         </template>
 
         <template v-else-if="column.key === 'status'">
@@ -108,12 +108,12 @@ watch(() => props.open, (open) => {
 
         <template v-else-if="column.key === 'error'">
           <span v-if="record.error" style="font-size: 11px; color: #cf1322">{{ record.error }}</span>
-          <span v-else style="color: #ccc">—</span>
+          <span v-else style="color: var(--text-placeholder)">—</span>
         </template>
       </template>
 
       <template #emptyText>
-        <div style="padding: 32px 0; text-align: center; color: #888">
+        <div style="padding: 32px 0; text-align: center; color: var(--text-tertiary)">
           No runs recorded yet for this rule.
         </div>
       </template>

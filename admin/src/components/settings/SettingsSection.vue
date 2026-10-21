@@ -46,7 +46,7 @@ defineProps<{
   width: 36px;
   height: 36px;
   border-radius: var(--settings-radius, 8px);
-  background: #e6f4ff;
+  background: var(--bg-selected);
   color: #1677ff;
   display: flex;
   align-items: center;
@@ -68,7 +68,7 @@ defineProps<{
 
 .settings-section__subtitle {
   font-size: 13px;
-  color: #767676;
+  color: var(--text-tertiary);
   margin-top: 3px;
   line-height: 1.5;
 }

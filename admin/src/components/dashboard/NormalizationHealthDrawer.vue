@@ -116,20 +116,20 @@ async function submitResolve(): Promise<void> {
         >
           <template #bodyCell="{ column, record }">
             <template v-if="column.key === 'protocol'">
-              <span style="font-size:12px; color:#888">{{ record.protocol ?? '—' }}</span>
+              <span style="font-size:12px; color:var(--text-tertiary)">{{ record.protocol ?? '—' }}</span>
             </template>
             <template v-else-if="column.key === 'firstSeen'">
-              <span style="font-size:11px; color:#aaa">{{ fmtDate(record.firstSeen) }}</span>
+              <span style="font-size:11px; color:var(--text-muted)">{{ fmtDate(record.firstSeen) }}</span>
             </template>
             <template v-else-if="column.key === 'lastSeen'">
-              <span style="font-size:11px; color:#aaa">{{ fmtDate(record.lastSeen) }}</span>
+              <span style="font-size:11px; color:var(--text-muted)">{{ fmtDate(record.lastSeen) }}</span>
             </template>
             <template v-else-if="column.key === 'actions'">
               <a-button type="link" size="small" @click="openResolve(record)">Resolve</a-button>
             </template>
           </template>
           <template #emptyText>
-            <div style="padding: 32px 0; text-align: center; color: #888">
+            <div style="padding: 32px 0; text-align: center; color: var(--text-tertiary)">
               No unknown units observed since the agent last started.
             </div>
           </template>
@@ -146,17 +146,17 @@ async function submitResolve(): Promise<void> {
         >
           <template #bodyCell="{ column, record }">
             <template v-if="column.key === 'protocol'">
-              <span style="font-size:12px; color:#888">{{ record.protocol ?? '—' }}</span>
+              <span style="font-size:12px; color:var(--text-tertiary)">{{ record.protocol ?? '—' }}</span>
             </template>
             <template v-else-if="column.key === 'firstSeen'">
-              <span style="font-size:11px; color:#aaa">{{ fmtDate(record.firstSeen) }}</span>
+              <span style="font-size:11px; color:var(--text-muted)">{{ fmtDate(record.firstSeen) }}</span>
             </template>
             <template v-else-if="column.key === 'lastSeen'">
-              <span style="font-size:11px; color:#aaa">{{ fmtDate(record.lastSeen) }}</span>
+              <span style="font-size:11px; color:var(--text-muted)">{{ fmtDate(record.lastSeen) }}</span>
             </template>
           </template>
           <template #emptyText>
-            <div style="padding: 32px 0; text-align: center; color: #888">
+            <div style="padding: 32px 0; text-align: center; color: var(--text-tertiary)">
               No conversion failures observed since the agent last started.
             </div>
           </template>
@@ -174,19 +174,19 @@ async function submitResolve(): Promise<void> {
     @ok="submitResolve"
     @cancel="closeResolve"
   >
-    <p style="margin-bottom: 16px; color: #888">
+    <p style="margin-bottom: 16px; color: var(--text-tertiary)">
       Map this raw unit to an existing canonical unit. Future readings using it will normalize automatically.
     </p>
     <div style="margin-bottom: 12px">
-      <div style="font-size: 12px; color: #888">Raw unit</div>
+      <div style="font-size: 12px; color: var(--text-tertiary)">Raw unit</div>
       <div><code>{{ resolveTarget?.label }}</code></div>
     </div>
     <div style="margin-bottom: 16px">
-      <div style="font-size: 12px; color: #888">Protocol</div>
+      <div style="font-size: 12px; color: var(--text-tertiary)">Protocol</div>
       <div>{{ resolveTarget?.protocol ?? '— (global)' }}</div>
     </div>
     <div>
-      <div style="font-size: 12px; color: #888; margin-bottom: 4px">Canonical unit</div>
+      <div style="font-size: 12px; color: var(--text-tertiary); margin-bottom: 4px">Canonical unit</div>
       <a-auto-complete
         v-model:value="selectedCanonicalUnit"
         placeholder="Select or type a canonical unit"

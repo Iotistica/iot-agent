@@ -776,15 +776,15 @@ async function deploy() {
         </a-form-item>
         <a-form-item label="Port mappings">
           <a-textarea v-model:value="addSvcForm.ports" placeholder="6379:6379&#10;8080:80" :rows="2" />
-          <div style="font-size: 11px; color: #aaa; margin-top: 3px">One per line — host:container</div>
+          <div style="font-size: 11px; color: var(--text-muted); margin-top: 3px">One per line — host:container</div>
         </a-form-item>
         <a-form-item label="Environment variables">
           <a-textarea v-model:value="addSvcForm.env" placeholder="KEY=value" :rows="3" style="font-family: monospace; font-size: 12px" />
-          <div style="font-size: 11px; color: #aaa; margin-top: 3px">One KEY=VALUE per line</div>
+          <div style="font-size: 11px; color: var(--text-muted); margin-top: 3px">One KEY=VALUE per line</div>
         </a-form-item>
         <a-form-item label="Volume mounts">
           <a-textarea v-model:value="addSvcForm.volumes" placeholder="/host/path:/container/path" :rows="2" />
-          <div style="font-size: 11px; color: #aaa; margin-top: 3px">One per line</div>
+          <div style="font-size: 11px; color: var(--text-muted); margin-top: 3px">One per line</div>
         </a-form-item>
         <a-form-item label="Restart policy">
           <a-select v-model:value="addSvcForm.restart" style="width: 100%">
@@ -822,15 +822,15 @@ async function deploy() {
         </a-form-item>
         <a-form-item label="Port mappings">
           <a-textarea v-model:value="editSvcForm.ports" placeholder="6379:6379&#10;8080:80" :rows="2" />
-          <div style="font-size: 11px; color: #aaa; margin-top: 3px">One per line — host:container</div>
+          <div style="font-size: 11px; color: var(--text-muted); margin-top: 3px">One per line — host:container</div>
         </a-form-item>
         <a-form-item label="Environment variables">
           <a-textarea v-model:value="editSvcForm.env" placeholder="KEY=value" :rows="3" style="font-family: monospace; font-size: 12px" />
-          <div style="font-size: 11px; color: #aaa; margin-top: 3px">One KEY=VALUE per line</div>
+          <div style="font-size: 11px; color: var(--text-muted); margin-top: 3px">One KEY=VALUE per line</div>
         </a-form-item>
         <a-form-item label="Volume mounts">
           <a-textarea v-model:value="editSvcForm.volumes" placeholder="/host/path:/container/path" :rows="2" />
-          <div style="font-size: 11px; color: #aaa; margin-top: 3px">One per line</div>
+          <div style="font-size: 11px; color: var(--text-muted); margin-top: 3px">One per line</div>
         </a-form-item>
         <a-form-item label="Restart policy">
           <a-select v-model:value="editSvcForm.restart" style="width: 100%">
@@ -871,11 +871,11 @@ async function deploy() {
           <div
             v-for="svc in appDetailsTarget.services"
             :key="svc.serviceId ?? svc.serviceName"
-            style="display: flex; align-items: center; gap: 8px; padding: 8px 12px; border: 1px solid #f0f0f0; border-radius: 6px"
+            style="display: flex; align-items: center; gap: 8px; padding: 8px 12px; border: 1px solid var(--border-color); border-radius: 6px"
           >
             <div style="flex: 1; min-width: 0">
               <div style="font-weight: 500">{{ svc.serviceName }}</div>
-              <div style="font-size: 12px; color: #888; font-family: monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">{{ svc.imageName }}</div>
+              <div style="font-size: 12px; color: var(--text-tertiary); font-family: monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">{{ svc.imageName }}</div>
             </div>
             <a-tag :color="STATUS_COLOR[resolveState(svc)]" style="margin: 0; font-size: 11px">
               {{ STATUS_LABEL[resolveState(svc)] }}
@@ -884,7 +884,7 @@ async function deploy() {
               <template #icon><EditOutlined /></template>
             </a-button>
           </div>
-          <div v-if="appDetailsTarget.services.length === 0" style="color: #999; padding: 12px 0">
+          <div v-if="appDetailsTarget.services.length === 0" style="color: var(--text-muted); padding: 12px 0">
             No services configured
           </div>
         </div>
@@ -911,7 +911,7 @@ async function deploy() {
         <!-- App name -->
         <a-form-item label="Application name" required>
           <a-input v-model:value="appName" placeholder="e.g. monitoring-stack, edge-gateway" />
-          <div style="font-size: 12px; color: #888; margin-top: 4px">
+          <div style="font-size: 12px; color: var(--text-tertiary); margin-top: 4px">
             Groups all services below under one application
           </div>
         </a-form-item>
@@ -923,7 +923,7 @@ async function deploy() {
         <!-- Service cards -->
         <div v-for="(svc, i) in services" :key="i" class="service-form-card">
           <div class="service-form-header">
-            <span style="font-weight: 600; font-size: 13px; color: rgba(0,0,0,0.75)">
+            <span style="font-weight: 600; font-size: 13px; color: var(--text-heading)">
               Service {{ i + 1 }}
             </span>
             <a-button
@@ -952,7 +952,7 @@ async function deploy() {
               placeholder="8080:80&#10;8443:443"
               :rows="2"
             />
-            <div style="font-size: 11px; color: #aaa; margin-top: 3px">One per line — host:container</div>
+            <div style="font-size: 11px; color: var(--text-muted); margin-top: 3px">One per line — host:container</div>
           </a-form-item>
 
           <a-form-item label="Environment variables" style="margin-bottom: 10px">
@@ -962,7 +962,7 @@ async function deploy() {
               :rows="3"
               style="font-family: monospace; font-size: 12px"
             />
-            <div style="font-size: 11px; color: #aaa; margin-top: 3px">One KEY=VALUE per line</div>
+            <div style="font-size: 11px; color: var(--text-muted); margin-top: 3px">One KEY=VALUE per line</div>
           </a-form-item>
 
           <a-form-item label="Volume mounts" style="margin-bottom: 10px">
@@ -971,7 +971,7 @@ async function deploy() {
               placeholder="/host/path:/container/path&#10;my-volume:/app/data"
               :rows="2"
             />
-            <div style="font-size: 11px; color: #aaa; margin-top: 3px">One per line</div>
+            <div style="font-size: 11px; color: var(--text-muted); margin-top: 3px">One per line</div>
           </a-form-item>
 
           <a-form-item label="Restart policy" style="margin-bottom: 0">
@@ -1019,7 +1019,7 @@ async function deploy() {
         <div style="display: flex; align-items: center; gap: 10px">
           <ShopOutlined style="color: #1677ff; font-size: 18px" />
           <span>App Marketplace</span>
-          <span style="font-size: 12px; font-weight: 400; color: #888; margin-left: 4px">
+          <span style="font-size: 12px; font-weight: 400; color: var(--text-tertiary); margin-left: 4px">
             One-click deploy for popular IoT apps
           </span>
         </div>
@@ -1033,12 +1033,12 @@ async function deploy() {
           allow-clear
           size="large"
         >
-          <template #prefix><SearchOutlined style="color: #bbb" /></template>
+          <template #prefix><SearchOutlined style="color: var(--text-placeholder)" /></template>
         </a-input>
       </div>
 
       <!-- Category tabs -->
-      <div style="padding: 0 20px; flex-shrink: 0; border-bottom: 1px solid #f0f0f0; margin-top: 12px">
+      <div style="padding: 0 20px; flex-shrink: 0; border-bottom: 1px solid var(--border-color); margin-top: 12px">
         <a-tabs v-model:activeKey="marketCategory" size="small" :tab-bar-style="{ marginBottom: 0 }">
           <a-tab-pane v-for="cat in marketCategories" :key="cat" :tab="cat" />
         </a-tabs>
@@ -1047,7 +1047,7 @@ async function deploy() {
       <!-- Cards -->
       <div style="flex: 1; overflow-y: auto; padding: 20px">
         <a-spin :spinning="marketLoading">
-          <div v-if="filteredTemplates.length === 0 && !marketLoading" style="text-align: center; padding: 48px 0; color: #bbb">
+          <div v-if="filteredTemplates.length === 0 && !marketLoading" style="text-align: center; padding: 48px 0; color: var(--text-placeholder)">
             No apps found
           </div>
           <div class="market-grid">
@@ -1108,7 +1108,7 @@ async function deploy() {
           </div>
         </a-radio-group>
       </div>
-      <div style="font-size: 12px; color: #888">
+      <div style="font-size: 12px; color: var(--text-tertiary)">
         {{ deployTargetTpl?.services.length === 1 ? '1 service' : `${deployTargetTpl?.services.length} services` }}
         will be added: <span style="font-family: monospace">{{ deployTargetTpl?.services.map(s => s.serviceName).join(', ') }}</span>
       </div>
@@ -1153,9 +1153,9 @@ async function deploy() {
 
 <style scoped>
 .heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 16px; }
-.heading p { color: #777; margin: 0; }
+.heading p { color: var(--text-tertiary); margin: 0; }
 .header-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-.toolbar-info { color: #888; font-size: 12px; margin-bottom: 10px; }
+.toolbar-info { color: var(--text-tertiary); font-size: 12px; margin-bottom: 10px; }
 /* ── Card grid ───────────────────────────────────────────── */
 .app-grid {
   display: grid;
@@ -1165,19 +1165,19 @@ async function deploy() {
 }
 
 .app-card {
-  border: 1px solid #e4e8ee;
+  border: 1px solid var(--border-color-card);
   border-radius: 10px;
   overflow: hidden;
-  background: #fff;
+  background: var(--bg-container);
   display: flex;
   flex-direction: column;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
+  box-shadow: var(--shadow-card);
   transition: box-shadow 0.2s, border-color 0.2s;
 }
 
 .app-card:hover {
-  box-shadow: 0 3px 12px rgba(0, 0, 0, 0.09);
-  border-color: #d0d7e0;
+  box-shadow: var(--shadow-card-hover);
+  border-color: var(--border-color-strong);
 }
 
 /* ── Card header ─────────────────────────────────────────── */
@@ -1187,8 +1187,8 @@ async function deploy() {
   justify-content: space-between;
   padding: 14px 16px 10px;
   gap: 8px;
-  background: #f7f9fb;
-  border-bottom: 1px solid #eef1f5;
+  background: var(--bg-card-header);
+  border-bottom: 1px solid var(--border-color);
 }
 
 .card-header-left {
@@ -1202,7 +1202,7 @@ async function deploy() {
   width: 30px;
   height: 30px;
   border-radius: 8px;
-  background: #e6f0ff;
+  background: var(--bg-selected);
   color: #1677ff;
   font-size: 14px;
   flex-shrink: 0;
@@ -1214,7 +1214,7 @@ async function deploy() {
 .app-name {
   font-weight: 600;
   font-size: 14px;
-  color: rgba(0, 0, 0, 0.88);
+  color: var(--text-primary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1227,8 +1227,8 @@ async function deploy() {
   gap: 6px;
   padding: 8px 16px 10px;
   font-size: 12px;
-  color: #888;
-  border-bottom: 1px solid #f0f0f0;
+  color: var(--text-tertiary);
+  border-bottom: 1px solid var(--border-color);
 }
 
 /* ── Service rows ────────────────────────────────────────── */
@@ -1238,7 +1238,7 @@ async function deploy() {
 
 .service-row {
   padding: 8px 16px;
-  border-bottom: 1px solid #fafafa;
+  border-bottom: 1px solid var(--border-color);
 }
 
 .service-row:last-child {
@@ -1256,12 +1256,12 @@ async function deploy() {
 .service-name {
   font-weight: 500;
   font-size: 13px;
-  color: rgba(0, 0, 0, 0.85);
+  color: var(--text-heading);
 }
 
 .service-image {
   font-size: 11px;
-  color: #999;
+  color: var(--text-muted);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1270,9 +1270,9 @@ async function deploy() {
 
 .port-tag {
   font-size: 11px;
-  background: #e6f4ff;
+  background: var(--bg-selected);
   color: #1677ff;
-  border: 1px solid #bae0ff;
+  border: 1px solid var(--badge-running-border);
   border-radius: 3px;
   padding: 0 5px;
   white-space: nowrap;
@@ -1287,8 +1287,8 @@ async function deploy() {
 .svc-error-hint {
   font-size: 11px;
   color: #ff4d4f;
-  background: #fff2f0;
-  border: 1px solid #ffccc7;
+  background: var(--badge-stopped-bg);
+  border: 1px solid var(--badge-stopped-border);
   border-radius: 3px;
   padding: 0 5px;
   cursor: help;
@@ -1298,22 +1298,22 @@ async function deploy() {
 .no-services {
   padding: 14px;
   font-size: 12px;
-  color: #bbb;
+  color: var(--text-placeholder);
   text-align: center;
 }
 
 .card-footer {
   padding: 8px 16px 12px;
-  border-top: 1px solid #f0f0f0;
+  border-top: 1px solid var(--border-color);
 }
 
 /* ── Deploy form ─────────────────────────────────────────── */
 .service-form-card {
-  border: 1px solid #e8e8e8;
+  border: 1px solid var(--border-color);
   border-radius: 6px;
   padding: 14px 14px 10px;
   margin-bottom: 12px;
-  background: #fafafa;
+  background: var(--bg-subtle);
 }
 
 .service-form-header {
@@ -1393,10 +1393,10 @@ async function deploy() {
 }
 
 .market-card {
-  border: 1px solid #e8e8e8;
+  border: 1px solid var(--border-color);
   border-radius: 10px;
   padding: 16px;
-  background: #fff;
+  background: var(--bg-container);
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -1441,7 +1441,7 @@ async function deploy() {
 .market-name {
   font-weight: 600;
   font-size: 14px;
-  color: rgba(0, 0, 0, 0.85);
+  color: var(--text-heading);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1449,7 +1449,7 @@ async function deploy() {
 
 .market-desc {
   font-size: 12px;
-  color: #666;
+  color: var(--text-secondary);
   line-height: 1.5;
   flex: 1;
   display: -webkit-box;
@@ -1468,7 +1468,7 @@ async function deploy() {
 
 .market-image {
   font-size: 10px;
-  color: #aaa;
+  color: var(--text-muted);
   font-family: monospace;
   white-space: nowrap;
   overflow: hidden;
@@ -1482,7 +1482,7 @@ async function deploy() {
 
 /* ── Deploy target picker ──────────────────────────────────── */
 .deploy-target-option {
-  border: 1px solid #e8e8e8;
+  border: 1px solid var(--border-color);
   border-radius: 8px;
   padding: 12px 14px;
   cursor: pointer;
@@ -1490,11 +1490,11 @@ async function deploy() {
 }
 
 .deploy-target-option:hover {
-  border-color: #d0d7e0;
+  border-color: var(--border-color-strong);
 }
 
 .deploy-target-option.active {
   border-color: #1677ff;
-  background: #f0f7ff;
+  background: var(--bg-selected-light);
 }
 </style>

@@ -128,7 +128,7 @@ function onConfirm() {
         allow-clear
         style="flex: 1"
       >
-        <template #prefix><SearchOutlined style="color: #bbb" /></template>
+        <template #prefix><SearchOutlined style="color: var(--text-placeholder)" /></template>
       </a-input>
       <a-select
         v-model:value="protocolFilter"
@@ -184,25 +184,25 @@ function onConfirm() {
 
 <style scoped>
 .picker-toolbar { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; }
-.selection-count { font-size: 12px; color: #8a94a3; white-space: nowrap; }
+.selection-count { font-size: 12px; color: var(--text-tertiary); white-space: nowrap; }
 
-.picker-list { max-height: 55vh; overflow-y: auto; border: 1px solid #f0f2f5; border-radius: 6px; }
-.device-group { border-bottom: 1px solid #f0f2f5; }
+.picker-list { max-height: 55vh; overflow-y: auto; border: 1px solid var(--border-color); border-radius: 6px; }
+.device-group { border-bottom: 1px solid var(--border-color); }
 .device-group:last-child { border-bottom: none; }
 
-.device-header { display: flex; align-items: center; gap: 8px; padding: 8px 12px; cursor: pointer; background: #fafbfc; }
-.device-header:hover { background: #f0f5ff; }
-.device-name { font-size: 13px; font-weight: 500; color: #1a2332; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.point-count { font-size: 11px; color: #8a94a3; flex-shrink: 0; }
+.device-header { display: flex; align-items: center; gap: 8px; padding: 8px 12px; cursor: pointer; background: var(--bg-subtle); }
+.device-header:hover { background: var(--bg-selected-light); }
+.device-name { font-size: 13px; font-weight: 500; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.point-count { font-size: 11px; color: var(--text-tertiary); flex-shrink: 0; }
 .proto-tag { margin: 0; font-size: 10px; min-width: 50px; text-align: center; flex-shrink: 0; }
 
-.expand-icon { font-size: 10px; color: #8a94a3; transition: transform 0.2s; flex-shrink: 0; }
+.expand-icon { font-size: 10px; color: var(--text-tertiary); transition: transform 0.2s; flex-shrink: 0; }
 .expand-icon.expanded { transform: rotate(90deg); }
 
 .point-items { padding: 0 12px 4px 40px; }
 .point-item { display: flex; align-items: center; gap: 8px; padding: 4px 0; }
-.pt-name { font-size: 13px; color: #334155; }
-.pt-raw { font-size: 11px; color: #8a94a3; }
+.pt-name { font-size: 13px; color: var(--text-primary); }
+.pt-raw { font-size: 11px; color: var(--text-tertiary); }
 
 .picker-footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
 </style>

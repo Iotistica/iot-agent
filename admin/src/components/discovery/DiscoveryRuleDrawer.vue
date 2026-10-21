@@ -254,7 +254,7 @@ function close() {
 
       <!-- ── Per-protocol scan targets ──────────────────────────────── -->
       <template v-if="hasParamFields">
-        <a-divider orientation="left" style="font-size: 13px; color: #888">Scan targets (optional — uses global config if empty)</a-divider>
+        <a-divider orientation="left" style="font-size: 13px; color: var(--text-tertiary)">Scan targets (optional — uses global config if empty)</a-divider>
 
         <!-- BACnet -->
         <template v-if="form.protocol === 'bacnet'">
@@ -301,7 +301,7 @@ function close() {
               <a-col :span="10">
                 <a-input-number v-model:value="modbus.slaveMin" :min="1" :max="247" style="width:100%" placeholder="1" />
               </a-col>
-              <a-col :span="4" style="text-align:center;color:#888">to</a-col>
+              <a-col :span="4" style="text-align:center;color:var(--text-tertiary)">to</a-col>
               <a-col :span="10">
                 <a-input-number v-model:value="modbus.slaveMax" :min="1" :max="247" style="width:100%" placeholder="10" />
               </a-col>

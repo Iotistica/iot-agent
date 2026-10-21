@@ -132,7 +132,7 @@ function detailFor(row: PointRow) {
   <div class="points-table">
     <div class="filter-row">
       <a-input v-model:value="search" placeholder="Search points…" allow-clear style="width: 260px">
-        <template #prefix><SearchOutlined style="color: #bbb" /></template>
+        <template #prefix><SearchOutlined style="color: var(--text-placeholder)" /></template>
       </a-input>
       <a-select v-model:value="qualityFilter" style="width: 160px">
         <a-select-option value="all">All qualities</a-select-option>
@@ -195,7 +195,7 @@ function detailFor(row: PointRow) {
       </template>
 
       <template #emptyText>
-        <div style="padding: 24px 0; text-align: center; color: #aaa; font-size: 13px">
+        <div style="padding: 24px 0; text-align: center; color: var(--text-muted); font-size: 13px">
           No points match the current filter
         </div>
       </template>
@@ -230,7 +230,7 @@ function detailFor(row: PointRow) {
   border: none;
   padding: 0;
   cursor: pointer;
-  color: #ccc;
+  color: var(--text-placeholder);
   font-size: 14px;
   line-height: 1;
 }
@@ -249,7 +249,7 @@ function detailFor(row: PointRow) {
 }
 .point-secondary {
   font-size: 11px;
-  color: #666;
+  color: var(--text-secondary);
   margin-top: 2px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -265,7 +265,7 @@ function detailFor(row: PointRow) {
   font-size: 12px;
 }
 .detail-label {
-  color: #888;
+  color: var(--text-tertiary);
   text-transform: uppercase;
   font-size: 10px;
   letter-spacing: 0.04em;
@@ -276,7 +276,7 @@ function detailFor(row: PointRow) {
 }
 .detail-empty {
   grid-column: 1 / -1;
-  color: #aaa;
+  color: var(--text-muted);
   font-size: 12px;
 }
 </style>

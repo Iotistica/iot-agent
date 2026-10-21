@@ -228,7 +228,7 @@ onMounted(loadAssets)
         </a-col>
       </a-row>
 
-      <a-divider orientation="left" style="font-size: 13px; color: #888">Rule config</a-divider>
+      <a-divider orientation="left" style="font-size: 13px; color: var(--text-tertiary)">Rule config</a-divider>
 
       <!-- Cumulative runtime -->
       <template v-if="form.rule_type === 'cumulative_runtime'">
@@ -238,7 +238,7 @@ onMounted(loadAssets)
         <a-form-item label="Threshold (hours)" extra="Fires once the counter crosses this value.">
           <a-input-number v-model:value="cumulativeRuntime.thresholdHours" :min="0" style="width: 100%" placeholder="5000" />
         </a-form-item>
-        <a-divider orientation="left" style="font-size: 12px; color: #aaa">Gating (optional)</a-divider>
+        <a-divider orientation="left" style="font-size: 12px; color: var(--text-muted)">Gating (optional)</a-divider>
         <a-row :gutter="12">
           <a-col :span="10"><a-form-item label="Gating metric"><a-auto-complete v-model:value="cumulativeRuntime.gatingMetric" :options="availableMetricOptions" :filter-option="false" allow-clear placeholder="e.g. temperature" style="width: 100%" /></a-form-item></a-col>
           <a-col :span="7"><a-form-item label="Min"><a-input-number v-model:value="cumulativeRuntime.gatingMin" style="width: 100%" /></a-form-item></a-col>
@@ -288,7 +288,7 @@ onMounted(loadAssets)
             </a-form-item>
           </a-col>
         </a-row>
-        <a-divider orientation="left" style="font-size: 12px; color: #aaa">Gating (optional)</a-divider>
+        <a-divider orientation="left" style="font-size: 12px; color: var(--text-muted)">Gating (optional)</a-divider>
         <a-row :gutter="12">
           <a-col :span="10"><a-form-item label="Gating metric"><a-auto-complete v-model:value="thresholdDuration.gatingMetric" :options="availableMetricOptions" :filter-option="false" allow-clear placeholder="e.g. temperature" style="width: 100%" /></a-form-item></a-col>
           <a-col :span="7"><a-form-item label="Min"><a-input-number v-model:value="thresholdDuration.gatingMin" style="width: 100%" /></a-form-item></a-col>

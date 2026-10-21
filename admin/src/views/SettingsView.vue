@@ -617,7 +617,7 @@ async function saveAllAlertConfig() {
                       :loading="targetSyncSaving"
                       @change="(v: boolean) => setTargetSync(v)"
                     />
-                    <span style="font-size: 12px; color: rgba(0,0,0,.45)">
+                    <span style="font-size: 12px; color: var(--text-tertiary)">
                       {{ settings.agent.targetSyncEnabled !== false
                         ? 'Pulling target state from cloud'
                         : 'Report-only — cloud cannot push config changes' }}
@@ -629,7 +629,7 @@ async function saveAllAlertConfig() {
 
             <template v-if="!settings.agent?.provisioned">
               <a-divider style="margin: 16px 0 12px" />
-              <p style="margin: 0 0 12px; font-size: 13px; font-weight: 600; color: rgba(0,0,0,.65)">
+              <p style="margin: 0 0 12px; font-size: 13px; font-weight: 600; color: var(--text-secondary)">
                 Connect to Iotistica
               </p>
               <a-form layout="vertical" class="provision-form">
@@ -988,7 +988,7 @@ async function saveAllAlertConfig() {
                     <a-radio-button value="tcp">Remote TCP</a-radio-button>
                     <a-radio-button value="tcp+tls">Remote TCP + TLS</a-radio-button>
                   </a-radio-group>
-                  <div style="font-size: 12px; color: #888; margin-top: 6px">
+                  <div style="font-size: 12px; color: var(--text-tertiary); margin-top: 6px">
                     <template v-if="dockerConfig.type === 'socket'">
                       Connects to the Docker daemon on this device via a Unix socket or Windows named pipe.
                     </template>
@@ -1008,7 +1008,7 @@ async function saveAllAlertConfig() {
                     placeholder="/var/run/docker.sock  (Linux/Mac)   or   //./pipe/docker_engine  (Windows)"
                     style="font-family: monospace; font-size: 12px"
                   />
-                  <div style="font-size: 12px; color: #888; margin-top: 4px">
+                  <div style="font-size: 12px; color: var(--text-tertiary); margin-top: 4px">
                     Leave blank to use the platform default.
                   </div>
                 </a-form-item>
@@ -1113,7 +1113,7 @@ async function saveAllAlertConfig() {
                       placeholder="mqtt://localhost:1883"
                       style="font-family: monospace; font-size: 13px"
                     />
-                    <div style="font-size: 12px; color: #888; margin-top: 4px">
+                    <div style="font-size: 12px; color: var(--text-tertiary); margin-top: 4px">
                       Use <code>mqtt://</code> for plain TCP or <code>mqtts://</code> for TLS.
                       In Docker deployments use the container hostname (e.g. <code>mqtt://iotistic-mosquitto-agent:1883</code>).
                     </div>
@@ -1195,7 +1195,7 @@ async function saveAllAlertConfig() {
           >
             <template #bodyCell="{ column, record }">
               <template v-if="column.key === 'source_system'">
-                <span style="font-size: 13px; color: #555">{{ record.source_system ?? '— (global)' }}</span>
+                <span style="font-size: 13px; color: var(--text-secondary)">{{ record.source_system ?? '— (global)' }}</span>
               </template>
               <template v-else-if="column.key === 'actions'">
                 <a-button size="small" @click="openEditAlias(record)">
@@ -1204,7 +1204,7 @@ async function saveAllAlertConfig() {
               </template>
             </template>
             <template #emptyText>
-              <div style="padding: 32px 0; text-align: center; color: #888">
+              <div style="padding: 32px 0; text-align: center; color: var(--text-tertiary)">
                 No custom unit mappings yet. Resolve an unknown unit from the Dashboard's
                 Normalization Health section to create one.
               </div>
@@ -1228,7 +1228,7 @@ async function saveAllAlertConfig() {
                         <a-slider v-model:value="alertConfig.sensitivity" :min="1" :max="10" style="flex: 1" />
                         <a-input-number v-model:value="alertConfig.sensitivity" :min="1" :max="10" style="width: 56px" size="small" />
                       </div>
-                      <div style="display: flex; justify-content: space-between; font-size: 11px; color: #999; max-width: 240px">
+                      <div style="display: flex; justify-content: space-between; font-size: 11px; color: var(--text-muted); max-width: 240px">
                         <span>Low</span><span>High</span>
                       </div>
                     </a-form-item>
@@ -1433,7 +1433,7 @@ async function saveAllAlertConfig() {
               </div>
             </template>
 
-            <div v-else-if="!alertConfigLoading" style="color: #888; padding: 48px 0; text-align: center">
+            <div v-else-if="!alertConfigLoading" style="color: var(--text-tertiary); padding: 48px 0; text-align: center">
               Configuration not available.
             </div>
           </a-spin>
@@ -1452,20 +1452,20 @@ async function saveAllAlertConfig() {
       @ok="submitEditAlias"
       @cancel="closeEditAlias"
     >
-      <p style="margin-bottom: 16px; color: #888">
+      <p style="margin-bottom: 16px; color: var(--text-tertiary)">
         Re-map this alias to a different canonical unit. Future readings using it
         will normalize to the new unit immediately.
       </p>
       <div style="margin-bottom: 12px">
-        <div style="font-size: 12px; color: #888">Alias</div>
+        <div style="font-size: 12px; color: var(--text-tertiary)">Alias</div>
         <div><code>{{ editAliasTarget?.alias }}</code></div>
       </div>
       <div style="margin-bottom: 16px">
-        <div style="font-size: 12px; color: #888">Protocol / Source System</div>
+        <div style="font-size: 12px; color: var(--text-tertiary)">Protocol / Source System</div>
         <div>{{ editAliasTarget?.source_system ?? '— (global)' }}</div>
       </div>
       <div>
-        <div style="font-size: 12px; color: #888; margin-bottom: 4px">Canonical unit</div>
+        <div style="font-size: 12px; color: var(--text-tertiary); margin-bottom: 4px">Canonical unit</div>
         <a-select
           v-model:value="editAliasCanonicalUnit"
           show-search
@@ -1481,7 +1481,7 @@ async function saveAllAlertConfig() {
 
 <style scoped>
 .heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 16px; }
-.heading p { color: #777; margin: 0; }
+.heading p { color: var(--text-tertiary); margin: 0; }
 
 .toggle-row {
   display: flex;
@@ -1493,11 +1493,11 @@ async function saveAllAlertConfig() {
 .toggle-label {
   font-size: 14px;
   font-weight: 500;
-  color: rgba(0, 0, 0, 0.85);
+  color: var(--text-heading);
 }
 .toggle-desc {
   font-size: 12px;
-  color: rgba(0, 0, 0, 0.45);
+  color: var(--text-tertiary);
   margin-top: 2px;
 }
 .save-bar {
@@ -1517,7 +1517,7 @@ async function saveAllAlertConfig() {
 
 .drift-enabled-toggle__label {
   font-size: 12.5px;
-  color: #767676;
+  color: var(--text-tertiary);
 }
 
 
@@ -1532,7 +1532,7 @@ async function saveAllAlertConfig() {
 }
 
 .drift-alert-on__info {
-  color: #999;
+  color: var(--text-muted);
   font-size: 12px;
   margin-left: 4px;
   cursor: help;
@@ -1575,15 +1575,15 @@ async function saveAllAlertConfig() {
 .settings-tabs :deep(.ant-tabs-tab) { padding: 11px 4px; font-size: 13px; }
 .settings-tabs :deep(.ant-tabs-content-holder),
 .settings-tabs :deep(.ant-tabs-tabpane) { min-width: 0; }
-.settings-card { border: 1px solid #e7ebf0; border-radius: 10px; overflow: hidden; margin-bottom: 14px; }
+.settings-card { border: 1px solid var(--border-color-card); border-radius: 10px; overflow: hidden; margin-bottom: 14px; }
 .settings-card--spaced { margin-bottom: 14px; }
-.settings-card :deep(.ant-card-head) { min-height: 49px; border-bottom: 1px solid #edf0f4; padding: 0 22px; }
+.settings-card :deep(.ant-card-head) { min-height: 49px; border-bottom: 1px solid var(--border-color); padding: 0 22px; }
 .settings-card :deep(.ant-card-head-title) { font-size: 14px; font-weight: 650; }
 .settings-card :deep(.ant-card-body) { padding: 22px; }
-.settings-intro { margin: 0 0 16px; color: #7c8795; font-size: 13px; line-height: 1.65; max-width: 850px; }
+.settings-intro { margin: 0 0 16px; color: var(--text-tertiary); font-size: 13px; line-height: 1.65; max-width: 850px; }
 .settings-shell :deep(.ant-form-item) { margin-bottom: 0; min-width: 0; }
 .settings-shell :deep(.ant-form-item-label) { padding-bottom: 6px; }
-.settings-shell :deep(.ant-form-item-label > label) { font-size: 12px; font-weight: 600; color: #566274; height: auto; min-height: 20px; }
+.settings-shell :deep(.ant-form-item-label > label) { font-size: 12px; font-weight: 600; color: var(--text-secondary); height: auto; min-height: 20px; }
 .settings-shell :deep(.ant-input),
 .settings-shell :deep(.ant-input-number),
 .settings-shell :deep(.ant-select-selector),
@@ -1596,13 +1596,13 @@ async function saveAllAlertConfig() {
 .toggle-row { min-height: 58px; padding: 10px 0; }
 .toggle-row > div:first-child { flex: 1; min-width: 0; padding-right: 12px; }
 .toggle-row :deep(.ant-switch) { flex-shrink: 0; }
-.toggle-label { font-size: 13px; font-weight: 650; color: #263448; }
-.toggle-desc { font-size: 12px; line-height: 1.55; color: #7c8795; max-width: 780px; margin-top: 3px; }
+.toggle-label { font-size: 13px; font-weight: 650; color: var(--text-primary); }
+.toggle-desc { font-size: 12px; line-height: 1.55; color: var(--text-tertiary); max-width: 780px; margin-top: 3px; }
 .save-bar { position: relative; display: flex; justify-content: flex-end; align-items: center; gap: 10px; flex-wrap: wrap; padding: 16px 0 4px; margin-top: 0; border-top: 0; }
-.agent-descriptions :deep(.ant-descriptions-item-label) { width: 165px; min-width: 125px; background: #f7f9fc; font-weight: 600; font-size: 12px; }
+.agent-descriptions :deep(.ant-descriptions-item-label) { width: 165px; min-width: 125px; background: var(--bg-table-header); font-weight: 600; font-size: 12px; }
 .agent-descriptions :deep(.ant-descriptions-item-content) { overflow-wrap: anywhere; font-size: 12px; }
-.settings-shell :deep(.ant-table-thead > tr > th) { background: #f7f9fc; font-weight: 650; font-size: 12px; }
-.settings-shell :deep(.ant-table-tbody > tr:hover > td) { background: #f5f9ff; }
+.settings-shell :deep(.ant-table-thead > tr > th) { background: var(--bg-table-header); font-weight: 650; font-size: 12px; }
+.settings-shell :deep(.ant-table-tbody > tr:hover > td) { background: var(--bg-table-hover); }
 .drift-alert-on__group { row-gap: 12px; }
 @media (max-width: 767px) {
   .settings-shell { padding-bottom: 18px; }
