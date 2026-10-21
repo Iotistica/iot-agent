@@ -65,9 +65,9 @@
   --text-muted: rgba(255, 255, 255, 0.35);
   --text-placeholder: rgba(255, 255, 255, 0.25);
 
-  --border-color: #303030;
-  --border-color-strong: #434343;
-  --border-color-card: #303030;
+  --border-color: #424242;
+  --border-color-strong: #555555;
+  --border-color-card: #424242;
 
   --shadow-card: 0 1px 4px rgba(0, 0, 0, 0.3);
   --shadow-card-hover: 0 4px 12px rgba(0, 0, 0, 0.5);
