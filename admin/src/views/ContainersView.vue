@@ -140,6 +140,29 @@ function isInFlight(appId: number, serviceName: string, action: string) {
   return !!actionInFlight.value[actionKey(appId, serviceName, action)]
 }
 
+// ── Rename app ───────────────────────────────────────────────────────────────
+
+const editingAppId = ref<number | null>(null)
+const editingAppName = ref('')
+
+function startEditAppName(app: ContainerApp) {
+  editingAppId.value = app.appId
+  editingAppName.value = app.appName
+}
+
+async function saveAppName(app: ContainerApp) {
+  const name = editingAppName.value.trim()
+  editingAppId.value = null
+  if (!name || name === app.appName) return
+  try {
+    await containersApi.renameApp(app.appId, name)
+    message.success(`Renamed to "${name}"`)
+    await load()
+  } catch (e: unknown) {
+    message.error((e as any)?.message ?? 'Rename failed')
+  }
+}
+
 // ── Remove app ────────────────────────────────────────────────────────────────
 
 function confirmRemoveApp(app: ContainerApp) {
@@ -552,7 +575,17 @@ async function deploy() {
           <div class="card-header">
             <div class="card-header-left">
               <AppstoreOutlined class="card-icon" />
-              <span class="app-name">{{ app.appName }}</span>
+              <a-input
+                v-if="editingAppId === app.appId"
+                :value="editingAppName"
+                size="small"
+                style="width: 160px"
+                @change="(e: any) => editingAppName = e.target.value"
+                @blur="saveAppName(app)"
+                @pressEnter="saveAppName(app)"
+                @vue:mounted="(vnode: any) => vnode.el?.querySelector('input')?.focus()"
+              />
+              <span v-else class="app-name" style="cursor: pointer" @dblclick="startEditAppName(app)">{{ app.appName }} <EditOutlined style="font-size: 11px; opacity: 0.4" /></span>
             </div>
             <a-button size="small" danger @click="confirmRemoveApp(app)">
               <template #icon><DeleteOutlined /></template>

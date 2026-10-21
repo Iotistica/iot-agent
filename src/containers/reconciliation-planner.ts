@@ -409,7 +409,11 @@ export function planStepsToUpdateApp(
 				targetSvc.config.networkMode !== undefined &&
 				currentNetworkMode !== targetNetworkMode;
 
+			const nameChanged = currentSvc.serviceName !== targetSvc.serviceName
+				|| currentSvc.appName !== targetSvc.appName;
+
 			const configChanged =
+				nameChanged ||
 				portsChanged ||
 				envChanged ||
 				volumesChanged ||
@@ -424,6 +428,9 @@ export function planStepsToUpdateApp(
 			const needsUpdate = imageChanged || configChanged || containerStopped;
 			if (needsUpdate) {
 				const changes: string[] = [];
+				if (nameChanged) {
+					changes.push(`name: ${currentSvc.serviceName} -> ${targetSvc.serviceName}`);
+				}
 				if (imageChanged) {
 					changes.push(`image: ${currentSvc.imageName} -> ${targetSvc.imageName}`);
 				}

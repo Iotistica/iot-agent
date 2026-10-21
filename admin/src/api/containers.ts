@@ -135,6 +135,10 @@ export const containersApi = {
     ).then(r => r.data)
   },
 
+  renameApp(appId: number, appName: string): Promise<{ appId: number; appName: string }> {
+    return client.patch(`/v1/apps/${appId}`, { appName }).then(r => r.data)
+  },
+
   remove(appId: number): Promise<void> {
     return client.delete(`/v1/apps/${appId}`).then(() => undefined)
   },

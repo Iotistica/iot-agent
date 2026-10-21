@@ -148,6 +148,24 @@ router.post('/v1/apps', requireRole('operator'), async (req: Request, res: Respo
 });
 
 /**
+ * PATCH /v1/apps/:appId
+ * Update application properties (e.g. rename)
+ */
+router.patch('/v1/apps/:appId', requireRole('operator'), async (req: Request, res: Response, next: NextFunction) => {
+	try {
+		const appId = parseInt(req.params.appId);
+		if (isNaN(appId)) return res.status(400).json({ error: 'Invalid app id' });
+		if (!req.body.appName || typeof req.body.appName !== 'string') {
+			return res.status(400).json({ error: 'appName is required' });
+		}
+		const result = await actions.updateApp(appId, { appName: req.body.appName });
+		return res.status(200).json(result);
+	} catch (error) {
+		next(error);
+	}
+});
+
+/**
  * DELETE /v1/apps/:appId
  * Remove an application from target state (stops + removes containers)
  */

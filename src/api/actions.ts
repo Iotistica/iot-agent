@@ -892,6 +892,29 @@ export const updateService = async (
 };
 
 /**
+ * Update an app's name (propagates to all services, triggers container recreate)
+ * Used by: PATCH /v1/apps/:appId
+ */
+export const updateApp = async (appId: number, body: { appName: string }) => {
+	const targetState = containerManager.getTargetState();
+	const app = (targetState.apps ?? {} as any)[appId];
+	if (!app) throw new Error(`App ${appId} not found`);
+
+	const updatedServices = (app.services as any[]).map((s: any) => ({
+		...s,
+		appName: body.appName,
+	}));
+	const updatedApp = { ...app, appName: body.appName, services: updatedServices };
+
+	await containerManager.setTarget({
+		...targetState,
+		apps: { ...targetState.apps, [appId]: updatedApp },
+	} as any);
+
+	return { appId, appName: body.appName };
+};
+
+/**
  * Remove a single service from an app's target state (stops + removes its container)
  * Used by: DELETE /v1/apps/:appId/services/:serviceName
  */
