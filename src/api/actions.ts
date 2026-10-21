@@ -39,7 +39,12 @@ type AgentInstance = {
 	restartServices: () => Promise<void>;
 };
 
-let containerManager: ContainerManager;
+let containerManager: ContainerManager | undefined;
+
+function requireCM(): ContainerManager {
+	if (!containerManager) throw new Error('Container manager not initialized — is Docker configured?');
+	return containerManager;
+}
 let agentManager: AgentManager;
 let cloudSync: CloudSync | undefined;
 let logger: AgentLogger | undefined;
@@ -532,7 +537,7 @@ export const runHealthchecks = async (
  * Used by: POST /v1/apps/:appId/restart
  */
 export const restartApp = async (appId: number, _force: boolean = false) => {
-	const currentState = await containerManager.getCurrentState();
+	const currentState = await requireCM().getCurrentState();
 	const app = currentState.apps[appId];
 	
 	if (!app) {
@@ -540,13 +545,13 @@ export const restartApp = async (appId: number, _force: boolean = false) => {
 	}
 
 	// Get target state and update it
-	const targetState = containerManager.getTargetState();
+	const targetState = requireCM().getTargetState();
 	if (!targetState.apps[appId]) {
 		throw new Error(`Application ${appId} not in target state`);
 	}
 
 	// Trigger reconciliation
-	await containerManager.applyTargetState();
+	await requireCM().applyTargetState();
 };
 
 /**
@@ -554,7 +559,7 @@ export const restartApp = async (appId: number, _force: boolean = false) => {
  * Used by: POST /v1/apps/:appId/stop
  */
 export const stopService = async (appId: number, serviceName?: string, _force: boolean = false) => {
-	const currentState = await containerManager.getCurrentState();
+	const currentState = await requireCM().getCurrentState();
 	const app = currentState.apps[appId];
 	
 	if (!app) {
@@ -571,14 +576,14 @@ export const stopService = async (appId: number, serviceName?: string, _force: b
 	}
 
 	// Update target state so reconciliation doesn't restart the container
-	const targetState = containerManager.getTargetState();
+	const targetState = requireCM().getTargetState();
 	const targetApp = (targetState.apps ?? {} as any)[appId];
 	if (targetApp) {
 		const svcName = service.serviceName;
 		const updatedServices = (targetApp.services as any[]).map((s: any) =>
 			s.serviceName === svcName ? { ...s, state: 'stopped' } : s,
 		);
-		await containerManager.setTarget({
+		await requireCM().setTarget({
 			...targetState,
 			apps: { ...targetState.apps, [appId]: { ...targetApp, services: updatedServices } },
 		} as any);
@@ -586,7 +591,7 @@ export const stopService = async (appId: number, serviceName?: string, _force: b
 
 	// Stop the container (ignore 304 = already stopped)
 	if (service.containerId) {
-		const docker = containerManager.getDocker();
+		const docker = requireCM().getDocker();
 		if (docker) {
 			const container = docker.getContainer(service.containerId);
 			try { await container.stop(); } catch (e: any) {
@@ -603,7 +608,7 @@ export const stopService = async (appId: number, serviceName?: string, _force: b
  * Used by: POST /v1/apps/:appId/start
  */
 export const startService = async (appId: number, serviceName?: string, _force: boolean = false) => {
-	const currentState = await containerManager.getCurrentState();
+	const currentState = await requireCM().getCurrentState();
 	const app = currentState.apps[appId];
 
 	if (!app) {
@@ -620,14 +625,14 @@ export const startService = async (appId: number, serviceName?: string, _force: 
 	}
 
 	// Update target state so reconciliation knows we want it running
-	const targetState = containerManager.getTargetState();
+	const targetState = requireCM().getTargetState();
 	const targetApp = (targetState.apps ?? {} as any)[appId];
 	if (targetApp) {
 		const svcName = service.serviceName;
 		const updatedServices = (targetApp.services as any[]).map((s: any) =>
 			s.serviceName === svcName ? { ...s, state: 'running' } : s,
 		);
-		await containerManager.setTarget({
+		await requireCM().setTarget({
 			...targetState,
 			apps: { ...targetState.apps, [appId]: { ...targetApp, services: updatedServices } },
 		} as any);
@@ -636,7 +641,7 @@ export const startService = async (appId: number, serviceName?: string, _force: 
 	// Start the container (ignore 304 = already running, 404 = container gone → reconcile)
 	let needsReconcile = !service.containerId;
 	if (service.containerId) {
-		const docker = containerManager.getDocker();
+		const docker = requireCM().getDocker();
 		if (docker) {
 			const container = docker.getContainer(service.containerId);
 			try { await container.start(); } catch (e: any) {
@@ -647,7 +652,7 @@ export const startService = async (appId: number, serviceName?: string, _force: 
 		}
 	}
 	if (needsReconcile) {
-		await containerManager.applyTargetState();
+		await requireCM().applyTargetState();
 	}
 
 	return service;
@@ -658,8 +663,7 @@ export const startService = async (appId: number, serviceName?: string, _force: 
  * Used by: GET /v1/apps/:appId
  */
 export const getApp = async (appId: number) => {
-	if (!containerManager) throw new Error('Container manager not initialized');
-	const currentState = await containerManager.getCurrentState();
+	const currentState = await requireCM().getCurrentState();
 	const app = currentState.apps[appId];
 	
 	if (!app) {
@@ -688,9 +692,9 @@ export const getApp = async (appId: number) => {
  */
 export const getDeviceState = async () => {
 	const agentInfo = agentManager.getAgentInfo();
-	const currentState = await containerManager.getCurrentState();
+	const currentState = await requireCM().getCurrentState();
 	const isOnline = cloudSync?.isOnline?.() ?? false;
-	const dockerAvailable = await containerManager.isDockerAvailable();
+	const dockerAvailable = await requireCM().isDockerAvailable();
 
 	return {
 		...agentInfo,
@@ -707,7 +711,7 @@ export const getDeviceState = async () => {
  * Used by: POST /v1/apps/:appId/purge
  */
 export const purgeApp = async (appId: number, _force: boolean = false) => {
-	const currentState = await containerManager.getCurrentState();
+	const currentState = await requireCM().getCurrentState();
 	const app = currentState.apps[appId];
 	
 	if (!app) {
@@ -720,16 +724,16 @@ export const purgeApp = async (appId: number, _force: boolean = false) => {
 	});
 
 	// Remove app from target state
-	const targetState = containerManager.getTargetState();
+	const targetState = requireCM().getTargetState();
 	delete targetState.apps[appId];
-	await containerManager.setTarget(targetState);
+	await requireCM().setTarget(targetState);
 
 	// Apply changes
-	await containerManager.applyTargetState();
+	await requireCM().applyTargetState();
 
 	// Restore app to target state
 	targetState.apps[appId] = app;
-	await containerManager.setTarget(targetState);
+	await requireCM().setTarget(targetState);
 	
 	logger?.infoSync('Purge complete for app', {
 		component: LogComponents.agent,
@@ -741,7 +745,7 @@ export const purgeApp = async (appId: number, _force: boolean = false) => {
  * Resolve the containerId for a named service — used by the log streaming route
  */
 export const getServiceContainerId = async (appId: number, serviceName: string): Promise<string | undefined> => {
-	const currentState = await containerManager.getCurrentState();
+	const currentState = await requireCM().getCurrentState();
 	const app = (currentState.apps as any)[appId];
 	const svc = (app?.services as any[] | undefined)?.find((s: any) => s.serviceName === serviceName);
 	return svc?.containerId;
@@ -750,7 +754,7 @@ export const getServiceContainerId = async (appId: number, serviceName: string):
 /**
  * Expose the Docker instance for streaming operations in routes
  */
-export const getDockerInstance = () => containerManager?.getDocker();
+export const getDockerInstance = () => containerManager ? requireCM().getDocker() : undefined;
 
 /**
  * List all apps merged from current + target state
@@ -758,8 +762,8 @@ export const getDockerInstance = () => containerManager?.getDocker();
  */
 export const getAllApps = async () => {
 	if (!containerManager) return [];
-	const currentState = await containerManager.getCurrentState();
-	const targetState = containerManager.getTargetState();
+	const currentState = await requireCM().getCurrentState();
+	const targetState = requireCM().getTargetState();
 
 	const allIds = new Set([
 		...Object.keys(currentState.apps).map(String),
@@ -817,7 +821,7 @@ export const deployApp = async (body: {
 		};
 	}>;
 }) => {
-	const targetState = containerManager.getTargetState();
+	const targetState = requireCM().getTargetState();
 
 	// Pick an appId: max existing + 1, or 1
 	const existing = Object.keys(targetState.apps ?? {}).map(Number).filter(n => !isNaN(n));
@@ -841,7 +845,7 @@ export const deployApp = async (body: {
 		},
 	};
 
-	await containerManager.setTarget(newTargetState as any);
+	await requireCM().setTarget(newTargetState as any);
 	return { appId, appName: body.appName };
 };
 
@@ -864,7 +868,7 @@ export const addService = async (
 		};
 	},
 ) => {
-	const targetState = containerManager.getTargetState();
+	const targetState = requireCM().getTargetState();
 	const app = (targetState.apps ?? {} as any)[appId];
 	if (!app) throw new Error(`App ${appId} not found`);
 
@@ -879,7 +883,7 @@ export const addService = async (
 	};
 
 	const updatedApp = { ...app, services: [...app.services, newService] };
-	await containerManager.setTarget({
+	await requireCM().setTarget({
 		...targetState,
 		apps: { ...targetState.apps, [appId]: updatedApp },
 	} as any);
@@ -907,7 +911,7 @@ export const updateService = async (
 		};
 	},
 ) => {
-	const targetState = containerManager.getTargetState();
+	const targetState = requireCM().getTargetState();
 	const app = (targetState.apps ?? {} as any)[appId];
 	if (!app) throw new Error(`App ${appId} not found`);
 
@@ -927,7 +931,7 @@ export const updateService = async (
 	updatedServices[idx] = updated;
 	const updatedApp = { ...app, services: updatedServices };
 
-	await containerManager.setTarget({
+	await requireCM().setTarget({
 		...targetState,
 		apps: { ...targetState.apps, [appId]: updatedApp },
 	} as any);
@@ -940,7 +944,7 @@ export const updateService = async (
  * Used by: PATCH /v1/apps/:appId
  */
 export const updateApp = async (appId: number, body: { appName: string }) => {
-	const targetState = containerManager.getTargetState();
+	const targetState = requireCM().getTargetState();
 	const app = (targetState.apps ?? {} as any)[appId];
 	if (!app) throw new Error(`App ${appId} not found`);
 
@@ -950,7 +954,7 @@ export const updateApp = async (appId: number, body: { appName: string }) => {
 	}));
 	const updatedApp = { ...app, appName: body.appName, services: updatedServices };
 
-	await containerManager.setTarget({
+	await requireCM().setTarget({
 		...targetState,
 		apps: { ...targetState.apps, [appId]: updatedApp },
 	} as any);
@@ -963,7 +967,7 @@ export const updateApp = async (appId: number, body: { appName: string }) => {
  * Used by: DELETE /v1/apps/:appId/services/:serviceName
  */
 export const removeService = async (appId: number, serviceName: string) => {
-	const targetState = containerManager.getTargetState();
+	const targetState = requireCM().getTargetState();
 	const app = (targetState.apps ?? {} as any)[appId];
 	if (!app) throw new Error(`App ${appId} not found`);
 
@@ -973,7 +977,7 @@ export const removeService = async (appId: number, serviceName: string) => {
 	const updatedServices = (app.services as any[]).filter((_: any, i: number) => i !== idx);
 	const updatedApp = { ...app, services: updatedServices };
 
-	await containerManager.setTarget({
+	await requireCM().setTarget({
 		...targetState,
 		apps: { ...targetState.apps, [appId]: updatedApp },
 	} as any);
@@ -984,7 +988,7 @@ export const removeService = async (appId: number, serviceName: string) => {
  * Used by: DELETE /v1/apps/:appId
  */
 export const removeApp = async (appId: number) => {
-	const targetState = containerManager.getTargetState();
+	const targetState = requireCM().getTargetState();
 	if (!(targetState.apps ?? {} as any)[appId]) {
 		throw new Error(`App ${appId} not found in target state`);
 	}
@@ -992,7 +996,7 @@ export const removeApp = async (appId: number) => {
 	const newApps = { ...targetState.apps } as Record<string, any>;
 	delete newApps[appId];
 
-	await containerManager.setTarget({ ...targetState, apps: newApps } as any);
+	await requireCM().setTarget({ ...targetState, apps: newApps } as any);
 };
 
 /**
@@ -1004,8 +1008,8 @@ export const serviceAction = async (
 	serviceName: string,
 	action: 'start' | 'stop' | 'restart',
 ) => {
-	const currentState = await containerManager.getCurrentState();
-	const targetState = containerManager.getTargetState();
+	const currentState = await requireCM().getCurrentState();
+	const targetState = requireCM().getTargetState();
 
 	// A freshly deployed app only exists in targetState until Docker creates the container
 	const currentApp = (currentState.apps as Record<string, any>)[appId];
@@ -1030,7 +1034,7 @@ export const serviceAction = async (
 				s.serviceName === serviceName ? { ...s, state: desiredState } : s,
 			);
 			const updatedApp = { ...targetApp, services: updatedServices };
-			await containerManager.setTarget({
+			await requireCM().setTarget({
 				...targetState,
 				apps: { ...targetState.apps, [appId]: updatedApp },
 			} as any);
@@ -1039,7 +1043,7 @@ export const serviceAction = async (
 
 	let needsReconcile = !containerId && (action === 'start' || action === 'restart');
 	if (containerId) {
-		const docker = containerManager.getDocker();
+		const docker = requireCM().getDocker();
 		if (!docker) throw new Error('Docker not available');
 		const container = docker.getContainer(containerId);
 		try {
@@ -1053,7 +1057,7 @@ export const serviceAction = async (
 		}
 	}
 	if (needsReconcile) {
-		await containerManager.applyTargetState();
+		await requireCM().applyTargetState();
 	}
 
 	return { appId, serviceName, action };
@@ -2557,7 +2561,7 @@ export const getDockerConfig = async (): Promise<DockerConnectionConfig> => {
 
 export const saveDockerConfig = async (cfg: DockerConnectionConfig): Promise<void> => {
 	await applyConfigUpdate((config) => { config.docker = cfg; });
-	containerManager.setDockerOptions(buildDockerOptions(cfg));
+	requireCM().setDockerOptions(buildDockerOptions(cfg));
 };
 
 export const testDockerConnection = async (cfg: DockerConnectionConfig): Promise<{ version: string; containers: number }> => {
