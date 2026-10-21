@@ -420,8 +420,28 @@ async function openMarketplace() {
   }
 }
 
+// ── Deploy target picker (marketplace) ───────────────────────────────────────
+
+const deployTargetOpen = ref(false)
+const deployTargetTpl = ref<AppTemplate | null>(null)
+const deployTargetMode = ref<'new' | 'existing'>('new')
+const deployTargetAppId = ref<number | null>(null)
+const deployTargetBusy = ref(false)
+
 function deployTemplate(tpl: AppTemplate) {
+  if (apps.value.length === 0) {
+    deployTemplateAsNewApp(tpl)
+    return
+  }
+  deployTargetTpl.value = tpl
+  deployTargetMode.value = 'new'
+  deployTargetAppId.value = apps.value[0]?.appId ?? null
+  deployTargetOpen.value = true
+}
+
+function deployTemplateAsNewApp(tpl: AppTemplate) {
   marketOpen.value = false
+  deployTargetOpen.value = false
   appName.value = tpl.appName
   services.value = tpl.services.map(s => ({
     serviceName: s.serviceName,
@@ -432,6 +452,47 @@ function deployTemplate(tpl: AppTemplate) {
     restart: s.restart ?? 'unless-stopped',
   }))
   drawerOpen.value = true
+}
+
+async function confirmDeployTarget() {
+  const tpl = deployTargetTpl.value
+  if (!tpl) return
+
+  if (deployTargetMode.value === 'new') {
+    deployTemplateAsNewApp(tpl)
+    return
+  }
+
+  const targetAppId = deployTargetAppId.value
+  if (!targetAppId) return
+
+  deployTargetBusy.value = true
+  try {
+    for (const s of tpl.services) {
+      const ports = s.ports ?? []
+      const volumes = s.volumes ?? []
+      await containersApi.addService(targetAppId, {
+        serviceName: s.serviceName,
+        imageName: s.image,
+        state: 'running',
+        config: {
+          image: s.image,
+          ...(ports.length ? { ports } : {}),
+          ...(s.environment && Object.keys(s.environment).length ? { environment: s.environment } : {}),
+          ...(volumes.length ? { volumes } : {}),
+          restart: s.restart ?? 'unless-stopped',
+        },
+      })
+    }
+    message.success(`${tpl.name} added to ${apps.value.find(a => a.appId === targetAppId)?.appName ?? 'app'}`)
+    deployTargetOpen.value = false
+    marketOpen.value = false
+    await load()
+  } catch (e: unknown) {
+    message.error((e as any)?.message ?? 'Failed to add services')
+  } finally {
+    deployTargetBusy.value = false
+  }
 }
 
 // ── Deploy drawer ─────────────────────────────────────────────────────────────
@@ -1023,6 +1084,37 @@ async function deploy() {
       </div>
     </a-modal>
 
+    <!-- Deploy target picker -->
+    <a-modal
+      v-model:open="deployTargetOpen"
+      :title="`Deploy ${deployTargetTpl?.name ?? ''}`"
+      :ok-text="deployTargetMode === 'new' ? 'Continue' : 'Deploy'"
+      :confirm-loading="deployTargetBusy"
+      @ok="confirmDeployTarget"
+      width="440px"
+    >
+      <div style="margin: 16px 0 20px">
+        <a-radio-group v-model:value="deployTargetMode" style="width: 100%">
+          <div class="deploy-target-option" :class="{ active: deployTargetMode === 'existing' }" @click="deployTargetMode = 'existing'">
+            <a-radio value="existing">Add to existing application</a-radio>
+            <a-select
+              v-if="deployTargetMode === 'existing'"
+              v-model:value="deployTargetAppId"
+              style="width: 100%; margin-top: 8px"
+              :options="apps.map(a => ({ label: a.appName, value: a.appId }))"
+            />
+          </div>
+          <div class="deploy-target-option" :class="{ active: deployTargetMode === 'new' }" @click="deployTargetMode = 'new'" style="margin-top: 10px">
+            <a-radio value="new">Create new application</a-radio>
+          </div>
+        </a-radio-group>
+      </div>
+      <div style="font-size: 12px; color: #888">
+        {{ deployTargetTpl?.services.length === 1 ? '1 service' : `${deployTargetTpl?.services.length} services` }}
+        will be added: <span style="font-family: monospace">{{ deployTargetTpl?.services.map(s => s.serviceName).join(', ') }}</span>
+      </div>
+    </a-modal>
+
     <!-- Log viewer drawer -->
     <a-drawer
       v-model:open="logDrawerOpen"
@@ -1387,5 +1479,23 @@ async function deploy() {
 
 .market-deploy-btn {
   flex-shrink: 0;
+}
+
+/* ── Deploy target picker ──────────────────────────────────── */
+.deploy-target-option {
+  border: 1px solid #e8e8e8;
+  border-radius: 8px;
+  padding: 12px 14px;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.deploy-target-option:hover {
+  border-color: #d0d7e0;
+}
+
+.deploy-target-option.active {
+  border-color: #1677ff;
+  background: #f0f7ff;
 }
 </style>
