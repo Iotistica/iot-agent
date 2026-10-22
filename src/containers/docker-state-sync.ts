@@ -17,6 +17,9 @@ interface DockerContainerInfo {
 	Config?: {
 		Env?: string[];
 		Labels?: Record<string, string>;
+		Cmd?: string[];
+		Entrypoint?: string | string[];
+		User?: string;
 	};
 	Mounts?: Array<{
 		Type: string;
@@ -29,6 +32,9 @@ interface DockerContainerInfo {
 			Name?: string;
 		};
 		NetworkMode?: string;
+		ReadonlyRootfs?: boolean;
+		NanoCpus?: number;
+		Memory?: number;
 	};
 }
 
@@ -83,6 +89,11 @@ export async function syncStateFromDocker(
 		let restart = 'no';
 		const labels: Record<string, string> = {};
 		let networkMode = 'bridge';
+		let command: string[] | undefined;
+		let entrypoint: string[] | undefined;
+		let user: string | undefined;
+		let readonlyRootfs: boolean | undefined;
+		let resources: { limits?: { cpu?: string; memory?: string } } | undefined;
 
 		try {
 			const containerInfo = await ctx.dockerManager.inspectContainer(container.id);
@@ -129,6 +140,31 @@ export async function syncStateFromDocker(
 			if (containerInfo.HostConfig?.NetworkMode) {
 				networkMode = containerInfo.HostConfig.NetworkMode;
 			}
+
+			if (containerInfo.Config?.Cmd && containerInfo.Config.Cmd.length > 0) {
+				command = containerInfo.Config.Cmd;
+			}
+			if (containerInfo.Config?.Entrypoint && containerInfo.Config.Entrypoint.length > 0) {
+				const ep = containerInfo.Config.Entrypoint;
+				entrypoint = typeof ep === 'string' ? [ep] : ep;
+			}
+			if (containerInfo.Config?.User) {
+				user = containerInfo.Config.User;
+			}
+			if (containerInfo.HostConfig?.ReadonlyRootfs) {
+				readonlyRootfs = true;
+			}
+			const nanoCpus = containerInfo.HostConfig?.NanoCpus;
+			const memoryBytes = containerInfo.HostConfig?.Memory;
+			if (nanoCpus || memoryBytes) {
+				const limits: { cpu?: string; memory?: string } = {};
+				if (nanoCpus && nanoCpus > 0) limits.cpu = String(nanoCpus / 1e9);
+				if (memoryBytes && memoryBytes > 0) {
+					const mb = memoryBytes / (1024 * 1024);
+					limits.memory = mb >= 1024 ? `${mb / 1024}G` : `${mb}M`;
+				}
+				if (Object.keys(limits).length > 0) resources = { limits };
+			}
 		} catch (error) {
 			ctx.logger?.warnSync('Failed to inspect container', {
 				component: LogComponents.containerManager,
@@ -166,6 +202,11 @@ export async function syncStateFromDocker(
 				restart,
 				labels: Object.keys(labels).length > 0 ? labels : undefined,
 				networkMode,
+				...(command ? { command } : {}),
+				...(entrypoint ? { entrypoint } : {}),
+				...(user ? { user } : {}),
+				...(readonlyRootfs ? { readonlyRootfs } : {}),
+				...(resources ? { resources } : {}),
 			},
 		};
 

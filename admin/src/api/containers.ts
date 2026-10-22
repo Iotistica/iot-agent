@@ -53,6 +53,22 @@ export interface ContainerService {
     volumes?: string[]
     restart?: string
     labels?: Record<string, string>
+    networkMode?: string
+    command?: string[]
+    entrypoint?: string[]
+    user?: string
+    readonlyRootfs?: boolean
+    privileged?: boolean
+    resources?: { limits?: { cpu?: string; memory?: string } }
+    livenessProbe?: {
+      type: 'http' | 'tcp' | 'exec'
+      path?: string
+      port?: number
+      command?: string[]
+      periodSeconds?: number
+      timeoutSeconds?: number
+      failureThreshold?: number
+    }
   }
 }
 
@@ -72,6 +88,21 @@ export interface DeployServiceForm {
     environment?: Record<string, string>
     volumes?: string[]
     restart?: string
+    networkMode?: string
+    command?: string[]
+    entrypoint?: string[]
+    user?: string
+    readonlyRootfs?: boolean
+    resources?: { limits?: { cpu?: string; memory?: string } }
+    livenessProbe?: {
+      type: 'http' | 'tcp' | 'exec'
+      path?: string
+      port?: number
+      command?: string[]
+      periodSeconds?: number
+      timeoutSeconds?: number
+      failureThreshold?: number
+    }
   }
 }
 

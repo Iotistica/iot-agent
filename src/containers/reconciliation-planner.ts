@@ -410,6 +410,13 @@ export function planStepsToUpdateApp(
 				targetSvc.config.networkMode !== undefined &&
 				currentNetworkMode !== targetNetworkMode;
 
+			const commandChanged = JSON.stringify(currentSvc.config.command ?? []) !== JSON.stringify(targetSvc.config.command ?? []);
+			const entrypointChanged = JSON.stringify(currentSvc.config.entrypoint ?? []) !== JSON.stringify(targetSvc.config.entrypoint ?? []);
+			const userChanged = (currentSvc.config.user ?? '') !== (targetSvc.config.user ?? '');
+			const readonlyChanged = !!currentSvc.config.readonlyRootfs !== !!targetSvc.config.readonlyRootfs;
+			const resourcesChanged = JSON.stringify(currentSvc.config.resources ?? {}) !== JSON.stringify(targetSvc.config.resources ?? {});
+			const healthcheckChanged = JSON.stringify(currentSvc.config.livenessProbe ?? null) !== JSON.stringify(targetSvc.config.livenessProbe ?? null);
+
 			const nameChanged = currentSvc.serviceName !== targetSvc.serviceName
 				|| currentSvc.appName !== targetSvc.appName;
 
@@ -420,7 +427,13 @@ export function planStepsToUpdateApp(
 				volumesChanged ||
 				networksChanged ||
 				restartChanged ||
-				networkModeChanged;
+				networkModeChanged ||
+				commandChanged ||
+				entrypointChanged ||
+				userChanged ||
+				readonlyChanged ||
+				resourcesChanged ||
+				healthcheckChanged;
 
 			const status = currentSvc.status?.toLowerCase();
 			const containerStopped =
@@ -456,6 +469,12 @@ export function planStepsToUpdateApp(
 						`networkMode: ${currentNetworkMode} -> ${targetNetworkMode}`,
 					);
 				}
+				if (commandChanged) changes.push('command changed');
+				if (entrypointChanged) changes.push('entrypoint changed');
+				if (userChanged) changes.push(`user: ${currentSvc.config.user ?? ''} -> ${targetSvc.config.user ?? ''}`);
+				if (readonlyChanged) changes.push(`readonlyRootfs: ${!!currentSvc.config.readonlyRootfs} -> ${!!targetSvc.config.readonlyRootfs}`);
+				if (resourcesChanged) changes.push('resources changed');
+				if (healthcheckChanged) changes.push('health check changed');
 				if (containerStopped) {
 					changes.push(`container stopped: ${currentSvc.status}`);
 				}

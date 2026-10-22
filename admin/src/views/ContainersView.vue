@@ -246,6 +246,7 @@ async function submitAddService() {
         ...(environment && Object.keys(environment).length ? { environment } : {}),
         ...(volumes.length ? { volumes } : {}),
         restart: addSvcForm.value.restart || undefined,
+        ...buildAdvancedConfig(addSvcForm.value),
       },
     })
     message.success(`Service added to ${app.appName}`)
@@ -269,13 +270,29 @@ const editSvcSaving = ref(false)
 function openEditService(app: ContainerApp, svc: ContainerService) {
   editSvcTargetApp.value = app
   editSvcTargetSvc.value = svc
+  const c = svc.config
+  const probe = c.livenessProbe
   editSvcForm.value = {
     serviceName: svc.serviceName,
     image: svc.imageName,
-    ports: formatLines(svc.config.ports),
-    env: formatEnv(svc.config.environment),
-    volumes: formatLines(svc.config.volumes),
-    restart: svc.config.restart ?? '',
+    ports: formatLines(c.ports),
+    env: formatEnv(c.environment),
+    volumes: formatLines(c.volumes),
+    restart: c.restart ?? '',
+    networkMode: c.networkMode ?? 'bridge',
+    command: (c.command ?? []).join(' '),
+    entrypoint: (c.entrypoint ?? []).join(' '),
+    user: c.user ?? '',
+    cpuLimit: c.resources?.limits?.cpu ?? '',
+    memoryLimit: c.resources?.limits?.memory ?? '',
+    readonlyRootfs: c.readonlyRootfs ?? false,
+    healthcheckType: probe?.type ?? 'none',
+    healthcheckPath: probe?.path ?? '',
+    healthcheckPort: probe?.port,
+    healthcheckCommand: (probe?.command ?? []).join(' '),
+    healthcheckInterval: probe?.periodSeconds ?? 30,
+    healthcheckTimeout: probe?.timeoutSeconds ?? 5,
+    healthcheckRetries: probe?.failureThreshold ?? 3,
   }
   editSvcDrawerOpen.value = true
 }
@@ -302,6 +319,7 @@ async function submitEditService() {
         ...(environment && Object.keys(environment).length ? { environment } : {}),
         ...(volumes.length ? { volumes } : {}),
         restart: editSvcForm.value.restart || undefined,
+        ...buildAdvancedConfig(editSvcForm.value),
       },
     })
     message.success(`${original.serviceName} updated`)
@@ -444,6 +462,7 @@ function deployTemplateAsNewApp(tpl: AppTemplate) {
   deployTargetOpen.value = false
   appName.value = tpl.appName
   services.value = tpl.services.map(s => ({
+    ...emptyService(),
     serviceName: s.serviceName,
     image: s.image,
     ports: (s.ports ?? []).join('\n'),
@@ -506,10 +525,30 @@ interface ServiceForm {
   env: string
   volumes: string
   restart: string
+  networkMode: string
+  command: string
+  entrypoint: string
+  user: string
+  cpuLimit: string
+  memoryLimit: string
+  readonlyRootfs: boolean
+  healthcheckType: 'none' | 'http' | 'tcp' | 'exec'
+  healthcheckPath: string
+  healthcheckPort: number | undefined
+  healthcheckCommand: string
+  healthcheckInterval: number
+  healthcheckTimeout: number
+  healthcheckRetries: number
 }
 
 function emptyService(): ServiceForm {
-  return { serviceName: '', image: '', ports: '', env: '', volumes: '', restart: 'unless-stopped' }
+  return {
+    serviceName: '', image: '', ports: '', env: '', volumes: '', restart: 'unless-stopped',
+    networkMode: 'bridge', command: '', entrypoint: '', user: '',
+    cpuLimit: '', memoryLimit: '', readonlyRootfs: false,
+    healthcheckType: 'none', healthcheckPath: '', healthcheckPort: undefined,
+    healthcheckCommand: '', healthcheckInterval: 30, healthcheckTimeout: 5, healthcheckRetries: 3,
+  }
 }
 
 const appName = ref('')
@@ -555,6 +594,35 @@ function parseLines(raw: string): string[] {
   return raw.split('\n').map(l => l.trim()).filter(Boolean)
 }
 
+function buildAdvancedConfig(svc: ServiceForm): Record<string, unknown> {
+  const cfg: Record<string, unknown> = {}
+  if (svc.networkMode && svc.networkMode !== 'bridge') cfg.networkMode = svc.networkMode
+  if (svc.command.trim()) cfg.command = svc.command.trim().split(/\s+/)
+  if (svc.entrypoint.trim()) cfg.entrypoint = svc.entrypoint.trim().split(/\s+/)
+  if (svc.user.trim()) cfg.user = svc.user.trim()
+  if (svc.readonlyRootfs) cfg.readonlyRootfs = true
+  const limits: Record<string, string> = {}
+  if (svc.cpuLimit.trim()) limits.cpu = svc.cpuLimit.trim()
+  if (svc.memoryLimit.trim()) limits.memory = svc.memoryLimit.trim()
+  if (Object.keys(limits).length) cfg.resources = { limits }
+  if (svc.healthcheckType !== 'none') {
+    const probe: Record<string, unknown> = { type: svc.healthcheckType }
+    if (svc.healthcheckType === 'http') {
+      probe.path = svc.healthcheckPath || '/health'
+      if (svc.healthcheckPort) probe.port = svc.healthcheckPort
+    } else if (svc.healthcheckType === 'tcp') {
+      if (svc.healthcheckPort) probe.port = svc.healthcheckPort
+    } else if (svc.healthcheckType === 'exec') {
+      if (svc.healthcheckCommand.trim()) probe.command = ['sh', '-c', svc.healthcheckCommand.trim()]
+    }
+    probe.periodSeconds = svc.healthcheckInterval
+    probe.timeoutSeconds = svc.healthcheckTimeout
+    probe.failureThreshold = svc.healthcheckRetries
+    cfg.livenessProbe = probe
+  }
+  return cfg
+}
+
 async function deploy() {
   if (!appName.value.trim()) { message.error('Application name is required'); return }
   for (let i = 0; i < services.value.length; i++) {
@@ -581,6 +649,7 @@ async function deploy() {
             ...(environment && Object.keys(environment).length ? { environment } : {}),
             ...(volumes.length ? { volumes } : {}),
             restart: svc.restart || undefined,
+            ...buildAdvancedConfig(svc),
           },
         }
       }),
@@ -794,6 +863,90 @@ async function deploy() {
             <a-select-option value="no">No restart</a-select-option>
           </a-select>
         </a-form-item>
+
+        <!-- Container Create Options -->
+        <a-collapse :bordered="false" ghost style="margin-top: 8px">
+          <a-collapse-panel key="advanced" header="Container Create Options">
+            <a-form-item label="Network mode">
+              <a-select v-model:value="addSvcForm.networkMode" style="width: 100%">
+                <a-select-option value="bridge">bridge (default)</a-select-option>
+                <a-select-option value="host">host</a-select-option>
+                <a-select-option value="none">none</a-select-option>
+              </a-select>
+            </a-form-item>
+            <a-form-item label="Command">
+              <a-input v-model:value="addSvcForm.command" placeholder="Override container CMD" style="font-family: monospace; font-size: 12px" />
+            </a-form-item>
+            <a-form-item label="Entrypoint">
+              <a-input v-model:value="addSvcForm.entrypoint" placeholder="Override ENTRYPOINT" style="font-family: monospace; font-size: 12px" />
+            </a-form-item>
+            <a-form-item label="User">
+              <a-input v-model:value="addSvcForm.user" placeholder="e.g. 1000:1000 or node" />
+              <div style="font-size: 11px; color: var(--text-muted); margin-top: 3px">Run as non-root user for security hardening</div>
+            </a-form-item>
+            <div style="display: flex; gap: 12px">
+              <a-form-item label="CPU limit" style="flex: 1">
+                <a-input v-model:value="addSvcForm.cpuLimit" placeholder="e.g. 0.5, 2" />
+                <div style="font-size: 11px; color: var(--text-muted); margin-top: 3px">Number of CPUs</div>
+              </a-form-item>
+              <a-form-item label="Memory limit" style="flex: 1">
+                <a-input v-model:value="addSvcForm.memoryLimit" placeholder="e.g. 256M, 1G" />
+              </a-form-item>
+            </div>
+            <a-form-item label="Security">
+              <div style="display: flex; flex-direction: column; gap: 8px">
+                <a-checkbox v-model:checked="addSvcForm.readonlyRootfs">Read-only root filesystem</a-checkbox>
+                <a-tooltip title="Blocked by agent security policy — edge devices cannot run privileged containers">
+                  <a-checkbox :disabled="true" :checked="false">
+                    Privileged mode
+                    <a-tag color="orange" size="small" style="margin-left: 6px">Blocked</a-tag>
+                  </a-checkbox>
+                </a-tooltip>
+              </div>
+            </a-form-item>
+            <a-form-item label="Health check">
+              <a-select v-model:value="addSvcForm.healthcheckType" style="width: 100%">
+                <a-select-option value="none">None</a-select-option>
+                <a-select-option value="http">HTTP</a-select-option>
+                <a-select-option value="tcp">TCP</a-select-option>
+                <a-select-option value="exec">Command</a-select-option>
+              </a-select>
+            </a-form-item>
+            <template v-if="addSvcForm.healthcheckType === 'http'">
+              <div style="display: flex; gap: 12px">
+                <a-form-item label="Path" style="flex: 2">
+                  <a-input v-model:value="addSvcForm.healthcheckPath" placeholder="/health" />
+                </a-form-item>
+                <a-form-item label="Port" style="flex: 1">
+                  <a-input-number v-model:value="addSvcForm.healthcheckPort" :min="1" :max="65535" style="width: 100%" placeholder="8080" />
+                </a-form-item>
+              </div>
+            </template>
+            <template v-if="addSvcForm.healthcheckType === 'tcp'">
+              <a-form-item label="Port">
+                <a-input-number v-model:value="addSvcForm.healthcheckPort" :min="1" :max="65535" style="width: 100%" placeholder="8080" />
+              </a-form-item>
+            </template>
+            <template v-if="addSvcForm.healthcheckType === 'exec'">
+              <a-form-item label="Command">
+                <a-input v-model:value="addSvcForm.healthcheckCommand" placeholder="curl -f http://localhost/health || exit 1" style="font-family: monospace; font-size: 12px" />
+              </a-form-item>
+            </template>
+            <template v-if="addSvcForm.healthcheckType !== 'none'">
+              <div style="display: flex; gap: 12px">
+                <a-form-item label="Interval (s)" style="flex: 1">
+                  <a-input-number v-model:value="addSvcForm.healthcheckInterval" :min="1" style="width: 100%" />
+                </a-form-item>
+                <a-form-item label="Timeout (s)" style="flex: 1">
+                  <a-input-number v-model:value="addSvcForm.healthcheckTimeout" :min="1" style="width: 100%" />
+                </a-form-item>
+                <a-form-item label="Retries" style="flex: 1">
+                  <a-input-number v-model:value="addSvcForm.healthcheckRetries" :min="1" style="width: 100%" />
+                </a-form-item>
+              </div>
+            </template>
+          </a-collapse-panel>
+        </a-collapse>
       </a-form>
       <template #footer>
         <div style="display: flex; justify-content: flex-end; gap: 8px">
@@ -840,6 +993,90 @@ async function deploy() {
             <a-select-option value="no">No restart</a-select-option>
           </a-select>
         </a-form-item>
+
+        <!-- Container Create Options -->
+        <a-collapse :bordered="false" ghost style="margin-top: 8px">
+          <a-collapse-panel key="advanced" header="Container Create Options">
+            <a-form-item label="Network mode">
+              <a-select v-model:value="editSvcForm.networkMode" style="width: 100%">
+                <a-select-option value="bridge">bridge (default)</a-select-option>
+                <a-select-option value="host">host</a-select-option>
+                <a-select-option value="none">none</a-select-option>
+              </a-select>
+            </a-form-item>
+            <a-form-item label="Command">
+              <a-input v-model:value="editSvcForm.command" placeholder="Override container CMD" style="font-family: monospace; font-size: 12px" />
+            </a-form-item>
+            <a-form-item label="Entrypoint">
+              <a-input v-model:value="editSvcForm.entrypoint" placeholder="Override ENTRYPOINT" style="font-family: monospace; font-size: 12px" />
+            </a-form-item>
+            <a-form-item label="User">
+              <a-input v-model:value="editSvcForm.user" placeholder="e.g. 1000:1000 or node" />
+              <div style="font-size: 11px; color: var(--text-muted); margin-top: 3px">Run as non-root user for security hardening</div>
+            </a-form-item>
+            <div style="display: flex; gap: 12px">
+              <a-form-item label="CPU limit" style="flex: 1">
+                <a-input v-model:value="editSvcForm.cpuLimit" placeholder="e.g. 0.5, 2" />
+                <div style="font-size: 11px; color: var(--text-muted); margin-top: 3px">Number of CPUs</div>
+              </a-form-item>
+              <a-form-item label="Memory limit" style="flex: 1">
+                <a-input v-model:value="editSvcForm.memoryLimit" placeholder="e.g. 256M, 1G" />
+              </a-form-item>
+            </div>
+            <a-form-item label="Security">
+              <div style="display: flex; flex-direction: column; gap: 8px">
+                <a-checkbox v-model:checked="editSvcForm.readonlyRootfs">Read-only root filesystem</a-checkbox>
+                <a-tooltip title="Blocked by agent security policy — edge devices cannot run privileged containers">
+                  <a-checkbox :disabled="true" :checked="false">
+                    Privileged mode
+                    <a-tag color="orange" size="small" style="margin-left: 6px">Blocked</a-tag>
+                  </a-checkbox>
+                </a-tooltip>
+              </div>
+            </a-form-item>
+            <a-form-item label="Health check">
+              <a-select v-model:value="editSvcForm.healthcheckType" style="width: 100%">
+                <a-select-option value="none">None</a-select-option>
+                <a-select-option value="http">HTTP</a-select-option>
+                <a-select-option value="tcp">TCP</a-select-option>
+                <a-select-option value="exec">Command</a-select-option>
+              </a-select>
+            </a-form-item>
+            <template v-if="editSvcForm.healthcheckType === 'http'">
+              <div style="display: flex; gap: 12px">
+                <a-form-item label="Path" style="flex: 2">
+                  <a-input v-model:value="editSvcForm.healthcheckPath" placeholder="/health" />
+                </a-form-item>
+                <a-form-item label="Port" style="flex: 1">
+                  <a-input-number v-model:value="editSvcForm.healthcheckPort" :min="1" :max="65535" style="width: 100%" placeholder="8080" />
+                </a-form-item>
+              </div>
+            </template>
+            <template v-if="editSvcForm.healthcheckType === 'tcp'">
+              <a-form-item label="Port">
+                <a-input-number v-model:value="editSvcForm.healthcheckPort" :min="1" :max="65535" style="width: 100%" placeholder="8080" />
+              </a-form-item>
+            </template>
+            <template v-if="editSvcForm.healthcheckType === 'exec'">
+              <a-form-item label="Command">
+                <a-input v-model:value="editSvcForm.healthcheckCommand" placeholder="curl -f http://localhost/health || exit 1" style="font-family: monospace; font-size: 12px" />
+              </a-form-item>
+            </template>
+            <template v-if="editSvcForm.healthcheckType !== 'none'">
+              <div style="display: flex; gap: 12px">
+                <a-form-item label="Interval (s)" style="flex: 1">
+                  <a-input-number v-model:value="editSvcForm.healthcheckInterval" :min="1" style="width: 100%" />
+                </a-form-item>
+                <a-form-item label="Timeout (s)" style="flex: 1">
+                  <a-input-number v-model:value="editSvcForm.healthcheckTimeout" :min="1" style="width: 100%" />
+                </a-form-item>
+                <a-form-item label="Retries" style="flex: 1">
+                  <a-input-number v-model:value="editSvcForm.healthcheckRetries" :min="1" style="width: 100%" />
+                </a-form-item>
+              </div>
+            </template>
+          </a-collapse-panel>
+        </a-collapse>
       </a-form>
       <template #footer>
         <div style="display: flex; justify-content: flex-end; gap: 8px">
@@ -982,6 +1219,90 @@ async function deploy() {
               <a-select-option value="no">No restart</a-select-option>
             </a-select>
           </a-form-item>
+
+          <!-- Container Create Options -->
+          <a-collapse :bordered="false" ghost style="margin-top: 8px">
+            <a-collapse-panel key="advanced" header="Container Create Options">
+              <a-form-item label="Network mode">
+                <a-select v-model:value="svc.networkMode" style="width: 100%">
+                  <a-select-option value="bridge">bridge (default)</a-select-option>
+                  <a-select-option value="host">host</a-select-option>
+                  <a-select-option value="none">none</a-select-option>
+                </a-select>
+              </a-form-item>
+              <a-form-item label="Command">
+                <a-input v-model:value="svc.command" placeholder="Override container CMD" style="font-family: monospace; font-size: 12px" />
+              </a-form-item>
+              <a-form-item label="Entrypoint">
+                <a-input v-model:value="svc.entrypoint" placeholder="Override ENTRYPOINT" style="font-family: monospace; font-size: 12px" />
+              </a-form-item>
+              <a-form-item label="User">
+                <a-input v-model:value="svc.user" placeholder="e.g. 1000:1000 or node" />
+                <div style="font-size: 11px; color: var(--text-muted); margin-top: 3px">Run as non-root user for security hardening</div>
+              </a-form-item>
+              <div style="display: flex; gap: 12px">
+                <a-form-item label="CPU limit" style="flex: 1">
+                  <a-input v-model:value="svc.cpuLimit" placeholder="e.g. 0.5, 2" />
+                  <div style="font-size: 11px; color: var(--text-muted); margin-top: 3px">Number of CPUs</div>
+                </a-form-item>
+                <a-form-item label="Memory limit" style="flex: 1">
+                  <a-input v-model:value="svc.memoryLimit" placeholder="e.g. 256M, 1G" />
+                </a-form-item>
+              </div>
+              <a-form-item label="Security">
+                <div style="display: flex; flex-direction: column; gap: 8px">
+                  <a-checkbox v-model:checked="svc.readonlyRootfs">Read-only root filesystem</a-checkbox>
+                  <a-tooltip title="Blocked by agent security policy — edge devices cannot run privileged containers">
+                    <a-checkbox :disabled="true" :checked="false">
+                      Privileged mode
+                      <a-tag color="orange" size="small" style="margin-left: 6px">Blocked</a-tag>
+                    </a-checkbox>
+                  </a-tooltip>
+                </div>
+              </a-form-item>
+              <a-form-item label="Health check">
+                <a-select v-model:value="svc.healthcheckType" style="width: 100%">
+                  <a-select-option value="none">None</a-select-option>
+                  <a-select-option value="http">HTTP</a-select-option>
+                  <a-select-option value="tcp">TCP</a-select-option>
+                  <a-select-option value="exec">Command</a-select-option>
+                </a-select>
+              </a-form-item>
+              <template v-if="svc.healthcheckType === 'http'">
+                <div style="display: flex; gap: 12px">
+                  <a-form-item label="Path" style="flex: 2">
+                    <a-input v-model:value="svc.healthcheckPath" placeholder="/health" />
+                  </a-form-item>
+                  <a-form-item label="Port" style="flex: 1">
+                    <a-input-number v-model:value="svc.healthcheckPort" :min="1" :max="65535" style="width: 100%" placeholder="8080" />
+                  </a-form-item>
+                </div>
+              </template>
+              <template v-if="svc.healthcheckType === 'tcp'">
+                <a-form-item label="Port">
+                  <a-input-number v-model:value="svc.healthcheckPort" :min="1" :max="65535" style="width: 100%" placeholder="8080" />
+                </a-form-item>
+              </template>
+              <template v-if="svc.healthcheckType === 'exec'">
+                <a-form-item label="Command">
+                  <a-input v-model:value="svc.healthcheckCommand" placeholder="curl -f http://localhost/health || exit 1" style="font-family: monospace; font-size: 12px" />
+                </a-form-item>
+              </template>
+              <template v-if="svc.healthcheckType !== 'none'">
+                <div style="display: flex; gap: 12px">
+                  <a-form-item label="Interval (s)" style="flex: 1">
+                    <a-input-number v-model:value="svc.healthcheckInterval" :min="1" style="width: 100%" />
+                  </a-form-item>
+                  <a-form-item label="Timeout (s)" style="flex: 1">
+                    <a-input-number v-model:value="svc.healthcheckTimeout" :min="1" style="width: 100%" />
+                  </a-form-item>
+                  <a-form-item label="Retries" style="flex: 1">
+                    <a-input-number v-model:value="svc.healthcheckRetries" :min="1" style="width: 100%" />
+                  </a-form-item>
+                </div>
+              </template>
+            </a-collapse-panel>
+          </a-collapse>
         </div>
 
         <!-- Add service -->
