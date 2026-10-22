@@ -14,27 +14,15 @@ export function showLogs(follow: boolean = false, lines: number = 50): void {
   });
 }
 
-function getCliVersion(): string {
-  const packagePath = join(__dirname, '..', 'package.json');
-  try {
-    if (existsSync(packagePath)) {
-      return JSON.parse(readFileSync(packagePath, 'utf-8')).version ?? 'unknown';
-    }
-  } catch { /* fall through */ }
-  return 'unknown';
-}
-
 /**
  * iotctl version
  */
 export async function showVersion(): Promise<void> {
-  const cliVersion = getCliVersion();
-
   const result = await apiProbe(`${DEVICE_API_V1}/settings`);
   if (result.ok && result.data) {
     const agentVersion = (result.data as any)?.settings?.agent?.version;
     if (agentVersion) {
-      logger.info('Iotistica Agent', { agent: agentVersion, cli: cliVersion });
+      logger.info('Iotistica Agent', { version: agentVersion });
       return;
     }
   }
@@ -49,12 +37,12 @@ export async function showVersion(): Promise<void> {
       if (existsSync(packagePath)) {
         const agentVersion = JSON.parse(readFileSync(packagePath, 'utf-8')).version;
         if (agentVersion) {
-          logger.info('Iotistica Agent', { agent: agentVersion, cli: cliVersion });
+          logger.info('Iotistica Agent', { version: agentVersion });
           return;
         }
       }
     } catch { continue; }
   }
 
-  logger.info('Iotistica Agent', { agent: 'unknown (agent not reachable)', cli: cliVersion });
+  logger.info('Iotistica Agent', { version: 'unknown (agent not reachable)' });
 }
