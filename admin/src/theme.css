@@ -250,8 +250,8 @@ body {
   background: var(--bg-elevated);
 }
 
-/* Ant switch when checked stays blue */
-[data-theme="dark"] .ant-switch {
+/* Ant switch: unchecked track visible in dark mode, checked stays blue */
+[data-theme="dark"] .ant-switch:not(.ant-switch-checked) {
   background: var(--bg-subtle);
 }
 
