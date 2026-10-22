@@ -5,7 +5,7 @@ import { PlusOutlined, EditOutlined, DeleteOutlined, CheckCircleOutlined, StopOu
 import type { TableColumnType } from 'ant-design-vue'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import SubscriptionDrawer from '@/components/subscriptions/SubscriptionDrawer.vue'
-import type { Destination, Subscription } from '@/types'
+import type { Destination, Endpoint, Subscription } from '@/types'
 import { subscriptionsApi } from '@/api/subscriptions'
 import { destinationsApi } from '@/api/destinations'
 import { settingsApi } from '@/api/settings'
@@ -15,7 +15,7 @@ import { buildIotisticaTopicBase } from '@/utils/mqtt'
 
 const rows = ref<Subscription[]>([])
 const destinations = ref<Destination[]>([])
-const deviceNames = ref<string[]>([])
+const allEndpoints = ref<Endpoint[]>([])
 const metricNames = ref<string[]>([])
 const loading = ref(false)
 const error = ref<string | null>(null)
@@ -51,7 +51,7 @@ const columns: TableColumnType<Subscription>[] = [
   { title: 'Destination', key: 'destination', width: 180, sorter: (a, b) => (destMap.value[a.publish_destination_id]?.name ?? '').localeCompare(destMap.value[b.publish_destination_id]?.name ?? '') },
   { title: 'Type', key: 'dest_type', width: 120 },
   { title: 'Topic', key: 'topic', sorter: (a, b) => (a.route_json?.topic ?? '').localeCompare(b.route_json?.topic ?? '') },
-  { title: 'Protocol', dataIndex: 'topics', key: 'topics', width: 160 },
+  { title: 'Sources', dataIndex: 'topics', key: 'topics', width: 200 },
   { title: 'Format', dataIndex: 'payload_format', key: 'payload_format', width: 100, sorter: (a, b) => (a.payload_format ?? '').localeCompare(b.payload_format ?? '') },
   { title: 'Compression', dataIndex: 'compression', key: 'compression', width: 160 },
   { title: 'Enabled', dataIndex: 'enabled', key: 'enabled', width: 90, sorter: (a, b) => Number(a.enabled) - Number(b.enabled) },
@@ -70,7 +70,7 @@ async function load() {
     ])
     rows.value = subs
     destinations.value = dests
-    deviceNames.value = endpoints.map((e) => e.name)
+    allEndpoints.value = endpoints
     metricNames.value = endpoints.flatMap((e) =>
       ((e.data_points ?? []) as { name?: string }[]).map((dp) => dp.name).filter((n): n is string => !!n),
     )
@@ -226,7 +226,10 @@ onMounted(load)
         </template>
 
         <template v-else-if="column.key === 'topics'">
-          <template v-if="record.topics?.length">
+          <template v-if="record.route_json?.includeDevices?.length">
+            <a-tag v-for="d in record.route_json.includeDevices" :key="d" style="margin-bottom: 2px">{{ d }}</a-tag>
+          </template>
+          <template v-else-if="record.topics?.length">
             <a-tag v-for="t in record.topics" :key="t" :color="protocolColor(t)" style="margin-bottom: 2px">{{ t }}</a-tag>
           </template>
           <span v-else style="color: var(--text-muted)">all</span>
@@ -267,7 +270,7 @@ onMounted(load)
       v-model:open="drawerOpen"
       :editing="editing"
       :destinations="destinations"
-      :device-names="deviceNames"
+      :endpoints="allEndpoints"
       :metric-names="metricNames"
       :iotistica-topic-base="iotisticaTopicBase ?? undefined"
       @saved="load"

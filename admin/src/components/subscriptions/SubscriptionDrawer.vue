@@ -1,16 +1,18 @@
 <script setup lang="ts">
 import { ref, computed, watch, nextTick } from 'vue'
 import { message } from 'ant-design-vue'
+import { SearchOutlined, WarningOutlined } from '@ant-design/icons-vue'
 import type { FormInstance } from 'ant-design-vue'
-import type { Destination, Subscription, SubscriptionFormData, SubscriptionRoute } from '@/types'
+import type { Destination, Endpoint, Subscription, SubscriptionFormData, SubscriptionRoute } from '@/types'
 import { subscriptionsApi } from '@/api/subscriptions'
 import { datasetsApi, type MlDataset } from '@/api/ml-datasets'
+import { protocolColor, protocolLabel } from '@/utils/protocol'
 
 const props = defineProps<{
   open: boolean
   editing: Subscription | null
   destinations: Destination[]
-  deviceNames?: string[]
+  endpoints?: Endpoint[]
   metricNames?: string[]
   iotisticaTopicBase?: string
 }>()
@@ -118,10 +120,139 @@ const blankForm = (): SubscriptionFormData => ({
 
 const form = ref<SubscriptionFormData>(blankForm())
 
-// Drives the "Publish interval" select. Reads/writes form.route_json.minIntervalMs directly
-// so the existing submit()/hasRouteConfig logic (r.minIntervalMs != null) keeps working
-// unchanged — "Every update" always writes `undefined`, never `0`, matching blankRoute()'s
-// existing default and avoiding a false-positive hasRouteConfig.
+// ── Source mode (3-way selector) ────────────────────────────────────────────
+type SourceMode = 'all' | 'protocol' | 'specific'
+const sourceMode = ref<SourceMode>('all')
+const sourceSearch = ref('')
+
+function detectSourceMode(sub: Subscription | null): SourceMode {
+  if (!sub) return 'all'
+  if ((sub.route_json?.includeDevices?.length ?? 0) > 0) return 'specific'
+  if (sub.topics?.length > 0) return 'protocol'
+  return 'all'
+}
+
+watch(sourceMode, (mode) => {
+  if (mode === 'all') {
+    form.value.topics = []
+    if (form.value.route_json) form.value.route_json.includeDevices = []
+  } else if (mode === 'protocol') {
+    if (form.value.route_json) form.value.route_json.includeDevices = []
+  } else if (mode === 'specific') {
+    form.value.topics = []
+  }
+  syncIotisticaTopic()
+})
+
+const endpointsByProtocol = computed(() => {
+  const groups: Record<string, Endpoint[]> = {}
+  for (const ep of props.endpoints ?? []) {
+    const p = ep.protocol || 'other'
+    ;(groups[p] ??= []).push(ep)
+  }
+  return groups
+})
+
+const filteredEndpointsByProtocol = computed(() => {
+  const q = sourceSearch.value.trim().toLowerCase()
+  if (!q) return endpointsByProtocol.value
+  const result: Record<string, Endpoint[]> = {}
+  for (const [protocol, eps] of Object.entries(endpointsByProtocol.value)) {
+    const filtered = eps.filter(ep => ep.name.toLowerCase().includes(q) || connSummary(ep).toLowerCase().includes(q))
+    if (filtered.length > 0) result[protocol] = filtered
+  }
+  return result
+})
+
+const selectedSources = computed(() => new Set(form.value.route_json?.includeDevices ?? []))
+const endpointNames = computed(() => new Set((props.endpoints ?? []).map(ep => ep.name)))
+const totalEndpoints = computed(() => (props.endpoints ?? []).length)
+const selectedCount = computed(() => selectedSources.value.size)
+
+const staleSourceNames = computed(() => {
+  const names = form.value.route_json?.includeDevices ?? []
+  return names.filter(n => !endpointNames.value.has(n))
+})
+
+function toggleSource(name: string) {
+  if (!form.value.route_json) return
+  const list = form.value.route_json.includeDevices ?? []
+  const idx = list.indexOf(name)
+  if (idx >= 0) {
+    list.splice(idx, 1)
+  } else {
+    list.push(name)
+  }
+  form.value.route_json.includeDevices = [...list]
+}
+
+function toggleProtocolGroup(protocol: string) {
+  if (!form.value.route_json) return
+  const eps = endpointsByProtocol.value[protocol] ?? []
+  const names = eps.map(ep => ep.name)
+  const current = new Set(form.value.route_json.includeDevices ?? [])
+  const allSelected = names.every(n => current.has(n))
+  if (allSelected) {
+    names.forEach(n => current.delete(n))
+  } else {
+    names.forEach(n => current.add(n))
+  }
+  form.value.route_json.includeDevices = [...current]
+}
+
+function isProtocolGroupAllSelected(protocol: string): boolean {
+  const eps = endpointsByProtocol.value[protocol] ?? []
+  if (eps.length === 0) return false
+  return eps.every(ep => selectedSources.value.has(ep.name))
+}
+
+function isProtocolGroupPartial(protocol: string): boolean {
+  const eps = endpointsByProtocol.value[protocol] ?? []
+  const some = eps.some(ep => selectedSources.value.has(ep.name))
+  const all = eps.every(ep => selectedSources.value.has(ep.name))
+  return some && !all
+}
+
+function connSummary(ep: Endpoint): string {
+  const c = ep.connection
+  if (!c) return ''
+  if (ep.protocol === 'modbus') {
+    return c.type === 'rtu' ? String(c.serialPort ?? '') : `${c.host ?? ''}:${c.port ?? 502}`
+  }
+  if (ep.protocol === 'opcua') {
+    const raw = String(c.endpointUrl ?? '')
+    try {
+      const u = new URL(raw)
+      return `${u.hostname}:${u.port || 4840}`
+    } catch {
+      return raw
+    }
+  }
+  if (ep.protocol === 'mqtt') {
+    const host = String(c.host ?? c.url ?? '')
+    const port = c.port ? `:${c.port}` : ''
+    return `${host}${port}`
+  }
+  if (ep.protocol === 'bacnet') {
+    const ip = String(c.ipAddress ?? c.host ?? '')
+    const instance = c.deviceInstance != null ? ` #${c.deviceInstance}` : ''
+    return `${ip}${instance}`
+  }
+  if (ep.protocol === 'system') return 'local'
+  return ''
+}
+
+function healthDot(ep: Endpoint): { color: string; label: string } {
+  if (!ep.enabled) return { color: '#999', label: 'Disabled' }
+  const q = ep.health?.communicationQuality
+  if (q === 'good') return { color: '#52c41a', label: 'Connected' }
+  if (q === 'degraded') return { color: '#faad14', label: 'Degraded' }
+  if (q === 'poor') return { color: '#fa541c', label: 'Poor' }
+  if (q === 'offline') return { color: '#ff4d4f', label: 'Offline' }
+  return { color: '#d9d9d9', label: 'Unknown' }
+}
+
+// ── Publish interval ────────────────────────────────────────────────────────
 const publishIntervalPreset = computed<string>({
   get() {
     const ms = form.value.route_json?.minIntervalMs
@@ -146,6 +277,7 @@ watch([customIntervalValue, customIntervalUnit], () => {
   form.value.route_json.minIntervalMs = customFieldsToMs()
 })
 
+// ── Destination logic ───────────────────────────────────────────────────────
 const selectedDestination = computed(() =>
   props.destinations.find((d) => d.id === form.value.publish_destination_id) ?? null,
 )
@@ -182,11 +314,13 @@ watch(() => form.value.topics, () => {
   syncIotisticaTopic()
 })
 
+// ── Drawer open/close ───────────────────────────────────────────────────────
 watch(
   () => props.open,
   (open) => {
     if (!open) return
     showAdvanced.value = false
+    sourceSearch.value = ''
     loadDatasets()
     if (props.editing) {
       form.value = {
@@ -198,8 +332,10 @@ watch(
         ml_dataset_id: props.editing.ml_dataset_id ?? null,
         enabled: props.editing.enabled,
       }
+      sourceMode.value = detectSourceMode(props.editing)
     } else {
       form.value = blankForm()
+      sourceMode.value = 'all'
       nextTick(() => {
         if (isIotisticaDestination.value) {
           form.value.payload_format = 'custom'
@@ -218,14 +354,28 @@ watch(() => form.value.payload_format, (fmt) => {
 })
 
 watch(() => form.value.ml_dataset_id, (id) => {
-  if (id) form.value.topics = []
+  if (id) {
+    form.value.topics = []
+    sourceMode.value = 'all'
+  }
 })
 
+// ── Submit ──────────────────────────────────────────────────────────────────
 async function submit() {
   await formRef.value?.validate()
   saving.value = true
 
   const payload = { ...form.value }
+
+  if (sourceMode.value === 'all') {
+    payload.topics = []
+    if (payload.route_json) payload.route_json.includeDevices = []
+  } else if (sourceMode.value === 'protocol') {
+    if (payload.route_json) payload.route_json.includeDevices = []
+  } else if (sourceMode.value === 'specific') {
+    payload.topics = []
+  }
+
   const r = payload.route_json
   const hasRouteConfig =
     r &&
@@ -266,7 +416,7 @@ function close() {
   <a-drawer
     :open="open"
     :title="editing ? 'Edit Subscription' : 'New Subscription'"
-    width="520"
+    width="560"
     @close="close"
   >
     <a-form
@@ -326,22 +476,95 @@ function close() {
         style="margin-bottom: 16px"
       />
 
-      <!-- Source Protocols (hidden when a dataset is selected — the dataset's point keys already define protocol scope) -->
-      <a-form-item
-        v-if="!selectedDataset"
-        label="Source Protocols"
-        name="topics"
-        extra="Which protocol endpoints feed this subscription. Leave empty to receive from all."
-      >
-        <a-select
-          v-model:value="form.topics"
-          mode="multiple"
-          placeholder="All protocols (leave empty for all)"
-        >
-          <a-select-option v-for="p in SOURCE_PROTOCOLS" :key="p" :value="p">
-            {{ p }}
-          </a-select-option>
-        </a-select>
+      <!-- Sources (hidden when a dataset is selected) -->
+      <a-form-item v-if="!selectedDataset" label="Sources">
+        <a-radio-group v-model:value="sourceMode" style="display: flex; flex-direction: column; gap: 8px">
+          <a-radio value="all">All sources</a-radio>
+          <a-radio value="protocol">By protocol</a-radio>
+          <a-radio value="specific">Specific sources</a-radio>
+        </a-radio-group>
+
+        <!-- By protocol: multi-select -->
+        <div v-if="sourceMode === 'protocol'" class="source-sub-panel">
+          <a-select
+            v-model:value="form.topics"
+            mode="multiple"
+            placeholder="Select protocols"
+            style="width: 100%"
+          >
+            <a-select-option v-for="p in SOURCE_PROTOCOLS" :key="p" :value="p">
+              {{ protocolLabel(p) || p }}
+            </a-select-option>
+          </a-select>
+        </div>
+
+        <!-- Specific sources: grouped checkbox list -->
+        <div v-if="sourceMode === 'specific'" class="source-sub-panel">
+          <a-input
+            v-model:value="sourceSearch"
+            placeholder="Search sources..."
+            allow-clear
+            size="small"
+            style="margin-bottom: 8px"
+          >
+            <template #prefix><SearchOutlined style="color: var(--text-muted)" /></template>
+          </a-input>
+
+          <div class="source-list">
+            <template v-for="(eps, protocol) in filteredEndpointsByProtocol" :key="protocol">
+              <div class="source-group-header">
+                <a-checkbox
+                  :checked="isProtocolGroupAllSelected(protocol as string)"
+                  :indeterminate="isProtocolGroupPartial(protocol as string)"
+                  @change="toggleProtocolGroup(protocol as string)"
+                >
+                  <a-tag :color="protocolColor(protocol as string)" size="small">{{ protocolLabel(protocol as string) || protocol }}</a-tag>
+                </a-checkbox>
+              </div>
+              <div
+                v-for="ep in eps"
+                :key="ep.uuid"
+                class="source-row"
+                @click="toggleSource(ep.name)"
+              >
+                <a-checkbox
+                  :checked="selectedSources.has(ep.name)"
+                  @click.stop
+                  @change="toggleSource(ep.name)"
+                />
+                <span class="source-name">{{ ep.name }}</span>
+                <span class="source-health" :title="healthDot(ep).label">
+                  <span class="health-dot" :style="{ background: healthDot(ep).color }" />
+                  {{ healthDot(ep).label }}
+                </span>
+                <span class="source-conn">{{ connSummary(ep) }}</span>
+              </div>
+            </template>
+
+            <div v-if="Object.keys(filteredEndpointsByProtocol).length === 0" class="source-empty">
+              {{ sourceSearch ? 'No sources match your search.' : 'No sources configured.' }}
+            </div>
+          </div>
+
+          <!-- Stale references warning -->
+          <a-alert
+            v-if="staleSourceNames.length > 0"
+            type="warning"
+            size="small"
+            show-icon
+            style="margin-top: 8px"
+          >
+            <template #icon><WarningOutlined /></template>
+            <template #message>
+              {{ staleSourceNames.length }} selected source{{ staleSourceNames.length > 1 ? 's' : '' }} no longer exist{{ staleSourceNames.length === 1 ? 's' : '' }}:
+              <a-tag v-for="n in staleSourceNames" :key="n" size="small" style="margin: 2px">{{ n }}</a-tag>
+            </template>
+          </a-alert>
+
+          <div class="source-count">
+            {{ selectedCount }} of {{ totalEndpoints }} source{{ totalEndpoints !== 1 ? 's' : '' }} selected
+          </div>
+        </div>
       </a-form-item>
 
       <!-- Payload Format -->
@@ -421,22 +644,6 @@ function close() {
               :options="(metricNames ?? []).map(n => ({ value: n, label: n }))"
             />
           </a-form-item>
-          <a-form-item label="Include devices" extra="Select from the list or type a custom name">
-            <a-select
-              v-model:value="form.route_json!.includeDevices"
-              mode="tags"
-              placeholder="All devices (leave empty for all)"
-              :options="(deviceNames ?? []).map(n => ({ value: n, label: n }))"
-            />
-          </a-form-item>
-          <a-form-item label="Exclude devices">
-            <a-select
-              v-model:value="form.route_json!.excludeDevices"
-              mode="tags"
-              placeholder="None excluded"
-              :options="(deviceNames ?? []).map(n => ({ value: n, label: n }))"
-            />
-          </a-form-item>
           <a-form-item label="Quality filter">
             <a-checkbox-group v-model:value="form.route_json!.qualities">
               <a-checkbox v-for="q in QUALITIES" :key="q" :value="q">{{ q }}</a-checkbox>
@@ -481,3 +688,90 @@ function close() {
     </template>
   </a-drawer>
 </template>
+
+<style scoped>
+.source-sub-panel {
+  margin-top: 8px;
+  margin-left: 24px;
+}
+
+.source-list {
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.source-group-header {
+  padding: 6px 10px;
+  background: var(--bg-subtle);
+  border-bottom: 1px solid var(--border-color);
+  font-weight: 500;
+  font-size: 13px;
+}
+
+.source-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px 5px 28px;
+  cursor: pointer;
+  font-size: 13px;
+  border-bottom: 1px solid var(--border-color);
+  transition: background 0.15s;
+}
+
+.source-row:last-child {
+  border-bottom: none;
+}
+
+.source-row:hover {
+  background: var(--bg-hover);
+}
+
+.source-name {
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.source-health {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+}
+
+.health-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.source-conn {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--text-muted);
+  font-family: monospace;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 180px;
+}
+
+.source-empty {
+  padding: 16px;
+  text-align: center;
+  color: var(--text-tertiary);
+  font-size: 13px;
+}
+
+.source-count {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+</style>
