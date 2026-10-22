@@ -83,12 +83,12 @@ export function suggestCanonicalUnits(
 			}
 
 			// Description substring.
-			if (def.description && def.description.toLowerCase().includes(queryLower)) {
+			if (def.description?.toLowerCase().includes(queryLower)) {
 				consider(def.canonical_unit, 40, 'description-substring');
 			}
 
 			// Quantity substring.
-			if (def.quantity.toLowerCase().includes(queryLower) && !(def.description && def.description.toLowerCase().includes(queryLower))) {
+			if (def.quantity.toLowerCase().includes(queryLower) && !def.description?.toLowerCase().includes(queryLower)) {
 				consider(def.canonical_unit, 40, 'quantity-substring');
 			}
 		}

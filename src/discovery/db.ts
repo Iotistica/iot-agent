@@ -121,7 +121,7 @@ export class DiscoveryStore {
 					// recurring ~20min OPC-UA resubscription bursts caused by BACnet's own
 					// present-value drift, 2026-10-05).
 					const stripVolatile = (points?: any[]) =>
-						(points || []).map(({ presentValue, ...rest }) => rest);
+						(points || []).map(({ presentValue: _pv, ...rest }) => rest);
 					const dataPointsChanged = !wouldClearDataPoints &&
 						JSON.stringify(stripVolatile(existing.data_points)) !== JSON.stringify(stripVolatile(device.dataPoints));
 					const validationChanged = device.validated && !existing.metadata?.validated;
