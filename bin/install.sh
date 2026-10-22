@@ -685,6 +685,13 @@ echo ""
         
         echo "✓ Agent downloaded and installed"
         SKIP_BUILD=true
+
+        if [ "$AGENT_VERSION" = "dev" ] && [ -f /opt/iotistic/agent/package.json ]; then
+            EXTRACTED_VERSION=$(grep -o '"version"[[:space:]]*:[[:space:]]*"[^"]*"' /opt/iotistic/agent/package.json | sed 's/.*"\([^"]*\)".*/\1/')
+            if [ -n "$EXTRACTED_VERSION" ]; then
+                AGENT_VERSION="$EXTRACTED_VERSION"
+            fi
+        fi
     fi
 
     # Build agent (only if using repository checkout)
