@@ -2708,6 +2708,24 @@ router.get('/v1/units/canonical', async (_req: Request, res: Response, next: Nex
 });
 
 /**
+ * GET /v1/units/suggest?q=<rawUnit>&source_system=<protocol>&limit=<n>
+ * Ranked canonical-unit suggestions for a raw/unknown unit string.
+ * Read-only — never writes or modifies mappings.
+ */
+router.get('/v1/units/suggest', async (req: Request, res: Response, next: NextFunction) => {
+	try {
+		const q = (req.query.q as string | undefined)?.trim();
+		if (!q) return res.status(400).json({ error: 'Missing required query parameter: q' });
+		const sourceSystem = (req.query.source_system as string | undefined) ?? undefined;
+		const limit = req.query.limit ? Math.min(Math.max(1, parseInt(req.query.limit as string, 10) || 10), 50) : undefined;
+		const { suggestCanonicalUnits } = await import('../units/suggest-canonical-units.js');
+		return res.status(200).json(suggestCanonicalUnits(q, sourceSystem, limit));
+	} catch (error) {
+		next(error);
+	}
+});
+
+/**
  * GET /v1/units/custom-aliases
  * Admin-created unit mappings (src/db/models/custom-unit-aliases.model.ts) —
  * the "Resolve unit" dashboard action's output. Separate from the built-in,

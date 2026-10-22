@@ -1,6 +1,7 @@
 import { existsSync } from 'fs';
 import { Agent as UndiciAgent, fetch as undiciFetch } from 'undici';
 import {
+  CONFIG_DIR,
   DB_PATH,
   DEVICE_API_BASE,
   DEVICE_API_V1,
@@ -517,7 +518,7 @@ export async function runDiagnostics(): Promise<void> {
       DEVICE_API_PORT: process.env.DEVICE_API_PORT || '(default: 48484)',
       IOTISTICA_API: process.env.IOTISTICA_API || '(not set)',
       PROVISIONING_API_KEY: process.env.PROVISIONING_API_KEY ? '(set)' : '(not set)',
-      CONFIG_DIR: process.env.CONFIG_DIR || '/app/data',
+      CONFIG_DIR: CONFIG_DIR,
     };
     results['Environment'] = {
       status: '⊘ INFO',

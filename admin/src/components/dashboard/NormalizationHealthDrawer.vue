@@ -2,7 +2,8 @@
 import { computed, ref, watch } from 'vue'
 import { message } from 'ant-design-vue'
 import type { TableColumnType } from 'ant-design-vue'
-import { dashboardApi, type CanonicalUnit, type NormalizationHealth, type NormalizationIssue } from '@/api/dashboard'
+import { StarFilled } from '@ant-design/icons-vue'
+import { dashboardApi, type CanonicalUnit, type NormalizationHealth, type NormalizationIssue, type UnitSuggestion } from '@/api/dashboard'
 
 const props = defineProps<{
   open: boolean
@@ -71,10 +72,35 @@ const resolveTarget = ref<NormalizationIssue | null>(null)
 const selectedCanonicalUnit = ref('')
 const resolving = ref(false)
 
+const suggestions = ref<UnitSuggestion[]>([])
+const suggestionsLoading = ref(false)
+const selectedSuggestion = ref<string | null>(null)
+
+function selectSuggestion(canonicalUnit: string): void {
+  selectedSuggestion.value = canonicalUnit
+  selectedCanonicalUnit.value = canonicalUnit
+}
+
+function onAutocompleteChange(value: string): void {
+  selectedCanonicalUnit.value = value
+  if (value !== selectedSuggestion.value) {
+    selectedSuggestion.value = null
+  }
+}
+
 function openResolve(record: NormalizationIssue): void {
   resolveTarget.value = record
   selectedCanonicalUnit.value = ''
+  selectedSuggestion.value = null
+  suggestions.value = []
   resolveModalOpen.value = true
+
+  suggestionsLoading.value = true
+  dashboardApi
+    .suggestUnits(record.label, record.protocol)
+    .then((results) => { suggestions.value = results })
+    .catch(() => { /* non-fatal — manual picker still works */ })
+    .finally(() => { suggestionsLoading.value = false })
 }
 
 function closeResolve(): void {
@@ -185,14 +211,49 @@ async function submitResolve(): Promise<void> {
       <div style="font-size: 12px; color: var(--text-tertiary)">Protocol</div>
       <div>{{ resolveTarget?.protocol ?? '— (global)' }}</div>
     </div>
+
+    <div v-if="suggestionsLoading" style="text-align: center; padding: 12px 0">
+      <a-spin size="small" />
+      <span style="margin-left: 8px; font-size: 12px; color: var(--text-tertiary)">Finding suggestions…</span>
+    </div>
+    <div v-else-if="suggestions.length > 0" style="margin-bottom: 16px">
+      <div style="font-size: 12px; color: var(--text-tertiary); margin-bottom: 8px">Suggestions</div>
+      <div class="suggestion-list">
+        <div
+          v-for="(s, idx) in suggestions"
+          :key="s.canonical_unit"
+          class="suggestion-item"
+          :class="{ 'suggestion-item--selected': selectedSuggestion === s.canonical_unit, 'suggestion-item--top': idx === 0 }"
+          @click="selectSuggestion(s.canonical_unit)"
+        >
+          <a-radio :checked="selectedSuggestion === s.canonical_unit" style="pointer-events: none" />
+          <div style="flex: 1; min-width: 0">
+            <span style="font-weight: 500">{{ s.canonical_unit }}</span>
+            <span v-if="s.symbol" style="color: var(--text-tertiary); margin-left: 4px">({{ s.symbol }})</span>
+            <span style="color: var(--text-muted); margin-left: 8px; font-size: 12px">{{ s.quantity }}</span>
+          </div>
+          <StarFilled v-if="idx === 0" style="color: #faad14; font-size: 12px; flex-shrink: 0" />
+          <span style="font-size: 11px; color: var(--text-muted); flex-shrink: 0; min-width: 24px; text-align: right">{{ s.score }}</span>
+        </div>
+      </div>
+    </div>
+    <div v-else-if="!suggestionsLoading" style="margin-bottom: 16px; font-size: 12px; color: var(--text-muted)">
+      No close matches found. Use the picker below.
+    </div>
+
+    <a-divider v-if="suggestions.length > 0" style="margin: 8px 0 12px">
+      <span style="font-size: 11px; color: var(--text-muted)">or pick manually</span>
+    </a-divider>
+
     <div>
       <div style="font-size: 12px; color: var(--text-tertiary); margin-bottom: 4px">Canonical unit</div>
       <a-auto-complete
-        v-model:value="selectedCanonicalUnit"
+        :value="selectedCanonicalUnit"
         placeholder="Select or type a canonical unit"
         style="width: 100%"
         :options="canonicalUnitOptions"
         :filter-option="(input: string, option: any) => option.label.toLowerCase().includes(input.toLowerCase())"
+        @change="onAutocompleteChange"
       />
       <div v-if="isNewUnit" style="font-size: 12px; color: #faad14; margin-top: 4px">
         New unit — will be created as a passthrough (no conversion)
@@ -200,3 +261,39 @@ async function submitResolve(): Promise<void> {
     </div>
   </a-modal>
 </template>
+
+<style scoped>
+.suggestion-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.suggestion-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--border-color);
+  cursor: pointer;
+  transition: border-color 0.2s, background 0.2s;
+}
+
+.suggestion-item:hover {
+  background: var(--bg-hover);
+}
+
+.suggestion-item--selected {
+  border-color: #1677ff;
+  background: var(--bg-selected-light);
+}
+
+.suggestion-item--top {
+  border-color: var(--border-color-strong);
+}
+
+.suggestion-item--top.suggestion-item--selected {
+  border-color: #1677ff;
+}
+</style>

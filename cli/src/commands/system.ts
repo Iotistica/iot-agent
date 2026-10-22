@@ -1,6 +1,6 @@
 import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
-import { CLIError, logger } from '../core';
+import { CLIError, DEVICE_API_V1, apiProbe, logger } from '../core';
 
 
 /**
@@ -14,28 +14,47 @@ export function showLogs(follow: boolean = false, lines: number = 50): void {
   });
 }
 
+function getCliVersion(): string {
+  const packagePath = join(__dirname, '..', 'package.json');
+  try {
+    if (existsSync(packagePath)) {
+      return JSON.parse(readFileSync(packagePath, 'utf-8')).version ?? 'unknown';
+    }
+  } catch { /* fall through */ }
+  return 'unknown';
+}
+
 /**
  * iotctl version
  */
-export function showVersion(): void {
-  const possiblePaths = [
-    join(__dirname, '..', 'package.json'),   // installed: /opt/iotistic/cli/dist/../package.json
-    join(process.cwd(), 'package.json'),
-    join(process.cwd(), '..', 'package.json'),
-    '/app/package.json',
-  ];
+export async function showVersion(): Promise<void> {
+  const cliVersion = getCliVersion();
 
-  for (const packagePath of possiblePaths) {
-    try {
-      if (existsSync(packagePath)) {
-        const packageJson = JSON.parse(readFileSync(packagePath, 'utf-8'));
-        logger.info('Iotistica Agent', { version: packageJson.version });
-        return;
-      }
-    } catch {
-      continue;
+  const result = await apiProbe(`${DEVICE_API_V1}/settings`);
+  if (result.ok && result.data) {
+    const agentVersion = (result.data as any)?.settings?.agent?.version;
+    if (agentVersion) {
+      logger.info('Iotistica Agent', { agent: agentVersion, cli: cliVersion });
+      return;
     }
   }
 
-  logger.info('Iotistica Agent', { version: '1.0.0' });
+  const agentPaths = [
+    '/opt/iotistic/agent/package.json',
+    '/app/package.json',
+  ];
+
+  for (const packagePath of agentPaths) {
+    try {
+      if (existsSync(packagePath)) {
+        const agentVersion = JSON.parse(readFileSync(packagePath, 'utf-8')).version;
+        if (agentVersion) {
+          logger.info('Iotistica Agent', { agent: agentVersion, cli: cliVersion });
+          return;
+        }
+      }
+    } catch { continue; }
+  }
+
+  logger.info('Iotistica Agent', { agent: 'unknown (agent not reachable)', cli: cliVersion });
 }

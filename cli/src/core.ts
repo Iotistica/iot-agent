@@ -2,8 +2,10 @@ import { existsSync, statSync } from 'fs';
 import { execSync } from 'child_process';
 import { join } from 'path';
 
-export const CONFIG_DIR = process.env.CONFIG_DIR || '/app/data';
-export const DB_PATH = join(CONFIG_DIR, 'agent.sqlite');
+export const CONFIG_DIR = process.env.CONFIG_DIR || process.env.DATA_DIR || (
+  existsSync('/var/lib/iotistic/agent') ? '/var/lib/iotistic/agent' : '/app/data'
+);
+export const DB_PATH = process.env.DATABASE_PATH || join(CONFIG_DIR, 'agent.sqlite');
 
 const DEVICE_API_PORT = process.env.DEVICE_API_PORT || '48484';
 export const DEVICE_API_BASE = process.env.DEVICE_API_URL || `http://localhost:${DEVICE_API_PORT}`;

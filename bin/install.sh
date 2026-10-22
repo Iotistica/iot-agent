@@ -19,6 +19,7 @@ set -e
 #   IOTISTICA_INSTALL_DOCKER       - Set to yes/true/1 to allow automatic Docker installation
 #   IOTISTICA_INSTALL_MOSQUITTO    - Set to yes/true/1 to install and manage a local Mosquitto broker
 #   MQTT_BROKER_PORT               - Port for the local Mosquitto broker (default: 1883); set if 1883 is already in use
+#   INITIAL_ADMIN_PASSWORD          - Admin UI password (default: randomly generated on first start)
 #   AGENT_SHELL_HMAC_KEY           - HMAC secret for remote shell command verification
 #   FORCE_INSTALL                  - Legacy opt-in flag; set to 1 to allow automatic Docker installation
 
@@ -127,12 +128,19 @@ install_docker_if_needed() {
     if [ "$SHOULD_INSTALL" = "yes" ] || [ "$SHOULD_INSTALL" = "y" ]; then
         echo "Installing Docker..."
         curl -fsSL https://get.docker.com -o get-docker.sh
-        sh get-docker.sh
-        rm get-docker.sh
-        
+        _DOCKER_LOG=$(mktemp)
+        if ! sh get-docker.sh > "$_DOCKER_LOG" 2>&1; then
+            echo "✗ Error: Docker installation failed"
+            echo "--- Docker install output ---"
+            cat "$_DOCKER_LOG"
+            rm -f "$_DOCKER_LOG" get-docker.sh
+            exit 1
+        fi
+        rm -f "$_DOCKER_LOG" get-docker.sh
+
         systemctl start docker
-        systemctl enable docker
-        
+        systemctl enable docker > /dev/null 2>&1
+
         echo "✓ Docker installed successfully"
         return 0
     else
@@ -254,7 +262,6 @@ configure_mosquitto_file_auth() {
 
     install_mosquitto_if_needed
 
-    echo "Configuring Mosquitto..."
     mkdir -p /etc/mosquitto/conf.d
     mkdir -p /var/log/mosquitto
     chgrp mosquitto /etc/mosquitto
@@ -262,12 +269,6 @@ configure_mosquitto_file_auth() {
 
     if ! grep -q '^[[:space:]]*include_dir[[:space:]]\+/etc/mosquitto/conf.d[[:space:]]*$' /etc/mosquitto/mosquitto.conf 2>/dev/null; then
         echo "include_dir /etc/mosquitto/conf.d" >> /etc/mosquitto/mosquitto.conf
-    fi
-
-    if [ -f /etc/mosquitto/conf.d/iotistica.conf ]; then
-        echo "Updating existing Iotistica Mosquitto config..."
-    else
-        echo "Creating Iotistica Mosquitto config..."
     fi
 
     cat > /etc/mosquitto/conf.d/iotistica.conf << EOFMOSQ
@@ -280,12 +281,11 @@ password_file /etc/mosquitto/passwd
 acl_file /etc/mosquitto/acl
 EOFMOSQ
 
-    echo "Initializing MQTT auth files..."
     touch /etc/mosquitto/passwd
     touch /etc/mosquitto/acl
     touch /var/log/mosquitto/mosquitto.log
 
-    mosquitto_passwd -b -c /etc/mosquitto/passwd "$MQTT_USERNAME_VALUE" "$MQTT_PASSWORD_VALUE"
+    mosquitto_passwd -b -c /etc/mosquitto/passwd "$MQTT_USERNAME_VALUE" "$MQTT_PASSWORD_VALUE" 2>/dev/null
 
     cat > /etc/mosquitto/acl << EOFACL
 # Iotistica managed ACL
@@ -366,7 +366,7 @@ WantedBy=multi-user.target
 EOFPATH
 
     systemctl daemon-reload
-    systemctl enable --now iotistica-mqtt-reload.path
+    systemctl enable --now iotistica-mqtt-reload.path > /dev/null 2>&1
     echo "✓ Mosquitto auto-reload path unit installed and active"
 
     systemctl restart mosquitto
@@ -528,11 +528,6 @@ echo ""
     chmod -R 755 /opt/iotistic/.config
     echo "✓ Created OPC UA certificate directory"
 
-    # Configuration
-    echo ""
-    echo "Configuration:"
-    echo "-------------"
-
     # Detect if we're running from a checked-out repository FIRST
     SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
     AGENT_DIR="$(dirname "$SCRIPT_DIR")"
@@ -605,15 +600,13 @@ echo ""
         case "$DETECTED_ARCH" in
             aarch64|arm64)
                 TARBALL_SUFFIX="-arm64"
-                echo "Detected ARM64 architecture - will download ARM-optimized tarball"
                 ;;
             x86_64|amd64)
                 TARBALL_SUFFIX="-x86_64"
-                echo "Detected x86_64 architecture"
                 ;;
             *)
                 TARBALL_SUFFIX=""
-                echo "Unknown architecture ($DETECTED_ARCH) - using generic tarball"
+                echo "Warning: Unknown architecture ($DETECTED_ARCH), using generic tarball"
                 ;;
         esac
         
@@ -634,12 +627,10 @@ echo ""
         cd /tmp
         rm -rf iotistic-agent-download
         
-        echo "Downloading from: $DOWNLOAD_URL"
-        
         # Try to download with curl or wget
-        if command -v curl &> /dev/null; then
+        if command -v curl > /dev/null 2>&1; then
             curl -fsSL -o agent.tar.gz "$DOWNLOAD_URL" || DOWNLOAD_FAILED=1
-        elif command -v wget &> /dev/null; then
+        elif command -v wget > /dev/null 2>&1; then
             wget -O agent.tar.gz "$DOWNLOAD_URL" || DOWNLOAD_FAILED=1
         else
             echo "Error: Neither curl nor wget is available"
@@ -674,16 +665,13 @@ echo ""
 
         # Stop running agent before overwriting files
         if systemctl is-active --quiet "${SERVICE_NAME}" 2>/dev/null; then
-            echo "Stopping running agent service..."
             systemctl stop "${SERVICE_NAME}"
         fi
 
         # Clean up ALL existing installation files to ensure fresh install
-        echo "Cleaning up existing installation files..."
         rm -rf /opt/iotistic/agent/node_modules
         rm -f /opt/iotistic/agent/package-lock.json
         rm -f /opt/iotistic/agent/package.json
-        echo "✓ Cleanup complete"
         
         # Copy extracted files to installation directory
         cp -r iotistic-agent-download/* /opt/iotistic/agent/ || {
@@ -739,10 +727,6 @@ echo ""
             echo "Warning: admin/ directory not found, skipping web admin build"
         fi
     else
-        echo ""
-        echo "Using pre-built agent from distribution server"
-        echo "✓ Skipping build step"
-        
         # Verify pre-built files exist
         cd /opt/iotistic/agent
 
@@ -753,9 +737,9 @@ echo ""
         
         # Check for app.js in multiple possible locations
         if [ -f dist/app.js ]; then
-            echo "✓ Found dist/app.js"
+            true
         elif [ -f dist/src/app.js ]; then
-            echo "✓ Found dist/src/app.js"
+            true
         else
             echo "✗ Error: Pre-built app.js not found"
             echo "Searched in:"
@@ -802,16 +786,11 @@ echo ""
 
     # Install update script
     if [ -f /opt/iotistic/agent/bin/update.sh ]; then
-        echo ""
-        echo "Installing update script..."
         cp /opt/iotistic/agent/bin/update.sh /usr/local/bin/update.sh
         chmod +x /usr/local/bin/update.sh
-        echo "✓ Update script installed"
     fi
 
     # Create environment file
-    echo ""
-    echo "Creating environment file..."
     
     # Generate device UUID if not already set
     if [ ! -f /var/lib/iotistic/agent/device-uuid ]; then
@@ -869,6 +848,10 @@ EOF
         echo "PROVISIONING_KEY=${PROVISIONING_KEY}" >> /etc/iotistic/agent.env
     fi
 
+    if [ -n "$INITIAL_ADMIN_PASSWORD" ]; then
+        echo "INITIAL_ADMIN_PASSWORD=${INITIAL_ADMIN_PASSWORD}" >> /etc/iotistic/agent.env
+    fi
+
     if [ -n "$IOTISTICA_API" ]; then
         echo "IOTISTICA_API=${IOTISTICA_API}" >> /etc/iotistic/agent.env
     fi
@@ -882,8 +865,6 @@ EOF
     fi
 
     # Set permissions
-    echo ""
-    echo "Setting permissions..."
     chown -R iotistic:iotistic /opt/iotistic/agent
     chown -R iotistic:iotistic /var/lib/iotistic/agent
     chown -R iotistic:iotistic /var/log/iotistic
@@ -891,8 +872,6 @@ EOF
     chmod 600 /etc/iotistic/agent.env
 
     # Create systemd service
-    echo ""
-    echo "Creating systemd service..."
 
     NODE_PATH=$(command -v node)
     
@@ -909,8 +888,6 @@ EOF
     # Allow install-time override for service memory cap.
     AGENT_MEMORY_LIMIT="${AGENT_MEMORY_LIMIT:-300M}"
     AGENT_MEMORY_HIGH="${AGENT_MEMORY_HIGH:-250M}"
-    echo "Service memory limit: ${AGENT_MEMORY_LIMIT}"
-    echo "Service memory high watermark: ${AGENT_MEMORY_HIGH}"
 
     SERVICE_TYPE="notify"
     WATCHDOG_DIRECTIVES="# Watchdog configuration (health-gated automatic restart)
@@ -998,8 +975,7 @@ WantedBy=multi-user.target
 EOFSVC
 
     # Configure journald limits (prevent disk exhaustion on edge devices)
-    echo ""
-    echo "Configuring journald log limits..."
+    # Configure journald log limits
     
     # Use drop-in config instead of overwriting system file
     mkdir -p /etc/systemd/journald.conf.d
@@ -1017,25 +993,21 @@ Storage=persistent
 EOFJOURNALD
 
     # Restart journald to apply limits
-    systemctl restart systemd-journald
-    echo "✓ Journald limits configured (200M disk, 7 day retention)"
+    systemctl restart systemd-journald > /dev/null 2>&1
 
     # Verify agent.env permissions before starting service
-    echo ""
-    echo "Verifying configuration file permissions..."
     if [ "$(stat -c %a /etc/iotistic/agent.env)" != "600" ]; then
         echo "✗ Error: agent.env permissions are insecure"
         echo "Expected: 600, Found: $(stat -c %a /etc/iotistic/agent.env)"
         exit 1
     fi
-    echo "✓ Configuration file permissions verified (600)"
 
     
     # Start (or restart) service
     systemctl daemon-reload
     echo ""
     echo "Starting agent service..."
-    systemctl enable "${SERVICE_NAME}"
+    systemctl enable "${SERVICE_NAME}" > /dev/null 2>&1
     systemctl restart "${SERVICE_NAME}"
 
     sleep 10
@@ -1051,8 +1023,14 @@ EOFJOURNALD
         echo "Agent is running as systemd service '${SERVICE_NAME}'"
         echo "Admin UI:   http://$(hostname -I | awk '{print $1}'):${DEVICE_API_PORT}/admin"
         echo ""
-        echo "Default credentials: admin / admin"
-        echo "  → Open the admin UI to change your password and configure the agent."
+        echo "Admin login — username: admin"
+        if [ -n "$INITIAL_ADMIN_PASSWORD" ]; then
+            echo "  Password:  (set via INITIAL_ADMIN_PASSWORD)"
+        else
+            echo "  The initial password was generated on first start."
+            echo "  Retrieve it with:  journalctl -u ${SERVICE_NAME} | grep 'Password:'"
+        fi
+        echo "  You will be required to change it on first login."
         echo ""
         if [ -z "$IOTISTICA_API" ]; then
         echo "Running in standalone mode."

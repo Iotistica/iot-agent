@@ -53,6 +53,14 @@ export interface CustomUnitAlias {
   canonical_unit: string
 }
 
+export interface UnitSuggestion {
+  canonical_unit: string
+  symbol: string | null
+  quantity: string
+  score: number
+  matchedVia: string
+}
+
 export const dashboardApi = {
   getStats(): Promise<DashboardStats> {
     return client.get<DashboardStats>('/v1/dashboard/stats').then((r) => r.data)
@@ -65,6 +73,11 @@ export const dashboardApi = {
   },
   getCustomUnitAliases(): Promise<CustomUnitAlias[]> {
     return client.get<CustomUnitAlias[]>('/v1/units/custom-aliases').then((r) => r.data)
+  },
+  suggestUnits(rawUnit: string, sourceSystem?: string | null): Promise<UnitSuggestion[]> {
+    const params: Record<string, string> = { q: rawUnit }
+    if (sourceSystem) params.source_system = sourceSystem
+    return client.get<UnitSuggestion[]>('/v1/units/suggest', { params }).then((r) => r.data)
   },
   resolveUnknownUnit(rawUnit: string, sourceSystem: string | null, canonicalUnit: string): Promise<NormalizationHealth> {
     return client
