@@ -522,11 +522,15 @@ echo ""
     mkdir -p /var/lib/iotistic/agent
     mkdir -p /var/log/iotistic
     
-    # Create OPC UA PKI directory (for certificate storage)
-    mkdir -p /opt/iotistic/.config/node-opcua-default-nodejs/PKI
+    # Create OPC UA PKI directory tree (node-opcua-certificate-manager expects the full structure)
+    mkdir -p /opt/iotistic/.config/node-opcua-default-nodejs/PKI/own/certs
+    mkdir -p /opt/iotistic/.config/node-opcua-default-nodejs/PKI/own/private
+    mkdir -p /opt/iotistic/.config/node-opcua-default-nodejs/PKI/trusted/certs
+    mkdir -p /opt/iotistic/.config/node-opcua-default-nodejs/PKI/trusted/crl
+    mkdir -p /opt/iotistic/.config/node-opcua-default-nodejs/PKI/rejected/certs
+    mkdir -p /opt/iotistic/.config/node-opcua-default-nodejs/PKI/issuers/certs
+    mkdir -p /opt/iotistic/.config/node-opcua-default-nodejs/PKI/issuers/crl
     chown -R iotistic:iotistic /opt/iotistic/.config
-    chmod -R 755 /opt/iotistic/.config
-    echo "✓ Created OPC UA certificate directory"
 
     # Detect if we're running from a checked-out repository FIRST
     SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -911,7 +915,7 @@ NotifyAccess=all"
 
     UNIT_AFTER="network-online.target docker.service"
     UNIT_REQUIRES="docker.service"
-    SERVICE_READWRITE_PATHS="/var/lib/iotistic /var/log/iotistic /opt/iotistic/agent /var/run/docker.sock"
+    SERVICE_READWRITE_PATHS="/var/lib/iotistic /var/log/iotistic /opt/iotistic/agent /opt/iotistic/.config /var/run/docker.sock"
 
     if [ "$MANAGE_LOCAL_MOSQUITTO" = "yes" ]; then
         UNIT_AFTER="$UNIT_AFTER mosquitto.service"
