@@ -29,12 +29,14 @@ import {
 import IotisticaLogo from '@/components/IotisticaLogo.vue'
 import { useSidebar } from '@/composables/useSidebar'
 import { useAuth } from '@/composables/useAuth'
+import { useProStatus } from '@/composables/useProStatus'
 
 const route = useRoute()
 const router = useRouter()
 
 const { collapsed, toggle } = useSidebar()
 const { hasRole } = useAuth()
+const { proInstalled } = useProStatus()
 
 const selectedKey = computed(() => route.path)
 
@@ -69,7 +71,7 @@ function onMenuClick({ key }: { key: string }) {
         <IotisticaLogo :size="24" />
         <template v-if="!collapsed">
           <span class="logo-title">Iotistica</span>
-          <a-tag class="pro-badge">PRO</a-tag>
+          <a-tag v-if="proInstalled" class="pro-badge">PRO</a-tag>
         </template>
       </div>
     </div>
