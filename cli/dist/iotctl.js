@@ -13,6 +13,7 @@ const provision_1 = require("./commands/provision");
 const system_1 = require("./commands/system");
 const agent_1 = require("./commands/agent");
 const publish_1 = require("./commands/publish");
+const schema_drift_1 = require("./commands/schema-drift");
 function buildCommands(args) {
     const commands = {
         provision: {
@@ -122,6 +123,12 @@ function buildCommands(args) {
             restore: db_1.dbRestore,
             prune: db_1.dbPrune,
             _default: db_1.dbList,
+        },
+        'schema-drift': {
+            get: schema_drift_1.schemaDriftGet,
+            set: (...args) => (0, schema_drift_1.schemaDriftSet)(...args),
+            'reset-advanced': schema_drift_1.schemaDriftResetAdvanced,
+            _default: schema_drift_1.schemaDriftGet,
         },
         buffer: {
             status: agent_1.bufferStatus,

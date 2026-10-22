@@ -485,7 +485,7 @@ async function runDiagnostics() {
             DEVICE_API_PORT: process.env.DEVICE_API_PORT || '(default: 48484)',
             IOTISTICA_API: process.env.IOTISTICA_API || '(not set)',
             PROVISIONING_API_KEY: process.env.PROVISIONING_API_KEY ? '(set)' : '(not set)',
-            CONFIG_DIR: process.env.CONFIG_DIR || '/app/data',
+            CONFIG_DIR: core_1.CONFIG_DIR,
         };
         results['Environment'] = {
             status: '⊘ INFO',
