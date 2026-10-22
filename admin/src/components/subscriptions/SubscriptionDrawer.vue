@@ -405,15 +405,15 @@ function close() {
         style="margin-top: 8px"
       >
         <a-collapse-panel key="true" header="Advanced Routing (optional)">
-          <a-form-item label="Include metrics" extra="Select from the list or type a custom name">
+          <a-form-item label="Include points" extra="Select from the list or type a custom name">
             <a-select
               v-model:value="form.route_json!.includeMetrics"
               mode="tags"
-              placeholder="All metrics (leave empty for all)"
+              placeholder="All points (leave empty for all)"
               :options="(metricNames ?? []).map(n => ({ value: n, label: n }))"
             />
           </a-form-item>
-          <a-form-item label="Exclude metrics" extra="Select from the list or type a custom name">
+          <a-form-item label="Exclude points" extra="Select from the list or type a custom name">
             <a-select
               v-model:value="form.route_json!.excludeMetrics"
               mode="tags"
