@@ -508,7 +508,7 @@ export class ContainerManager extends EventEmitter {
 	* Set what containers SHOULD be running (target state)
 	*/
 	public async setTarget(target: DeviceState): Promise<void> {
-		if (!target || target.apps === null || typeof target.apps !== 'object' || Array.isArray(target.apps)) {
+		if (!target?.apps || typeof target.apps !== 'object' || Array.isArray(target.apps)) {
 			this.logger?.warnSync('Rejecting target state with missing or invalid apps - existing containers preserved', {
 				component: LogComponents.containerManager,
 				operation: 'setTarget',
