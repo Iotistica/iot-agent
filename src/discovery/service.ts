@@ -22,6 +22,7 @@ export interface DiscoveryOptions {
 	validate?: boolean;
 	forceRun?: boolean;
 	protocols?: Array<DiscoveryProtocol>;
+	failOnError?: boolean;
 	skipDbWrites?: boolean;
 	// Per-protocol option overrides — merged on top of ConfigManager defaults.
 	// Key is protocol name, value is the plugin-specific options object.
@@ -317,6 +318,9 @@ export class DiscoveryService extends EventEmitter {
           error as Error,
           { component: LogComponents.discovery, traceId }
 				);
+				if (options.failOnError) {
+					throw error;
+				}
 			}
 		}
 

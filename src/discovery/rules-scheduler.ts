@@ -151,6 +151,7 @@ export class DiscoveryRulesScheduler {
 				protocols: [rule.protocol as any],
 				forceRun: true,
 				validate: true,
+				failOnError: true,
 				// Discovered devices are always persisted — auto_enable only controls
 				// what `enabled` state they start in (see autoEnableNew below), not
 				// whether they get saved at all. skipDbWrites has an unrelated meaning
