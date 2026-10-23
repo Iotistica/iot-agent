@@ -25,10 +25,14 @@ const saving = ref(false)
 const testing = ref(false)
 const testResult = ref<SourceTestResult | null>(null)
 
+function connectionWithDefaults(protocol: string, connection: Record<string, unknown> = {}) {
+  return protocol === 'modbus' && connection.type == null ? { ...connection, type: 'tcp' } : { ...connection }
+}
+
 const form = ref<EndpointCreateData>({
   name: '',
   protocol: 'modbus',
-  connection: {},
+  connection: { type: 'tcp' },
   poll_interval: 5000,
   enabled: true,
 })
@@ -42,7 +46,7 @@ watch(
       form.value = {
         name: props.editing.name,
         protocol: props.editing.protocol,
-        connection: { ...props.editing.connection },
+        connection: connectionWithDefaults(props.editing.protocol, props.editing.connection),
         poll_interval: props.editing.poll_interval,
         enabled: props.editing.enabled,
         data_points: props.editing.data_points ? [...props.editing.data_points] : undefined,
@@ -52,18 +56,18 @@ watch(
       form.value = {
         name: props.prefill.name,
         protocol: props.prefill.protocol,
-        connection: { ...props.prefill.connection },
+        connection: connectionWithDefaults(props.prefill.protocol, props.prefill.connection),
         poll_interval: props.prefill.poll_interval ?? 5000,
         enabled: props.prefill.enabled ?? true,
       }
     } else {
-      form.value = { name: '', protocol: 'modbus', connection: {}, poll_interval: 5000, enabled: true }
+      form.value = { name: '', protocol: 'modbus', connection: { type: 'tcp' }, poll_interval: 5000, enabled: true }
     }
   },
 )
 
 function onProtocolChange() {
-  form.value.connection = {}
+  form.value.connection = connectionWithDefaults(form.value.protocol)
   form.value.data_points = undefined
   testResult.value = null
 }
