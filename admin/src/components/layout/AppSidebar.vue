@@ -58,7 +58,7 @@ function onMenuClick({ key }: { key: string }) {
 
 <template>
   <a-layout-sider
-    :width="220"
+    :width="252"
     :collapsed="collapsed"
     :collapsed-width="64"
     collapsible
@@ -68,7 +68,7 @@ function onMenuClick({ key }: { key: string }) {
   >
     <div class="logo" :class="{ 'logo--collapsed': collapsed }">
       <div class="logo-row">
-        <IotisticaLogo :size="24" />
+        <IotisticaLogo :size="36" />
         <template v-if="!collapsed">
           <span class="logo-title">Iotistica</span>
           <a-tag v-if="proInstalled" class="pro-badge">PRO</a-tag>
@@ -224,14 +224,14 @@ function onMenuClick({ key }: { key: string }) {
 
 <style scoped>
 .logo {
-  height: 52px;
+  height: var(--app-header-height, 72px);
   display: flex;
   flex-direction: column;
   justify-content: center;
   gap: 4px;
-  padding: 0 16px 0 24px;
+  padding: 0 16px 0 30px;
   color: rgba(255, 255, 255, 0.85);
-  font-size: 16px;
+  font-size: 20px;
   font-weight: 600;
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
   flex-shrink: 0;
@@ -251,7 +251,7 @@ function onMenuClick({ key }: { key: string }) {
 .logo-row {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   min-width: 0;
 }
 

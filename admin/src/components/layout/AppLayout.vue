@@ -137,7 +137,7 @@ onMounted(async () => {
               aria-haspopup="menu"
             >
               <a-avatar
-                :size="28"
+                :size="36"
                 class="user-avatar"
               >
                 {{ userInitial }}
@@ -208,9 +208,9 @@ onMounted(async () => {
 ============================ */
 
 .page-header {
-  height: var(--app-header-height, 52px);
-  min-height: var(--app-header-height, 52px);
-  flex: 0 0 var(--app-header-height, 52px);
+  height: var(--app-header-height, 72px);
+  min-height: var(--app-header-height, 72px);
+  flex: 0 0 var(--app-header-height, 72px);
 
   padding: 0 24px;
   box-sizing: border-box;
@@ -233,7 +233,7 @@ onMounted(async () => {
 .header-left {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 14px;
 
   min-width: 0;
   height: 100%;
@@ -242,8 +242,8 @@ onMounted(async () => {
 .title-accent {
   display: block;
 
-  width: 3px;
-  height: 22px;
+  width: 4px;
+  height: 30px;
 
   flex-shrink: 0;
 
@@ -254,7 +254,7 @@ onMounted(async () => {
 .page-title {
   margin: 0;
 
-  font-size: 15px;
+  font-size: 18px;
   font-weight: 600;
   line-height: 22px;
 
@@ -272,7 +272,7 @@ onMounted(async () => {
 .header-right {
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: 20px;
 
   flex-shrink: 0;
 }
@@ -302,13 +302,13 @@ onMounted(async () => {
 .version-badge {
   margin: 0;
 
-  height: 24px;
+  height: 28px;
   padding: 0 8px;
 
   display: inline-flex;
   align-items: center;
 
-  font-size: 11px;
+  font-size: 13px;
   line-height: 1;
   font-weight: 500;
 
@@ -364,14 +364,14 @@ onMounted(async () => {
   background: #596fb5;
   color: #ffffff;
 
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 600;
 
   flex-shrink: 0;
 }
 
 .username {
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 500;
   color: var(--text-primary);
 }
@@ -391,7 +391,7 @@ onMounted(async () => {
   flex: 1;
   min-height: 0;
 
-  margin: 24px;
+  margin: 20px;
   padding: 24px;
 
   background: var(--bg-container);
