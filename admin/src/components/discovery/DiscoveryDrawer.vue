@@ -46,6 +46,7 @@ const { hasRole } = useAuth()
 const running = ref(false)
 const results = ref<DiscoveredDevice[]>([])
 const hasRun = ref(false)
+const scanError = ref<string | null>(null)
 const adding = ref<Set<string>>(new Set())
 const addingAll = ref(false)
 const addedThisSession = ref<Set<string>>(new Set())
@@ -178,6 +179,7 @@ async function runRuleScan() {
   startScanTimer()
   results.value = []
   hasRun.value = false
+  scanError.value = null
   pruneConfirmVisible.value = false
   prunePreview.value = []
   lastPrunedCount.value = null
@@ -191,12 +193,16 @@ async function runRuleScan() {
   try {
     // Prune dry-run: same scan, nothing gets disabled yet — just previews what
     // would be, so the confirmation modal can show exactly what's about to change.
-    const { devices, prunedCount, prunedDevices } = await discoveryRulesApi.run(
+    const { rule: completedRule, devices, prunedCount, prunedDevices } = await discoveryRulesApi.run(
       rule.uuid,
       abortController.signal,
       pruneEnabled.value ? { prune: true, pruneDryRun: true } : undefined,
     )
     results.value = devices
+    if (completedRule.status === 'error') {
+      scanError.value = completedRule.last_result_json?.error ?? 'Discovery failed'
+      message.error(scanError.value)
+    }
     existingEndpoints.value = await sourcesApi.getAll().catch(() => existingEndpoints.value)
     hasRun.value = true
 
@@ -340,6 +346,7 @@ function close() {
   }
   results.value = []
   hasRun.value = false
+  scanError.value = null
   awaitingBackgroundResult.value = false
   backgroundRuleUuid.value = null
   emit('update:open', false)
@@ -371,6 +378,7 @@ watch(
 
       results.value = []
       hasRun.value = false
+      scanError.value = null
       addedThisSession.value = new Set()
       pruneEnabled.value = false
       runInBackground.value = false
@@ -600,7 +608,10 @@ watch(selectedRuleUuid, () => {
     <!-- ── Results ───────────────────────────────────────────────────── -->
     <template v-if="hasRun">
       <a-divider />
-      <div v-if="!results.length" style="color: var(--text-muted); padding: 24px 0; text-align: center">
+      <div v-if="scanError" role="alert" style="color: #cf1322; padding: 24px 0; text-align: center">
+        {{ scanError }}
+      </div>
+      <div v-else-if="!results.length" style="color: var(--text-muted); padding: 24px 0; text-align: center">
         No devices found. Try expanding the scan range or checking network connectivity.
       </div>
       <template v-else>
