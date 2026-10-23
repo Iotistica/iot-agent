@@ -1,444 +1,331 @@
+<script setup lang="ts">
+import { computed } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import {
+  DashboardOutlined,
+  CloudUploadOutlined,
+  PartitionOutlined,
+  ApartmentOutlined,
+  RadarChartOutlined,
+  BellOutlined,
+  FileTextOutlined,
+  ContainerOutlined,
+  SettingOutlined,
+  TeamOutlined,
+  SafetyOutlined,
+  UserOutlined,
+  KeyOutlined,
+  QuestionCircleOutlined,
+  CustomerServiceOutlined,
+  WifiOutlined,
+  ApiOutlined,
+  ClusterOutlined,
+  DatabaseOutlined,
+  CodeOutlined,
+  NodeIndexOutlined,
+  MenuFoldOutlined,
+  MenuUnfoldOutlined,
+} from '@ant-design/icons-vue'
+import IotisticaLogo from '@/components/IotisticaLogo.vue'
+import { useSidebar } from '@/composables/useSidebar'
+import { useAuth } from '@/composables/useAuth'
+import { useProStatus } from '@/composables/useProStatus'
 
-/* ==========================================
-   IOTISTICA THEME
-   Light + Dark Mode
-   Concept B - Unified Application Header
-========================================== */
+const route = useRoute()
+const router = useRouter()
 
-/* ==========================================
-   LIGHT THEME
-========================================== */
+const { collapsed, toggle } = useSidebar()
+const { hasRole } = useAuth()
+const { proInstalled } = useProStatus()
 
-:root {
-  /* Application backgrounds */
-  --bg-body: #f0f2f5;
-  --bg-container: #ffffff;
-  --bg-elevated: #ffffff;
-  --bg-subtle: #f5f5f5;
-  --bg-hover: #fafafa;
-  --bg-card-header: #f7f9fb;
-  --bg-code: #f6f6f6;
-  --bg-table-header: #f7f9fc;
-  --bg-table-hover: #f5f9ff;
-  --bg-stat-card: #fafafa;
-  --bg-panel: #fafafa;
-  --bg-selected: #e6f4ff;
-  --bg-selected-light: #f0f7ff;
+const selectedKey = computed(() => route.path)
 
-  /* Application shell */
-  --bg-app-header: #ffffff;
-  --bg-sidebar: #ffffff;
-  --border-app-header: #e7ebf0;
-  --app-header-height: 52px;
-  --app-header-accent: #1677ff;
+const openKeys = computed(() => {
+  const keys: string[] = []
+  if (route.path.startsWith('/admin')) keys.push('administration')
+  if (route.path.startsWith('/user')) keys.push('user-settings')
+  return keys
+})
 
-  /* Text */
-  --text-primary: rgba(0, 0, 0, 0.88);
-  --text-secondary: rgba(0, 0, 0, 0.65);
-  --text-tertiary: rgba(0, 0, 0, 0.45);
-  --text-heading: rgba(0, 0, 0, 0.85);
-  --text-muted: #999;
-  --text-placeholder: #bbb;
-
-  /* Borders */
-  --border-color: #f0f0f0;
-  --border-color-strong: #d9d9d9;
-  --border-color-card: #e7ebf0;
-
-  /* Shadows */
-  --shadow-card: 0 1px 4px rgba(0, 0, 0, 0.06);
-  --shadow-card-hover: 0 4px 12px rgba(0, 0, 0, 0.1);
-
-  /* Scrollbars */
-  --scrollbar-thumb: rgba(0, 0, 0, 0.15);
-  --scrollbar-track: transparent;
-
-  /* Icon backgrounds */
-  --icon-bg-blue: #edf4ff;
-  --icon-bg-green: #eefbf4;
-  --icon-bg-purple: #f5f0ff;
-  --icon-bg-red: #fff1f2;
-
-  /* Running status */
-  --badge-running-bg: #e6f4ff;
-  --badge-running-color: #1677ff;
-  --badge-running-border: #bae0ff;
-
-  /* Stopped status */
-  --badge-stopped-bg: #fff2f0;
-  --badge-stopped-color: #ff4d4f;
-  --badge-stopped-border: #ffccc7;
+function onMenuClick({ key }: { key: string }) {
+  if (key === 'help') {
+    window.open('https://docs.iotistica.com/docs/intro', '_blank')
+    return
+  }
+  router.push(key)
 }
+</script>
 
-/* ==========================================
-   DARK THEME
-========================================== */
+<template>
+  <a-layout-sider
+    :width="220"
+    :collapsed="collapsed"
+    :collapsed-width="64"
+    collapsible
+    :trigger="null"
+    theme="dark"
+    style="height: 100vh; background: #0a0a0a; display: flex; flex-direction: column; flex-shrink: 0;"
+  >
+    <div class="logo" :class="{ 'logo--collapsed': collapsed }">
+      <div class="logo-row">
+        <IotisticaLogo :size="24" />
+        <template v-if="!collapsed">
+          <span class="logo-title">Iotistica</span>
+          <a-tag v-if="proInstalled" class="pro-badge">PRO</a-tag>
+        </template>
+      </div>
+    </div>
 
-[data-theme="dark"] {
-  /* Application backgrounds */
-  --bg-body: #141414;
-  --bg-container: #1f1f1f;
-  --bg-elevated: #262626;
-  --bg-subtle: #262626;
-  --bg-hover: #303030;
-  --bg-card-header: #262626;
-  --bg-code: #2a2a2a;
-  --bg-table-header: #1a1a1a;
-  --bg-table-hover: #262626;
-  --bg-stat-card: #1a1a1a;
-  --bg-panel: #1a1a1a;
-  --bg-selected: #111d2c;
-  --bg-selected-light: #111a2c;
+    <div class="nav-main">
+      <a-menu
+        theme="dark"
+        mode="inline"
+        :inline-collapsed="collapsed"
+        :selected-keys="[selectedKey]"
+        :open-keys="openKeys"
+        @click="onMenuClick"
+      >
+        <a-menu-item key="/dashboard">
+          <template #icon><DashboardOutlined /></template>
+          Dashboard
+        </a-menu-item>
 
-  /* Unified application header */
-  --bg-app-header: #191c20;
-  --bg-sidebar: #141619;
-  --border-app-header: #30343a;
-  --app-header-height: 52px;
-  --app-header-accent: #1677ff;
+        <a-menu-item key="/sources">
+          <template #icon><ApartmentOutlined /></template>
+          Sources
+        </a-menu-item>
 
-  /* Text */
-  --text-primary: rgba(255, 255, 255, 0.88);
-  --text-secondary: rgba(255, 255, 255, 0.65);
-  --text-tertiary: rgba(255, 255, 255, 0.45);
-  --text-heading: rgba(255, 255, 255, 0.85);
-  --text-muted: rgba(255, 255, 255, 0.35);
-  --text-placeholder: rgba(255, 255, 255, 0.25);
+        <a-menu-item key="/destinations">
+          <template #icon><CloudUploadOutlined /></template>
+          Destinations
+        </a-menu-item>
 
-  /* Borders */
-  --border-color: #424242;
-  --border-color-strong: #555555;
-  --border-color-card: #424242;
+        <a-menu-item key="/subscriptions">
+          <template #icon><PartitionOutlined /></template>
+          Subscriptions
+        </a-menu-item>
 
-  /* Shadows */
-  --shadow-card: 0 1px 4px rgba(0, 0, 0, 0.3);
-  --shadow-card-hover: 0 4px 12px rgba(0, 0, 0, 0.5);
+        <a-menu-item key="/data-flow">
+          <template #icon><NodeIndexOutlined /></template>
+          Data
+        </a-menu-item>
 
-  /* Scrollbars */
-  --scrollbar-thumb: rgba(255, 255, 255, 0.15);
-  --scrollbar-track: transparent;
+        <a-menu-item key="/devices">
+          <template #icon><ClusterOutlined /></template>
+          Devices
+        </a-menu-item>
 
-  /* Icon backgrounds */
-  --icon-bg-blue: rgba(22, 119, 255, 0.15);
-  --icon-bg-green: rgba(82, 196, 26, 0.15);
-  --icon-bg-purple: rgba(114, 46, 209, 0.15);
-  --icon-bg-red: rgba(240, 68, 82, 0.15);
+        <!-- Assets hidden for now — route still works, just not linked from the sidebar. -->
 
-  /* Running status */
-  --badge-running-bg: rgba(22, 119, 255, 0.15);
-  --badge-running-color: #4096ff;
-  --badge-running-border: rgba(22, 119, 255, 0.3);
+        <a-menu-item key="/discovery-rules">
+          <template #icon><RadarChartOutlined /></template>
+          Discovery
+        </a-menu-item>
 
-  /* Stopped status */
-  --badge-stopped-bg: rgba(255, 77, 79, 0.15);
-  --badge-stopped-color: #ff7875;
-  --badge-stopped-border: rgba(255, 77, 79, 0.3);
-}
+        <a-menu-item key="/applications">
+          <template #icon><ContainerOutlined /></template>
+          Applications
+        </a-menu-item>
 
-/* ==========================================
-   GLOBAL BODY
-========================================== */
+        <a-menu-item key="/anomaly">
+          <template #icon><BellOutlined /></template>
+          Detection
+        </a-menu-item>
 
-body {
-  background: var(--bg-body);
-  color: var(--text-primary);
+        <a-menu-item key="/mqtt-broker">
+          <template #icon><WifiOutlined /></template>
+          MQTT
+        </a-menu-item>
 
-  transition:
-    background-color 0.3s,
-    color 0.3s;
-}
+        <a-menu-item key="/terminal">
+          <template #icon><CodeOutlined /></template>
+          Terminal
+        </a-menu-item>
 
-/* ==========================================
-   ANT DESIGN LAYOUT
-========================================== */
+        <a-menu-item key="/logs">
+          <template #icon><FileTextOutlined /></template>
+          Logs
+        </a-menu-item>
 
-[data-theme="dark"] .ant-layout {
-  background: var(--bg-body);
-}
+        <a-menu-item key="/settings">
+          <template #icon><SettingOutlined /></template>
+          Settings
+        </a-menu-item>
 
-[data-theme="dark"] .ant-layout-header {
-  background: var(--bg-app-header);
-}
+        <a-sub-menu v-if="hasRole('admin')" key="administration">
+          <template #icon><SafetyOutlined /></template>
+          <template #title>Administration</template>
 
-[data-theme="dark"] .ant-layout-content {
-  background: transparent;
-}
+          <a-menu-item key="/admin/users">
+            <template #icon><TeamOutlined /></template>
+            Users
+          </a-menu-item>
 
-[data-theme="dark"] .ant-layout-sider {
-  background: var(--bg-sidebar) !important;
-}
+          <a-menu-item key="/admin/mqtt-users">
+            <template #icon><ApiOutlined /></template>
+            MQTT Users
+          </a-menu-item>
 
-/* ==========================================
-   APPLICATION HEADER + SIDEBAR
-========================================== */
+          <a-menu-item key="/admin/backups">
+            <template #icon><DatabaseOutlined /></template>
+            Backups
+          </a-menu-item>
+        </a-sub-menu>
+      </a-menu>
+    </div>
 
-/* Header styling is shared by both themes */
+    <div class="nav-bottom">
+      <a-menu
+        theme="dark"
+        mode="inline"
+        :inline-collapsed="collapsed"
+        :selected-keys="[selectedKey]"
+        :open-keys="openKeys"
+        @click="onMenuClick"
+      >
+        <a-sub-menu key="user-settings">
+          <template #icon><UserOutlined /></template>
+          <template #title>User</template>
 
-.page-header {
-  background: var(--bg-app-header);
-  border-bottom-color: var(--border-app-header);
-}
+          <a-menu-item key="/user/profile">
+            <template #icon><UserOutlined /></template>
+            Profile
+          </a-menu-item>
 
-/* Sidebar shell */
+          <a-menu-item key="/user/api-tokens">
+            <template #icon><KeyOutlined /></template>
+            API Tokens
+          </a-menu-item>
+        </a-sub-menu>
 
-.app-sidebar.ant-layout-sider {
-  background: var(--bg-sidebar) !important;
-}
+        <a-menu-item key="help">
+          <template #icon><QuestionCircleOutlined /></template>
+          Help
+        </a-menu-item>
 
-/* Logo header */
+        <a-menu-item key="/support">
+          <template #icon><CustomerServiceOutlined /></template>
+          Support
+        </a-menu-item>
+      </a-menu>
+    </div>
 
-.app-sidebar .sidebar-brand {
-  height: var(--app-header-height);
-  min-height: var(--app-header-height);
-  box-sizing: border-box;
+    <div class="sidebar-footer">
+      <a-button type="text" size="small" class="collapse-btn" @click="toggle">
+        <template #icon>
+          <MenuUnfoldOutlined v-if="collapsed" />
+          <MenuFoldOutlined v-else />
+        </template>
+      </a-button>
+    </div>
 
-  background: var(--bg-app-header);
-  border-bottom: 1px solid var(--border-app-header);
-}
+  </a-layout-sider>
+</template>
 
-/* Vertical boundary between sidebar and content */
-
-.app-sidebar.ant-layout-sider {
-  border-right: 1px solid var(--border-app-header);
-}
-
-/* Sidebar internal layout */
-
-.app-sidebar .ant-layout-sider-children {
+<style scoped>
+.logo {
+  height: 52px;
   display: flex;
   flex-direction: column;
-  height: 100%;
-  min-height: 0;
+  justify-content: center;
+  gap: 4px;
+  padding: 0 16px 0 24px;
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 16px;
+  font-weight: 600;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  flex-shrink: 0;
+  overflow: hidden;
+  background: #0a0a0a;
 }
 
-/* Sidebar navigation */
-
-.app-sidebar .nav-main,
-.app-sidebar .nav-bottom,
-.app-sidebar .sidebar-footer {
-  background: var(--bg-sidebar);
+.logo--collapsed {
+  padding: 8px 0;
+  align-items: center;
 }
 
-/* ==========================================
-   ANT DESIGN TABLE
-========================================== */
-
-[data-theme="dark"] .ant-table {
-  background: var(--bg-container);
-  color: var(--text-primary);
+.logo--collapsed .logo-row {
+  justify-content: center;
 }
 
-[data-theme="dark"] .ant-table-thead > tr > th,
-[data-theme="dark"] .ant-table-thead > tr > td {
-  background: var(--bg-table-header) !important;
-  color: var(--text-secondary) !important;
-  border-bottom-color: var(--border-color) !important;
+.logo-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
 }
 
-[data-theme="dark"] .ant-table-tbody > tr > td {
-  border-bottom-color: var(--border-color) !important;
+.logo-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
 }
 
-[data-theme="dark"] .ant-table-tbody > tr:hover > td {
-  background: var(--bg-table-hover) !important;
+.nav-main {
+  flex: 1;
+  overflow-y: auto;
+  background: #141414;
 }
 
-[data-theme="dark"] .ant-table-cell-row-hover {
-  background: var(--bg-table-hover) !important;
+.sidebar-footer {
+  flex-shrink: 0;
+  padding: 8px;
+  display: flex;
+  justify-content: flex-end;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  background: #141414;
 }
 
-/* ==========================================
-   ANT DESIGN CARDS
-========================================== */
-
-[data-theme="dark"] .ant-card {
-  background: var(--bg-container);
-  border-color: var(--border-color);
+.collapse-btn {
+  color: rgba(255, 255, 255, 0.45);
+  font-size: 16px;
 }
 
-[data-theme="dark"] .ant-card-head {
-  border-bottom-color: var(--border-color);
+.collapse-btn:hover {
+  color: #fff !important;
 }
 
-/* ==========================================
-   ANT DESIGN DRAWERS
-========================================== */
-
-[data-theme="dark"] .ant-drawer-content {
-  background: var(--bg-container);
+:deep(.ant-menu-dark),
+:deep(.ant-menu-dark .ant-menu-sub),
+:deep(.ant-menu-dark.ant-menu-inline) {
+  background: #141414 !important;
 }
 
-[data-theme="dark"] .ant-drawer-header {
-  border-bottom-color: var(--border-color);
+.nav-bottom {
+  flex-shrink: 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  padding-top: 4px;
 }
 
-[data-theme="dark"] .ant-drawer-footer {
-  border-top-color: var(--border-color);
+:deep(.ant-layout-sider) {
+  background: #0a0a0a !important;
 }
 
-/* ==========================================
-   ANT DESIGN MODALS
-========================================== */
-
-[data-theme="dark"] .ant-modal-content {
-  background: var(--bg-container);
+:deep(.ant-layout-sider-children) {
+  display: flex;
+  flex-direction: column;
 }
 
-[data-theme="dark"] .ant-modal-header {
-  background: var(--bg-container);
-  border-bottom-color: var(--border-color);
+
+:deep(.ant-menu-dark .ant-menu-item:not(.ant-menu-item-selected):hover) {
+  background: #111111 !important;
 }
 
-/* ==========================================
-   ANT DESIGN FORMS
-========================================== */
-
-[data-theme="dark"] .ant-form-item-label > label {
-  color: var(--text-primary);
+.pro-badge {
+  background: linear-gradient(135deg, #dc2626, #ef4444) !important;
+  border: none !important;
+  color: #fff !important;
+  font-size: 9px !important;
+  font-weight: 700 !important;
+  letter-spacing: 0.06em !important;
+  line-height: 14px !important;
+  padding: 0 5px !important;
+  height: 14px !important;
+  margin-left: 6px !important;
+  flex-shrink: 0 !important;
+  white-space: nowrap !important;
+  vertical-align: middle !important;
+  border-radius: 3px !important;
 }
-
-/* ==========================================
-   INPUTS AND SELECTS
-========================================== */
-
-[data-theme="dark"] .ant-input,
-[data-theme="dark"] .ant-input-affix-wrapper,
-[data-theme="dark"] .ant-select-selector,
-[data-theme="dark"] .ant-picker,
-[data-theme="dark"] .ant-input-number {
-  background: var(--bg-elevated) !important;
-  border-color: var(--border-color-strong) !important;
-  color: var(--text-primary) !important;
-}
-
-[data-theme="dark"] .ant-select-dropdown {
-  background: var(--bg-elevated);
-}
-
-/* ==========================================
-   ANT DESIGN TABS
-========================================== */
-
-[data-theme="dark"] .ant-tabs-nav::before {
-  border-bottom-color: var(--border-color) !important;
-}
-
-/* ==========================================
-   ANT DESIGN COLLAPSE
-========================================== */
-
-[data-theme="dark"] .ant-collapse {
-  background: var(--bg-subtle);
-  border-color: var(--border-color);
-}
-
-[data-theme="dark"] .ant-collapse-item {
-  border-bottom-color: var(--border-color) !important;
-}
-
-[data-theme="dark"] .ant-collapse-content {
-  background: var(--bg-container);
-  border-top-color: var(--border-color);
-}
-
-/* ==========================================
-   ANT DESIGN TAGS
-========================================== */
-
-[data-theme="dark"] .ant-tag.ant-tag-default {
-  background: var(--bg-subtle);
-  border-color: var(--border-color);
-  color: var(--text-secondary);
-}
-
-/* ==========================================
-   ANT DESIGN PAGINATION
-========================================== */
-
-[data-theme="dark"] .ant-pagination-item {
-  background: var(--bg-container);
-  border-color: var(--border-color-strong);
-}
-
-[data-theme="dark"] .ant-pagination-item a {
-  color: var(--text-primary);
-}
-
-/* ==========================================
-   ANT DESIGN EMPTY
-========================================== */
-
-[data-theme="dark"] .ant-empty-description {
-  color: var(--text-tertiary);
-}
-
-/* ==========================================
-   ANT DESIGN ALERT
-========================================== */
-
-[data-theme="dark"] .ant-alert {
-  border-color: var(--border-color);
-}
-
-/* ==========================================
-   ANT DESIGN DESCRIPTIONS
-========================================== */
-
-[data-theme="dark"]
-.ant-descriptions-bordered
-.ant-descriptions-item-label {
-  background: var(--bg-subtle);
-}
-
-/* ==========================================
-   ANT DESIGN SEGMENTED
-========================================== */
-
-[data-theme="dark"] .ant-segmented {
-  background: var(--bg-subtle);
-}
-
-/* ==========================================
-   ANT DESIGN TOOLTIP
-========================================== */
-
-[data-theme="dark"] .ant-tooltip-inner {
-  background: var(--bg-elevated);
-}
-
-/* ==========================================
-   ANT DESIGN SWITCH
-========================================== */
-
-[data-theme="dark"]
-.ant-switch:not(.ant-switch-checked) {
-  background: var(--bg-subtle);
-}
-
-/* ==========================================
-   ANT DESIGN PROGRESS
-========================================== */
-
-[data-theme="dark"] .ant-progress-inner {
-  background: var(--bg-subtle) !important;
-}
-
-/* ==========================================
-   ANT DESIGN STATISTIC
-========================================== */
-
-[data-theme="dark"] .ant-statistic-title {
-  color: var(--text-tertiary);
-}
-
-[data-theme="dark"] .ant-statistic-content {
-  color: var(--text-primary);
-}
-
-/* ==========================================
-   ANT DESIGN SPIN
-========================================== */
-
-[data-theme="dark"] .ant-spin-container::after {
-  background: var(--bg-container);
-}
+</style>
