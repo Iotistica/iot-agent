@@ -107,7 +107,7 @@ function onMenuClick({ key }: { key: string }) {
 
         <a-menu-item key="/data-flow">
           <template #icon><NodeIndexOutlined /></template>
-          Data Explorer
+          Data
         </a-menu-item>
 
         <a-menu-item key="/devices">

@@ -439,7 +439,7 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
 </script>
 
 <template>
-  <AppLayout title="Data Explorer">
+  <AppLayout title="Data">
     <div class="explorer">
 
       <div class="heading">

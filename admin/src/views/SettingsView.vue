@@ -1567,7 +1567,7 @@ async function saveAllAlertConfig() {
 .provision-form :deep(.ant-form-item-control) { flex: none; width: 100%; max-width: 100%; }
 .provision-form :deep(.ant-input),
 .provision-form :deep(.ant-input-affix-wrapper) { width: 100%; }
-/* Unified settings layout — consistent with Sources / Data Explorer */
+/* Unified settings layout — consistent with Sources / Data */
 .settings-shell { width: 100%; max-width: none; margin: 0; padding: 0 0 28px; min-width: 0; }
 .settings-tabs { width: 100%; min-width: 0; }
 .settings-tabs :deep(.ant-tabs-nav) { margin: 0 0 18px; }
