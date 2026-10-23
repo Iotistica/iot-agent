@@ -230,13 +230,13 @@ function onMenuClick({ key }: { key: string }) {
   justify-content: center;
   gap: 4px;
   padding: 0 16px 0 30px;
-  color: rgba(255, 255, 255, 0.85);
+  color: var(--text-primary);
   font-size: 20px;
   font-weight: 600;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  border-bottom: 1px solid var(--border-app-header);
   flex-shrink: 0;
   overflow: hidden;
-  background: #0a0a0a;
+  background: var(--bg-app-header);
 }
 
 .logo--collapsed {
