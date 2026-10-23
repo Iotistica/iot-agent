@@ -410,12 +410,18 @@ export function planStepsToUpdateApp(
 				targetSvc.config.networkMode !== undefined &&
 				currentNetworkMode !== targetNetworkMode;
 
-			const commandChanged = JSON.stringify(currentSvc.config.command ?? []) !== JSON.stringify(targetSvc.config.command ?? []);
-			const entrypointChanged = JSON.stringify(currentSvc.config.entrypoint ?? []) !== JSON.stringify(targetSvc.config.entrypoint ?? []);
-			const userChanged = (currentSvc.config.user ?? '') !== (targetSvc.config.user ?? '');
-			const readonlyChanged = !!currentSvc.config.readonlyRootfs !== !!targetSvc.config.readonlyRootfs;
-			const resourcesChanged = JSON.stringify(currentSvc.config.resources ?? {}) !== JSON.stringify(targetSvc.config.resources ?? {});
-			const healthcheckChanged = JSON.stringify(currentSvc.config.livenessProbe ?? null) !== JSON.stringify(targetSvc.config.livenessProbe ?? null);
+			const commandChanged = targetSvc.config.command !== undefined &&
+				JSON.stringify(currentSvc.config.command ?? []) !== JSON.stringify(targetSvc.config.command);
+			const entrypointChanged = targetSvc.config.entrypoint !== undefined &&
+				JSON.stringify(currentSvc.config.entrypoint ?? []) !== JSON.stringify(targetSvc.config.entrypoint);
+			const userChanged = targetSvc.config.user !== undefined &&
+				(currentSvc.config.user ?? '') !== targetSvc.config.user;
+			const readonlyChanged = targetSvc.config.readonlyRootfs !== undefined &&
+				!!currentSvc.config.readonlyRootfs !== !!targetSvc.config.readonlyRootfs;
+			const resourcesChanged = targetSvc.config.resources !== undefined &&
+				JSON.stringify(currentSvc.config.resources ?? {}) !== JSON.stringify(targetSvc.config.resources);
+			const healthcheckChanged = targetSvc.config.livenessProbe !== undefined &&
+				JSON.stringify(currentSvc.config.livenessProbe ?? null) !== JSON.stringify(targetSvc.config.livenessProbe);
 
 			const nameChanged = currentSvc.serviceName !== targetSvc.serviceName
 				|| currentSvc.appName !== targetSvc.appName;
