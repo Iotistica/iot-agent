@@ -418,15 +418,6 @@ echo ""
     # Install system dependencies
     echo "Installing system dependencies..."
     
-    # Detect multiarch and warn only.
-    # Do not auto-remove foreign architectures or packages because that can
-    # remove valid system packages and destabilize the host.
-    FOREIGN_ARCHES="$(dpkg --print-foreign-architectures 2>/dev/null || true)"
-    if [ -n "$FOREIGN_ARCHES" ]; then
-        echo "Warning: multiarch detected: $FOREIGN_ARCHES"
-        echo "Warning: installer will not modify foreign architectures automatically."
-    fi
-    
     # Clean up package cache and fix broken dependencies
     apt-get clean > /dev/null 2>&1 || true
     dpkg --configure -a > /dev/null 2>&1 || true
@@ -515,8 +506,6 @@ echo ""
     fi
 
     # Create directories
-    echo ""
-    echo "Creating directories..."
     mkdir -p /opt/iotistic/agent
     mkdir -p /etc/iotistic
     mkdir -p /var/lib/iotistic/agent
@@ -767,7 +756,7 @@ echo ""
         # ARM64: always rebuild native modules from source.
         # The tarball is built on x86_64 CI runners so bundled .node binaries are x86_64
         # and will not load on aarch64. Unconditional — no detection needed.
-        if [ "$ARCH" = "aarch64" ]; then
+        if [ "$ARCH" = "aarch64" ] && ! (cd /opt/iotistic/agent && node -e "require('better-sqlite3');require('node-pty')" > /dev/null 2>&1); then
             echo ""
             echo "ARM64 device — compiling native modules from source (takes ~3 min)..."
             apt-get install -y -qq --no-install-recommends build-essential python3 libsqlite3-dev > /dev/null || {
