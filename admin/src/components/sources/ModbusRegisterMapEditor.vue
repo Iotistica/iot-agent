@@ -251,7 +251,7 @@ function applyCsv() {
       </template>
     </a-table>
 
-    <a-modal v-model:open="csvOpen" title="Register map CSV" width="560" @ok="applyCsv">
+    <a-modal v-model:open="csvOpen" title="Register map CSV" @ok="applyCsv">
       <p style="margin: 0 0 8px; font-size: 12px; color: var(--text-tertiary)">
         Header: <code>address,type,dataType,name,unit</code> — edit and click OK to replace the table above with these rows.
       </p>
