@@ -318,8 +318,24 @@ export class StatePoller extends EventEmitter {
 		const targetVersion = Number.isFinite(rawVersion) && rawVersion >= 1 ? Math.floor(rawVersion) : 1;
 		this.currentVersion = targetVersion;
 
+		// A missing/invalid `apps` field must never be interpreted as "remove all apps".
+		// Only an explicit (possibly empty) apps object is authoritative.
+		const appsIsValid = deviceState.apps !== null
+			&& typeof deviceState.apps === 'object'
+			&& !Array.isArray(deviceState.apps);
+		const existingForApps = this.stateManager.getTargetState?.() ?? { apps: {}, config: {} };
+
+		if (!appsIsValid) {
+			this.logger?.warnSync('Target state has missing or invalid apps - preserving existing apps', {
+				component: LogComponents.cloudSync,
+				operation: 'poll',
+				appsType: deviceState.apps === null ? 'null' : Array.isArray(deviceState.apps) ? 'array' : typeof deviceState.apps,
+				preservedAppsCount: Object.keys(existingForApps.apps || {}).length,
+			});
+		}
+
 		const newTargetState: AgentState = {
-			apps: deviceState.apps || {},
+			apps: appsIsValid ? deviceState.apps : (existingForApps.apps || {}),
 			config: deviceState.config || {},
 		};
 

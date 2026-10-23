@@ -131,7 +131,10 @@ export function reconcileVolumesForApp(
 		}
 	}
 
-	for (const volumeName of currentVolumes) {
+	// Persistent data is preserved when the whole app is absent from the target
+	// (e.g. incomplete desired state); volumes are only pruned when the app
+	// remains in the target but no longer references them.
+	for (const volumeName of targetApp ? currentVolumes : []) {
 		if (!targetVolumes.has(volumeName)) {
 			steps.push({ action: 'removeVolume', appId, volumeName });
 		}
