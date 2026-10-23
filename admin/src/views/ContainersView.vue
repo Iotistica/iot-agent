@@ -232,7 +232,7 @@ async function submitAddService() {
 
   const ports = parseLines(addSvcForm.value.ports)
   const volumes = parseLines(addSvcForm.value.volumes)
-  const environment = addSvcForm.value.env.trim() ? parseEnv(addSvcForm.value.env) : undefined
+  const environment = rowsToEnv(addSvcForm.value.envRows)
 
   addSvcSaving.value = true
   try {
@@ -276,7 +276,7 @@ function openEditService(app: ContainerApp, svc: ContainerService) {
     serviceName: svc.serviceName,
     image: svc.imageName,
     ports: formatLines(c.ports),
-    env: formatEnv(c.environment),
+    envRows: envToRows(c.environment),
     volumes: formatLines(c.volumes),
     restart: c.restart ?? '',
     networkMode: c.networkMode ?? 'bridge',
@@ -305,7 +305,7 @@ async function submitEditService() {
 
   const ports = parseLines(editSvcForm.value.ports)
   const volumes = parseLines(editSvcForm.value.volumes)
-  const environment = editSvcForm.value.env.trim() ? parseEnv(editSvcForm.value.env) : undefined
+  const environment = rowsToEnv(editSvcForm.value.envRows)
 
   editSvcSaving.value = true
   try {
@@ -467,7 +467,7 @@ function deployTemplateAsNewApp(tpl: AppTemplate) {
     image: s.image,
     ports: (s.ports ?? []).join('\n'),
     volumes: (s.volumes ?? []).join('\n'),
-    env: s.environment ? Object.entries(s.environment).map(([k, v]) => `${k}=${v}`).join('\n') : '',
+    envRows: envToRows(s.environment),
     restart: s.restart ?? 'unless-stopped',
   }))
   drawerOpen.value = true
@@ -522,7 +522,7 @@ interface ServiceForm {
   serviceName: string
   image: string
   ports: string
-  env: string
+  envRows: { name: string; value: string }[]
   volumes: string
   restart: string
   networkMode: string
@@ -543,7 +543,7 @@ interface ServiceForm {
 
 function emptyService(): ServiceForm {
   return {
-    serviceName: '', image: '', ports: '', env: '', volumes: '', restart: 'unless-stopped',
+    serviceName: '', image: '', ports: '', envRows: [], volumes: '', restart: 'unless-stopped',
     networkMode: 'bridge', command: '', entrypoint: '', user: '',
     cpuLimit: '', memoryLimit: '', readonlyRootfs: false,
     healthcheckType: 'none', healthcheckPath: '', healthcheckPort: undefined,
@@ -568,27 +568,24 @@ function removeService(i: number) {
   services.value.splice(i, 1)
 }
 
-function formatEnv(env?: Record<string, string>): string {
-  if (!env) return ''
-  return Object.entries(env).map(([k, v]) => `${k}=${v}`).join('\n')
+function envToRows(env?: Record<string, string>): { name: string; value: string }[] {
+  if (!env || !Object.keys(env).length) return []
+  return Object.entries(env).map(([name, value]) => ({ name, value }))
+}
+
+function rowsToEnv(rows: { name: string; value: string }[]): Record<string, string> | undefined {
+  const out: Record<string, string> = {}
+  for (const row of rows) {
+    const k = row.name.trim()
+    if (k) out[k] = row.value
+  }
+  return Object.keys(out).length ? out : undefined
 }
 
 function formatLines(arr?: string[]): string {
   return arr ? arr.join('\n') : ''
 }
 
-function parseEnv(raw: string): Record<string, string> {
-  const out: Record<string, string> = {}
-  for (const line of raw.split('\n')) {
-    const trimmed = line.trim()
-    if (!trimmed || trimmed.startsWith('#')) continue
-    const eq = trimmed.indexOf('=')
-    if (eq < 0) { out[trimmed] = '' } else {
-      out[trimmed.slice(0, eq).trim()] = trimmed.slice(eq + 1).trim()
-    }
-  }
-  return out
-}
 
 function parseLines(raw: string): string[] {
   return raw.split('\n').map(l => l.trim()).filter(Boolean)
@@ -638,7 +635,7 @@ async function deploy() {
       services: services.value.map(svc => {
         const ports = parseLines(svc.ports)
         const volumes = parseLines(svc.volumes)
-        const environment = svc.env.trim() ? parseEnv(svc.env) : undefined
+        const environment = rowsToEnv(svc.envRows)
         return {
           serviceName: svc.serviceName.trim(),
           imageName: svc.image.trim(),
@@ -848,8 +845,18 @@ async function deploy() {
           <div style="font-size: 11px; color: var(--text-muted); margin-top: 3px">One per line — host:container</div>
         </a-form-item>
         <a-form-item label="Environment variables">
-          <a-textarea v-model:value="addSvcForm.env" placeholder="KEY=value" :rows="3" style="font-family: monospace; font-size: 12px" />
-          <div style="font-size: 11px; color: var(--text-muted); margin-top: 3px">One KEY=VALUE per line</div>
+          <div style="display: flex; flex-direction: column; gap: 6px">
+            <div v-for="(row, i) in addSvcForm.envRows" :key="i" style="display: flex; gap: 8px; align-items: center">
+              <a-input v-model:value="row.name" placeholder="NAME" style="flex: 2; font-family: monospace; font-size: 12px" />
+              <a-input v-model:value="row.value" placeholder="Value" style="flex: 3; font-family: monospace; font-size: 12px" />
+              <a-button type="text" size="small" danger @click="addSvcForm.envRows.splice(i, 1)">
+                <template #icon><DeleteOutlined /></template>
+              </a-button>
+            </div>
+            <a-button type="dashed" size="small" @click="addSvcForm.envRows.push({ name: '', value: '' })" style="width: fit-content">
+              <template #icon><PlusOutlined /></template> Add variable
+            </a-button>
+          </div>
         </a-form-item>
         <a-form-item label="Volume mounts">
           <a-textarea v-model:value="addSvcForm.volumes" placeholder="/host/path:/container/path" :rows="2" />
@@ -978,8 +985,18 @@ async function deploy() {
           <div style="font-size: 11px; color: var(--text-muted); margin-top: 3px">One per line — host:container</div>
         </a-form-item>
         <a-form-item label="Environment variables">
-          <a-textarea v-model:value="editSvcForm.env" placeholder="KEY=value" :rows="3" style="font-family: monospace; font-size: 12px" />
-          <div style="font-size: 11px; color: var(--text-muted); margin-top: 3px">One KEY=VALUE per line</div>
+          <div style="display: flex; flex-direction: column; gap: 6px">
+            <div v-for="(row, i) in editSvcForm.envRows" :key="i" style="display: flex; gap: 8px; align-items: center">
+              <a-input v-model:value="row.name" placeholder="NAME" style="flex: 2; font-family: monospace; font-size: 12px" />
+              <a-input v-model:value="row.value" placeholder="Value" style="flex: 3; font-family: monospace; font-size: 12px" />
+              <a-button type="text" size="small" danger @click="editSvcForm.envRows.splice(i, 1)">
+                <template #icon><DeleteOutlined /></template>
+              </a-button>
+            </div>
+            <a-button type="dashed" size="small" @click="editSvcForm.envRows.push({ name: '', value: '' })" style="width: fit-content">
+              <template #icon><PlusOutlined /></template> Add variable
+            </a-button>
+          </div>
         </a-form-item>
         <a-form-item label="Volume mounts">
           <a-textarea v-model:value="editSvcForm.volumes" placeholder="/host/path:/container/path" :rows="2" />
@@ -1193,13 +1210,18 @@ async function deploy() {
           </a-form-item>
 
           <a-form-item label="Environment variables" style="margin-bottom: 10px">
-            <a-textarea
-              v-model:value="svc.env"
-              placeholder="NODE_ENV=production&#10;API_KEY=secret"
-              :rows="3"
-              style="font-family: monospace; font-size: 12px"
-            />
-            <div style="font-size: 11px; color: var(--text-muted); margin-top: 3px">One KEY=VALUE per line</div>
+            <div style="display: flex; flex-direction: column; gap: 6px">
+              <div v-for="(row, ri) in svc.envRows" :key="ri" style="display: flex; gap: 8px; align-items: center">
+                <a-input v-model:value="row.name" placeholder="NAME" style="flex: 2; font-family: monospace; font-size: 12px" />
+                <a-input v-model:value="row.value" placeholder="Value" style="flex: 3; font-family: monospace; font-size: 12px" />
+                <a-button type="text" size="small" danger @click="svc.envRows.splice(ri, 1)">
+                  <template #icon><DeleteOutlined /></template>
+                </a-button>
+              </div>
+              <a-button type="dashed" size="small" @click="svc.envRows.push({ name: '', value: '' })" style="width: fit-content">
+                <template #icon><PlusOutlined /></template> Add variable
+              </a-button>
+            </div>
           </a-form-item>
 
           <a-form-item label="Volume mounts" style="margin-bottom: 10px">
