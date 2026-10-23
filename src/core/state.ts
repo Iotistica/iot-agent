@@ -154,6 +154,14 @@ export class StateManager extends EventEmitter {
 	* Set target state (unified entry point)
 	*/
 	public async setTarget(state: AgentState): Promise<void> {
+		if (!state || state.apps === null || typeof state.apps !== 'object' || Array.isArray(state.apps)) {
+			this.logger?.warnSync('Rejecting target state with missing or invalid apps - existing state preserved', {
+				component: LogComponents.stateReconciler,
+				operation: 'setTarget',
+			});
+			throw new Error('Invalid target state: apps must be an object (use {} to explicitly remove all apps)');
+		}
+
 		this.logger?.infoSync('Setting target state', {
 			component: LogComponents.stateReconciler,
 			operation: 'setTarget',

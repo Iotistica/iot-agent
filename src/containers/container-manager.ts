@@ -508,6 +508,14 @@ export class ContainerManager extends EventEmitter {
 	* Set what containers SHOULD be running (target state)
 	*/
 	public async setTarget(target: DeviceState): Promise<void> {
+		if (!target || target.apps === null || typeof target.apps !== 'object' || Array.isArray(target.apps)) {
+			this.logger?.warnSync('Rejecting target state with missing or invalid apps - existing containers preserved', {
+				component: LogComponents.containerManager,
+				operation: 'setTarget',
+			});
+			throw new Error('Invalid target state: apps must be an object (use {} to explicitly remove all apps)');
+		}
+
 		this.logger?.infoSync('Setting target state', {
 			component: LogComponents.containerManager,
 			operation: 'setTarget',
@@ -771,6 +779,14 @@ export class ContainerManager extends EventEmitter {
 			// === CONTAINER STEPS ===
 			// Case 1: App should be removed (exists in current, not in target)
 			if (currentApp && !targetApp) {
+				this.logger?.warnSync('Removing app: absent from target state', {
+					component: LogComponents.containerManager,
+					operation: 'calculateSteps',
+					reason: 'app-not-in-target',
+					appId,
+					targetAppsCount: Object.keys(targetApps).length,
+					services: currentApp.services.map((s) => s.serviceName),
+				});
 				steps.push(...planStepsToRemoveApp(currentApp));
 			}
 			// Case 2: App should be added (exists in target, not in current)
@@ -864,6 +880,15 @@ export class ContainerManager extends EventEmitter {
 				currentApp,
 				targetApp,
 			).filter((step) => step.action === 'removeVolume');
+			for (const step of volumeRemoveSteps) {
+				this.logger?.warnSync('Removing volume: no longer referenced by target app', {
+					component: LogComponents.containerManager,
+					operation: 'calculateSteps',
+					reason: 'volume-not-in-target',
+					appId,
+					volumeName: (step as any).volumeName,
+				});
+			}
 			steps.push(...volumeRemoveSteps);
 		}
 
