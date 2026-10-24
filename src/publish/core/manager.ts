@@ -28,6 +28,9 @@ import { buildCompactIssueCodes } from '../../quality/index.js';
 import type { DataQuality } from '../../quality/index.js';
 import type { PointIdentity } from '../../point-name/index.js';
 
+const DESTINATION_HEALTH_INTERVAL_MS = 60_000;
+const RECONNECT_FORCE_AFTER_MS = 10 * 60_000;
+
 // Adaptive batch safety limits (calculated once at module load)
 const MAX_BATCH_MESSAGES = 10000;
 const MAX_BATCH_BYTES = (() => {
@@ -231,6 +234,8 @@ export class PublishManager extends EventEmitter {
 	// reporting a same-named metric don't collide.
 	private lastAllowedAtByPoint = new Map<string, number>();
 	private sharedDatasetAccumulators: Map<number, DatasetAccumulatorEntry> | null = null;
+	private destinationHealthTimer: NodeJS.Timeout | null = null;
+	private disconnectedSince = new Map<IPublishPlugin, number>();
 
 	private readonly onConnected = (): void => {
 		if (this.needStop) return;
@@ -529,6 +534,7 @@ export class PublishManager extends EventEmitter {
 
 		this.clearBufferTimer();
 		if (this.config.bufferTimeMs > 0) this.startBufferTimer();
+		this.startDestinationHealthMonitor();
 		this.connection.connect();
 	}
 
@@ -539,6 +545,7 @@ export class PublishManager extends EventEmitter {
 
 		this.heartbeat?.stop();
 		this.clearBufferTimer();
+		this.stopDestinationHealthMonitor();
 		this.detachConnectionHandlers();
 		this.connection.disconnect();
 
@@ -1726,6 +1733,93 @@ export class PublishManager extends EventEmitter {
 		if (this.bufferTimer) {
 			clearInterval(this.bufferTimer);
 			this.bufferTimer = null;
+		}
+	}
+
+	private startDestinationHealthMonitor(): void {
+		this.stopDestinationHealthMonitor();
+		this.destinationHealthTimer = setInterval(() => {
+			this.checkDestinationHealth().catch((err) => {
+				this.logger?.error('Destination health check failed', err instanceof Error ? err : new Error(String(err)));
+			});
+		}, DESTINATION_HEALTH_INTERVAL_MS);
+	}
+
+	private stopDestinationHealthMonitor(): void {
+		if (this.destinationHealthTimer) {
+			clearInterval(this.destinationHealthTimer);
+			this.destinationHealthTimer = null;
+		}
+		this.disconnectedSince.clear();
+	}
+
+	private async checkDestinationHealth(): Promise<void> {
+		if (this.needStop) return;
+
+		const seen = new Set<IPublishPlugin>();
+		for (const [destId, { plugin, snapshot }] of this.pluginByDestinationId) {
+			if (seen.has(plugin)) continue;
+			seen.add(plugin);
+
+			const publisher = this.bindings.find((b) => b.publisher.id === destId)?.publisher;
+			const destName = publisher?.name ?? `destination-${destId}`;
+			const destType = publisher?.type ?? 'unknown';
+			const connected = plugin.isConnected();
+
+			if (connected) {
+				const offlineSince = this.disconnectedSince.get(plugin);
+				if (offlineSince !== undefined) {
+					const downtimeMs = Date.now() - offlineSince;
+					this.logger?.info(`Destination back online`, {
+						destination: destName,
+						type: destType,
+						destinationId: destId,
+						downtimeSeconds: Math.round(downtimeMs / 1000),
+					});
+					this.disconnectedSince.delete(plugin);
+				}
+				continue;
+			}
+
+			if (!this.disconnectedSince.has(plugin)) {
+				this.disconnectedSince.set(plugin, Date.now());
+				this.logger?.info(`Destination offline`, {
+					destination: destName,
+					type: destType,
+					destinationId: destId,
+				});
+				continue;
+			}
+
+			const offlineSince = this.disconnectedSince.get(plugin)!;
+			const offlineMs = Date.now() - offlineSince;
+			if (offlineMs < RECONNECT_FORCE_AFTER_MS) continue;
+
+			this.logger?.info(`Destination offline for >${Math.round(RECONNECT_FORCE_AFTER_MS / 60_000)}min, forcing reconnect`, {
+				destination: destName,
+				type: destType,
+				destinationId: destId,
+				offlineSeconds: Math.round(offlineMs / 1000),
+			});
+
+			try {
+				await plugin.stop();
+				await plugin.start();
+				this.disconnectedSince.set(plugin, Date.now());
+				this.logger?.info(`Destination reconnect initiated`, {
+					destination: destName,
+					type: destType,
+					destinationId: destId,
+				});
+			} catch (err) {
+				this.disconnectedSince.set(plugin, Date.now());
+				this.logger?.warn(`Destination reconnect failed, will retry next cycle`, {
+					destination: destName,
+					type: destType,
+					destinationId: destId,
+					error: err instanceof Error ? err.message : String(err),
+				});
+			}
 		}
 	}
 

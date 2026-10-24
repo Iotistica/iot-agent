@@ -16,21 +16,24 @@ export class BasePublishPlugin extends EventEmitter implements IPublishPlugin {
 			return;
 		}
 
+		this.logger?.info('Starting publish plugin');
 		if (this.client.connect && !this.client.isConnected()) {
 			await this.client.connect();
 		}
 
 		this.running = true;
+		this.logger?.info('Publish plugin started');
 		this.emit('started');
 	}
 
 	async stop(): Promise<void> {
-		if (!this.running) {
-			return;
-		}
-
+		this.logger?.info('Stopping publish plugin');
 		if (this.client.disconnect) {
 			await this.client.disconnect();
+		}
+
+		if (!this.running) {
+			return;
 		}
 
 		this.running = false;

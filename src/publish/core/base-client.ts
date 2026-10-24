@@ -51,7 +51,15 @@ export abstract class BaseMqttClient extends EventEmitter implements MqttConnect
 		return true;
 	}
 
-	protected onPublishRetry(_attempt: number, _error: Error, _nextDelayMs: number): void {}
+	protected onPublishRetry(attempt: number, error: Error, nextDelayMs: number): void {
+		this.logger?.debugSync('Publish retry', {
+			component: LogComponents.agent,
+			attempt,
+			error: error.message,
+			nextDelayMs,
+			...this.getLogContext(),
+		});
+	}
 
 	public async connect(): Promise<void> {
 		const options = this.buildMqttOptions();
@@ -128,7 +136,8 @@ export abstract class BaseMqttClient extends EventEmitter implements MqttConnect
 			const onError = (err: Error) => {
 				if (!initialized) {
 					initialized = true;
-					client.removeListener('connect', onConnect);
+					// Keep onConnect registered — mqtt.js will keep reconnecting
+					// internally, and markConnected() must fire when it succeeds.
 					reject(err);
 				}
 			};

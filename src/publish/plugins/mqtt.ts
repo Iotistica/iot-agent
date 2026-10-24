@@ -1,5 +1,6 @@
 import type { IClientOptions } from 'mqtt';
 import type { AgentLogger } from '../../logging/agent-logger.js';
+import { LogComponents } from '../../logging/types.js';
 import { BasePublishPlugin } from '../core/base-plugin.js';
 import type { IPublishClient as ICorePublishClient, PublishBatchItem, Logger } from '../core/types.js';
 import { BaseMqttClient } from '../core/base-client.js';
@@ -245,6 +246,11 @@ export class MqttPublishPlugin extends BasePublishPlugin {
 
 	override async publishBatch(batch: PublishBatchItem[]): Promise<void> {
 		if (this.destBufferSync && !this.isConnected()) {
+			this.agentLogger?.debugSync('Destination offline, buffering batch', {
+				component: LogComponents.agent,
+				messages: batch.length,
+				destinationId: this.destinationId,
+			});
 			await this.bufferBatch(batch);
 			return;
 		}
@@ -263,6 +269,10 @@ export class MqttPublishPlugin extends BasePublishPlugin {
 
 	private async enableDestinationBuffering(): Promise<void> {
 		if (this.destBufferSync) return;
+		this.agentLogger?.infoSync('Enabling destination message buffering', {
+			component: LogComponents.agent,
+			destinationId: this.destinationId,
+		});
 		const proxy = new ExternalMqttFlushProxy(this.client as ExternalMqttClient);
 		this.destBufferSync = new MessageBufferSync(proxy, this.agentLogger, {
 			scopeEndpointName: `ext-dest-${this.destinationId}`,
