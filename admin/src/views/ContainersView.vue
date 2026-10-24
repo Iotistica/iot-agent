@@ -449,7 +449,6 @@ async function submitEditService() {
     await containersApi.updateService(app.appId, original.serviceName, {
       serviceName: editSvcForm.value.serviceName.trim() || original.serviceName,
       imageName: editSvcForm.value.image.trim(),
-      state: original.state ?? 'running',
       config: {
         image: editSvcForm.value.image.trim(),
         ...(ports.length ? { ports } : {}),
