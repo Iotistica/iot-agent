@@ -81,7 +81,7 @@ function resolveState(svc: ContainerService): RunState {
   const rawStatus = typeof svc.status === 'string'
     ? svc.status
     : (svc.status as any)?.state
-  const s = rawStatus ?? svc.serviceStatus ?? svc.state
+  const s = svc.state ?? rawStatus ?? svc.serviceStatus
   if (s === 'running') return 'running'
   if (s === 'stopped' || s === 'exited') return 'stopped'
   if (s === 'error') return 'error'
@@ -449,7 +449,7 @@ async function submitEditService() {
     await containersApi.updateService(app.appId, original.serviceName, {
       serviceName: editSvcForm.value.serviceName.trim() || original.serviceName,
       imageName: editSvcForm.value.image.trim(),
-      state: 'running',
+      state: original.state ?? 'running',
       config: {
         image: editSvcForm.value.image.trim(),
         ...(ports.length ? { ports } : {}),
@@ -1707,12 +1707,12 @@ async function deploy() {
           <div class="details-label">Volumes</div>
           <span v-if="!currentServiceDetailsService.config.volumes?.length" class="details-empty">None</span>
           <div v-else class="details-values">
-            <code v-for="volume in currentServiceDetailsService.config.volumes" :key="volume">{{ volume }}</code>
+            <code v-for="volume in currentServiceDetailsService.config.volumes" :key="volume" class="details-value">{{ volume }}</code>
           </div>
         </div>
         <div class="details-section">
           <div class="details-label">Restart policy</div>
-          <span>{{ currentServiceDetailsService.config.restart || 'Default' }}</span>
+          <span class="details-value">{{ currentServiceDetailsService.config.restart || 'Default' }}</span>
         </div>
         <div v-if="currentServiceDetailsService.config.networkMode" class="details-section">
           <div class="details-label">Network mode</div>
@@ -1937,6 +1937,7 @@ a.port-tag:hover { border-color: #1677ff; }
 .details-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
 .details-section { margin: 16px 0; }
 .details-label { margin-bottom: 7px; color: var(--text-secondary); font-size: 12px; font-weight: 600; }
+.details-value { color: var(--text-primary); }
 .details-empty { color: var(--text-muted); font-size: 12px; }
 .details-values { display: flex; flex-wrap: wrap; gap: 6px; }
 .details-values code, .environment-row code { overflow-wrap: anywhere; }
