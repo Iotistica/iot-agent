@@ -19,6 +19,7 @@ export declare class CLILogger {
 }
 export declare const logger: CLILogger;
 export declare function apiCached(endpoint: string): Promise<any>;
+export declare function apiCachedApps(): Promise<Record<string, any>>;
 export declare function clearApiCache(): void;
 export declare function apiRequest(endpoint: string, options?: RequestInit): Promise<any>;
 export declare function apiProbe(endpoint: string, options?: RequestInit): Promise<{

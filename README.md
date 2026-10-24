@@ -270,6 +270,12 @@ npm run build
 npm link        # or: node dist/iotctl.js <command>
 ```
 
+Commands that access authenticated API endpoints require valid admin credentials. Set `IOTCTL_USERNAME` and `IOTCTL_PASSWORD`; the CLI logs in on demand and reuses the session for the command:
+
+```bash
+IOTCTL_USERNAME=admin IOTCTL_PASSWORD='your-password' iotctl apps list
+```
+
 ---
 
 ## Further Documentation

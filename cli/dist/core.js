@@ -2,6 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.logger = exports.CLILogger = exports.CLIError = exports.ENV = exports.DEVICE_API_V1 = exports.DEVICE_API_BASE = exports.DB_PATH = exports.CONFIG_DIR = void 0;
 exports.apiCached = apiCached;
+exports.apiCachedApps = apiCachedApps;
 exports.clearApiCache = clearApiCache;
 exports.apiRequest = apiRequest;
 exports.apiProbe = apiProbe;
@@ -67,25 +68,104 @@ class CLILogger {
 exports.CLILogger = CLILogger;
 exports.logger = new CLILogger();
 const apiCache = new Map();
+let adminSessionCookie;
+let adminSessionRequest;
+function getAdminCredentials() {
+    const username = process.env.IOTCTL_USERNAME;
+    const password = process.env.IOTCTL_PASSWORD;
+    return username && password ? { username, password } : undefined;
+}
+async function login() {
+    const credentials = getAdminCredentials();
+    if (!credentials) {
+        throw new Error('Set IOTCTL_USERNAME and IOTCTL_PASSWORD to authenticate with the Device API');
+    }
+    const response = await fetch(`${exports.DEVICE_API_V1}/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(credentials),
+        signal: AbortSignal.timeout(5000),
+    });
+    if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${await response.text()}`);
+    }
+    const cookie = response.headers.get('set-cookie')?.split(';', 1)[0];
+    if (!cookie) {
+        throw new Error('Device API login succeeded without returning a session cookie');
+    }
+    return cookie;
+}
+async function getAdminSessionCookie() {
+    if (adminSessionCookie)
+        return adminSessionCookie;
+    if (!getAdminCredentials())
+        return undefined;
+    const request = adminSessionRequest ??= login();
+    try {
+        adminSessionCookie = await request;
+        return adminSessionCookie;
+    }
+    finally {
+        if (adminSessionRequest === request)
+            adminSessionRequest = undefined;
+    }
+}
+function isNotAuthenticated(status, body) {
+    if (status !== 401)
+        return false;
+    try {
+        return JSON.parse(body).error === 'Not authenticated';
+    }
+    catch {
+        return false;
+    }
+}
+async function fetchApiResponse(endpoint, options) {
+    const request = (cookie) => {
+        const headers = new Headers(options.headers);
+        if (!headers.has('Content-Type'))
+            headers.set('Content-Type', 'application/json');
+        if (cookie)
+            headers.set('Cookie', cookie);
+        return fetch(endpoint, {
+            ...options,
+            headers,
+            signal: options.signal ?? AbortSignal.timeout(5000),
+        });
+    };
+    const cookie = adminSessionCookie;
+    const response = await request(cookie);
+    if (response.status !== 401 ||
+        !getAdminCredentials() ||
+        !isNotAuthenticated(response.status, await response.clone().text())) {
+        return response;
+    }
+    if (cookie && adminSessionCookie === cookie)
+        adminSessionCookie = undefined;
+    const sessionCookie = await getAdminSessionCookie();
+    return sessionCookie ? request(sessionCookie) : response;
+}
 async function apiCached(endpoint) {
     if (!apiCache.has(endpoint)) {
         apiCache.set(endpoint, apiRequest(endpoint));
     }
     return apiCache.get(endpoint);
 }
+async function apiCachedApps() {
+    const response = await apiCached(`${exports.DEVICE_API_V1}/apps`);
+    const list = Array.isArray(response?.apps) ? response.apps : [];
+    const apps = {};
+    for (const app of list) {
+        apps[String(app.appId)] = app;
+    }
+    return apps;
+}
 function clearApiCache() {
     apiCache.clear();
 }
 async function apiRequest(endpoint, options = {}) {
     try {
-        const response = await fetch(endpoint, {
-            ...options,
-            headers: {
-                'Content-Type': 'application/json',
-                ...options.headers,
-            },
-            signal: options.signal ?? AbortSignal.timeout(5000),
-        });
+        const response = await fetchApiResponse(endpoint, options);
         if (!response.ok) {
             const error = await response.text();
             throw new Error(`HTTP ${response.status}: ${error}`);
@@ -109,14 +189,7 @@ async function apiRequest(endpoint, options = {}) {
 }
 async function apiProbe(endpoint, options = {}) {
     try {
-        const response = await fetch(endpoint, {
-            ...options,
-            headers: {
-                'Content-Type': 'application/json',
-                ...options.headers,
-            },
-            signal: options.signal ?? AbortSignal.timeout(5000),
-        });
+        const response = await fetchApiResponse(endpoint, options);
         const text = await response.text();
         let parsed = undefined;
         if (text && text !== 'OK') {
