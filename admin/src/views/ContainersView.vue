@@ -13,6 +13,10 @@ import {
   ShopOutlined,
   SearchOutlined,
   RocketOutlined,
+  EllipsisOutlined,
+  DownOutlined,
+  EyeOutlined,
+  BarsOutlined,
 } from '@ant-design/icons-vue'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import { containersApi, templatesApi } from '@/api/containers'
@@ -27,6 +31,10 @@ const apps = ref<ContainerApp[]>([])
 const loading = ref(false)
 const error = ref<string | null>(null)
 const actionInFlight = ref<Record<string, boolean>>({})
+const searchQuery = ref('')
+const viewMode = ref<'grid' | 'list'>('grid')
+const collapsedApps = ref(new Set<number>())
+let refreshRequested = false
 
 // ── Auto-refresh ──────────────────────────────────────────────────────────────
 
@@ -45,7 +53,10 @@ onUnmounted(() => { stopRefresh(); if (logEs) { logEs.close(); logEs = null } })
 // ── Load ──────────────────────────────────────────────────────────────────────
 
 async function load() {
-  if (loading.value) return
+  if (loading.value) {
+    refreshRequested = true
+    return
+  }
   loading.value = true
   error.value = null
   try {
@@ -54,6 +65,10 @@ async function load() {
     error.value = (e as any)?.message ?? 'Failed to load containers'
   } finally {
     loading.value = false
+    if (refreshRequested) {
+      refreshRequested = false
+      void load()
+    }
   }
 }
 
@@ -101,17 +116,65 @@ const STATUS_LABEL: Record<RunState, string> = {
   unknown: '—',
 }
 
+type AppRunState = ReturnType<typeof statusForApp>
+const APP_STATUS_LABEL: Record<AppRunState, string> = {
+  running: 'Running',
+  partial: 'Partial',
+  stopped: 'Stopped',
+  error: 'Error',
+  pending: 'Pending',
+  empty: 'No services',
+}
+const APP_STATUS_COLOR: Record<AppRunState, string> = {
+  running: 'success',
+  partial: 'warning',
+  stopped: 'default',
+  error: 'error',
+  pending: 'processing',
+  empty: 'default',
+}
+
 function summaryForApp(app: ContainerApp) {
   const total = app.services.length
   const running = app.services.filter(s => resolveState(s) === 'running').length
   return { total, running }
 }
 
+function statusForApp(app: ContainerApp): 'running' | 'partial' | 'stopped' | 'error' | 'pending' | 'empty' {
+  const { total, running } = summaryForApp(app)
+  if (!total) return 'empty'
+  if (app.services.some(s => resolveState(s) === 'error' || s.error)) return 'error'
+  if (running === total) return 'running'
+  if (running > 0) return 'partial'
+  if (app.services.every(s => resolveState(s) === 'stopped')) return 'stopped'
+  return 'pending'
+}
+
+const filteredApps = computed(() => {
+  const query = searchQuery.value.trim().toLowerCase()
+  if (!query) return apps.value
+  return apps.value.flatMap(app => {
+    const matchesApp = app.appName.toLowerCase().includes(query)
+    const services = matchesApp
+      ? app.services
+      : app.services.filter(svc =>
+        [svc.serviceName, svc.imageName, ...(svc.config.ports ?? [])]
+          .some(value => value.toLowerCase().includes(query)),
+      )
+    return matchesApp || services.length
+      ? [{ ...app, services }]
+      : []
+  })
+})
+
 const totalRunning = computed(() =>
   apps.value.reduce((n, a) => n + a.services.filter(s => resolveState(s) === 'running').length, 0),
 )
 const totalServices = computed(() =>
   apps.value.reduce((n, a) => n + a.services.length, 0),
+)
+const totalStopped = computed(() =>
+  apps.value.reduce((n, a) => n + a.services.filter(s => resolveState(s) === 'stopped').length, 0),
 )
 
 // ── Service actions ───────────────────────────────────────────────────────────
@@ -121,6 +184,7 @@ function actionKey(appId: number, serviceName: string, action: string) {
 }
 
 async function doAction(app: ContainerApp, svc: ContainerService, action: 'start' | 'stop' | 'restart') {
+  if (isServiceBusy(app.appId, svc.serviceName)) return
   const key = actionKey(app.appId, svc.serviceName, action)
   actionInFlight.value = { ...actionInFlight.value, [key]: true }
   try {
@@ -138,6 +202,79 @@ async function doAction(app: ContainerApp, svc: ContainerService, action: 'start
 
 function isInFlight(appId: number, serviceName: string, action: string) {
   return !!actionInFlight.value[actionKey(appId, serviceName, action)]
+}
+
+function isServiceBusy(appId: number, serviceName: string) {
+  return (['start', 'stop', 'restart'] as const)
+    .some(action => isInFlight(appId, serviceName, action))
+}
+
+function toggleApp(appId: number) {
+  const next = new Set(collapsedApps.value)
+  if (next.has(appId)) next.delete(appId)
+  else next.add(appId)
+  collapsedApps.value = next
+}
+
+function handleAppMenu(key: string, app: ContainerApp) {
+  if (key === 'edit') openAppDetails(apps.value.find(item => item.appId === app.appId) ?? app)
+  if (key === 'toggle') toggleApp(app.appId)
+  if (key === 'delete') confirmRemoveApp(app)
+}
+
+function handleAppMenuClick(event: { key: string | number }, app: ContainerApp) {
+  handleAppMenu(String(event.key), app)
+}
+
+function handleServiceMenu(key: string, app: ContainerApp, svc: ContainerService) {
+  if (key === 'details') openServiceDetails(app, svc)
+  if (key === 'logs') openLogs(app, svc)
+  if (key === 'edit') openEditService(app, svc)
+  if (key === 'restart') void doAction(app, svc, 'restart')
+  if (key === 'delete') confirmRemoveService(app, svc)
+}
+
+function handleServiceMenuClick(event: { key: string | number }, app: ContainerApp, svc: ContainerService) {
+  handleServiceMenu(String(event.key), app, svc)
+}
+
+function fullApp(app: ContainerApp) {
+  return apps.value.find(item => item.appId === app.appId) ?? app
+}
+
+function portUrl(port: string): string | null {
+  const parts = port.split(':')
+  const hostPort = parts.length > 1 ? parts[parts.length - 2].split('/')[0] : ''
+  if (!/^\d+$/.test(hostPort) || Number(hostPort) < 1 || Number(hostPort) > 65535) return null
+  const hostname = window.location.hostname
+  const host = hostname.includes(':') ? `[${hostname}]` : hostname
+  return `http://${host}:${hostPort}`
+}
+
+function maskedEnvironmentValue(name: string, value: string) {
+  return /password|passwd|pwd|secret|token|(?:^|[_-])key(?:$|[_-])|api.?key|credential|private|auth/i.test(name)
+    ? '••••••••'
+    : value
+}
+
+const serviceDetailsOpen = ref(false)
+const serviceDetailsApp = ref<ContainerApp | null>(null)
+const serviceDetailsService = ref<ContainerService | null>(null)
+const currentServiceDetailsApp = computed(() =>
+  apps.value.find(app => app.appId === serviceDetailsApp.value?.appId) ?? serviceDetailsApp.value,
+)
+const currentServiceDetailsService = computed(() => {
+  const selected = serviceDetailsService.value
+  if (!selected) return null
+  return currentServiceDetailsApp.value?.services.find(svc =>
+    svc.serviceId === selected.serviceId || svc.serviceName === selected.serviceName,
+  ) ?? selected
+})
+
+function openServiceDetails(app: ContainerApp, svc: ContainerService) {
+  serviceDetailsApp.value = app
+  serviceDetailsService.value = svc
+  serviceDetailsOpen.value = true
 }
 
 // ── App details drawer ───────────────────────────────────────────────────────
@@ -673,8 +810,28 @@ async function deploy() {
       </div>
     </div>
 
-    <div class="toolbar-info" v-if="apps.length > 0">
-      <a-badge status="success" /> {{ totalRunning }} running · {{ totalServices }} total services · {{ apps.length }} app{{ apps.length !== 1 ? 's' : '' }}
+    <div class="summary-toolbar">
+      <div class="summary-stats" aria-label="Application summary">
+        <span class="summary-stat"><strong>{{ apps.length }}</strong> apps</span>
+        <span class="summary-stat"><strong>{{ totalServices }}</strong> services</span>
+        <span class="summary-stat status-running"><a-badge status="success" /><strong>{{ totalRunning }}</strong> running</span>
+        <span class="summary-stat status-stopped"><a-badge status="default" /><strong>{{ totalStopped }}</strong> stopped</span>
+      </div>
+      <div class="summary-controls">
+        <a-input
+          v-model:value="searchQuery"
+          allow-clear
+          class="app-search"
+          placeholder="Search applications or services"
+          aria-label="Search applications or services"
+        >
+          <template #prefix><SearchOutlined /></template>
+        </a-input>
+        <a-radio-group v-model:value="viewMode" button-style="solid" aria-label="Application view">
+          <a-radio-button value="grid" aria-label="Grid view"><AppstoreOutlined /></a-radio-button>
+          <a-radio-button value="list" aria-label="List view"><BarsOutlined /></a-radio-button>
+        </a-radio-group>
+      </div>
     </div>
 
     <!-- Docker unavailable -->
@@ -702,129 +859,132 @@ async function deploy() {
       </a-button>
     </a-empty>
 
-    <!-- App grid -->
-    <a-spin :spinning="loading && apps.length === 0">
-      <div class="app-grid">
-        <div v-for="app in apps" :key="app.appId" class="app-card">
+    <div v-if="loading && apps.length === 0" class="app-grid" aria-label="Loading applications">
+      <div v-for="i in 2" :key="i" class="app-card loading-card"><a-skeleton active :paragraph="{ rows: 4 }" /></div>
+    </div>
+    <a-empty
+      v-else-if="apps.length > 0 && filteredApps.length === 0"
+      description="No applications or services match your search"
+      class="search-empty"
+    />
 
-          <!-- Card header -->
-          <div class="card-header">
-            <div class="card-header-left">
-              <AppstoreOutlined class="card-icon" />
+    <div v-else class="app-grid" :class="{ 'app-grid--list': viewMode === 'list' }">
+      <article v-for="app in filteredApps" :key="app.appId" class="app-card">
+        <div class="card-header">
+          <div class="card-header-left">
+            <AppstoreOutlined class="card-icon" aria-hidden="true" />
+            <div class="app-title-block">
               <span class="app-name">{{ app.appName }}</span>
-            </div>
-            <div style="display: flex; gap: 4px">
-              <a-button size="small" title="Edit application" @click="openAppDetails(app)">
-                <template #icon><EditOutlined /></template>
-              </a-button>
-              <a-button size="small" danger title="Remove application" @click="confirmRemoveApp(app)">
-                <template #icon><DeleteOutlined /></template>
-              </a-button>
+              <span class="app-summary">
+                {{ summaryForApp(fullApp(app)).total }} service{{ summaryForApp(fullApp(app)).total !== 1 ? 's' : '' }}
+                · {{ summaryForApp(fullApp(app)).running }} running
+              </span>
             </div>
           </div>
-
-          <!-- Running summary -->
-          <div class="card-summary">
-            <a-badge :status="summaryForApp(app).running > 0 ? 'success' : 'default'" />
-            <span>{{ summaryForApp(app).running }}/{{ summaryForApp(app).total }} running</span>
-          </div>
-
-          <!-- Services -->
-          <div class="service-list">
-            <div
-              v-for="svc in app.services"
-              :key="svc.serviceId ?? svc.serviceName"
-              class="service-row"
+          <div class="app-card-actions">
+            <a-tag :color="APP_STATUS_COLOR[statusForApp(fullApp(app))]" class="app-status">
+              {{ APP_STATUS_LABEL[statusForApp(fullApp(app))] }}
+            </a-tag>
+            <a-dropdown :trigger="['click']">
+              <a-button type="text" class="icon-menu-button" aria-label="Application actions" title="Application actions">
+                <EllipsisOutlined />
+              </a-button>
+              <template #overlay>
+                <a-menu @click="handleAppMenuClick($event, app)">
+                  <a-menu-item key="edit"><EditOutlined /> Edit application</a-menu-item>
+                  <a-menu-item key="toggle"><DownOutlined /> {{ collapsedApps.has(app.appId) ? 'Expand' : 'Collapse' }}</a-menu-item>
+                  <a-menu-divider />
+                  <a-menu-item key="delete" danger><DeleteOutlined /> Delete application</a-menu-item>
+                </a-menu>
+              </template>
+            </a-dropdown>
+            <a-button
+              type="text"
+              class="icon-menu-button expand-button"
+              :aria-label="collapsedApps.has(app.appId) ? `Expand ${app.appName}` : `Collapse ${app.appName}`"
+              :aria-expanded="!collapsedApps.has(app.appId)"
+              @click="toggleApp(app.appId)"
             >
-              <!-- Name + image -->
-              <div class="svc-identity">
-                <span class="service-name">{{ svc.serviceName }}</span>
-                <span class="service-image">{{ svc.imageName }}</span>
-                <template v-if="svc.config.ports?.length">
-                  <span v-for="p in svc.config.ports" :key="p" class="port-tag">{{ p }}</span>
-                </template>
-                <a-tooltip v-if="svc.error" :title="svc.error.message" placement="topLeft">
-                  <span class="svc-error-hint">
-                    {{ svc.error.type }}
-                    <template v-if="svc.error.retryCount > 0">({{ svc.error.retryCount }}×)</template>
-                  </span>
-                </a-tooltip>
-              </div>
+              <DownOutlined :class="{ rotated: !collapsedApps.has(app.appId) }" />
+            </a-button>
+          </div>
+        </div>
 
-              <!-- Status + actions pinned to bottom-right of the row -->
-              <div class="svc-controls">
-                <a-tag :color="STATUS_COLOR[resolveState(svc)]" style="font-size: 11px; margin: 0">
-                  {{ STATUS_LABEL[resolveState(svc)] }}
-                </a-tag>
-                <a-button
-                  size="small"
-                  title="Logs"
-                  @click="openLogs(app, svc)"
-                >
-                  <template #icon><FileTextOutlined /></template>
-                </a-button>
-                <a-button
-                  size="small"
-                  title="Edit"
-                  @click="openEditService(app, svc)"
-                >
-                  <template #icon><EditOutlined /></template>
-                </a-button>
-                <a-button
-                  size="small"
-                  title="Start"
-                  :disabled="resolveState(svc) === 'running' || isInFlight(app.appId, svc.serviceName, 'start')"
-                  :loading="isInFlight(app.appId, svc.serviceName, 'start')"
-                  style="color: #52c41a; border-color: #b7eb8f"
-                  @click="doAction(app, svc, 'start')"
-                >
-                  <template #icon><PlayCircleOutlined /></template>
-                </a-button>
-                <a-button
-                  size="small"
-                  title="Restart"
-                  :loading="isInFlight(app.appId, svc.serviceName, 'restart')"
-                  @click="doAction(app, svc, 'restart')"
-                >
-                  <template #icon><ReloadOutlined /></template>
-                </a-button>
-                <a-button
-                  size="small"
-                  danger
-                  title="Stop"
-                  :disabled="resolveState(svc) === 'stopped' || isInFlight(app.appId, svc.serviceName, 'stop')"
-                  :loading="isInFlight(app.appId, svc.serviceName, 'stop')"
-                  @click="doAction(app, svc, 'stop')"
-                >
-                  <template #icon><PoweroffOutlined /></template>
-                </a-button>
-                <a-button
-                  size="small"
-                  danger
-                  title="Remove service"
-                  @click="confirmRemoveService(app, svc)"
-                >
-                  <template #icon><DeleteOutlined /></template>
-                </a-button>
-              </div>
+        <div v-if="!collapsedApps.has(app.appId)" class="card-body">
+          <div v-if="app.services.length === 0" class="no-services">No services configured</div>
+          <div
+            v-for="svc in app.services"
+            :key="svc.serviceId ?? svc.serviceName"
+            class="service-row"
+          >
+            <span class="service-state-dot" :class="`state-${resolveState(svc)}`" :aria-label="STATUS_LABEL[resolveState(svc)]" />
+            <div class="svc-identity">
+              <button class="service-name service-name-button" type="button" @click="openServiceDetails(fullApp(app), svc)">
+                {{ svc.serviceName }}
+              </button>
+              <span class="service-image" :title="svc.imageName">{{ svc.imageName }}</span>
+              <a-tooltip v-if="svc.error" :title="svc.error.message" placement="topLeft">
+                <span class="svc-error-hint">{{ svc.error.type }}</span>
+              </a-tooltip>
             </div>
-
-            <div v-if="app.services.length === 0" class="no-services">
-              No services configured
+            <div class="service-ports">
+              <template v-for="port in svc.config.ports ?? []" :key="port">
+                <a
+                  v-if="portUrl(port)"
+                  class="port-tag"
+                  :href="portUrl(port)!"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  :aria-label="`Open ${svc.serviceName} on port ${port}`"
+                >{{ port }}</a>
+                <span v-else class="port-tag">{{ port }}</span>
+              </template>
+            </div>
+            <a-tag :color="STATUS_COLOR[resolveState(svc)]" class="service-status">
+              {{ STATUS_LABEL[resolveState(svc)] }}
+            </a-tag>
+            <div class="svc-controls">
+              <a-button
+                size="small"
+                :type="resolveState(svc) === 'running' ? 'default' : 'primary'"
+                :disabled="isServiceBusy(app.appId, svc.serviceName)"
+                :loading="isServiceBusy(app.appId, svc.serviceName)"
+                @click="doAction(app, svc, resolveState(svc) === 'running' ? 'stop' : 'start')"
+              >
+                <template #icon><PoweroffOutlined v-if="resolveState(svc) === 'running'" /><PlayCircleOutlined v-else /></template>
+                {{ resolveState(svc) === 'running' ? 'Stop' : 'Start' }}
+              </a-button>
+              <a-tooltip title="View service details">
+                <a-button size="small" aria-label="View service details" @click="openServiceDetails(fullApp(app), svc)">
+                  <template #icon><EyeOutlined /></template>
+                </a-button>
+              </a-tooltip>
+              <a-dropdown :trigger="['click']">
+                <a-button size="small" aria-label="Service actions" title="Service actions">
+                  <template #icon><EllipsisOutlined /></template>
+                </a-button>
+                <template #overlay>
+                  <a-menu @click="handleServiceMenuClick($event, fullApp(app), svc)">
+                    <a-menu-item key="details"><EyeOutlined /> View details</a-menu-item>
+                    <a-menu-item key="logs"><FileTextOutlined /> View logs</a-menu-item>
+                    <a-menu-item key="edit" :disabled="isServiceBusy(app.appId, svc.serviceName)"><EditOutlined /> Edit configuration</a-menu-item>
+                    <a-menu-item key="restart" :disabled="isServiceBusy(app.appId, svc.serviceName)"><ReloadOutlined /> Restart</a-menu-item>
+                    <a-menu-divider />
+                    <a-menu-item key="delete" danger :disabled="isServiceBusy(app.appId, svc.serviceName)"><DeleteOutlined /> Delete service</a-menu-item>
+                  </a-menu>
+                </template>
+              </a-dropdown>
             </div>
           </div>
-
-          <!-- Card footer -->
           <div class="card-footer">
-            <a-button size="small" type="dashed" block @click="openAddService(app)">
+            <a-button size="small" type="dashed" block :disabled="!dockerAvailable" @click="openAddService(fullApp(app))">
               <template #icon><PlusOutlined /></template>
               Add Service
             </a-button>
           </div>
-
         </div>
-      </div>
-    </a-spin>
+      </article>
+    </div>
 
     <!-- Add Service drawer -->
     <a-drawer
@@ -1457,6 +1617,129 @@ async function deploy() {
       </div>
     </a-modal>
 
+    <a-drawer
+      v-model:open="serviceDetailsOpen"
+      :title="currentServiceDetailsService?.serviceName ?? 'Service details'"
+      width="520"
+      placement="right"
+      :keyboard="true"
+      @keydown.esc="serviceDetailsOpen = false"
+    >
+      <template v-if="currentServiceDetailsApp && currentServiceDetailsService">
+        <div class="details-heading">
+          <span>Application: {{ currentServiceDetailsApp.appName }}</span>
+          <a-tag :color="STATUS_COLOR[resolveState(currentServiceDetailsService)]">
+            {{ STATUS_LABEL[resolveState(currentServiceDetailsService)] }}
+          </a-tag>
+        </div>
+        <div class="details-actions">
+          <a-button
+            type="primary"
+            :disabled="!dockerAvailable || isServiceBusy(currentServiceDetailsApp.appId, currentServiceDetailsService.serviceName)"
+            :loading="isServiceBusy(currentServiceDetailsApp.appId, currentServiceDetailsService.serviceName)"
+            @click="doAction(currentServiceDetailsApp, currentServiceDetailsService, resolveState(currentServiceDetailsService) === 'running' ? 'stop' : 'start')"
+          >
+            <template #icon><PoweroffOutlined v-if="resolveState(currentServiceDetailsService) === 'running'" /><PlayCircleOutlined v-else /></template>
+            {{ resolveState(currentServiceDetailsService) === 'running' ? 'Stop' : 'Start' }}
+          </a-button>
+          <a-button
+            :disabled="!dockerAvailable || isServiceBusy(currentServiceDetailsApp.appId, currentServiceDetailsService.serviceName)"
+            @click="doAction(currentServiceDetailsApp, currentServiceDetailsService, 'restart')"
+          >
+            <template #icon><ReloadOutlined /></template>
+            Restart
+          </a-button>
+          <a-button @click="serviceDetailsOpen = false; openLogs(currentServiceDetailsApp, currentServiceDetailsService)">
+            <template #icon><FileTextOutlined /></template>
+            Logs
+          </a-button>
+          <a-button @click="serviceDetailsOpen = false; openEditService(currentServiceDetailsApp, currentServiceDetailsService)">
+            <template #icon><EditOutlined /></template>
+            Edit
+          </a-button>
+        </div>
+
+        <a-divider orientation="left">Container</a-divider>
+        <a-descriptions :column="1" size="small" bordered>
+          <a-descriptions-item label="Image">{{ currentServiceDetailsService.imageName }}</a-descriptions-item>
+          <a-descriptions-item label="Container ID">{{ currentServiceDetailsService.containerId || '—' }}</a-descriptions-item>
+          <a-descriptions-item label="State">{{ currentServiceDetailsService.status?.state ?? currentServiceDetailsService.serviceStatus ?? currentServiceDetailsService.state ?? 'Unknown' }}</a-descriptions-item>
+          <a-descriptions-item v-if="currentServiceDetailsService.status?.health" label="Health">
+            {{ currentServiceDetailsService.status.health }}
+          </a-descriptions-item>
+          <a-descriptions-item v-if="currentServiceDetailsService.status?.message || currentServiceDetailsService.error?.message" label="Message">
+            {{ currentServiceDetailsService.status?.message ?? currentServiceDetailsService.error?.message }}
+          </a-descriptions-item>
+          <a-descriptions-item v-if="currentServiceDetailsService.status?.restartCount !== undefined" label="Restart count">
+            {{ currentServiceDetailsService.status.restartCount }}
+          </a-descriptions-item>
+          <a-descriptions-item v-if="currentServiceDetailsService.status?.exitCode !== undefined" label="Exit code">
+            {{ currentServiceDetailsService.status.exitCode }}
+          </a-descriptions-item>
+        </a-descriptions>
+
+        <a-divider orientation="left">Configuration</a-divider>
+        <div class="details-section">
+          <div class="details-label">Port mappings</div>
+          <span v-if="!currentServiceDetailsService.config.ports?.length" class="details-empty">None</span>
+          <div v-else class="details-values">
+            <a
+              v-for="port in currentServiceDetailsService.config.ports"
+              :key="port"
+              :href="portUrl(port) ?? undefined"
+              :target="portUrl(port) ? '_blank' : undefined"
+              :rel="portUrl(port) ? 'noopener noreferrer' : undefined"
+              class="port-tag"
+            >{{ port }}</a>
+          </div>
+        </div>
+        <div class="details-section">
+          <div class="details-label">Environment variables</div>
+          <div v-if="Object.keys(currentServiceDetailsService.config.environment ?? {}).length" class="environment-list">
+            <div v-for="(value, name) in currentServiceDetailsService.config.environment" :key="name" class="environment-row">
+              <code>{{ name }}</code>
+              <code>{{ maskedEnvironmentValue(name, value) }}</code>
+            </div>
+          </div>
+          <span v-else class="details-empty">None</span>
+        </div>
+        <div class="details-section">
+          <div class="details-label">Volumes</div>
+          <span v-if="!currentServiceDetailsService.config.volumes?.length" class="details-empty">None</span>
+          <div v-else class="details-values">
+            <code v-for="volume in currentServiceDetailsService.config.volumes" :key="volume">{{ volume }}</code>
+          </div>
+        </div>
+        <div class="details-section">
+          <div class="details-label">Restart policy</div>
+          <span>{{ currentServiceDetailsService.config.restart || 'Default' }}</span>
+        </div>
+        <div v-if="currentServiceDetailsService.config.networkMode" class="details-section">
+          <div class="details-label">Network mode</div>
+          <span>{{ currentServiceDetailsService.config.networkMode }}</span>
+        </div>
+        <div v-if="currentServiceDetailsService.config.command?.length" class="details-section">
+          <div class="details-label">Command</div>
+          <code>{{ currentServiceDetailsService.config.command.join(' ') }}</code>
+        </div>
+        <div v-if="currentServiceDetailsService.config.entrypoint?.length" class="details-section">
+          <div class="details-label">Entrypoint</div>
+          <code>{{ currentServiceDetailsService.config.entrypoint.join(' ') }}</code>
+        </div>
+        <div v-if="currentServiceDetailsService.config.user" class="details-section">
+          <div class="details-label">User</div>
+          <code>{{ currentServiceDetailsService.config.user }}</code>
+        </div>
+        <div v-if="currentServiceDetailsService.config.resources?.limits" class="details-section">
+          <div class="details-label">Resource limits</div>
+          <span>
+            {{ currentServiceDetailsService.config.resources.limits.cpu ? `CPU ${currentServiceDetailsService.config.resources.limits.cpu}` : '' }}
+            {{ currentServiceDetailsService.config.resources.limits.memory ? `Memory ${currentServiceDetailsService.config.resources.limits.memory}` : '' }}
+          </span>
+        </div>
+      </template>
+    </a-drawer>
+
     <!-- Log viewer drawer -->
     <a-drawer
       v-model:open="logDrawerOpen"
@@ -1498,28 +1781,34 @@ async function deploy() {
 .heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 16px; }
 .heading p { color: var(--text-tertiary); margin: 0; }
 .header-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-.toolbar-info { color: var(--text-tertiary); font-size: 12px; margin-bottom: 10px; }
+.summary-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 16px; }
+.summary-stats, .summary-controls { display: flex; align-items: center; gap: 12px; }
+.summary-stat { display: inline-flex; align-items: center; gap: 5px; color: var(--text-tertiary); font-size: 12px; white-space: nowrap; }
+.summary-stat strong { color: var(--text-primary); font-weight: 600; }
+.summary-controls { min-width: 0; }
+.app-search { width: 260px; }
+.search-empty { margin: 44px 0; }
+.loading-card { padding: 18px; }
 /* ── Card grid ───────────────────────────────────────────── */
 .app-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 16px;
   align-items: start;
 }
+.app-grid--list { grid-template-columns: minmax(0, 1fr); }
 
 .app-card {
   border: 1px solid var(--border-color-card);
-  border-radius: 10px;
+  border-radius: 8px;
   overflow: hidden;
   background: var(--bg-container);
   display: flex;
   flex-direction: column;
-  box-shadow: var(--shadow-card);
-  transition: box-shadow 0.2s, border-color 0.2s;
+  transition: border-color 0.2s;
 }
 
 .app-card:hover {
-  box-shadow: var(--shadow-card-hover);
   border-color: var(--border-color-strong);
 }
 
@@ -1528,10 +1817,9 @@ async function deploy() {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 14px 16px 10px;
-  gap: 8px;
+  padding: 11px 14px;
+  gap: 10px;
   background: var(--bg-card-header);
-  border-bottom: 1px solid var(--border-color);
 }
 
 .card-header-left {
@@ -1542,8 +1830,8 @@ async function deploy() {
 }
 
 .card-icon {
-  width: 30px;
-  height: 30px;
+  width: 32px;
+  height: 32px;
   border-radius: 8px;
   background: var(--bg-selected);
   color: #1677ff;
@@ -1563,70 +1851,74 @@ async function deploy() {
   text-overflow: ellipsis;
 }
 
-/* ── Running summary ─────────────────────────────────────── */
-.card-summary {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 8px 16px 10px;
-  font-size: 12px;
-  color: var(--text-tertiary);
-  border-bottom: 1px solid var(--border-color);
+.app-title-block { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.app-summary { color: var(--text-tertiary); font-size: 11px; }
+.app-card-actions { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
+.app-status { margin: 0; font-size: 11px; }
+.icon-menu-button { color: var(--text-secondary); }
+.icon-menu-button:focus-visible, .service-name-button:focus-visible, .svc-controls :deep(.ant-btn:focus-visible) {
+  outline: 2px solid #1677ff;
+  outline-offset: 2px;
 }
+.expand-button { width: 28px; height: 28px; }
+.expand-button :deep(svg) { transition: transform 0.15s; }
+.expand-button :deep(svg.rotated) { transform: rotate(180deg); }
 
-/* ── Service rows ────────────────────────────────────────── */
-.service-list {
-  padding: 4px 0 6px;
-}
-
+.card-body { padding: 3px 0 10px; }
 .service-row {
-  padding: 8px 16px;
+  display: grid;
+  grid-template-columns: 8px minmax(120px, 1fr) minmax(0, auto) auto auto;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
   border-bottom: 1px solid var(--border-color);
 }
-
-.service-row:last-child {
-  border-bottom: none;
-}
-
-.svc-identity {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  flex-wrap: wrap;
-  margin-bottom: 6px;
-}
-
+.service-row:last-of-type { border-bottom: none; }
+.service-state-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--text-muted); }
+.service-state-dot.state-running { background: #52c41a; }
+.service-state-dot.state-stopped { background: #8c8c8c; }
+.service-state-dot.state-error { background: #ff4d4f; }
+.service-state-dot.state-creating { background: #faad14; }
+.service-state-dot.state-unknown { background: #faad14; }
+.svc-identity { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; min-width: 0; }
 .service-name {
-  font-weight: 500;
+  font-weight: 600;
   font-size: 13px;
   color: var(--text-heading);
 }
-
+.service-name-button {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.service-name-button:hover { color: #1677ff; }
 .service-image {
+  max-width: 100%;
   font-size: 11px;
   color: var(--text-muted);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 180px;
 }
-
+.service-ports { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; min-width: 0; }
 .port-tag {
+  display: inline-block;
   font-size: 11px;
   background: var(--bg-selected);
   color: #1677ff;
   border: 1px solid var(--badge-running-border);
   border-radius: 3px;
-  padding: 0 5px;
+  padding: 1px 5px;
   white-space: nowrap;
 }
-
-.svc-controls {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
+a.port-tag { text-decoration: none; }
+a.port-tag:hover { border-color: #1677ff; }
+.service-status { margin: 0; font-size: 11px; }
+.svc-controls { display: flex; align-items: center; gap: 5px; }
+.svc-controls :deep(.ant-btn) { display: inline-flex; align-items: center; justify-content: center; }
 .svc-error-hint {
   font-size: 11px;
   color: #ff4d4f;
@@ -1637,17 +1929,50 @@ async function deploy() {
   cursor: help;
   white-space: nowrap;
 }
+.no-services { padding: 14px; font-size: 12px; color: var(--text-placeholder); text-align: center; }
+.card-footer { padding: 8px 14px 0; }
 
-.no-services {
-  padding: 14px;
-  font-size: 12px;
-  color: var(--text-placeholder);
-  text-align: center;
+.details-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; color: var(--text-secondary); }
+.details-heading :deep(.ant-tag) { margin: 0; }
+.details-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+.details-section { margin: 16px 0; }
+.details-label { margin-bottom: 7px; color: var(--text-secondary); font-size: 12px; font-weight: 600; }
+.details-empty { color: var(--text-muted); font-size: 12px; }
+.details-values { display: flex; flex-wrap: wrap; gap: 6px; }
+.details-values code, .environment-row code { overflow-wrap: anywhere; }
+.environment-list { border: 1px solid var(--border-color); border-radius: 6px; overflow: hidden; }
+.environment-row { display: flex; justify-content: space-between; gap: 12px; padding: 8px 10px; border-bottom: 1px solid var(--border-color); }
+.environment-row:last-child { border-bottom: 0; }
+.environment-row code { min-width: 0; color: var(--text-secondary); font-size: 11px; }
+
+@media (max-width: 1100px) {
+  .service-row { grid-template-columns: 8px minmax(0, 1fr) minmax(0, auto); }
+  .service-ports { grid-column: 2; }
+  .service-status { grid-column: 3; grid-row: 1; justify-self: end; }
+  .svc-controls { grid-column: 3; justify-self: end; }
 }
 
-.card-footer {
-  padding: 8px 16px 12px;
-  border-top: 1px solid var(--border-color);
+@media (max-width: 768px) {
+  .heading { align-items: flex-start; flex-direction: column; }
+  .summary-toolbar { align-items: stretch; flex-direction: column; }
+  .summary-stats { flex-wrap: wrap; gap: 8px 14px; }
+  .summary-controls { width: 100%; }
+  .app-search { flex: 1; width: auto; }
+  .app-grid { grid-template-columns: minmax(0, 1fr); }
+}
+
+@media (max-width: 480px) {
+  .header-actions { width: 100%; }
+  .header-actions :deep(.ant-btn) { flex: 1; }
+  .service-row { grid-template-columns: 8px minmax(0, 1fr) auto; gap: 8px; padding: 9px 10px; }
+  .service-status { grid-column: 3; grid-row: 1; }
+  .service-ports { grid-column: 2; grid-row: 2; }
+  .svc-controls { grid-column: 3; grid-row: 2; }
+  .svc-controls :deep(.ant-btn) { padding-inline: 6px; }
+  .svc-controls :deep(.ant-btn > span:not(.anticon)) { font-size: 11px; }
+  .app-card-actions { gap: 0; }
+  .app-status { display: none; }
+  .environment-row { align-items: flex-start; flex-direction: column; gap: 4px; }
 }
 
 /* ── Deploy form ─────────────────────────────────────────── */
