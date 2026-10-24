@@ -146,13 +146,13 @@ export abstract class BaseMqttClient extends EventEmitter implements MqttConnect
 			client.once('error', onError);
 
 			client.on('error', (err) => {
+				// After disconnect(), this.client is null — errors during teardown are expected.
+				if (!this.client) return;
 				this.logger?.errorSync(
 					`${this.providerName} client error`,
 					err instanceof Error ? err : new Error(String(err)),
 					{ component: LogComponents.agent, ...this.getLogContext() },
 				);
-				// Only re-emit if a consumer has registered a listener; otherwise an unhandled
-				// 'error' event on an EventEmitter throws and crashes the process.
 				if (this.listenerCount('error') > 0) {
 					this.emit('error', err);
 				}
