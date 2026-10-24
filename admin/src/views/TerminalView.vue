@@ -167,8 +167,8 @@ function initTerminal() {
   if (!containerEl.value) return
 
   term = new Terminal({
-    fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', Menlo, 'Courier New', monospace",
-    fontSize: 13,
+    fontFamily: "'Cascadia Code', 'Fira Code', 'Courier New', monospace",
+    fontSize: 12,
     lineHeight: 1.4,
     theme: {
       background:    '#0d1117',
