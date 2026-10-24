@@ -168,7 +168,7 @@ export async function showStatusEnhanced(): Promise<void> {
       hasDocker: ENV.hasDocker,
     });
 
-    const apps = await apiCachedApps().catch(() => ({}));
+    const apps = await apiCachedApps().catch((): Record<string, any> => ({}));
     const appCount = Object.keys(apps).length;
 
     let runningCount = 0;
