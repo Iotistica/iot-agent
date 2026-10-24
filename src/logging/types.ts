@@ -112,6 +112,8 @@ export interface LogMessage {
 	isStdErr?: boolean;
 	/** Whether this is a system message */
 	isSystem?: boolean;
+	/** Structured metadata attached by the logger */
+	context?: Record<string, unknown>;
 }
 
 export interface LogSource {

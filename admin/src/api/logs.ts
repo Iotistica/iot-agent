@@ -14,6 +14,7 @@ export interface LogMessage {
   containerId?: string
   isStdErr?: boolean
   isSystem?: boolean
+  context?: Record<string, unknown>
 }
 
 export interface LogsFilter {
