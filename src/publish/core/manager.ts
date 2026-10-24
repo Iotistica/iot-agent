@@ -211,7 +211,7 @@ export class PublishManager extends EventEmitter {
 	// including ones triggered by unrelated endpoint churn) can tell "this destination
 	// is unchanged, reuse its plugin" apart from "this destination's config actually
 	// changed, rebuild it" — see loadBindings() for why this distinction matters.
-	private pluginByDestinationId: Map<number, { plugin: IPublishPlugin; snapshot: string }> = new Map();
+	private pluginByDestinationId: Map<number, { plugin: IPublishPlugin; snapshot: string; name: string; type: string }> = new Map();
 	// Serializes concurrent reloadBindings() calls so only one runs at a time.
 	// Without this, two rapid admin-UI actions can create zombie plugins that escape
 	// the stop-before-start guard and produce a duplicate-clientId kick cycle.
@@ -1759,13 +1759,9 @@ export class PublishManager extends EventEmitter {
 		if (this.needStop) return;
 
 		const seen = new Set<IPublishPlugin>();
-		for (const [destId, { plugin, snapshot }] of this.pluginByDestinationId) {
+		for (const [destId, { plugin, name: destName, type: destType }] of this.pluginByDestinationId) {
 			if (seen.has(plugin)) continue;
 			seen.add(plugin);
-
-			const publisher = this.bindings.find((b) => b.publisher.id === destId)?.publisher;
-			const destName = publisher?.name ?? `destination-${destId}`;
-			const destType = publisher?.type ?? 'unknown';
 			const connected = plugin.isConnected();
 
 			if (connected) {
@@ -2259,7 +2255,7 @@ export class PublishManager extends EventEmitter {
 				plugin = cached.plugin;
 			} else {
 				plugin = this.buildPlugin(destination, this.defaultClient, this.logger, this.endpointName);
-				this.pluginByDestinationId.set(subscription.publish_destination_id, { plugin, snapshot });
+				this.pluginByDestinationId.set(subscription.publish_destination_id, { plugin, snapshot, name: destination.name, type: destination.type });
 			}
 
 			const binding: HostBinding = { subscription, publisher: destination, plugin };
