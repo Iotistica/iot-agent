@@ -46,44 +46,24 @@ export class PublishStats {
 	): void {
 		if (!logger) return;
 
-		const saved = info.originalSize - info.compressedSize;
-		const compressionLog: Record<string, unknown> = {
-			method: info.method,
-			originalSize: info.originalSize,
-			compressedSize: info.compressedSize,
-			savedBytes: saved,
-			savedPercent: `${info.ratio.toFixed(1)}%`,
-			compressionMs: info.compressionMs,
-			throughputBytesPerMs: info.compressionMs > 0
-				? Math.round(info.compressedSize / info.compressionMs)
-				: 0,
-		};
+		const size = PublishStats.formatBytes(batchBytes);
+		const destinations = Array.isArray(extraContext?.destinations) ? extraContext.destinations as string[] : [];
+		const destPart = destinations.length > 0 ? ` → ${destinations.join(', ')}` : '';
+		const baseline = info.isBaseline ? ' (baseline)' : '';
+		const saved = info.originalSize > info.compressedSize
+			? ` (${info.ratio.toFixed(0)}% saved)`
+			: '';
 
-		if (info.cpuUsage) {
-			const { serialization: ser, compression: comp, total } = info.cpuUsage;
-			if (ser) {
-				compressionLog.serializationMethod = ser.method;
-				compressionLog.serializationCpuMs = ((ser.cpu.user + ser.cpu.system) / 1000).toFixed(2);
-			}
-			if (comp) {
-				compressionLog.compressionCpuMethod = comp.method;
-				compressionLog.compressionCpuMs = ((comp.cpu.user + comp.cpu.system) / 1000).toFixed(2);
-			}
-			if (total) {
-				compressionLog.totalCpuMs = ((total.user + total.system) / 1000).toFixed(2);
-			}
-		}
+		logger.info(
+			`Published ${messageCount} messages | ${deviceName} ${size}${saved}${destPart}${baseline}`,
+			{ messages: messageCount, batchBytes },
+		);
+	}
 
-		const label = info.isBaseline
-			? `Published ${messageCount} messages (no-op baseline)`
-			: `Published ${messageCount} messages`;
-
-		logger.info(label, {
-			protocol: deviceName,
-			messages: messageCount,
-			batchBytes,
-			compression: compressionLog,
-			...(extraContext || {}),
-		});
+	private static formatBytes(bytes: number): string {
+		if (bytes < 1024) return `${bytes} B`;
+		const kb = bytes / 1024;
+		if (kb < 1024) return `${kb.toFixed(1)} KB`;
+		return `${(kb / 1024).toFixed(1)} MB`;
 	}
 }
