@@ -74,23 +74,16 @@ export class PublishStats {
 			}
 		}
 
-		const size = PublishStats.formatBytes(batchBytes);
-		const destinations = Array.isArray(extraContext?.destinations) ? extraContext.destinations as string[] : [];
-		const baseline = info.isBaseline ? ' (no-op baseline)' : '';
-		const destPart = destinations.length > 0 ? `  destinations: ${JSON.stringify(destinations)}` : '';
-		const label = `Published ${messageCount} messages  |  ${deviceName}  ${size}${destPart}${baseline}`;
+		const label = info.isBaseline
+			? `Published ${messageCount} messages (no-op baseline)`
+			: `Published ${messageCount} messages`;
 
 		logger.info(label, {
+			protocol: deviceName,
 			messages: messageCount,
 			batchBytes,
 			compression: compressionLog,
+			...(extraContext || {}),
 		});
-	}
-
-	private static formatBytes(bytes: number): string {
-		if (bytes < 1024) return `${bytes} B`;
-		const kb = bytes / 1024;
-		if (kb < 1024) return `${kb.toFixed(1)} KB`;
-		return `${(kb / 1024).toFixed(1)} MB`;
 	}
 }
