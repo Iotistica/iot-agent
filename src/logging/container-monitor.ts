@@ -22,6 +22,7 @@ const RESUME_THRESHOLD = 50; // Resume stream when pending drops below this
 export class ContainerLogMonitor {
 	private attachments: Map<string, ContainerLogAttachment> = new Map();
 	private reconnectionOptions: Map<string, LogStreamOptions> = new Map();
+	private lastLogTimes: Map<string, number> = new Map(); // Last received log time (ms) per container, avoids replaying old logs on reattach
 	private pendingWrites: Map<string, number> = new Map(); // Track pending backend writes per container
 	private retryManager: RetryManager;
 	private docker: Docker;
@@ -107,13 +108,19 @@ export class ContainerLogMonitor {
 		try {
 			const container = this.docker.getContainer(containerId);
 
+			// Resume from last received log on reattach to avoid duplicate replay
+			const lastLogTime = this.lastLogTimes.get(containerId);
+			const since = lastLogTime !== undefined ? Math.floor(lastLogTime / 1000) : undefined;
+
 			// Start streaming logs
 			const logStream = (await container.logs({
 				follow: true, // Must be true for streaming
 				stdout: options.stdout ?? true,
 				stderr: options.stderr ?? true,
 				timestamps: options.timestamps ?? false,
-				tail: options.tail ?? 100, // Get last 100 lines initially
+				...(since !== undefined
+					? { since }
+					: { tail: options.tail ?? 100 }), // Get last 100 lines initially
 			}));
 
 			// Docker multiplexes stdout/stderr in a special format
@@ -137,6 +144,7 @@ export class ContainerLogMonitor {
 					}
 					this.attachments.delete(containerId);
 					this.reconnectionOptions.delete(containerId);
+					this.lastLogTimes.delete(containerId);
 					this.retryManager.clearState(`log-stream-${containerId}`);
 				},
 			};
@@ -494,6 +502,8 @@ export class ContainerLogMonitor {
 						// Many apps log normal info to stderr
 						level = 'warn';
 					}
+
+					this.lastLogTimes.set(containerId, Date.now());
 
 					// Create log message
 					const logMessage: LogMessage = {
