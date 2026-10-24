@@ -287,7 +287,7 @@ export class MqttDiscovery extends BaseDiscovery {
 
 			this.cleanupClient();
 
-			return [];
+			throw error;
 		}
 	}
 
