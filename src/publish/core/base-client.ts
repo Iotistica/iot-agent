@@ -101,7 +101,7 @@ export abstract class BaseMqttClient extends EventEmitter implements MqttConnect
 				const wasConnected = this.connected;
 				this.connected = false;
 				if (wasConnected) {
-					this.logger?.warnSync(`${this.providerName} connection lost`, {
+					this.logger?.infoSync(`${this.providerName} disconnected`, {
 						component: LogComponents.agent,
 						...this.getLogContext(),
 					});
