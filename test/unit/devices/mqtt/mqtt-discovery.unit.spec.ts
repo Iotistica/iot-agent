@@ -506,6 +506,26 @@ describe('MqttDiscovery', () => {
         })
       );
     });
+
+    it('should propagate connection errors after cleaning up the client', async () => {
+      const plugin = new MqttDiscovery(mockLogger, mockFactory);
+      const connectionError = new Error('Connection refused');
+      const promise = plugin.discover({
+        brokerUrl: 'mqtt://test:1883',
+        topics: ['test/topic']
+      });
+
+      setTimeout(() => fakeClient.emit('error', connectionError), 10);
+
+      await expect(promise).rejects.toBe(connectionError);
+
+      expect(fakeClient.end).toHaveBeenCalledWith(true);
+      expect(mockLogger.errorSync).toHaveBeenCalledWith(
+        'MQTT discovery failed',
+        connectionError,
+        expect.objectContaining({ component: expect.any(String) })
+      );
+    });
   });
 
   describe('isAvailable', () => {
