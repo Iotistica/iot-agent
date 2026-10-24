@@ -58,6 +58,86 @@ export class CLILogger {
 export const logger = new CLILogger();
 
 const apiCache = new Map<string, Promise<any>>();
+let adminSessionCookie: string | undefined;
+let adminSessionRequest: Promise<string> | undefined;
+
+function getAdminCredentials(): { username: string; password: string } | undefined {
+  const username = process.env.IOTCTL_USERNAME;
+  const password = process.env.IOTCTL_PASSWORD;
+  return username && password ? { username, password } : undefined;
+}
+
+async function login(): Promise<string> {
+  const credentials = getAdminCredentials();
+  if (!credentials) {
+    throw new Error('Set IOTCTL_USERNAME and IOTCTL_PASSWORD to authenticate with the Device API');
+  }
+
+  const response = await fetch(`${DEVICE_API_V1}/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(credentials),
+    signal: AbortSignal.timeout(5000),
+  });
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}: ${await response.text()}`);
+  }
+
+  const cookie = response.headers.get('set-cookie')?.split(';', 1)[0];
+  if (!cookie) {
+    throw new Error('Device API login succeeded without returning a session cookie');
+  }
+  return cookie;
+}
+
+async function getAdminSessionCookie(): Promise<string | undefined> {
+  if (adminSessionCookie) return adminSessionCookie;
+  if (!getAdminCredentials()) return undefined;
+
+  const request = adminSessionRequest ??= login();
+  try {
+    adminSessionCookie = await request;
+    return adminSessionCookie;
+  } finally {
+    if (adminSessionRequest === request) adminSessionRequest = undefined;
+  }
+}
+
+function isNotAuthenticated(status: number, body: string): boolean {
+  if (status !== 401) return false;
+  try {
+    return JSON.parse(body).error === 'Not authenticated';
+  } catch {
+    return false;
+  }
+}
+
+async function fetchApiResponse(endpoint: string, options: RequestInit): Promise<Response> {
+  const request = (cookie?: string) => {
+    const headers = new Headers(options.headers);
+    if (!headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
+    if (cookie) headers.set('Cookie', cookie);
+    return fetch(endpoint, {
+      ...options,
+      headers,
+      signal: options.signal ?? AbortSignal.timeout(5000),
+    });
+  };
+
+  const cookie = adminSessionCookie;
+  const response = await request(cookie);
+  if (
+    response.status !== 401 ||
+    !getAdminCredentials() ||
+    !isNotAuthenticated(response.status, await response.clone().text())
+  ) {
+    return response;
+  }
+
+  if (cookie && adminSessionCookie === cookie) adminSessionCookie = undefined;
+  const sessionCookie = await getAdminSessionCookie();
+  return sessionCookie ? request(sessionCookie) : response;
+}
 
 export async function apiCached(endpoint: string): Promise<any> {
   if (!apiCache.has(endpoint)) {
@@ -82,14 +162,7 @@ export function clearApiCache(): void {
 
 export async function apiRequest(endpoint: string, options: RequestInit = {}): Promise<any> {
   try {
-    const response = await fetch(endpoint, {
-      ...options,
-      headers: {
-        'Content-Type': 'application/json',
-        ...options.headers,
-      },
-      signal: options.signal ?? AbortSignal.timeout(5000),
-    });
+    const response = await fetchApiResponse(endpoint, options);
 
     if (!response.ok) {
       const error = await response.text();
@@ -121,14 +194,7 @@ export async function apiProbe(endpoint: string, options: RequestInit = {}): Pro
   error?: string;
 }> {
   try {
-    const response = await fetch(endpoint, {
-      ...options,
-      headers: {
-        'Content-Type': 'application/json',
-        ...options.headers,
-      },
-      signal: options.signal ?? AbortSignal.timeout(5000),
-    });
+    const response = await fetchApiResponse(endpoint, options);
 
     const text = await response.text();
     let parsed: any = undefined;
