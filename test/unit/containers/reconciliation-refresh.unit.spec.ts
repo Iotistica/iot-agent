@@ -1,3 +1,8 @@
+jest.mock('../../../src/containers/docker-manager', () => ({
+	DockerManager: jest.fn(),
+}));
+jest.mock('../../../src/containers/docker-ops', () => ({}));
+
 import { ContainerManager } from '../../../src/containers/container-manager';
 
 describe('ContainerManager.applyTargetState', () => {
