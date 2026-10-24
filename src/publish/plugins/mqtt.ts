@@ -131,12 +131,13 @@ export class ExternalMqttClient extends BaseMqttClient {
 	constructor(
 		private readonly config: ExternalMqttConfig,
 		logger?: AgentLogger,
+		private readonly destinationName?: string,
 	) {
 		super(logger);
 	}
 
 	protected get providerName(): string {
-		return 'MQTT destination';
+		return this.destinationName ? `MQTT destination '${this.destinationName}'` : 'MQTT destination';
 	}
 
 	protected getLogContext(): Record<string, unknown> {
@@ -297,12 +298,13 @@ export class MqttPublishPlugin extends BasePublishPlugin {
 		fallbackDeviceId?: string,
 		fallbackEndpointName?: string,
 		destinationId?: number,
+		destinationName?: string,
 	): MqttPublishPlugin {
 		const resolved = loadExternalMqttConfigFromRecord(config, fallbackDeviceId, fallbackEndpointName);
 		if (!resolved) {
 			throw new Error('mqtt publisher requires config_json with a brokerUrl');
 		}
-		return new MqttPublishPlugin(new ExternalMqttClient(resolved, agentLogger), logger, destinationId, agentLogger);
+		return new MqttPublishPlugin(new ExternalMqttClient(resolved, agentLogger, destinationName), logger, destinationId, agentLogger);
 	}
 }
 

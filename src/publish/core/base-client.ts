@@ -147,9 +147,9 @@ export abstract class BaseMqttClient extends EventEmitter implements MqttConnect
 
 			client.on('error', (err) => {
 				if (!this.client) return;
-				this.logger?.warnSync(
-					`${this.providerName} connection error`,
-					{ component: LogComponents.agent, error: err instanceof Error ? err.message : String(err), ...this.getLogContext() },
+				this.logger?.debugSync(
+					`${this.providerName} connection error: ${err instanceof Error ? err.message : String(err)}`,
+					{ component: LogComponents.agent, ...this.getLogContext() },
 				);
 				if (this.listenerCount('error') > 0) {
 					this.emit('error', err);

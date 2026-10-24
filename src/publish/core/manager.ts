@@ -1770,7 +1770,7 @@ export class PublishManager extends EventEmitter {
 				const offlineSince = this.disconnectedSince.get(plugin);
 				if (offlineSince !== undefined) {
 					const downtimeMs = Date.now() - offlineSince;
-					this.logger?.info(`Destination back online`, {
+					this.logger?.info(`Destination '${destName}' back online after ${Math.round(downtimeMs / 1000)}s`, {
 						destination: destName,
 						type: destType,
 						destinationId: destId,
@@ -1783,7 +1783,7 @@ export class PublishManager extends EventEmitter {
 
 			if (!this.disconnectedSince.has(plugin)) {
 				this.disconnectedSince.set(plugin, Date.now());
-				this.logger?.info(`Destination offline`, {
+				this.logger?.info(`Destination '${destName}' offline`, {
 					destination: destName,
 					type: destType,
 					destinationId: destId,
@@ -1795,7 +1795,7 @@ export class PublishManager extends EventEmitter {
 			const offlineMs = Date.now() - offlineSince;
 			if (offlineMs < RECONNECT_FORCE_AFTER_MS) continue;
 
-			this.logger?.info(`Destination offline for >${Math.round(RECONNECT_FORCE_AFTER_MS / 60_000)}min, forcing reconnect`, {
+			this.logger?.info(`Destination '${destName}' offline for >${Math.round(RECONNECT_FORCE_AFTER_MS / 60_000)}min, forcing reconnect`, {
 				destination: destName,
 				type: destType,
 				destinationId: destId,
@@ -1806,14 +1806,14 @@ export class PublishManager extends EventEmitter {
 				await plugin.stop();
 				await plugin.start();
 				this.disconnectedSince.set(plugin, Date.now());
-				this.logger?.info(`Destination reconnect initiated`, {
+				this.logger?.info(`Destination '${destName}' reconnect initiated`, {
 					destination: destName,
 					type: destType,
 					destinationId: destId,
 				});
 			} catch (err) {
 				this.disconnectedSince.set(plugin, Date.now());
-				this.logger?.warn(`Destination reconnect failed, will retry next cycle`, {
+				this.logger?.warn(`Destination '${destName}' reconnect failed, will retry next cycle`, {
 					destination: destName,
 					type: destType,
 					destinationId: destId,
