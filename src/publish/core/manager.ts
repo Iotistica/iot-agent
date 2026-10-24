@@ -1652,15 +1652,27 @@ export class PublishManager extends EventEmitter {
 			return undefined;
 		}
 
-		const destinations: string[] = [];
+		const online: string[] = [];
+		const buffered: string[] = [];
 		for (const binding of this.bindings) {
-			if ((binding.publisher.id ?? -1) === -1) continue;
-			if (binding.publisher.name && !destinations.includes(binding.publisher.name)) {
-				destinations.push(binding.publisher.name);
+			const destId = binding.publisher.id ?? -1;
+			if (destId === -1) continue;
+			const name = binding.publisher.name;
+			if (!name) continue;
+			if (online.includes(name) || buffered.includes(name)) continue;
+			const entry = this.pluginByDestinationId.get(destId);
+			if (entry?.plugin.isConnected()) {
+				online.push(name);
+			} else {
+				buffered.push(name);
 			}
 		}
 
-		return destinations.length > 0 ? { destinations } : undefined;
+		if (online.length === 0 && buffered.length === 0) return undefined;
+		return {
+			...(online.length > 0 ? { destinations: online } : {}),
+			...(buffered.length > 0 ? { buffered } : {}),
+		};
 	}
 
 	private async publishOffline(

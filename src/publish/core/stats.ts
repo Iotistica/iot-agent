@@ -48,11 +48,16 @@ export class PublishStats {
 
 		const size = PublishStats.formatBytes(batchBytes);
 		const destinations = Array.isArray(extraContext?.destinations) ? extraContext.destinations as string[] : [];
-		const destPart = destinations.length > 0 ? ` → ${destinations.join(', ')}` : '';
+		const buffered = Array.isArray(extraContext?.buffered) ? extraContext.buffered as string[] : [];
 		const baseline = info.isBaseline ? ' (baseline)' : '';
 		const saved = info.originalSize > info.compressedSize
 			? ` (${info.ratio.toFixed(0)}% saved)`
 			: '';
+
+		const parts: string[] = [];
+		if (destinations.length > 0) parts.push(`→ ${destinations.join(', ')}`);
+		if (buffered.length > 0) parts.push(`buffered: ${buffered.join(', ')}`);
+		const destPart = parts.length > 0 ? ` ${parts.join(' | ')}` : '';
 
 		logger.info(
 			`Published ${messageCount} messages | ${deviceName} ${size}${saved}${destPart}${baseline}`,
