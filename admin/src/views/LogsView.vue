@@ -66,27 +66,6 @@ const statusText = computed(() => {
   return `Showing ${logs.value.length} entries`
 })
 
-function fmtBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`
-  const kb = bytes / 1024
-  if (kb < 1024) return `${kb.toFixed(1)} KB`
-  return `${(kb / 1024).toFixed(1)} MB`
-}
-
-function getPublishDetails(log: LogMessage): { protocol?: string; bytes?: number; topic?: string; routes?: { destination: string; topic: string }[] } | null {
-  const ctx = log.context
-  if (!ctx || !ctx.protocol) return null
-  const routes = Array.isArray(ctx.externalRoutes)
-    ? (ctx.externalRoutes as { destination: string; destinationTopic: string }[]).map(r => ({ destination: r.destination, topic: r.destinationTopic }))
-    : []
-  return {
-    protocol: ctx.protocol as string,
-    bytes: typeof ctx.batchBytes === 'number' ? ctx.batchBytes : undefined,
-    topic: typeof ctx.endpointTopic === 'string' ? ctx.endpointTopic : undefined,
-    routes,
-  }
-}
-
 function clearFilters() {
   filterLevel.value = undefined
   filterSource.value = undefined
@@ -218,16 +197,6 @@ onUnmounted(() => { if (refreshTimer) clearInterval(refreshTimer) })
           <span :style="{ color: LEVEL_TEXT_COLOR[log.level] || '#e6edf3', wordBreak: 'break-all' }">
             {{ log.message }}
           </span>
-          <div v-if="getPublishDetails(log)" style="color: #6e7681; font-size: 11px; margin-top: 1px">
-            <a-tag color="blue" style="margin: 0 4px 0 0; font-size: 10px; line-height: 16px; padding: 0 4px">{{ getPublishDetails(log)!.protocol }}</a-tag>
-            <span v-if="getPublishDetails(log)!.bytes" style="margin-right: 6px">{{ fmtBytes(getPublishDetails(log)!.bytes!) }}</span>
-            <span v-if="getPublishDetails(log)!.topic" style="color: #484f58">{{ getPublishDetails(log)!.topic }}</span>
-            <template v-if="getPublishDetails(log)!.routes?.length">
-              <span v-for="(r, i) in getPublishDetails(log)!.routes" :key="i" style="margin-left: 6px; color: #484f58">
-                → {{ r.destination }}: <span style="color: #6e7681">{{ r.topic }}</span>
-              </span>
-            </template>
-          </div>
         </div>
       </div>
     </div>
