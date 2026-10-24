@@ -1660,11 +1660,7 @@ export class PublishManager extends EventEmitter {
 			}
 		}
 
-		return {
-			protocol: this.protocol,
-			endpointTopic: topic,
-			...(destinations.length > 0 ? { destinations } : {}),
-		};
+		return destinations.length > 0 ? { destinations } : undefined;
 	}
 
 	private async publishOffline(
