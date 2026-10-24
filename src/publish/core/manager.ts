@@ -1652,24 +1652,18 @@ export class PublishManager extends EventEmitter {
 			return undefined;
 		}
 
-		// Only include external (non-iotistica) routes — the internal endpointTopic is already shown separately.
-		const externalRoutes: Array<{ destination: string; destinationTopic: string; payloadFormat: string; subscriptionId: number | undefined }> = [];
+		const destinations: string[] = [];
 		for (const binding of this.bindings) {
-			if ((binding.publisher.id ?? -1) === -1) continue; // skip default iotistica binding
-			const destinationTopic = this.resolveDestinationTopic(binding, topic ?? '');
-			if (!destinationTopic) continue;
-			externalRoutes.push({
-				destination: binding.publisher.name,
-				destinationTopic,
-				payloadFormat: this.resolvePayloadFormatForBinding(binding),
-				subscriptionId: binding.subscription.id,
-			});
+			if ((binding.publisher.id ?? -1) === -1) continue;
+			if (binding.publisher.name && !destinations.includes(binding.publisher.name)) {
+				destinations.push(binding.publisher.name);
+			}
 		}
 
 		return {
 			protocol: this.protocol,
 			endpointTopic: topic,
-			...(externalRoutes.length > 0 ? { externalRoutes } : {}),
+			...(destinations.length > 0 ? { destinations } : {}),
 		};
 	}
 
