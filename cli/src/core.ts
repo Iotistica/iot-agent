@@ -66,6 +66,16 @@ export async function apiCached(endpoint: string): Promise<any> {
   return apiCache.get(endpoint)!;
 }
 
+export async function apiCachedApps(): Promise<Record<string, any>> {
+  const response = await apiCached(`${DEVICE_API_V1}/apps`);
+  const list: any[] = Array.isArray(response?.apps) ? response.apps : [];
+  const apps: Record<string, any> = {};
+  for (const app of list) {
+    apps[String(app.appId)] = app;
+  }
+  return apps;
+}
+
 export function clearApiCache(): void {
   apiCache.clear();
 }

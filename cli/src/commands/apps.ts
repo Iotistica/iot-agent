@@ -1,4 +1,4 @@
-import { DEVICE_API_V1, CLIError, logger, apiCached, apiRequest, clearApiCache, requireConfirmation } from '../core';
+import { DEVICE_API_V1, CLIError, logger, apiCached, apiCachedApps, apiRequest, clearApiCache, requireConfirmation } from '../core';
 
 /**
  * iotctl apps list
@@ -6,8 +6,7 @@ import { DEVICE_API_V1, CLIError, logger, apiCached, apiRequest, clearApiCache, 
 export async function appsList(): Promise<void> {
   clearApiCache();
   try {
-    const deviceState = await apiCached(`${DEVICE_API_V1}/device`);
-    const apps = deviceState.apps || {};
+    const apps = await apiCachedApps();
 
     if (Object.keys(apps).length === 0) {
       logger.info('No applications configured');

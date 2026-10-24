@@ -11,6 +11,7 @@ import {
   apiCached,
   apiProbe,
   apiRequest,
+  apiCachedApps,
   clearApiCache,
   redact,
   sleep,
@@ -167,14 +168,14 @@ export async function showStatusEnhanced(): Promise<void> {
       hasDocker: ENV.hasDocker,
     });
 
-    const apps = deviceState.apps || {};
+    const apps = await apiCachedApps().catch(() => ({}));
     const appCount = Object.keys(apps).length;
 
     let runningCount = 0;
     for (const appId in apps) {
       const app = apps[appId];
       if (app.services) {
-        runningCount += app.services.filter((s: any) => s.status === 'Running').length;
+        runningCount += app.services.filter((s: any) => s.status === 'Running' || s.serviceStatus === 'running').length;
       }
     }
 

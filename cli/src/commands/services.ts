@@ -1,5 +1,5 @@
 import { spawn } from 'child_process';
-import { DEVICE_API_V1, CLIError, ENV, logger, apiCached, apiRequest, clearApiCache } from '../core';
+import { DEVICE_API_V1, CLIError, ENV, logger, apiCached, apiCachedApps, apiRequest, clearApiCache } from '../core';
 
 /**
  * iotctl services list [<appId>]
@@ -7,8 +7,7 @@ import { DEVICE_API_V1, CLIError, ENV, logger, apiCached, apiRequest, clearApiCa
 export async function servicesList(appId?: string): Promise<void> {
   clearApiCache();
   try {
-    const deviceState = await apiCached(`${DEVICE_API_V1}/device`);
-    const apps = deviceState.apps || {};
+    const apps = await apiCachedApps();
 
     let totalServices = 0;
 
@@ -155,8 +154,7 @@ export async function servicesLogs(serviceId: string, follow: boolean = false): 
   }
 
   try {
-    const deviceState = await apiCached(`${DEVICE_API_V1}/device`);
-    const apps = deviceState.apps || {};
+    const apps = await apiCachedApps();
 
     let containerId: string | undefined;
     for (const appId in apps) {
@@ -223,8 +221,7 @@ export async function servicesInfo(serviceId: string): Promise<void> {
   }
 
   try {
-    const deviceState = await apiCached(`${DEVICE_API_V1}/device`);
-    const apps = deviceState.apps || {};
+    const apps = await apiCachedApps();
 
     for (const appId in apps) {
       const app = apps[appId];
