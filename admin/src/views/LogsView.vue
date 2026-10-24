@@ -40,9 +40,13 @@ function fmtDate(ms: number): string {
   return new Date(ms).toLocaleDateString()
 }
 
+function fmtSource(name: string): string {
+  return name.replace(/\]\s*\[/g, ' / ')
+}
+
 const componentOptions = computed(() => {
   const names = [...new Set(logs.value.map((l) => l.source.name))].sort()
-  return names.map((n) => ({ value: n, label: n }))
+  return names.map((n) => ({ value: n, label: fmtSource(n) }))
 })
 
 const filtered = computed(() => {
@@ -205,7 +209,7 @@ onUnmounted(() => { if (refreshTimer) clearInterval(refreshTimer) })
 
         <!-- Source -->
         <span style="color: #6e7681; white-space: nowrap; flex-shrink: 0; min-width: 120px">
-          {{ log.source.name }}
+          {{ fmtSource(log.source.name) }}
           <span v-if="log.serviceName" style="color: #484f58"> · {{ log.serviceName }}</span>
         </span>
 
