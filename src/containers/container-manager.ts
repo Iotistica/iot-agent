@@ -573,7 +573,7 @@ export class ContainerManager extends EventEmitter {
 	/**
 	* Sync current state from real Docker containers
 	*/
-	private async syncCurrentStateFromDocker(): Promise<void> {
+	private async syncCurrentStateFromDocker(saveState = true): Promise<void> {
 		try {
 			this.currentState = await syncStateFromDocker({
 				dockerManager: this.dockerManager,
@@ -581,7 +581,7 @@ export class ContainerManager extends EventEmitter {
 			});
 
 			// Save the synced current state to database
-			await this.saveCurrentStateToDB();
+			if (saveState) await this.saveCurrentStateToDB();
 		} catch (error) {
 			this.logger?.errorSync(
 				'Failed to sync state from Docker',
@@ -619,6 +619,10 @@ export class ContainerManager extends EventEmitter {
 		this.isApplyingState = true;
 
 		try {
+			if (this.useRealDocker) {
+				await this.syncCurrentStateFromDocker(saveState);
+			}
+
 			// Step 1: Calculate what needs to change
 			const steps = this.calculateSteps();
 
@@ -1317,5 +1321,4 @@ export class ContainerManager extends EventEmitter {
 // ============================================================================
 
 export default ContainerManager;
-
 
