@@ -16,6 +16,7 @@ exports.getDbSizeMb = getDbSizeMb;
 const fs_1 = require("fs");
 const child_process_1 = require("child_process");
 const path_1 = require("path");
+const readline_1 = require("readline");
 exports.CONFIG_DIR = process.env.CONFIG_DIR || process.env.DATA_DIR || ((0, fs_1.existsSync)('/var/lib/iotistic/agent') ? '/var/lib/iotistic/agent' : '/app/data');
 exports.DB_PATH = process.env.DATABASE_PATH || (0, path_1.join)(exports.CONFIG_DIR, 'agent.sqlite');
 const DEVICE_API_PORT = process.env.DEVICE_API_PORT || '48484';
@@ -75,11 +76,62 @@ function getAdminCredentials() {
     const password = process.env.IOTCTL_PASSWORD;
     return username && password ? { username, password } : undefined;
 }
-async function login() {
-    const credentials = getAdminCredentials();
-    if (!credentials) {
+async function promptForAdminCredentials() {
+    if (!process.stdin.isTTY || !process.stdout.isTTY) {
         throw new Error('Set IOTCTL_USERNAME and IOTCTL_PASSWORD to authenticate with the Device API');
     }
+    const readline = (0, readline_1.createInterface)({ input: process.stdin, output: process.stdout });
+    let username;
+    try {
+        username = (await new Promise((resolve) => {
+            readline.question('Device API username: ', resolve);
+        })).trim();
+    }
+    finally {
+        readline.close();
+    }
+    const input = process.stdin;
+    input.setRawMode(true);
+    input.setEncoding('utf8');
+    const password = await new Promise((resolve, reject) => {
+        let value = '';
+        const cleanup = () => {
+            input.setRawMode(false);
+            input.pause();
+            input.removeListener('data', onData);
+            process.stdout.write('\n');
+        };
+        const onData = (keys) => {
+            for (const key of keys) {
+                if (key === '\u0003' || key === '\u0004') {
+                    cleanup();
+                    reject(new Error('Authentication cancelled'));
+                    return;
+                }
+                if (key === '\r' || key === '\n') {
+                    cleanup();
+                    resolve(value);
+                    return;
+                }
+                if (key === '\u007f' || key === '\b') {
+                    value = value.slice(0, -1);
+                }
+                else {
+                    value += key;
+                }
+            }
+        };
+        input.on('data', onData);
+        input.resume();
+        process.stdout.write('Device API password: ');
+    });
+    if (!username || !password) {
+        throw new Error('A username and password are required to authenticate with the Device API');
+    }
+    return { username, password };
+}
+async function login() {
+    const credentials = getAdminCredentials() ?? await promptForAdminCredentials();
     const response = await fetch(`${exports.DEVICE_API_V1}/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -98,8 +150,6 @@ async function login() {
 async function getAdminSessionCookie() {
     if (adminSessionCookie)
         return adminSessionCookie;
-    if (!getAdminCredentials())
-        return undefined;
     const request = adminSessionRequest ??= login();
     try {
         adminSessionCookie = await request;
@@ -136,7 +186,6 @@ async function fetchApiResponse(endpoint, options) {
     const cookie = adminSessionCookie;
     const response = await request(cookie);
     if (response.status !== 401 ||
-        !getAdminCredentials() ||
         !isNotAuthenticated(response.status, await response.clone().text())) {
         return response;
     }
