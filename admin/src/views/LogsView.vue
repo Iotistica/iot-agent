@@ -72,7 +72,7 @@ async function load() {
       source: filterSource.value,
       limit: limitOption.value,
     })
-    logs.value = res.logs.slice().reverse()
+    logs.value = res.logs.filter((log) => log.source.type !== 'container').reverse()
     total.value = res.total
   } catch {
     // non-fatal
@@ -97,7 +97,7 @@ onUnmounted(() => { if (refreshTimer) clearInterval(refreshTimer) })
 <template>
   <AppLayout title="Logs">
     <div class="heading">
-      <p>Live log stream from agent services and containers.</p>
+      <p>Live log stream from agent services.</p>
       <div class="header-actions">
         <a-button :icon="h(ReloadOutlined)" :loading="loading" @click="load">Refresh</a-button>
         <a-switch :checked="autoRefresh" checked-children="Auto" un-checked-children="Auto" @change="toggleAutoRefresh" />
@@ -114,7 +114,6 @@ onUnmounted(() => { if (refreshTimer) clearInterval(refreshTimer) })
       </a-select>
       <a-select v-model:value="filterSource" placeholder="All sources" allow-clear class="filter" @change="load">
         <a-select-option value="system">System</a-select-option>
-        <a-select-option value="container">Container</a-select-option>
         <a-select-option value="manager">Manager</a-select-option>
       </a-select>
       <a-select v-model:value="filterComponent" :options="componentOptions" placeholder="All components" allow-clear class="filter" />
@@ -203,4 +202,3 @@ onUnmounted(() => { if (refreshTimer) clearInterval(refreshTimer) })
 .filter-small { width: 120px; max-width: 100%; }
 .toolbar-info { color: var(--text-tertiary); font-size: 12px; margin-bottom: 10px; }
 </style>
-
