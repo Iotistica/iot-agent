@@ -81,6 +81,7 @@ export function attachShellHandler(server: Server, logger?: AgentLogger): void {
 	wss.on('connection', (ws: WebSocket, req: IncomingMessage) => {
 		const shell = resolveShell();
 		const ip = (req.socket as any).remoteAddress ?? 'unknown';
+		const sessionToken = parseCookie(req.headers.cookie, SESSION_COOKIE);
 
 		logger?.infoSync('Shell session opened', {
 			component: LogComponents.agent,
@@ -110,6 +111,7 @@ export function attachShellHandler(server: Server, logger?: AgentLogger): void {
 					...(process.env.DEVICE_API_PORT ? { DEVICE_API_PORT: process.env.DEVICE_API_PORT } : {}),
 					...(process.env.DEVICE_API_URL ? { DEVICE_API_URL: process.env.DEVICE_API_URL } : {}),
 					...(process.env.CONFIG_DIR ? { CONFIG_DIR: process.env.CONFIG_DIR } : {}),
+					...(sessionToken ? { IOTCTL_SESSION: sessionToken } : {}),
 				},
 			});
 		} catch (err) {
