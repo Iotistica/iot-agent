@@ -1,5 +1,11 @@
 import { client } from './client'
 
+export interface JSONSchema {
+  type: string
+  properties?: Record<string, JSONSchema>
+  items?: JSONSchema
+}
+
 export interface TopicNode {
   name: string
   fullTopic: string
@@ -11,6 +17,7 @@ export interface TopicNode {
   truncated: boolean
   retain: boolean
   qos: number
+  schema?: JSONSchema
   children: Record<string, TopicNode>
 }
 

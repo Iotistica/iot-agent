@@ -1,13 +1,26 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { message, Modal } from 'ant-design-vue'
-import { PlusOutlined, DeleteOutlined, KeyOutlined, StopOutlined, CheckCircleOutlined } from '@ant-design/icons-vue'
+import { PlusOutlined, DeleteOutlined, KeyOutlined, StopOutlined, CheckCircleOutlined, WifiOutlined, CrownOutlined } from '@ant-design/icons-vue'
 import type { TableColumnType } from 'ant-design-vue'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import { usersApi, sessionsApi, type User, type Session } from '@/api/users'
+import { client as apiClient } from '@/api/client'
 import type { UserRole } from '@/api/auth'
 
 // ── Users ─────────────────────────────────────────────────────────────────────
+
+const route = useRoute()
+const router = useRouter()
+
+const VALID_TABS = ['users', 'sessions', 'mqtt'] as const
+const initTab = VALID_TABS.includes(route.query.tab as any) ? route.query.tab as string : 'users'
+const activeTab = ref(initTab)
+
+watch(activeTab, (tab) => {
+  router.replace({ query: tab === 'users' ? {} : { tab } })
+})
 
 const rows = ref<User[]>([])
 const loading = ref(false)
@@ -210,29 +223,151 @@ function confirmRevoke(row: Session) {
   })
 }
 
-function onTabChange(key: string) {
-  if (key === 'sessions') loadSessions()
+// ── MQTT Users ───────────────────────────────────────────────────────────────
+
+interface MqttUser {
+  username: string
+  topic: string
+  access: 'read' | 'write' | 'readwrite'
+  superuser: boolean
+  endpointUuid: string | null
+  endpointName: string | null
 }
 
-onMounted(loadUsers)
+const mqttRows = ref<MqttUser[]>([])
+const mqttLoading = ref(false)
+const mqttSelectedUsernames = ref<string[]>([])
+const mqttDeleting = ref(false)
+
+const mqttRowSelection = computed(() => ({
+  selectedRowKeys: mqttSelectedUsernames.value,
+  onChange: (keys: (string | number)[]) => { mqttSelectedUsernames.value = keys as string[] },
+  getCheckboxProps: (record: MqttUser) => ({ disabled: record.superuser }),
+}))
+
+const mqttCreateOpen = ref(false)
+const mqttCreateForm = ref({ username: '', password: '', topic: '' })
+const mqttCreating = ref(false)
+
+const mqttColumns: TableColumnType<MqttUser>[] = [
+  { title: 'Username', dataIndex: 'username', key: 'username' },
+  { title: 'Topic Pattern', dataIndex: 'topic', key: 'topic' },
+  { title: 'Access', dataIndex: 'access', key: 'access', width: 110 },
+  { title: 'Role', key: 'role', width: 100 },
+  { title: 'Actions', key: 'actions', width: 90, fixed: 'right' },
+]
+
+async function loadMqttUsers() {
+  mqttLoading.value = true
+  try {
+    const { data } = await apiClient.get('/v1/mqtt/users')
+    mqttRows.value = data.users
+  } finally {
+    mqttLoading.value = false
+  }
+}
+
+function openMqttCreate() {
+  mqttCreateForm.value = { username: '', password: '', topic: '' }
+  mqttCreateOpen.value = true
+}
+
+async function submitMqttCreate() {
+  if (!mqttCreateForm.value.username.trim() || !mqttCreateForm.value.password.trim()) return
+  mqttCreating.value = true
+  try {
+    await apiClient.post('/v1/mqtt/users', {
+      username: mqttCreateForm.value.username.trim(),
+      password: mqttCreateForm.value.password.trim(),
+      ...(mqttCreateForm.value.topic.trim() ? { topic: mqttCreateForm.value.topic.trim() } : {}),
+    })
+    message.success('MQTT user created')
+    mqttCreateOpen.value = false
+    await loadMqttUsers()
+  } catch (e: any) {
+    message.error(e?.response?.data?.error ?? 'Failed to create user')
+  } finally {
+    mqttCreating.value = false
+  }
+}
+
+function confirmMqttDelete(row: MqttUser) {
+  Modal.confirm({
+    title: `Delete "${row.username}"?`,
+    content: 'This will remove the user from the MQTT broker. Connected clients using these credentials will be disconnected.',
+    okText: 'Delete',
+    okType: 'danger',
+    onOk: () => deleteMqttUser(row),
+  })
+}
+
+async function deleteMqttUser(row: MqttUser) {
+  try {
+    await apiClient.delete(`/v1/mqtt/users/${encodeURIComponent(row.username)}`)
+    message.success(`User "${row.username}" removed`)
+    await loadMqttUsers()
+  } catch (e: any) {
+    message.error(e?.response?.data?.error ?? 'Failed to delete user')
+  }
+}
+
+function confirmDeleteSelectedMqttUsers() {
+  const count = mqttSelectedUsernames.value.length
+  Modal.confirm({
+    title: `Delete ${count} MQTT user${count !== 1 ? 's' : ''}?`,
+    content: 'Connected clients using these credentials will be disconnected.',
+    okType: 'danger',
+    okText: `Delete ${count}`,
+    async onOk() {
+      mqttDeleting.value = true
+      try {
+        await Promise.allSettled(
+          mqttSelectedUsernames.value.map((u) => apiClient.delete(`/v1/mqtt/users/${encodeURIComponent(u)}`))
+        )
+        mqttSelectedUsernames.value = []
+        message.success(`Deleted ${count} MQTT user${count !== 1 ? 's' : ''}`)
+        await loadMqttUsers()
+      } finally {
+        mqttDeleting.value = false
+      }
+    },
+  })
+}
+
+function onTabChange(key: string) {
+  if (key === 'sessions') loadSessions()
+  if (key === 'mqtt') loadMqttUsers()
+}
+
+onMounted(() => {
+  loadUsers()
+  if (activeTab.value === 'sessions') loadSessions()
+  if (activeTab.value === 'mqtt') loadMqttUsers()
+})
 </script>
 
 <template>
   <AppLayout title="Users">
     <div class="heading">
-      <p>Manage admin panel accounts and active sessions.</p>
+      <p>Manage admin panel accounts, sessions, and MQTT broker credentials.</p>
       <div class="header-actions">
-        <template v-if="selectedUsernames.length > 0">
+        <template v-if="activeTab === 'users' && selectedUsernames.length > 0">
           <span style="font-size: 13px; color: var(--text-secondary)">{{ selectedUsernames.length }} selected</span>
           <a-button :loading="bulkActivating" @click="bulkActivate"><template #icon><CheckCircleOutlined /></template>Activate</a-button>
           <a-button :loading="bulkDeactivating" @click="bulkDeactivate"><template #icon><StopOutlined /></template>Deactivate</a-button>
           <a-button danger :loading="deletingUsers" @click="confirmDeleteSelectedUsers"><template #icon><DeleteOutlined /></template>Delete</a-button>
         </template>
-        <a-button type="primary" @click="openCreate"><template #icon><PlusOutlined /></template>New User</a-button>
+        <a-button v-if="activeTab === 'users'" type="primary" @click="openCreate"><template #icon><PlusOutlined /></template>New User</a-button>
+
+        <template v-if="activeTab === 'mqtt' && mqttSelectedUsernames.length > 0">
+          <span style="font-size: 13px; color: var(--text-secondary)">{{ mqttSelectedUsernames.length }} selected</span>
+          <a-button danger :loading="mqttDeleting" @click="confirmDeleteSelectedMqttUsers"><template #icon><DeleteOutlined /></template>Delete</a-button>
+        </template>
+        <a-button v-if="activeTab === 'mqtt'" type="primary" @click="openMqttCreate"><template #icon><PlusOutlined /></template>Add MQTT User</a-button>
       </div>
     </div>
 
-    <a-tabs default-active-key="users" @change="onTabChange">
+    <a-tabs v-model:activeKey="activeTab" @change="onTabChange">
 
       <!-- ── Users tab ──────────────────────────────────────────────────────── -->
       <a-tab-pane key="users" tab="Users">
@@ -324,6 +459,51 @@ onMounted(loadUsers)
         </a-card>
       </a-tab-pane>
 
+      <!-- ── MQTT Users tab ────────────────────────────────────────────────── -->
+      <a-tab-pane key="mqtt" tab="MQTT Users">
+        <a-card size="small" class="list-card">
+        <a-table
+          :dataSource="mqttRows"
+          :columns="mqttColumns"
+          :loading="mqttLoading"
+          :pagination="{ pageSize: 20, showSizeChanger: true, pageSizeOptions: ['10', '20', '50'] }"
+          :row-selection="mqttRowSelection"
+          rowKey="username"
+          size="small"
+        >
+          <template #bodyCell="{ column, record }">
+            <template v-if="column.key === 'topic'">
+              <code style="font-size: 12px; background: rgba(255,255,255,0.06); padding: 2px 6px; border-radius: 4px;">{{ record.topic }}</code>
+            </template>
+
+            <template v-else-if="column.key === 'access'">
+              <a-tag :color="record.access === 'readwrite' ? 'blue' : record.access === 'write' ? 'green' : 'default'">
+                {{ record.access }}
+              </a-tag>
+            </template>
+
+            <template v-else-if="column.key === 'role'">
+              <span v-if="record.superuser" style="color: #faad14; display: flex; align-items: center; gap: 4px;">
+                <CrownOutlined /> Admin
+              </span>
+              <span v-else style="color: var(--text-tertiary);">Client</span>
+            </template>
+
+            <template v-else-if="column.key === 'actions'">
+              <a-tooltip v-if="record.superuser" title="Bootstrap admin cannot be deleted">
+                <a-button size="small" danger disabled>
+                  <template #icon><DeleteOutlined /></template>
+                </a-button>
+              </a-tooltip>
+              <a-button v-else size="small" danger @click="confirmMqttDelete(record)">
+                <template #icon><DeleteOutlined /></template>
+              </a-button>
+            </template>
+          </template>
+        </a-table>
+        </a-card>
+      </a-tab-pane>
+
     </a-tabs>
 
     <!-- Create user drawer -->
@@ -376,6 +556,54 @@ onMounted(loadUsers)
         </a-form-item>
       </a-form>
     </a-modal>
+
+    <!-- Add MQTT User Drawer -->
+    <a-drawer
+      v-model:open="mqttCreateOpen"
+      title="Add MQTT User"
+      placement="right"
+      :width="400"
+    >
+      <a-form layout="vertical">
+        <a-form-item label="Username" required>
+          <a-input
+            v-model:value="mqttCreateForm.username"
+            placeholder="e.g. my-device"
+            autocomplete="off"
+          />
+        </a-form-item>
+
+        <a-form-item label="Password" required>
+          <a-input-password
+            v-model:value="mqttCreateForm.password"
+            placeholder="Strong password"
+            autocomplete="new-password"
+          />
+        </a-form-item>
+
+        <a-form-item label="Topic Pattern" extra="Leave blank to allow publish to all topics under i/#">
+          <a-input
+            v-model:value="mqttCreateForm.topic"
+            placeholder="i/tenant/a/agent/d/device (optional)"
+          />
+        </a-form-item>
+      </a-form>
+
+      <template #footer>
+        <a-space style="justify-content: flex-end; width: 100%">
+          <a-button @click="mqttCreateOpen = false">Cancel</a-button>
+          <a-button
+            type="primary"
+            :loading="mqttCreating"
+            :disabled="!mqttCreateForm.username.trim() || !mqttCreateForm.password.trim()"
+            @click="submitMqttCreate"
+          >
+            <template #icon><WifiOutlined /></template>
+            Create User
+          </a-button>
+        </a-space>
+      </template>
+    </a-drawer>
   </AppLayout>
 </template>
 

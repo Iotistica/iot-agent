@@ -137,7 +137,7 @@ export class ExternalMqttClient extends BaseMqttClient {
 	}
 
 	protected get providerName(): string {
-		return this.destinationName ? `Destination '${this.destinationName}'` : 'MQTT destination';
+		return this.destinationName || 'external mqtt';
 	}
 
 	protected getLogContext(): Record<string, unknown> {

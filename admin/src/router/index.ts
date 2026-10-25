@@ -88,8 +88,7 @@ const router = createRouter({
     },
     {
       path: '/admin/mqtt-users',
-      component: () => import('@/views/MqttUsersView.vue'),
-      meta: { title: 'MQTT Users', minRole: 'admin' },
+      redirect: '/admin/users?tab=mqtt',
     },
     {
       path: '/admin/backups',

@@ -1,18 +1,20 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { CopyOutlined, CheckOutlined } from '@ant-design/icons-vue'
-import { mqttApi, type TopicNode, type HistoryEntry, type CompressionSnapshot } from '@/api/mqtt'
+import { mqttApi, type TopicNode, type HistoryEntry, type CompressionSnapshot, type JSONSchema } from '@/api/mqtt'
 import { parsePointsPayload } from '@/utils/mqtt-points'
 import { estimateDeflateRatio, type CompressionEstimate } from '@/utils/compression-estimate'
+import { generateSchema } from '@/utils/schema'
 import PointsTable from './PointsTable.vue'
 import MessageHistory from './MessageHistory.vue'
+import SchemaViewer from './SchemaViewer.vue'
 
 const props = defineProps<{
   node: TopicNode | null
 }>()
 
 const copied = ref(false)
-const activeTab = ref<'points' | 'raw' | 'history'>('raw')
+const activeTab = ref<'points' | 'raw' | 'history' | 'schema'>('raw')
 // null = viewing the live message; set = viewing a specific historical snapshot
 // selected from the History tab. Both Points and Raw JSON read whichever is
 // current via the effective* computeds below — History is the selector for
@@ -53,6 +55,14 @@ const compressionApplied = computed(() =>
 const effectiveText = computed(() => historyOverride.value?.text ?? props.node?.lastMessage ?? '')
 const effectiveType = computed(() => historyOverride.value?.messageType ?? props.node?.messageType)
 const effectiveTruncated = computed(() => historyOverride.value?.truncated ?? props.node?.truncated ?? false)
+
+const effectiveSchema = computed<JSONSchema | null>(() => {
+  if (historyOverride.value) {
+    if (historyOverride.value.messageType !== 'json' || !historyOverride.value.text) return null
+    try { return generateSchema(JSON.parse(historyOverride.value.text)) } catch { return null }
+  }
+  return props.node?.schema ?? null
+})
 
 // When a JSON payload has no real compression applied yet, estimate what
 // enabling 'json+deflate' on the subscription would save — computed
@@ -249,6 +259,10 @@ watch(() => props.node?.fullTopic, (topic) => {
 
       <a-tab-pane key="history" tab="History">
         <MessageHistory :topic="node.fullTopic" @select-entry="onSelectHistoryId" />
+      </a-tab-pane>
+
+      <a-tab-pane key="schema" tab="Schema">
+        <SchemaViewer :schema="effectiveSchema" />
       </a-tab-pane>
     </a-tabs>
   </div>

@@ -11,6 +11,7 @@ export interface Destination {
   use_for_commands: boolean
   last_error: string | null
   last_error_at: string | null
+  connected: boolean | null
   created_at: string
   updated_at: string
 }
@@ -44,7 +45,7 @@ export interface Subscription {
 }
 
 // Form shapes (omit server-generated fields)
-export type DestinationFormData = Omit<Destination, 'id' | 'last_error' | 'last_error_at' | 'created_at' | 'updated_at'>
+export type DestinationFormData = Omit<Destination, 'id' | 'last_error' | 'last_error_at' | 'connected' | 'created_at' | 'updated_at'>
 export type SubscriptionFormData = Omit<Subscription, 'id' | 'created_at' | 'updated_at'>
 
 // Mirrors agent/src/db/models/endpoints.model.ts

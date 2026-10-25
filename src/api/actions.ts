@@ -1586,7 +1586,12 @@ export const deleteDevice = async (uuid: string) => {
  * Publish control: list publishers
  */
 export const listPublishDestinations = async (includeDisabled: boolean = true) => {
-	return PublishDestinationsModel.getAll(includeDisabled);
+	const destinations = PublishDestinationsModel.getAll(includeDisabled);
+	const healthMap = devicePublish?.getDestinationHealthMap();
+	return destinations.map((d) => ({
+		...d,
+		connected: healthMap?.get(d.id!) ?? null,
+	}));
 };
 
 /**

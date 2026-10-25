@@ -1879,6 +1879,14 @@ export class PublishManager extends EventEmitter {
 		return Array.from(byDestination.values());
 	}
 
+	public getDestinationHealthMap(): Map<number, boolean> {
+		const map = new Map<number, boolean>();
+		for (const [destId, { plugin }] of this.pluginByDestinationId) {
+			map.set(destId, plugin.isConnected());
+		}
+		return map;
+	}
+
 	private resolveDestinationTopic(binding: HostBinding, sourceTopic: string): string | null {
 		if ((binding.publisher.id ?? -1) === -1) {
 			return sourceTopic;

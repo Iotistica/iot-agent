@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { h, ref, computed, onMounted, onUnmounted } from 'vue'
 import { message, Modal } from 'ant-design-vue'
-import { PlusOutlined, EditOutlined, DeleteOutlined, CheckCircleOutlined, StopOutlined } from '@ant-design/icons-vue'
+import { PlusOutlined, EditOutlined, DeleteOutlined, CheckCircleOutlined, StopOutlined, ReloadOutlined } from '@ant-design/icons-vue'
 import type { TableColumnType } from 'ant-design-vue'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import DestinationDrawer from '@/components/destinations/DestinationDrawer.vue'
@@ -42,6 +42,7 @@ function clearFilters() { search.value = ''; activeType.value = undefined }
 const columns: TableColumnType<Destination>[] = [
   { title: 'Name', dataIndex: 'name', key: 'name', ellipsis: true, sorter: (a, b) => a.name.localeCompare(b.name) },
   { title: 'Type', dataIndex: 'type', key: 'type', width: 110, sorter: (a, b) => a.type.localeCompare(b.type) },
+  { title: 'Status', key: 'status', width: 130, sorter: (a, b) => Number(a.connected ?? -1) - Number(b.connected ?? -1) },
   { title: 'Enabled', dataIndex: 'enabled', key: 'enabled', width: 90, sorter: (a, b) => Number(a.enabled) - Number(b.enabled) },
   { title: 'Last Error', dataIndex: 'last_error', key: 'last_error', ellipsis: true },
   { title: 'Actions', key: 'actions', width: 110, fixed: 'right' },
@@ -141,12 +142,17 @@ async function bulkDisable() {
   }
 }
 
+const POLL_MS = 10_000
+let pollTimer: ReturnType<typeof setInterval> | null = null
+
 onMounted(async () => {
   const [, settings] = await Promise.allSettled([load(), settingsApi.get()])
   if (settings.status === 'fulfilled') {
     provisioned.value = settings.value.agent?.provisioned ?? false
   }
+  pollTimer = setInterval(load, POLL_MS)
 })
+onUnmounted(() => { if (pollTimer) clearInterval(pollTimer) })
 </script>
 
 <template>
@@ -160,6 +166,7 @@ onMounted(async () => {
           <a-button :loading="bulkDisabling" @click="bulkDisable"><template #icon><StopOutlined /></template>Disable</a-button>
           <a-button danger :loading="deleting" @click="confirmDeleteSelected"><template #icon><DeleteOutlined /></template>Delete</a-button>
         </template>
+        <a-button :icon="h(ReloadOutlined)" :loading="loading" @click="load">Refresh</a-button>
         <a-button type="primary" @click="openCreate"><template #icon><PlusOutlined /></template>New Destination</a-button>
       </div>
     </div>
@@ -188,6 +195,21 @@ onMounted(async () => {
           <a-tooltip v-if="record.use_for_commands" title="This destination receives inbound device-write commands">
             <a-tag color="blue" style="font-size:10px;padding:0 4px;height:16px;line-height:16px;border-radius:3px">Commands</a-tag>
           </a-tooltip>
+        </template>
+
+        <template v-else-if="column.key === 'status'">
+          <template v-if="!record.enabled">
+            <span class="status-dot status-disabled" /><span class="status-label" style="color: var(--text-muted)">Disabled</span>
+          </template>
+          <template v-else-if="record.connected === true">
+            <span class="status-dot status-connected" /><span class="status-label" style="color: #52c41a">Connected</span>
+          </template>
+          <template v-else-if="record.connected === false">
+            <span class="status-dot status-offline" /><span class="status-label" style="color: #ff4d4f">Offline</span>
+          </template>
+          <template v-else>
+            <span class="status-dot status-unknown" /><span class="status-label" style="color: var(--text-muted)">—</span>
+          </template>
         </template>
 
         <template v-else-if="column.key === 'enabled'">
@@ -241,4 +263,25 @@ onMounted(async () => {
 .search { width: 300px; max-width: 100%; }
 .filter { width: 170px; max-width: 100%; }
 .toolbar-info { color: var(--text-tertiary); font-size: 12px; margin-bottom: 10px; }
+
+.status-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 6px;
+  vertical-align: middle;
+  flex-shrink: 0;
+}
+.status-connected { background: #52c41a; box-shadow: 0 0 0 0 rgba(82, 196, 26, 0.6); animation: pulse 2.5s ease-out infinite; }
+.status-offline { background: #ff4d4f; }
+.status-disabled { background: #555; }
+.status-unknown { background: #555; }
+.status-label { font-size: 12px; vertical-align: middle; }
+
+@keyframes pulse {
+  0%   { box-shadow: 0 0 0 0 rgba(82, 196, 26, 0.6); }
+  70%  { box-shadow: 0 0 0 6px rgba(82, 196, 26, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(82, 196, 26, 0); }
+}
 </style>

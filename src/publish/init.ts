@@ -532,6 +532,16 @@ export class DevicePublish extends EventEmitter {
 	 * clearing only the DB row without this lets a still-populated detector
 	 * silently re-persist its old state on its next observe() call.
 	 */
+	public getDestinationHealthMap(): Map<number, boolean> {
+		const merged = new Map<number, boolean>();
+		for (const device of this.devices) {
+			for (const [id, connected] of device.getDestinationHealthMap()) {
+				merged.set(id, connected);
+			}
+		}
+		return merged;
+	}
+
 	public clearSchemaDriftBaselines(): void {
 		for (const device of this.devices) {
 			device.clearSchemaDriftBaseline();

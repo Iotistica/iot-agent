@@ -18,7 +18,6 @@ import {
   QuestionCircleOutlined,
   CustomerServiceOutlined,
   WifiOutlined,
-  ApiOutlined,
   ClusterOutlined,
   DatabaseOutlined,
   CodeOutlined,
@@ -159,11 +158,6 @@ function onMenuClick({ key }: { key: string }) {
           <a-menu-item key="/admin/users">
             <template #icon><TeamOutlined /></template>
             Users
-          </a-menu-item>
-
-          <a-menu-item key="/admin/mqtt-users">
-            <template #icon><ApiOutlined /></template>
-            MQTT Users
           </a-menu-item>
 
           <a-menu-item key="/admin/backups">

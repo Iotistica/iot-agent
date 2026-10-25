@@ -210,12 +210,12 @@ export abstract class BaseMqttClient extends EventEmitter implements MqttConnect
 		client.options.clientId = newClientId;
 		this.rapidDropCount = 0;
 
-		this.logger?.warnSync(`${this.providerName} suspected clientId collision — rotating clientId`, {
+		this.logger?.warnSync('Destination clientId collision detected, rotating', {
 			component: LogComponents.agent,
+			destination: this.providerName,
 			...this.getLogContext(),
 			previousClientId: this.baseClientId,
 			newClientId,
-			note: 'Connection dropped almost immediately after connecting, repeatedly — likely another session (e.g. a stale agent instance) holding the same clientId. Rotating to break the loop.',
 		});
 	}
 

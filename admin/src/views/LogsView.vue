@@ -73,13 +73,29 @@ function fmtBytes(bytes: number): string {
   return `${(kb / 1024).toFixed(1)} MB`
 }
 
-function getPublishDetails(log: LogMessage): { protocol: string; bytes?: number; destinations?: string[] } | null {
+function getPublishDetails(log: LogMessage): {
+  protocol: string;
+  bytes?: number;
+  destinations?: string[];
+  buffered?: string[];
+  destination?: string;
+  saved?: string;
+  source?: string;
+} | null {
   const ctx = log.context
   if (!ctx || typeof ctx.protocol !== 'string') return null
+
+  const destinations = Array.isArray(ctx.destinations) ? ctx.destinations as string[] : undefined
+  const destination = !destinations && typeof ctx.destination === 'string' ? ctx.destination as string : undefined
+
   return {
     protocol: ctx.protocol as string,
     bytes: typeof ctx.batchBytes === 'number' ? ctx.batchBytes : undefined,
-    destinations: Array.isArray(ctx.destinations) ? ctx.destinations as string[] : undefined,
+    destinations,
+    destination,
+    buffered: Array.isArray(ctx.buffered) ? ctx.buffered as string[] : undefined,
+    saved: typeof ctx.saved === 'string' ? ctx.saved as string : undefined,
+    source: typeof ctx.source === 'string' ? ctx.source as string : undefined,
   }
 }
 
@@ -229,8 +245,12 @@ onUnmounted(() => { if (refreshTimer) clearInterval(refreshTimer) })
           </span>
           <div v-if="getPublishDetails(log)" style="color: #6e7681; font-size: 11px; margin-top: 1px">
             <a-tag color="blue" style="margin: 0 4px 0 0; font-size: 10px; line-height: 16px; padding: 0 4px">{{ getPublishDetails(log)!.protocol }}</a-tag>
+            <span v-if="getPublishDetails(log)!.source" style="margin-right: 6px; color: #8b949e">{{ getPublishDetails(log)!.source }}</span>
             <span v-if="getPublishDetails(log)!.bytes" style="margin-right: 6px">{{ fmtBytes(getPublishDetails(log)!.bytes!) }}</span>
+            <span v-if="getPublishDetails(log)!.saved" style="margin-right: 6px; color: #3fb950">({{ getPublishDetails(log)!.saved }} saved)</span>
             <span v-if="getPublishDetails(log)!.destinations?.length" style="color: #484f58">→ {{ getPublishDetails(log)!.destinations!.join(', ') }}</span>
+            <span v-else-if="getPublishDetails(log)!.destination" style="color: #484f58">→ {{ getPublishDetails(log)!.destination }}</span>
+            <span v-if="getPublishDetails(log)!.buffered?.length" style="color: #d29922; margin-left: 6px">buffered: {{ getPublishDetails(log)!.buffered!.join(', ') }}</span>
           </div>
         </div>
       </div>
