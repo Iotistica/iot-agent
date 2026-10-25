@@ -1631,7 +1631,7 @@ export class PublishManager extends EventEmitter {
 		}
 	}
 
-	private getPublishDestinationLogContext(topic?: string): Record<string, unknown> | undefined {
+	private getPublishDestinationLogContext(_topic?: string): Record<string, unknown> | undefined {
 		if (this.bindings.length === 0) {
 			return undefined;
 		}
@@ -1759,7 +1759,7 @@ export class PublishManager extends EventEmitter {
 						downtimeSeconds: Math.round(downtimeMs / 1000),
 					});
 					this.disconnectedSince.delete(plugin);
-					try { PublishDestinationsModel.update(destId, { last_error: null, last_error_at: null }); } catch {}
+					try { PublishDestinationsModel.update(destId, { last_error: null, last_error_at: null }); } catch { /* best-effort */ }
 				}
 				continue;
 			}
@@ -1771,7 +1771,7 @@ export class PublishManager extends EventEmitter {
 					destinationType: destType,
 					destinationId: destId,
 				});
-				try { PublishDestinationsModel.update(destId, { last_error: 'Connection lost', last_error_at: new Date() }); } catch {}
+				try { PublishDestinationsModel.update(destId, { last_error: 'Connection lost', last_error_at: new Date() }); } catch { /* best-effort */ }
 				continue;
 			}
 
@@ -1804,7 +1804,7 @@ export class PublishManager extends EventEmitter {
 					destinationId: destId,
 					error: errMsg,
 				});
-				try { PublishDestinationsModel.update(destId, { last_error: `Reconnect failed: ${errMsg}`, last_error_at: new Date() }); } catch {}
+				try { PublishDestinationsModel.update(destId, { last_error: `Reconnect failed: ${errMsg}`, last_error_at: new Date() }); } catch { /* best-effort */ }
 			}
 		}
 	}
