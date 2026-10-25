@@ -33,10 +33,12 @@ export class AnomalyFeed {
 
 		if (!hasService) {
 			this.logger?.debug(
-				"Endpoint batch skipped: anomaly service unavailable",
+				"Anomaly processing skipped",
 				{
-					deviceName,
-					messageCount: messages.length,
+					source: deviceName,
+					protocol: this.protocol,
+					messages: messages.length,
+					reason: "service unavailable",
 				},
 			);
 			return;
@@ -60,20 +62,22 @@ export class AnomalyFeed {
 		}
 
 		if (this.batchProcessedMetrics.size > 0) {
-			this.logger?.debug("Endpoint processing complete", {
-				deviceName,
-				messageCount: messages.length,
-				extractedMetricCount: this.batchProcessedMetrics.size,
+			this.logger?.debug("Anomaly processing complete", {
+				source: deviceName,
+				protocol: this.protocol,
+				messages: messages.length,
+				extractedMetrics: this.batchProcessedMetrics.size,
 				sampleMetrics: Array.from(this.batchProcessedMetrics).slice(0, 10),
 			});
 		}
 
-		this.logger?.debug("Endpoint batch evaluation summary", {
-			deviceName,
-			messageCount: messages.length,
-			candidateMetricCount: this.batchCandidateMetrics.size,
-			evaluatedMetricCount: this.batchProcessedMetrics.size,
-			skippedMetricCount: this.batchSkippedMetrics.size,
+		this.logger?.debug("Anomaly evaluation summary", {
+			source: deviceName,
+			protocol: this.protocol,
+			messages: messages.length,
+			candidateMetrics: this.batchCandidateMetrics.size,
+			evaluatedMetrics: this.batchProcessedMetrics.size,
+			skippedMetrics: this.batchSkippedMetrics.size,
 			sampleSkippedMetrics: Array.from(this.batchSkippedMetrics).slice(0, 10),
 			sampleSkippedLabels: Array.from(this.batchSkippedMetrics)
 				.slice(0, 10)
@@ -280,11 +284,11 @@ export class AnomalyFeed {
 
 		if (value === undefined) {
 			this.logger?.debug("Skipping non-numeric reading", {
-				endpoint: parentDeviceName,
+				source: parentDeviceName,
+				protocol: this.protocol,
 				deviceName: readingDeviceName,
-				fieldName,
+				field: fieldName,
 				rawType: typeof data.value,
-				rawValue: data.value,
 			});
 			return;
 		}
@@ -347,12 +351,12 @@ export class AnomalyFeed {
 			if (!fieldName) continue;
 
 			if (value === undefined) {
-				this.logger?.debug("Skipping non-numeric array reading", {
-					endpoint: parentDeviceName,
+				this.logger?.debug("Skipping non-numeric reading", {
+					source: parentDeviceName,
+					protocol: this.protocol,
 					deviceName: readingDeviceName,
-					fieldName,
+					field: fieldName,
 					rawType: typeof reading.value,
-					rawValue: reading.value,
 				});
 				continue;
 			}

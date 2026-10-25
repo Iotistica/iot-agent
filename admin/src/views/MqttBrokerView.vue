@@ -99,7 +99,7 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
 <template>
   <AppLayout title="MQTT">
     <div class="heading">
-      <p>Live topic tree, throughput metrics, and message inspection.</p>
+      <p>Local Mosquitto broker — live topic tree, throughput metrics, and message inspection.</p>
     </div>
 
     <!-- Connection banner -->

@@ -181,7 +181,7 @@ export class DevicePublish extends EventEmitter {
 			return;
 		}
 
-		this.logger.debug(`Starting Device Publish feature with ${deviceConfig.endpoints.length} devices`);
+		this.logger.debug('Starting publish feature', { sourceCount: deviceConfig.endpoints.length });
 	}
 
 	private async onStart(): Promise<void> {
@@ -298,7 +298,7 @@ export class DevicePublish extends EventEmitter {
 
 	private createDeviceManager(config: DeviceConfig, index: number, total: number): PublishManager {
 		config.name = config.name || `device-${index + 1}`;
-		this.logger.debug(`Creating device '${config.name}' (${index + 1}/${total})`);
+		this.logger.debug('Creating source', { source: config.name, index: index + 1, total });
 		const protocolName = config.protocol || config.name.split('-')[0];
 		if (!this.isValidProtocol(protocolName)) {
 			throw new Error(`Unknown protocol '${protocolName}' for endpoint '${config.name}'`);
@@ -391,28 +391,28 @@ export class DevicePublish extends EventEmitter {
 
 	private attachDeviceEventHandlers(device: PublishManager, deviceName: string): void {
 		device.on('connected', () => {
-			this.logger.debug(`Device '${deviceName}' connected`);
+			this.logger.debug('Source connected', { source: deviceName });
 		});
 
 		device.on('disconnected', () => {
-			this.logger.debug(`Device '${deviceName}' disconnected`);
+			this.logger.debug('Source disconnected', { source: deviceName });
 		});
 
 		device.on('error', (error: Error) => {
 			const isNotReady = (error as NodeJS.ErrnoException).code === 'ENOENT';
 			if (!isNotReady) {
-				this.logger.error(`Device '${deviceName}' error: ${error.message}`, error);
+				this.logger.error('Source error', error, { source: deviceName });
 			}
 		});
 	}
 
 	private async startDeviceManager(device: PublishManager, config: DeviceConfig): Promise<void> {
 		try {
-			this.logger.debug(`Starting Device '${config.name}'...`);
+			this.logger.debug('Starting source', { source: config.name });
 			await device.start();
-			this.logger.debug(`Device '${config.name}' started successfully`);
+			this.logger.debug('Source started', { source: config.name });
 		} catch (error) {
-			this.logger.error(`Failed to create/start Device '${config.name}' at ${config.addr}`, error);
+			this.logger.error('Source start failed', error, { source: config.name, address: config.addr });
 			throw error;
 		}
 	}
@@ -461,7 +461,7 @@ export class DevicePublish extends EventEmitter {
 				await device.start();
 			}
       
-			this.logger.debug(`Device '${deviceName}' enabled`);
+			this.logger.debug('Source enabled', { source: deviceName });
 		}
 	}
 
@@ -485,7 +485,7 @@ export class DevicePublish extends EventEmitter {
 				await device.stop();
 			}
       
-			this.logger.debug(`Device '${deviceName}' disabled`);
+			this.logger.debug('Source disabled', { source: deviceName });
 		}
 	}
 
@@ -513,7 +513,7 @@ export class DevicePublish extends EventEmitter {
 			device.updateInterval(intervalMs);
 		}
     
-		this.logger.debug(`Updated interval for '${deviceName}': ${intervalMs}ms`);
+		this.logger.debug('Source interval updated', { source: deviceName, intervalMs });
 	}
 
 	/**
@@ -599,6 +599,6 @@ export class DevicePublish extends EventEmitter {
 			throw new Error(`Device '${config.name}': Invalid 'eomDelimiter' regex: ${config.eomDelimiter}`);
 		}
 
-		this.logger.debug(`Validated configuration for Device '${config.name}'`);
+		this.logger.debug('Source config validated', { source: config.name });
 	}
 }

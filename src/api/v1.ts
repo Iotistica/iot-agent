@@ -3151,7 +3151,7 @@ router.post('/v1/mqtt/broker/test', requireRole('operator'), (req: Request, res:
 			clean: true,
 			reconnectPeriod: 0,
 			connectTimeout: 8000,
-			...(username ? { username, password: password ?? '' } : {}),
+			...(username ? { username, password: password || process.env.LOCAL_MQTT_PASS || process.env.MQTT_PASSWORD || '' } : {}),
 		});
 		const finish = (ok: boolean, error?: string) => {
 			if (settled) return;
@@ -3172,11 +3172,14 @@ router.patch('/v1/mqtt/broker/config', requireRole('admin'), async (req: Request
 		if (typeof url !== 'string' || !url.trim()) {
 			return res.status(400).json({ error: '"url" (string) is required' });
 		}
-		// If password is blank, keep whatever is already persisted
+		// If password is blank, keep whatever is already persisted or fall back to env vars
 		let resolvedPassword: string = password ?? '';
 		if (!resolvedPassword) {
 			const existing = await actions.getSettings();
-			resolvedPassword = existing.mqttMonitor?.password ?? '';
+			resolvedPassword = existing.mqttMonitor?.password
+				?? process.env.LOCAL_MQTT_PASS
+				?? process.env.MQTT_PASSWORD
+				?? '';
 		}
 		// Persist to settings
 		await actions.updateSettings({

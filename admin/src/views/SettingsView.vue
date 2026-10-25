@@ -1135,7 +1135,7 @@ async function saveAllAlertConfig() {
                   <a-form-item label="Password">
                     <a-input-password
                       v-model:value="mqttForm.password"
-                      placeholder="Leave blank to keep current"
+                      :placeholder="settings.mqttMonitor?.url ? 'Password is configured — leave blank to keep' : 'Enter password'"
                       autocomplete="new-password"
                     />
                   </a-form-item>

@@ -46,23 +46,18 @@ export class PublishStats {
 	): void {
 		if (!logger) return;
 
-		const size = PublishStats.formatBytes(batchBytes);
 		const destinations = Array.isArray(extraContext?.destinations) ? extraContext.destinations as string[] : [];
 		const buffered = Array.isArray(extraContext?.buffered) ? extraContext.buffered as string[] : [];
-		const baseline = info.isBaseline ? ' (baseline)' : '';
-		const saved = info.originalSize > info.compressedSize
-			? ` (${info.ratio.toFixed(0)}% saved)`
-			: '';
 
-		const parts: string[] = [];
-		if (destinations.length > 0) parts.push(`→ ${destinations.join(', ')}`);
-		if (buffered.length > 0) parts.push(`buffered: ${buffered.join(', ')}`);
-		const destPart = parts.length > 0 ? ` ${parts.join(' | ')}` : '';
-
-		logger.info(
-			`Published ${messageCount} messages | ${deviceName} ${size}${saved}${destPart}${baseline}`,
-			{ messages: messageCount, batchBytes },
-		);
+		logger.info('Published batch', {
+			source: deviceName,
+			messages: messageCount,
+			batchBytes,
+			...(destinations.length > 0 && { destinations }),
+			...(buffered.length > 0 && { buffered }),
+			...(info.originalSize > info.compressedSize && { saved: `${info.ratio.toFixed(0)}%` }),
+			...(info.isBaseline && { baseline: true }),
+		});
 	}
 
 	private static formatBytes(bytes: number): string {

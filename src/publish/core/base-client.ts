@@ -79,8 +79,9 @@ export abstract class BaseMqttClient extends EventEmitter implements MqttConnect
 				this.connectedAt = Date.now();
 
 				if (!wasConnected) {
-					this.logger?.infoSync(`${this.providerName} connected`, {
+					this.logger?.infoSync('Destination connected', {
 						component: LogComponents.agent,
+						destination: this.providerName,
 						...this.getLogContext(),
 					});
 					this.emit('connect');
@@ -101,8 +102,9 @@ export abstract class BaseMqttClient extends EventEmitter implements MqttConnect
 				const wasConnected = this.connected;
 				this.connected = false;
 				if (wasConnected) {
-					this.logger?.infoSync(`${this.providerName} disconnected`, {
+					this.logger?.infoSync('Destination disconnected', {
 						component: LogComponents.agent,
+						destination: this.providerName,
 						...this.getLogContext(),
 					});
 					this.trackRapidDrop(client);
@@ -119,8 +121,9 @@ export abstract class BaseMqttClient extends EventEmitter implements MqttConnect
 			};
 
 			const onReconnect = () => {
-				this.logger?.infoSync(`${this.providerName} reconnecting`, {
+				this.logger?.infoSync('Destination reconnecting', {
 					component: LogComponents.agent,
+					destination: this.providerName,
 					...this.getLogContext(),
 				});
 			};
@@ -147,10 +150,12 @@ export abstract class BaseMqttClient extends EventEmitter implements MqttConnect
 
 			client.on('error', (err) => {
 				if (!this.client) return;
-				this.logger?.debugSync(
-					`${this.providerName} connection error: ${err instanceof Error ? err.message : String(err)}`,
-					{ component: LogComponents.agent, ...this.getLogContext() },
-				);
+				this.logger?.debugSync('Destination connection error', {
+					component: LogComponents.agent,
+					destination: this.providerName,
+					error: err instanceof Error ? err.message : String(err),
+					...this.getLogContext(),
+				});
 				if (this.listenerCount('error') > 0) {
 					this.emit('error', err);
 				}

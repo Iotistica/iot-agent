@@ -301,7 +301,7 @@ export class PublishManager extends EventEmitter {
 		this.feed = new AnomalyFeed(() => this.anomalyService, deviceUuid, protocol, logger, () => this.maintenanceEnergyService);
 		this.enricher = new AnomalyEnricher(() => this.anomalyService, deviceUuid, protocol, logger);
 		this.initSchemaDrift().catch((error) => {
-			this.logger?.warn(`Schema drift init failed for endpoint '${this.endpointName}', continuing without it`, error);
+			this.logger?.warn('Schema drift init failed', error, { source: this.endpointName });
 		});
 
 		this.batcher.on('flush', () => { this.publishBatch(); });
@@ -321,7 +321,7 @@ export class PublishManager extends EventEmitter {
 			try {
 				this.schemaDriftDetector?.declareDeviceSchema(payload.deviceName, payload.fields);
 			} catch (err) {
-				this.logger?.warn(`Failed to declare device schema for endpoint '${this.endpointName}'`, err);
+				this.logger?.warn('Schema declaration failed', err, { source: this.endpointName });
 			}
 		});
 	}
@@ -453,19 +453,19 @@ export class PublishManager extends EventEmitter {
 	async start(): Promise<void> {
 		const name = this.config.name || 'unknown';
 		if (!this.config.enabled) {
-			this.logger?.info(`Endpoint '${name}' is disabled`);
+			this.logger?.info('Source disabled', { source: name });
 			return;
 		}
-		this.logger?.info(`Starting endpoint '${name}'`);
+		this.logger?.info('Starting source', { source: name });
 		this.needStop = false;
 
 		this.bindings = this.loadBindings();
 		if (this.bindings.length === 0) {
 			if (this.defaultClient.isConnected()) {
-				this.logger?.warn('No publisher bindings found; using default Iotistica');
+				this.logger?.warn('No publish bindings found, using default', { source: name });
 				this.bindings = this.createDefaultIotisticaBinding();
 			} else {
-				this.logger?.info('No publisher bindings found; waiting for bindings to be configured');
+				this.logger?.info('No publish bindings found, waiting for configuration', { source: name });
 			}
 		}
 
@@ -480,9 +480,9 @@ export class PublishManager extends EventEmitter {
 				continue; // Already started this plugin instance
 			}
 
-			this.logger?.info(`Starting publish plugin`, {
-				publisher: binding.publisher.name,
-				type: binding.publisher.type,
+			this.logger?.info('Starting publish plugin', {
+				destination: binding.publisher.name,
+				destinationType: binding.publisher.type,
 			});
 
 			try {
@@ -490,9 +490,9 @@ export class PublishManager extends EventEmitter {
 				startedPlugins.add(binding.plugin);
 			} catch (err) {
 				const error = err instanceof Error ? err : new Error(String(err));
-				this.logger?.error(`Failed to start publish plugin`, error, {
-					publisher: binding.publisher.name,
-					type: binding.publisher.type,
+				this.logger?.error('Publish plugin start failed', error, {
+					destination: binding.publisher.name,
+					destinationType: binding.publisher.type,
 				});
 				failures.push({ plugin: binding.plugin, error });
 				startedPlugins.add(binding.plugin); // Track as attempted
@@ -500,7 +500,8 @@ export class PublishManager extends EventEmitter {
 		}
 
 		if (failures.length > 0) {
-			this.logger?.warn(`${failures.length} publish plugin(s) failed to start — will retry when destinations reconnect`, {
+			this.logger?.warn('Publish plugins failed to start', {
+				failedCount: failures.length,
 				errors: failures.map((f) => f.error.message),
 			});
 		}
@@ -523,7 +524,7 @@ export class PublishManager extends EventEmitter {
 
 	async stop(): Promise<void> {
 		const name = this.config.name || 'unknown';
-		this.logger?.info(`Stopping endpoint '${name}'`);
+		this.logger?.info('Stopping source', { source: name });
 		this.needStop = true;
 
 		this.heartbeat?.stop();
@@ -679,7 +680,7 @@ export class PublishManager extends EventEmitter {
 			const raw = JSON.stringify(message) + this.config.eomDelimiter;
 			this.batcher.appendData(Buffer.from(raw, 'utf8'));
 		} catch (error) {
-			this.logger?.error(`Failed to inject simulation message for endpoint '${this.config.name || 'unknown'}'`, error);
+			this.logger?.error('Simulation message inject failed', error, { source: this.config.name || 'unknown' });
 		}
 	}
 
@@ -740,7 +741,7 @@ export class PublishManager extends EventEmitter {
 						messages = intercepted;
 					}
 				} catch (err) {
-					this.logger?.warn(`Live data interceptor failed for endpoint '${name}', continuing with original payload`, err);
+					this.logger?.warn('Live data interceptor failed', err, { source: name });
 				}
 			}
 
@@ -764,7 +765,7 @@ export class PublishManager extends EventEmitter {
 				try {
 					this.schemaDriftDetector?.observe(this.driftAccumulator);
 				} catch (err) {
-					this.logger?.warn(`Schema drift detector failed for endpoint '${name}', continuing with original payload`, err);
+					this.logger?.warn('Schema drift detector failed', err, { source: name });
 				}
 				this.driftAccumulator = [];
 				this.driftWindowStartedAt = nowMs;
@@ -1578,12 +1579,13 @@ export class PublishManager extends EventEmitter {
 			MessageBufferModel.deleteByIds([claimed.id]);
 			this.stats.recordPublish(messageCount, batchBytes);
 			this.stats.logPublishSuccess(messageCount, batchBytes, info, endpointName, this.logger, {
+				protocol: this.protocol,
 				...destinationContext,
 				...(cloudLinkMode && cloudLinkMode !== 'direct' ? { cloudLinkMode } : {}),
 			});
 			this.batcher.reset();
 		} catch (err) {
-			this.logger?.error(`Failed to publish batch from endpoint '${endpointName}'`, err, destinationContext);
+			this.logger?.error('Publish batch failed', err, { source: endpointName, protocol: this.protocol, ...destinationContext });
 			await this.handlePublishFailure(endpointName, err, bufferedRecordId, publishConfirmed, topic, data, msgId, messageCount);
 		}
 	}
@@ -1601,10 +1603,10 @@ export class PublishManager extends EventEmitter {
 		try {
 			if (publishConfirmed) {
 				this.batcher.reset();
-				this.logger?.error(
-					`Published batch from endpoint '${endpointName}' but failed to clean durable buffer record; leaving claimed row for timeout recovery`,
-					err,
-				);
+				this.logger?.error('Durable buffer cleanup failed after publish', {
+					source: endpointName,
+					error: err instanceof Error ? err.message : String(err),
+				});
 				return;
 			}
 
@@ -1615,14 +1617,17 @@ export class PublishManager extends EventEmitter {
 					err instanceof Error ? err.message : String(err),
 				);
 				this.batcher.reset();
-				this.logger?.warn(`Queued failed publish for endpoint '${endpointName}' for durable retry`);
+				this.logger?.warn('Queued failed publish for durable retry', { source: endpointName });
 				return;
 			}
 
 			await this.publishOffline(topic, data, msgId, messageCount);
-			this.logger?.warn(`Buffered failed publish for endpoint '${endpointName}' to durable storage`);
+			this.logger?.warn('Buffered failed publish to durable storage', { source: endpointName });
 		} catch (bufferError) {
-			this.logger?.error(`Failed to durably buffer publish failure for endpoint '${endpointName}'`, bufferError);
+			this.logger?.error('Durable buffer write failed', {
+				source: endpointName,
+				error: bufferError instanceof Error ? bufferError.message : String(bufferError),
+			});
 		}
 	}
 
@@ -1671,12 +1676,12 @@ export class PublishManager extends EventEmitter {
 		messageCount: number,
 	): Promise<void> {
 		const name = this.config.name || 'unknown';
-		this.logger?.warn(`MQTT not connected  buffering ${messageCount} messages from '${name}'`);
+		this.logger?.warn('Buffering messages (destination offline)', { source: name, messages: messageCount });
 		try {
 			await this.persistQueuedBatch(topic, data, msgId);
 			this.batcher.reset();
 		} catch (err) {
-			this.logger?.error(`Failed to buffer messages from device '${name}'`, err);
+			this.logger?.error('Buffer messages failed', err, { source: name, messages: messageCount });
 		}
 	}
 
@@ -1747,9 +1752,9 @@ export class PublishManager extends EventEmitter {
 				const offlineSince = this.disconnectedSince.get(plugin);
 				if (offlineSince !== undefined) {
 					const downtimeMs = Date.now() - offlineSince;
-					this.logger?.info(`Destination '${destName}' back online after ${Math.round(downtimeMs / 1000)}s`, {
+					this.logger?.info('Destination online', {
 						destination: destName,
-						type: destType,
+						destinationType: destType,
 						destinationId: destId,
 						downtimeSeconds: Math.round(downtimeMs / 1000),
 					});
@@ -1761,9 +1766,9 @@ export class PublishManager extends EventEmitter {
 
 			if (!this.disconnectedSince.has(plugin)) {
 				this.disconnectedSince.set(plugin, Date.now());
-				this.logger?.info(`Destination '${destName}' offline`, {
+				this.logger?.info('Destination offline', {
 					destination: destName,
-					type: destType,
+					destinationType: destType,
 					destinationId: destId,
 				});
 				try { PublishDestinationsModel.update(destId, { last_error: 'Connection lost', last_error_at: new Date() }); } catch {}
@@ -1774,9 +1779,9 @@ export class PublishManager extends EventEmitter {
 			const offlineMs = Date.now() - offlineSince;
 			if (offlineMs < RECONNECT_FORCE_AFTER_MS) continue;
 
-			this.logger?.info(`Destination '${destName}' offline for >${Math.round(RECONNECT_FORCE_AFTER_MS / 60_000)}min, forcing reconnect`, {
+			this.logger?.info('Destination reconnect forced', {
 				destination: destName,
-				type: destType,
+				destinationType: destType,
 				destinationId: destId,
 				offlineSeconds: Math.round(offlineMs / 1000),
 			});
@@ -1785,17 +1790,17 @@ export class PublishManager extends EventEmitter {
 				await plugin.stop();
 				await plugin.start();
 				this.disconnectedSince.set(plugin, Date.now());
-				this.logger?.info(`Destination '${destName}' reconnect initiated`, {
+				this.logger?.info('Destination reconnecting', {
 					destination: destName,
-					type: destType,
+					destinationType: destType,
 					destinationId: destId,
 				});
 			} catch (err) {
 				const errMsg = err instanceof Error ? err.message : String(err);
 				this.disconnectedSince.set(plugin, Date.now());
-				this.logger?.warn(`Destination '${destName}' reconnect failed, will retry next cycle`, {
+				this.logger?.warn('Destination reconnect failed', {
 					destination: destName,
-					type: destType,
+					destinationType: destType,
 					destinationId: destId,
 					error: errMsg,
 				});
@@ -2097,17 +2102,17 @@ export class PublishManager extends EventEmitter {
 				compressionInfo = compressed.info;
 			}
 
-			this.logger?.debug(`Routing batch → ${binding.publisher.name} (sub ${binding.subscription.id ?? '?'}, topic: ${destinationTopic})`, {
-				component: LogComponents.devicePublish,
+			this.logger?.debug('Routing batch', {
+				source: endpointName,
 				protocol: this.protocol,
-				endpointName,
-				destinationName: binding.publisher.name,
+				destination: binding.publisher.name,
 				destinationType: binding.publisher.type,
-				destinationTopic,
+				destinations: [binding.publisher.name],
+				subscription: binding.subscription.id ?? null,
+				topic: destinationTopic,
+				messages: bindingMessages.length,
 				payloadFormat,
 				compression: subscriptionCompression ?? 'global',
-				subscriptionId: binding.subscription.id ?? null,
-				messageCount: bindingMessages.length,
 				...(minIntervalMs > 0 && { publishIntervalMs: minIntervalMs, throttledOut: allThrottledOut }),
 			});
 

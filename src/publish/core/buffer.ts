@@ -272,8 +272,9 @@ export class MessageBufferSync {
 	}
 
 	private flushNow(): void {
-		this.logger?.infoSync('MQTT connected - initiating buffer flush', {
-			component: LogComponents.agent
+		this.logger?.infoSync('Buffer flush triggered', {
+			component: LogComponents.agent,
+			reason: 'connected',
 		});
     
 		// Keep the request flag set so the periodic timer can retry if this immediate attempt is skipped.
@@ -411,12 +412,12 @@ export class MessageBufferSync {
             
 						// Check if message should be retried or dropped
 						if (record.retry_count >= this.config.maxRetries) {
-							this.logger?.warnSync('Message exceeded max retries, dropping', {
+							this.logger?.warnSync('Buffer message dropped (max retries)', {
 								component: LogComponents.agent,
 								recordId: record.id,
-								endpoint: record.endpoint_name,
+								source: record.endpoint_name,
 								retries: record.retry_count,
-								error: errorMsg
+								error: errorMsg,
 							});
               
 							droppedIds.push(record.id!);
