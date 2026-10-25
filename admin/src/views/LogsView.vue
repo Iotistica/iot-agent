@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { h, ref, computed, onMounted, onUnmounted } from 'vue'
-import { ReloadOutlined } from '@ant-design/icons-vue'
+import { ReloadOutlined, CopyOutlined, CheckOutlined } from '@ant-design/icons-vue'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import { logsApi } from '@/api/logs'
 import type { LogMessage, LogLevel, LogSourceType } from '@/api/logs'
@@ -116,6 +116,21 @@ function toggleAutoRefresh(on: boolean) {
   }
 }
 
+const copied = ref(false)
+
+async function copyLogs() {
+  if (filtered.value.length === 0) return
+  const text = filtered.value.map((l) => {
+    const ts = `${fmtDate(l.timestamp)} ${fmtTs(l.timestamp)}`
+    const lvl = l.level.toUpperCase().padEnd(5)
+    const src = fmtSource(l.source.name)
+    return `${ts}  ${lvl}  ${src}  ${l.message}`
+  }).join('\n')
+  await navigator.clipboard.writeText(text)
+  copied.value = true
+  setTimeout(() => { copied.value = false }, 2000)
+}
+
 onMounted(load)
 onUnmounted(() => { if (refreshTimer) clearInterval(refreshTimer) })
 </script>
@@ -151,19 +166,17 @@ onUnmounted(() => { if (refreshTimer) clearInterval(refreshTimer) })
       </a-select>
       <a-button @click="clearFilters">Clear</a-button>
     </div>
-    <div class="toolbar-info">{{ statusText }}</div>
+    <div class="toolbar-info">
+      {{ statusText }}
+      <button v-if="filtered.length > 0" class="copy-btn" :class="{ copied }" @click="copyLogs">
+        <CheckOutlined v-if="copied" />
+        <CopyOutlined v-else />
+        {{ copied ? 'Copied' : 'Copy' }}
+      </button>
+    </div>
 
     <!-- Log table -->
-    <div
-      style="
-        font-family: 'Cascadia Code', 'Fira Code', 'Courier New', monospace;
-        font-size: 12px;
-        background: #0d1117;
-        border-radius: 6px;
-        padding: 8px 0;
-        overflow-x: auto;
-      "
-    >
+    <div class="log-table-wrap">
       <div
         v-if="loading && filtered.length === 0"
         style="text-align: center; color: #555; padding: 40px"
@@ -233,5 +246,30 @@ onUnmounted(() => { if (refreshTimer) clearInterval(refreshTimer) })
 .search { width: 300px; max-width: 100%; }
 .filter { width: 170px; max-width: 100%; }
 .filter-small { width: 120px; max-width: 100%; }
-.toolbar-info { color: var(--text-tertiary); font-size: 12px; margin-bottom: 10px; }
+.toolbar-info { color: var(--text-tertiary); font-size: 12px; margin-bottom: 10px; display: flex; align-items: center; justify-content: space-between; }
+
+.log-table-wrap {
+  font-family: 'Cascadia Code', 'Fira Code', 'Courier New', monospace;
+  font-size: 12px;
+  background: #0d1117;
+  border-radius: 6px;
+  padding: 8px 0;
+  overflow-x: auto;
+}
+
+.copy-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: none;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  padding: 2px 8px;
+  font-size: 11px;
+  cursor: pointer;
+  color: var(--text-secondary);
+  transition: all 0.15s;
+}
+.copy-btn:hover { border-color: #1677ff; color: #1677ff; }
+.copy-btn.copied { border-color: #52c41a; color: #52c41a; }
 </style>

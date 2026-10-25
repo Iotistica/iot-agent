@@ -233,10 +233,10 @@ export class MqttPublishPlugin extends BasePublishPlugin {
 	}
 
 	override async start(): Promise<void> {
-		await super.start();
 		if (this.destinationId !== undefined && this.client instanceof ExternalMqttClient) {
 			await this.enableDestinationBuffering();
 		}
+		await super.start();
 	}
 
 	override async stop(): Promise<void> {

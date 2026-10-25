@@ -1,14 +1,12 @@
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import TopicTree from '@/components/mqtt/TopicTree.vue'
 import MessageViewer from '@/components/mqtt/MessageViewer.vue'
-import { useProStatus } from '@/composables/useProStatus'
 import { mqttApi, type TopicNode, type BrokerMetrics } from '@/api/mqtt'
 import { WifiOutlined, GlobalOutlined, TeamOutlined, NodeIndexOutlined, LoginOutlined, LogoutOutlined } from '@ant-design/icons-vue'
 
-const { proInstalled } = useProStatus()
 const router = useRouter()
 
 const metrics    = ref<BrokerMetrics | null>(null)
@@ -93,13 +91,7 @@ function startPolling() {
 }
 
 onMounted(() => {
-  if (proInstalled.value) {
-    startPolling()
-  }
-})
-
-watch(proInstalled, (v) => {
-  if (v) startPolling()
+  startPolling()
 })
 onUnmounted(() => { if (timer) clearInterval(timer) })
 </script>
@@ -110,28 +102,7 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
       <p>Live topic tree, throughput metrics, and message inspection.</p>
     </div>
 
-    <!-- Pro gate -->
-    <a-alert v-if="!proInstalled" type="info" show-icon style="margin-bottom: 16px">
-      <template #message>Live broker monitoring requires Agent Pro</template>
-      <template #description>
-        <div style="margin-top: 4px">
-          <strong>Iotistica Agent Pro</strong> includes a live MQTT broker monitor — browse the full topic tree,
-          inspect message payloads, and track throughput and client metrics in real time.
-        </div>
-        <div style="margin-top: 12px">
-          <a-button type="primary" size="small" href="https://iotistica.com/solutions.html" target="_blank" rel="noopener">
-            Upgrade to Agent Pro →
-          </a-button>
-          <a href="https://iotistica.com/solutions.html" target="_blank" rel="noopener" style="margin-left:16px;font-size:12px">
-            Compare plans
-          </a>
-        </div>
-      </template>
-    </a-alert>
-
-    <template v-if="proInstalled">
-
-      <!-- Connection banner -->
+    <!-- Connection banner -->
       <a-alert
         v-if="!loading && !connected"
         type="warning"
@@ -254,7 +225,6 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
 
       </div>
 
-    </template>
   </AppLayout>
 </template>
 

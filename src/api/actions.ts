@@ -2475,6 +2475,13 @@ export const getSettings = async (): Promise<Record<string, any>> => {
 		if (config[key] !== undefined) settings[key] = config[key];
 	}
 
+	if (!settings.mqttMonitor) {
+		settings.mqttMonitor = {
+			url: process.env.LOCAL_MQTT_URL ?? process.env.MQTT_BROKER_URL ?? 'mqtt://localhost:1883',
+			username: process.env.LOCAL_MQTT_USER ?? process.env.MQTT_USERNAME ?? 'admin',
+		};
+	}
+
 	// Attach read-only agent identity (mix DB row for version + agentManager for parsed mqtt config).
 	try {
 		const { AgentModel } = await import('../db/models/agent.model.js');

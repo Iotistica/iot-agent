@@ -23,6 +23,7 @@ import type { PublishDestinationInfo, PublishBatchItem } from './types.js';
 import { MlDatasetModel, PublishDestinationsModel, PublishSubscriptionsModel } from '../../db/models/index.js';
 import type { MlDatasetRecord, PublisherRecord, PublishSubscriptionRecord, PublishSubscriptionRoute } from '../../db/models/index.js';
 import { activityMonitor } from './activity-monitor.js';
+import { LogComponents } from '../../logging/types.js';
 import { cleanDriftFieldName, prettifyDriftDeviceId, cleanProtocolPipeName, stripFieldDevicePrefix } from '../../db/models/drift-labels.js';
 import { buildCompactIssueCodes } from '../../quality/index.js';
 import type { DataQuality } from '../../quality/index.js';
@@ -498,28 +499,10 @@ export class PublishManager extends EventEmitter {
 			}
 		}
 
-		// If all plugins failed and we have non-default bindings, fall back to Iotistica only when cloud is connected
-		if (failures.length === startedPlugins.size && failures.length > 0 && this.bindings.some((b) => b.publisher.id !== -1)) {
-			if (this.defaultClient.isConnected()) {
-				this.logger?.warn(`All publish plugins failed to start; falling back to default Iotistica`, {
-					failedPluginCount: failures.length,
-					errors: failures.map((f) => f.error.message),
-				});
-				this.bindings = this.createDefaultIotisticaBinding();
-				this.logger?.info(`Starting default Iotistica publish plugin`);
-				try {
-					await this.bindings[0].plugin.start();
-				} catch (err) {
-					this.logger?.error('Failed to start default Iotistica publisher', err);
-					throw new Error(`All publish plugins failed and fallback also failed: ${err instanceof Error ? err.message : String(err)}`);
-				}
-			} else {
-				this.logger?.warn(`All publish plugins failed to start; cloud not connected, clearing bindings`, {
-					failedPluginCount: failures.length,
-					errors: failures.map((f) => f.error.message),
-				});
-				this.bindings = [];
-			}
+		if (failures.length > 0) {
+			this.logger?.warn(`${failures.length} publish plugin(s) failed to start — will retry when destinations reconnect`, {
+				errors: failures.map((f) => f.error.message),
+			});
 		}
 
 		this.attachConnectionHandlers();
@@ -731,10 +714,6 @@ export class PublishManager extends EventEmitter {
 		if (this.batcher.messageCount === 0) return;
 		if (this.publishing) return;
 
-		// No destinations or subscriptions configured — discard the batch silently.
-		// Buffering without a destination wastes disk and misleads the operator.
-		// Once bindings are added, reloadBindings() will repopulate this.bindings
-		// and subsequent batches will flow normally.
 		if (this.bindings.length === 0) {
 			this.batcher.reset();
 			return;
@@ -1016,7 +995,7 @@ export class PublishManager extends EventEmitter {
 
 			if (!result) {
 				this.logger?.debug('Dataset flush suppressed (empty or incomplete)', {
-					component: 'PublishManager',
+					component: LogComponents.devicePublish,
 					protocol: this.protocol,
 					subscriptionId: binding.subscription.id,
 					datasetId: entry.datasetConfig?.id,
@@ -1047,7 +1026,7 @@ export class PublishManager extends EventEmitter {
 			}
 
 			this.logger?.debug('Flushed dataset accumulator', {
-				component: 'PublishManager',
+				component: LogComponents.devicePublish,
 				protocol: this.protocol,
 				endpoint: this.endpointName,
 				subscriptionId: binding.subscription.id,
@@ -1057,7 +1036,7 @@ export class PublishManager extends EventEmitter {
 			});
 		} catch (err) {
 			this.logger?.error('Failed to flush dataset accumulator', err instanceof Error ? err : new Error(String(err)), {
-				component: 'PublishManager',
+				component: LogComponents.devicePublish,
 				protocol: this.protocol,
 				endpoint: this.endpointName,
 				subscriptionId: binding.subscription.id,
@@ -1775,6 +1754,7 @@ export class PublishManager extends EventEmitter {
 						downtimeSeconds: Math.round(downtimeMs / 1000),
 					});
 					this.disconnectedSince.delete(plugin);
+					try { PublishDestinationsModel.update(destId, { last_error: null, last_error_at: null }); } catch {}
 				}
 				continue;
 			}
@@ -1786,6 +1766,7 @@ export class PublishManager extends EventEmitter {
 					type: destType,
 					destinationId: destId,
 				});
+				try { PublishDestinationsModel.update(destId, { last_error: 'Connection lost', last_error_at: new Date() }); } catch {}
 				continue;
 			}
 
@@ -1810,13 +1791,15 @@ export class PublishManager extends EventEmitter {
 					destinationId: destId,
 				});
 			} catch (err) {
+				const errMsg = err instanceof Error ? err.message : String(err);
 				this.disconnectedSince.set(plugin, Date.now());
 				this.logger?.warn(`Destination '${destName}' reconnect failed, will retry next cycle`, {
 					destination: destName,
 					type: destType,
 					destinationId: destId,
-					error: err instanceof Error ? err.message : String(err),
+					error: errMsg,
 				});
+				try { PublishDestinationsModel.update(destId, { last_error: `Reconnect failed: ${errMsg}`, last_error_at: new Date() }); } catch {}
 			}
 		}
 	}
@@ -1910,7 +1893,7 @@ export class PublishManager extends EventEmitter {
 				return '';
 			}
 			this.logger?.warn('Skipping publish binding without route_json.topic destination', {
-				component: 'PublishManager',
+				component: LogComponents.devicePublish,
 				protocol: this.protocol,
 				endpoint: this.endpointName,
 				destinationId: binding.publisher.id,
@@ -1951,7 +1934,7 @@ export class PublishManager extends EventEmitter {
 		}
 
 		this.logger?.warn('Some publish destinations failed while others succeeded', {
-			component: 'PublishManager',
+			component: LogComponents.devicePublish,
 			protocol: this.protocol,
 			endpoint: this.endpointName,
 			failedDestinations: failures.length,
@@ -2114,8 +2097,8 @@ export class PublishManager extends EventEmitter {
 				compressionInfo = compressed.info;
 			}
 
-			this.logger?.debug('Routing batch to destination', {
-				component: 'PublishManager',
+			this.logger?.debug(`Routing batch → ${binding.publisher.name} (sub ${binding.subscription.id ?? '?'}, topic: ${destinationTopic})`, {
+				component: LogComponents.devicePublish,
 				protocol: this.protocol,
 				endpointName,
 				destinationName: binding.publisher.name,
