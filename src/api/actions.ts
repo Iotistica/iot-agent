@@ -895,6 +895,7 @@ export const addService = async (
 			environment?: Record<string, string>;
 			volumes?: string[];
 			restart?: string;
+			enableSocketDestination?: boolean;
 		};
 	},
 ) => {
@@ -938,6 +939,7 @@ export const updateService = async (
 			environment?: Record<string, string>;
 			volumes?: string[];
 			restart?: string;
+			enableSocketDestination?: boolean;
 		};
 	},
 ) => {
