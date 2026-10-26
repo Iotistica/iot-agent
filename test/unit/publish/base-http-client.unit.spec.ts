@@ -78,6 +78,23 @@ describe('BaseHttpClient', () => {
 			expect(spy).toHaveBeenCalledTimes(1);
 		});
 
+		it('does not repeat connect or disconnect side effects', async () => {
+			const connectSpy = jest.fn();
+			const disconnectSpy = jest.fn();
+			client.on('connect', connectSpy);
+			client.on('disconnect', disconnectSpy);
+
+			await client.connect();
+			await client.connect();
+			expect(connectSpy).toHaveBeenCalledTimes(1);
+			expect(logger.infoSync).toHaveBeenCalledTimes(1);
+
+			await client.disconnect();
+			await client.disconnect();
+			expect(disconnectSpy).toHaveBeenCalledTimes(1);
+			expect(logger.infoSync).toHaveBeenCalledTimes(2);
+		});
+
 		it('disconnect clears ready and emits event', async () => {
 			await client.connect();
 			const spy = jest.fn();
@@ -102,7 +119,7 @@ describe('BaseHttpClient', () => {
 			await expect(client.publish('t', 'data')).rejects.toThrow('not connected');
 		});
 
-		it('sends a POST with string payload and JSON content type', async () => {
+		it('sends a POST with string payload and a text content type', async () => {
 			fetchMock.mockResolvedValueOnce(ok());
 			await client.publish('telemetry/sensor1', '{"temp":22}');
 
@@ -110,9 +127,24 @@ describe('BaseHttpClient', () => {
 			const [url, init] = fetchMock.mock.calls[0];
 			expect(url).toBe('https://example.com/ingest');
 			expect(init!.method).toBe('POST');
-			expect((init!.headers as Record<string, string>)['Content-Type']).toBe('application/json');
+			expect((init!.headers as Record<string, string>)['Content-Type']).toBe('text/plain; charset=utf-8');
 			expect((init!.headers as Record<string, string>)['X-Api-Key']).toBe('secret');
 			expect(init!.body).toBe('{"temp":22}');
+		});
+
+		it('allows configured content type to override the default', async () => {
+			const customClient = new TestHttpClient({
+				endpoint: 'https://example.com/ingest',
+				headers: { 'Content-Type': 'application/json' },
+			});
+			await customClient.connect();
+			fetchMock.mockResolvedValueOnce(ok());
+
+			await customClient.publish('telemetry/sensor1', '{"temp":22}');
+
+			const [, init] = fetchMock.mock.calls[0];
+			expect((init!.headers as Record<string, string>)['Content-Type']).toBe('application/json');
+			await customClient.disconnect();
 		});
 
 		it('sends Buffer payload with octet-stream content type', async () => {
@@ -182,6 +214,16 @@ describe('BaseHttpClient', () => {
 			expect(fetchMock).toHaveBeenCalledTimes(1);
 		});
 
+		it('preserves HTTP status metadata on errors', async () => {
+			fetchMock.mockResolvedValueOnce(fail(400, 'Bad Request'));
+
+			await expect(client.publish('t', 'data')).rejects.toMatchObject({
+				message: 'HTTP 400: Bad Request',
+				status: 400,
+				statusText: 'Bad Request',
+			});
+		});
+
 		it('does not retry on HTTP 401', async () => {
 			fetchMock.mockResolvedValueOnce(fail(401, 'Unauthorized'));
 			await expect(client.publish('t', 'data')).rejects.toThrow('HTTP 401');
@@ -204,6 +246,51 @@ describe('BaseHttpClient', () => {
 
 			await client.publish('t', 'data');
 			expect(fetchMock).toHaveBeenCalledTimes(2);
+		});
+
+		it.each(['TimeoutError', 'AbortError'])('retries on %s', async (name) => {
+			fetchMock
+				.mockRejectedValueOnce(Object.assign(new Error(name), { name }))
+				.mockResolvedValueOnce(ok());
+
+			await client.publish('t', 'data');
+			expect(fetchMock).toHaveBeenCalledTimes(2);
+		});
+
+		it.each(['ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'ENETUNREACH'])(
+			'retries on network error code %s',
+			async (code) => {
+				fetchMock
+					.mockRejectedValueOnce(Object.assign(new Error('socket failure'), { code }))
+					.mockResolvedValueOnce(ok());
+
+				await client.publish('t', 'data');
+				expect(fetchMock).toHaveBeenCalledTimes(2);
+			},
+		);
+
+		it('retries when a transient network code is nested in cause', async () => {
+			const cause = Object.assign(new Error('socket failure'), { code: 'ECONNRESET' });
+			fetchMock
+				.mockRejectedValueOnce(Object.assign(new Error('request failed'), { cause }))
+				.mockResolvedValueOnce(ok());
+
+			await client.publish('t', 'data');
+
+			expect(fetchMock).toHaveBeenCalledTimes(2);
+			expect(logger.debugSync).toHaveBeenCalledWith('HTTP publish retry', expect.objectContaining({
+				attempt: 1,
+				maxAttempts: 3,
+				retryReason: 'ECONNRESET',
+			}));
+		});
+
+		it('does not retry after disconnect during retry delay', async () => {
+			fetchMock.mockRejectedValueOnce(Object.assign(new Error('timed out'), { name: 'TimeoutError' }));
+			(client as any)._sleep = async () => client.disconnect();
+
+			await expect(client.publish('t', 'data')).rejects.toThrow('not connected');
+			expect(fetchMock).toHaveBeenCalledTimes(1);
 		});
 
 		it('exhausts retries and throws', async () => {
