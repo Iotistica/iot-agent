@@ -286,9 +286,10 @@ const isIotisticaDestination = computed(() => selectedDestination.value?.type ==
 const isExternalDestination = computed(() => !!selectedDestination.value && !isIotisticaDestination.value)
 const isInfluxDbDestination = computed(() => selectedDestination.value?.type === 'influxdb')
 const isTimescaleDbDestination = computed(() => selectedDestination.value?.type === 'timescaledb')
+const isSocketDestination = computed(() => selectedDestination.value?.type === 'socket')
 
 const destinationTopicRules = computed(() =>
-  isExternalDestination.value && !isInfluxDbDestination.value && !isTimescaleDbDestination.value
+  isExternalDestination.value && !isInfluxDbDestination.value && !isTimescaleDbDestination.value && !isSocketDestination.value
     ? [{ required: true, message: 'Destination topic is required for external destinations' }]
     : [],
 )
@@ -453,7 +454,7 @@ function close() {
 
       <!-- Destination Topic / Measurement -->
       <a-form-item
-        v-if="isExternalDestination && !isTimescaleDbDestination"
+        v-if="isExternalDestination && !isTimescaleDbDestination && !isSocketDestination"
         :label="isInfluxDbDestination ? 'Measurement' : 'Destination Topic'"
         :name="['route_json', 'topic']"
         :rules="destinationTopicRules"
@@ -475,6 +476,7 @@ function close() {
         description="TimescaleDB rows go into the readings table by metric name — there's no per-topic destination to configure."
         style="margin-bottom: 16px"
       />
+
 
       <!-- Sources (hidden when a dataset is selected) -->
       <a-form-item v-if="!selectedDataset" label="Sources">

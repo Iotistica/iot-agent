@@ -1945,14 +1945,6 @@ export class PublishManager extends EventEmitter {
 			const first = failures[0]?.reason;
 			throw first instanceof Error ? first : new Error(String(first));
 		}
-
-		this.logger?.warn('Some publish destinations failed while others succeeded', {
-			component: LogComponents.devicePublish,
-			protocol: this.protocol,
-			endpoint: this.endpointName,
-			failedDestinations: failures.length,
-			totalDestinations: entries.length,
-		});
 	}
 
 	private async collectRouteEntries(

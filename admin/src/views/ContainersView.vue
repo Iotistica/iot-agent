@@ -394,6 +394,7 @@ function openEditService(app: ContainerApp, svc: ContainerService) {
     user: c.user ?? '',
     cpuLimit: c.resources?.limits?.cpu ?? '',
     memoryLimit: c.resources?.limits?.memory ?? '',
+    enableSocketDestination: c.enableSocketDestination ?? false,
     readonlyRootfs: c.readonlyRootfs ?? false,
     healthcheckType: probe?.type ?? 'none',
     healthcheckPath: probe?.path ?? '',
@@ -639,6 +640,7 @@ interface ServiceForm {
   user: string
   cpuLimit: string
   memoryLimit: string
+  enableSocketDestination: boolean
   readonlyRootfs: boolean
   healthcheckType: 'none' | 'http' | 'tcp' | 'exec'
   healthcheckPath: string
@@ -653,7 +655,7 @@ function emptyService(): ServiceForm {
   return {
     serviceName: '', image: '', ports: '', envRows: [], volumes: '', restart: 'unless-stopped',
     networkMode: 'bridge', command: '', entrypoint: '', user: '',
-    cpuLimit: '', memoryLimit: '', readonlyRootfs: false,
+    cpuLimit: '', memoryLimit: '', enableSocketDestination: false, readonlyRootfs: false,
     healthcheckType: 'none', healthcheckPath: '', healthcheckPort: undefined,
     healthcheckCommand: '', healthcheckInterval: 30, healthcheckTimeout: 5, healthcheckRetries: 3,
   }
@@ -705,6 +707,7 @@ function buildAdvancedConfig(svc: ServiceForm): Record<string, unknown> {
   if (svc.command.trim()) cfg.command = svc.command.trim().split(/\s+/)
   if (svc.entrypoint.trim()) cfg.entrypoint = svc.entrypoint.trim().split(/\s+/)
   if (svc.user.trim()) cfg.user = svc.user.trim()
+  if (svc.enableSocketDestination) cfg.enableSocketDestination = true
   if (svc.readonlyRootfs) cfg.readonlyRootfs = true
   const limits: Record<string, string> = {}
   if (svc.cpuLimit.trim()) limits.cpu = svc.cpuLimit.trim()
@@ -1027,6 +1030,10 @@ async function deploy() {
                 <a-input v-model:value="addSvcForm.memoryLimit" placeholder="e.g. 256M, 1G" />
               </a-form-item>
             </div>
+            <a-form-item label="Inter-process communication">
+              <a-checkbox v-model:checked="addSvcForm.enableSocketDestination">Enable socket destination</a-checkbox>
+              <div style="font-size: 11px; color: var(--text-muted); margin-top: 3px">Mount a Unix socket into the container so the agent can publish data to it</div>
+            </a-form-item>
             <a-form-item label="Security">
               <div style="display: flex; flex-direction: column; gap: 8px">
                 <a-checkbox v-model:checked="addSvcForm.readonlyRootfs">Read-only root filesystem</a-checkbox>
@@ -1167,6 +1174,10 @@ async function deploy() {
                 <a-input v-model:value="editSvcForm.memoryLimit" placeholder="e.g. 256M, 1G" />
               </a-form-item>
             </div>
+            <a-form-item label="Inter-process communication">
+              <a-checkbox v-model:checked="editSvcForm.enableSocketDestination">Enable socket destination</a-checkbox>
+              <div style="font-size: 11px; color: var(--text-muted); margin-top: 3px">Mount a Unix socket into the container so the agent can publish data to it</div>
+            </a-form-item>
             <a-form-item label="Security">
               <div style="display: flex; flex-direction: column; gap: 8px">
                 <a-checkbox v-model:checked="editSvcForm.readonlyRootfs">Read-only root filesystem</a-checkbox>
@@ -1398,6 +1409,10 @@ async function deploy() {
                   <a-input v-model:value="svc.memoryLimit" placeholder="e.g. 256M, 1G" />
                 </a-form-item>
               </div>
+              <a-form-item label="Inter-process communication">
+                <a-checkbox v-model:checked="svc.enableSocketDestination">Enable socket destination</a-checkbox>
+                <div style="font-size: 11px; color: var(--text-muted); margin-top: 3px">Mount a Unix socket into the container so the agent can publish data to it</div>
+              </a-form-item>
               <a-form-item label="Security">
                 <div style="display: flex; flex-direction: column; gap: 8px">
                   <a-checkbox v-model:checked="svc.readonlyRootfs">Read-only root filesystem</a-checkbox>
