@@ -1159,11 +1159,6 @@ EOFJOURNALD
             fi
             echo ""
         fi
-        echo "Useful commands:"
-        echo "  systemctl status ${SERVICE_NAME}        # Check status"
-        echo "  journalctl -u ${SERVICE_NAME} -f        # View logs"
-        echo "  systemctl restart ${SERVICE_NAME}       # Restart agent"
-        echo "  systemctl stop ${SERVICE_NAME}          # Stop agent"
         echo ""
     else
         echo ""
