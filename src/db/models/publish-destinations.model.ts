@@ -121,6 +121,11 @@ export class PublishDestinationsModel {
 		return this.mapRow(row);
 	}
 
+	static getByName(name: string): PublishDestinationRecord | null {
+		const row = this.getDb().prepare(`SELECT * FROM ${this.table} WHERE name = ? LIMIT 1`).get(name) as unknown as PublishDestinationRow | undefined;
+		return this.mapRow(row);
+	}
+
 	static create(input: Omit<PublishDestinationRecord, 'id' | 'created_at' | 'updated_at' | 'last_error' | 'last_error_at'>): PublishDestinationRecord | null {
 		const now = new Date().toISOString();
 		const configStr = input.config_json ? JSON.stringify(input.config_json) : null;

@@ -16,6 +16,7 @@ import { loadAzureDestination, loadAwsDestination, loadGcpDestination, loadInflu
 import { MqttPublishPlugin } from './plugins/mqtt.js';
 import { NoopPublishPlugin } from './plugins/noop.js';
 import { TimescaleDbPublishPlugin } from './plugins/timescaledb.js';
+import { SocketPublishPlugin } from './plugins/socket.js';
 import { BasePublishPlugin } from './core/base-plugin.js';
 import type { IPublishPlugin, IPublishClient } from './core/types.js';
 import type { AnomalyEventPayload } from '../db/models/anomaly-event.model.js';
@@ -380,6 +381,7 @@ export class DevicePublish extends EventEmitter {
 				if (!this.proPlugins.influxdb) throw new Error('InfluxDB destination requires Iotistica Agent Pro');
 				return this.proPlugins.influxdb.fromConfig(config, logger);
 			case 'timescaledb': return TimescaleDbPublishPlugin.fromConfig(config, logger, this.deviceUuid);
+			case 'socket': return SocketPublishPlugin.fromConfig(config, logger);
 			default: throw new Error(`Publish destination type not found: ${target}`);
 		}
 	}

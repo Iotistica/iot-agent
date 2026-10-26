@@ -296,6 +296,7 @@ export class ContainerManager extends EventEmitter {
 	private lastSavedCurrentStateHash: string = '';
 	private lastSavedTargetStateHash: string = '';
 	private logger?: AgentLogger;
+	private devicePublish?: { reloadAllBindings(): Promise<void> };
 
 	constructor(logger?: AgentLogger) {
 		super();
@@ -943,6 +944,15 @@ export class ContainerManager extends EventEmitter {
 			removeNetwork: (appId, networkName) => this.removeNetwork(appId, networkName),
 			createVolume: (appId, volumeName) => this.createVolume(appId, volumeName),
 			removeVolume: (appId, volumeName) => this.removeVolume(appId, volumeName),
+			reloadPublishBindings: () => {
+				this.devicePublish?.reloadAllBindings().catch((err) => {
+					this.logger?.warnSync('Failed to reload publish bindings', {
+						component: LogComponents.containerManager,
+						operation: 'reloadPublishBindings',
+						error: err instanceof Error ? err.message : String(err),
+					});
+				});
+			},
 		});
 	}
 
@@ -1222,6 +1232,10 @@ export class ContainerManager extends EventEmitter {
 			component: LogComponents.containerManager,
 			operation: 'setLogMonitor'
 		});
+	}
+
+	public setDevicePublish(dp: { reloadAllBindings(): Promise<void> }): void {
+		this.devicePublish = dp;
 	}
 
 	/**
