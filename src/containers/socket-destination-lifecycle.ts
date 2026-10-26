@@ -27,7 +27,7 @@ export function ensureSocketDestination(
 
 	const existing = PublishDestinationsModel.getByName(name);
 
-	if (existing && existing.id !== undefined) {
+	if (existing?.id !== undefined) {
 		PublishDestinationsModel.update(existing.id, {
 			enabled: true,
 			config_json: config,
@@ -66,7 +66,7 @@ export function disableSocketDestination(
 	const name = socketDestinationName(service);
 	const existing = PublishDestinationsModel.getByName(name);
 
-	if (!existing || existing.id === undefined) {
+	if (existing?.id === undefined) {
 		logger?.debugSync('No socket destination to disable', {
 			component: LogComponents.containerManager,
 			operation: 'disableSocketDestination',
