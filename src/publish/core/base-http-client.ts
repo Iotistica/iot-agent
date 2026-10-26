@@ -12,6 +12,12 @@ export interface HttpClientConfig {
 }
 
 const DEFAULT_TIMEOUT_MS = 10_000;
+const TRANSIENT_NETWORK_ERROR_CODES = new Set([
+	'ECONNREFUSED',
+	'ECONNRESET',
+	'ETIMEDOUT',
+	'ENETUNREACH',
+]);
 
 export abstract class BaseHttpClient extends EventEmitter implements IPublishClient {
 	protected ready = false;
@@ -30,7 +36,7 @@ export abstract class BaseHttpClient extends EventEmitter implements IPublishCli
 	}
 
 	protected buildHeaders(config: HttpClientConfig, payload: string | Buffer): Record<string, string> {
-		const contentType = Buffer.isBuffer(payload) ? 'application/octet-stream' : 'application/json';
+		const contentType = Buffer.isBuffer(payload) ? 'application/octet-stream' : 'text/plain; charset=utf-8';
 		return { 'Content-Type': contentType, ...config.headers };
 	}
 
@@ -43,21 +49,56 @@ export abstract class BaseHttpClient extends EventEmitter implements IPublishCli
 	}
 
 	protected isTransientNetworkError(error: Error): boolean {
-		const msg = error.message.toLowerCase();
-		return msg.includes('fetch failed')
-			|| msg.includes('network')
-			|| msg.includes('econnrefused')
-			|| msg.includes('econnreset')
-			|| msg.includes('etimedout')
-			|| msg.includes('enetunreach')
-			|| msg.includes('abort')
-			|| error.name === 'AbortError';
+		const seen = new Set<unknown>();
+		let current: unknown = error;
+
+		while (current && typeof current === 'object' && !seen.has(current)) {
+			seen.add(current);
+			const candidate = current as { name?: unknown; message?: unknown; code?: unknown; cause?: unknown };
+			if (
+				candidate.name === 'TimeoutError'
+				|| candidate.name === 'AbortError'
+				|| (typeof candidate.code === 'string' && TRANSIENT_NETWORK_ERROR_CODES.has(candidate.code.toUpperCase()))
+				|| (
+					typeof candidate.message === 'string'
+					&& /fetch failed|network|econnrefused|econnreset|etimedout|enetunreach/i.test(candidate.message)
+				)
+			) {
+				return true;
+			}
+			current = candidate.cause;
+		}
+
+		return false;
+	}
+
+	protected getRetryReason(error: Error): string {
+		const httpStatus = (error as Error & { status?: unknown }).status;
+		if (typeof httpStatus === 'number') return `HTTP ${httpStatus}`;
+
+		const seen = new Set<unknown>();
+		let current: unknown = error;
+		while (current && typeof current === 'object' && !seen.has(current)) {
+			seen.add(current);
+			const candidate = current as { name?: unknown; code?: unknown; cause?: unknown };
+			if (candidate.name === 'TimeoutError' || candidate.name === 'AbortError') {
+				return String(candidate.name);
+			}
+			if (typeof candidate.code === 'string' && TRANSIENT_NETWORK_ERROR_CODES.has(candidate.code.toUpperCase())) {
+				return candidate.code.toUpperCase();
+			}
+			current = candidate.cause;
+		}
+
+		return 'network error';
 	}
 
 	protected onPublishRetry(attempt: number, error: Error, nextDelayMs: number): void {
 		this.logger?.debugSync('HTTP publish retry', {
 			component: LogComponents.agent,
-			attempt,
+			attempt: attempt + 1,
+			maxAttempts: this.maxPublishRetries,
+			retryReason: this.getRetryReason(error),
 			error: error.message,
 			nextDelayMs,
 			...this.getLogContext(),
@@ -69,6 +110,8 @@ export abstract class BaseHttpClient extends EventEmitter implements IPublishCli
 	protected onPublishError(_error: Error, _topic: string): void {}
 
 	public async connect(): Promise<void> {
+		if (this.ready) return;
+
 		this.ready = true;
 		this.logger?.infoSync('HTTP destination ready', {
 			component: LogComponents.agent,
@@ -79,6 +122,8 @@ export abstract class BaseHttpClient extends EventEmitter implements IPublishCli
 	}
 
 	public async disconnect(): Promise<void> {
+		if (!this.ready) return;
+
 		this.ready = false;
 		this.logger?.infoSync('HTTP destination disconnected', {
 			component: LogComponents.agent,
@@ -121,7 +166,16 @@ export abstract class BaseHttpClient extends EventEmitter implements IPublishCli
 		const timeoutMs = config.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 
 		let lastError: Error | null = null;
+		// Retrying a POST is at-least-once: a server may accept a request before its
+		// response is lost. Destinations that require de-duplication should provide an
+		// idempotency key through their configured headers.
 		for (let attempt = 0; attempt < this.maxPublishRetries; attempt++) {
+			if (!this.ready) {
+				const error = new Error(`${this.providerName}: not connected`);
+				this.onPublishError(error, targetTopic);
+				throw error;
+			}
+
 			let response: Response;
 			try {
 				response = await fetch(url, {
@@ -153,7 +207,10 @@ export abstract class BaseHttpClient extends EventEmitter implements IPublishCli
 			}
 
 			const errMsg = `HTTP ${response.status}: ${response.statusText}`;
-			const httpError = new Error(errMsg);
+			const httpError = Object.assign(new Error(errMsg), {
+				status: response.status,
+				statusText: response.statusText,
+			});
 			lastError = httpError;
 
 			if (!this.isTransientError(response.status, httpError) || attempt === this.maxPublishRetries - 1) {
