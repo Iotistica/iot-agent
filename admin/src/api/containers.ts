@@ -57,6 +57,7 @@ export interface ContainerService {
     command?: string[]
     entrypoint?: string[]
     user?: string
+    enableSocketDestination?: boolean
     readonlyRootfs?: boolean
     privileged?: boolean
     resources?: { limits?: { cpu?: string; memory?: string } }
@@ -92,6 +93,7 @@ export interface DeployServiceForm {
     command?: string[]
     entrypoint?: string[]
     user?: string
+    enableSocketDestination?: boolean
     readonlyRootfs?: boolean
     resources?: { limits?: { cpu?: string; memory?: string } }
     livenessProbe?: {
