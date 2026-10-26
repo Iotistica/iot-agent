@@ -8,6 +8,7 @@ import express from 'express';
 import type { Server } from 'http';
 import { join } from 'path';
 import * as middleware from './middleware';
+import { isLocalhost } from './middleware';
 import * as actions from './actions';
 import type { AgentLogger } from '../logging/agent-logger';
 import { LogComponents } from '../logging/types';
@@ -116,6 +117,8 @@ export class DeviceAPI {
 			if (PUBLIC_API_PATH_PREFIXES.some((p) => req.path === p || req.path.startsWith(`${p}/`))) {
 				return next();
 			}
+			const clientIP = req.ip || req.socket.remoteAddress || '';
+			if (isLocalhost(clientIP)) return next();
 			return middleware.requireRole('viewer')(req, res, next);
 		});
 

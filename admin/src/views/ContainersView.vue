@@ -116,38 +116,10 @@ const STATUS_LABEL: Record<RunState, string> = {
   unknown: '—',
 }
 
-type AppRunState = ReturnType<typeof statusForApp>
-const APP_STATUS_LABEL: Record<AppRunState, string> = {
-  running: 'Running',
-  partial: 'Partial',
-  stopped: 'Stopped',
-  error: 'Error',
-  pending: 'Pending',
-  empty: 'No services',
-}
-const APP_STATUS_COLOR: Record<AppRunState, string> = {
-  running: 'success',
-  partial: 'warning',
-  stopped: 'default',
-  error: 'error',
-  pending: 'processing',
-  empty: 'default',
-}
-
 function summaryForApp(app: ContainerApp) {
   const total = app.services.length
   const running = app.services.filter(s => resolveState(s) === 'running').length
   return { total, running }
-}
-
-function statusForApp(app: ContainerApp): 'running' | 'partial' | 'stopped' | 'error' | 'pending' | 'empty' {
-  const { total, running } = summaryForApp(app)
-  if (!total) return 'empty'
-  if (app.services.some(s => resolveState(s) === 'error' || s.error)) return 'error'
-  if (running === total) return 'running'
-  if (running > 0) return 'partial'
-  if (app.services.every(s => resolveState(s) === 'stopped')) return 'stopped'
-  return 'pending'
 }
 
 const filteredApps = computed(() => {

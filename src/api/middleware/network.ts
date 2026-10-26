@@ -52,7 +52,7 @@ function normalizeIP(ip: string): string {
 /**
  * Check if IP is localhost
  */
-function isLocalhost(ip: string): boolean {
+export function isLocalhost(ip: string): boolean {
 	const normalized = normalizeIP(ip);
 	return LOCALHOST_IPS.includes(ip) || LOCALHOST_IPS.includes(normalized);
 }
