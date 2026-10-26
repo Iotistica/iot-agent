@@ -93,6 +93,36 @@ describe('DockerManager socket destination', () => {
 			expect(createCall.Labels['iotistic.socket-destination']).toBe('true');
 		});
 
+		it('includes iotistic.socket-path label when enabled', async () => {
+			const { mgr } = makeDockerManager();
+			const svc = makeService({ config: { image: 'x', enableSocketDestination: true } });
+
+			await mgr.startContainer(svc);
+
+			const createCall = mgr.docker.createContainer.mock.calls[0][0];
+			expect(createCall.Labels['iotistic.socket-path']).toBe('/run/edge-ipc/app.sock');
+		});
+
+		it('includes EDGE_IPC_SOCKET env var when enabled', async () => {
+			const { mgr } = makeDockerManager();
+			const svc = makeService({ config: { image: 'x', enableSocketDestination: true } });
+
+			await mgr.startContainer(svc);
+
+			const createCall = mgr.docker.createContainer.mock.calls[0][0];
+			expect(createCall.Env).toContain('EDGE_IPC_SOCKET=/run/edge-ipc/app.sock');
+		});
+
+		it('does not include EDGE_IPC_SOCKET env var when disabled', async () => {
+			const { mgr } = makeDockerManager();
+			const svc = makeService({ config: { image: 'x', enableSocketDestination: false } });
+
+			await mgr.startContainer(svc);
+
+			const createCall = mgr.docker.createContainer.mock.calls[0][0];
+			expect(createCall.Env).not.toContain('EDGE_IPC_SOCKET=/run/edge-ipc/app.sock');
+		});
+
 		it('does not add socket bind when enableSocketDestination is false', async () => {
 			const { mgr } = makeDockerManager();
 			const svc = makeService({ config: { image: 'x', enableSocketDestination: false } });

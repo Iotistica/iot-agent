@@ -1721,7 +1721,7 @@ export const listPublishSubscriptions = async (publishDestinationId?: number, in
 // publishes on the agent's own structured MQTT topic regardless of what's stored,
 // while 'influxdb' (optional measurement name) and 'timescaledb' (writes straight
 // into the readings table by metric name) simply have nothing to route on.
-const TOPIC_OPTIONAL_DESTINATION_TYPES = new Set(['iotistica', 'influxdb', 'timescaledb']);
+const TOPIC_OPTIONAL_DESTINATION_TYPES = new Set(['iotistica', 'influxdb', 'timescaledb', 'socket']);
 
 /**
  * Publish control: create subscription

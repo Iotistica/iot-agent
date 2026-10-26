@@ -722,11 +722,16 @@ export class DockerManager extends EventEmitter {
 				User: service.config.user,
 				StopSignal: service.config.stopSignal,
 				StopTimeout: service.config.stopTimeout,
-				Env: service.config.environment
-					? Object.entries(service.config.environment).map(
-						([key, value]) => `${key}=${value}`,
-					)
-					: [],
+				Env: [
+					...(service.config.environment
+						? Object.entries(service.config.environment).map(
+							([key, value]) => `${key}=${value}`,
+						)
+						: []),
+					...(service.config.enableSocketDestination
+						? ['EDGE_IPC_SOCKET=/run/edge-ipc/app.sock']
+						: []),
+				],
 				ExposedPorts: exposedPorts,
 				Healthcheck: healthcheck,
 				HostConfig: {
@@ -748,7 +753,7 @@ export class DockerManager extends EventEmitter {
 					'iotistic.service-name': service.serviceName,
 					...(service.config.labels || {}),
 					...(service.config.enableSocketDestination
-						? { 'iotistic.socket-destination': 'true' }
+						? { 'iotistic.socket-destination': 'true', 'iotistic.socket-path': '/run/edge-ipc/app.sock' }
 						: {}),
 				},
 			};
@@ -1411,11 +1416,14 @@ export class DockerManager extends EventEmitter {
 				User: service.config.user,
 				StopSignal: service.config.stopSignal,
 				StopTimeout: service.config.stopTimeout,
-				Env: service.config.environment
-					? Object.entries(service.config.environment).map(
-						([key, value]) => `${key}=${value}`,
-					)
-					: [],
+				Env: [
+					...(service.config.environment
+						? Object.entries(service.config.environment).map(
+							([key, value]) => `${key}=${value}`,
+						)
+						: []),
+					'EDGE_IPC_SOCKET=/run/edge-ipc/app.sock',
+				],
 				ExposedPorts: exposedPorts,
 				HostConfig: {
 					PortBindings: portBindings,
@@ -1435,6 +1443,7 @@ export class DockerManager extends EventEmitter {
 					'iotistic.service-name': service.serviceName,
 					...(service.config.labels || {}),
 					'iotistic.socket-destination': 'true',
+					'iotistic.socket-path': '/run/edge-ipc/app.sock',
 				},
 			};
 

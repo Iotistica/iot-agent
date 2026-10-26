@@ -3,6 +3,7 @@ import type { RetryManager } from './retry-manager';
 import type { HealthCheckManager } from './health-check-manager';
 import type { AgentLogger } from '../logging/agent-logger';
 import { LogComponents } from '../logging/types';
+import { ensureSocketDestination, disableSocketDestination } from './socket-destination-lifecycle';
 
 interface StepExecutorContext {
 	retryManager: RetryManager;
@@ -52,6 +53,7 @@ interface StepExecutorContext {
 	removeNetwork: (appId: number, networkName: string) => Promise<void>;
 	createVolume: (appId: number, volumeName: string) => Promise<void>;
 	removeVolume: (appId: number, volumeName: string) => Promise<void>;
+	reloadPublishBindings?: () => void;
 }
 
 export function getStepKey(step: AppStep): string {
@@ -190,6 +192,20 @@ export async function executeStep(
 				await ctx.attachLogsToContainer(newContainerId, service);
 				ctx.startHealthMonitoring(newContainerId, service);
 
+				if (service.config.enableSocketDestination) {
+					try {
+						ensureSocketDestination(service, ctx.logger);
+						ctx.reloadPublishBindings?.();
+					} catch (destErr: any) {
+						ctx.logger?.warnSync('Failed to ensure socket destination', {
+							component: LogComponents.containerManager,
+							operation: 'executeStep',
+							serviceName: service.serviceName,
+							error: destErr instanceof Error ? destErr.message : String(destErr),
+						});
+					}
+				}
+
 				ctx.logger?.infoSync('Stopped container restarted successfully', {
 					component: LogComponents.containerManager,
 					operation: 'executeStep',
@@ -219,11 +235,27 @@ export async function executeStep(
 			break;
 		}
 
-		case 'removeContainer':
+		case 'removeContainer': {
+			const svc = ctx.getServiceFromCurrentState(step.appId, step.serviceId);
 			await ctx.removeContainer(step.containerId);
 			ctx.removeServiceFromCurrentState(step.appId, step.serviceId);
 			ctx.healthCheckManager.stopMonitoring(step.containerId);
+
+			if (svc?.config.enableSocketDestination) {
+				try {
+					disableSocketDestination(svc, ctx.logger);
+					ctx.reloadPublishBindings?.();
+				} catch (destErr: any) {
+					ctx.logger?.warnSync('Failed to disable socket destination', {
+						component: LogComponents.containerManager,
+						operation: 'executeStep',
+						serviceId: step.serviceId,
+						error: destErr instanceof Error ? destErr.message : String(destErr),
+					});
+				}
+			}
 			break;
+		}
 
 		case 'startContainer': {
 			try {
@@ -232,6 +264,20 @@ export async function executeStep(
 				ctx.markServiceAsRunning(step.appId, step.service.serviceId);
 				await ctx.attachLogsToContainer(containerId, step.service);
 				ctx.startHealthMonitoring(containerId, step.service);
+
+				if (step.service.config.enableSocketDestination) {
+					try {
+						ensureSocketDestination(step.service, ctx.logger);
+						ctx.reloadPublishBindings?.();
+					} catch (destErr: any) {
+						ctx.logger?.warnSync('Failed to ensure socket destination', {
+							component: LogComponents.containerManager,
+							operation: 'executeStep',
+							serviceName: step.service.serviceName,
+							error: destErr instanceof Error ? destErr.message : String(destErr),
+						});
+					}
+				}
 			} catch (error: any) {
 				ctx.logger?.errorSync(
 					'Failed to start container',
