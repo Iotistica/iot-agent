@@ -315,6 +315,71 @@ describe('BaseHttpClient', () => {
 		});
 	});
 
+	describe('timeout and response body handling', () => {
+		function withBody(res: Response, used = false) {
+			const cancel = jest.fn().mockResolvedValue(undefined);
+			return { res: { ...res, body: { cancel }, bodyUsed: used } as unknown as Response, cancel };
+		}
+
+		it.each([0, -5, NaN, Infinity, '100' as any])('falls back to default timeout for %p', async (timeoutMs) => {
+			const spy = jest.spyOn(AbortSignal, 'timeout');
+			const c = new TestHttpClient({ endpoint: 'https://example.com', timeoutMs });
+			await c.connect();
+			fetchMock.mockResolvedValueOnce(ok());
+			await c.publish('t', 'data');
+			expect(spy).toHaveBeenCalledWith(10_000);
+			spy.mockRestore();
+		});
+
+		it('uses a valid configured timeout', async () => {
+			const spy = jest.spyOn(AbortSignal, 'timeout');
+			const c = new TestHttpClient({ endpoint: 'https://example.com', timeoutMs: 1234 });
+			await c.connect();
+			fetchMock.mockResolvedValueOnce(ok());
+			await c.publish('t', 'data');
+			expect(spy).toHaveBeenCalledWith(1234);
+			spy.mockRestore();
+		});
+
+		it('cancels unused body on success', async () => {
+			await client.connect();
+			const { res, cancel } = withBody(ok());
+			fetchMock.mockResolvedValueOnce(res);
+			await client.publish('t', 'data');
+			expect(cancel).toHaveBeenCalledTimes(1);
+		});
+
+		it('does not cancel body already used', async () => {
+			await client.connect();
+			const { res, cancel } = withBody(ok(), true);
+			fetchMock.mockResolvedValueOnce(res);
+			await client.publish('t', 'data');
+			expect(cancel).not.toHaveBeenCalled();
+		});
+
+		it('cancels body on non-OK response before retry and before throw', async () => {
+			await client.connect();
+			const a = withBody(fail(503));
+			const b = withBody(ok());
+			fetchMock.mockResolvedValueOnce(a.res).mockResolvedValueOnce(b.res);
+			await client.publish('t', 'data');
+			expect(a.cancel).toHaveBeenCalledTimes(1);
+
+			const c = withBody(fail(400));
+			fetchMock.mockResolvedValueOnce(c.res);
+			await expect(client.publish('t', 'data')).rejects.toThrow('HTTP 400');
+			expect(c.cancel).toHaveBeenCalledTimes(1);
+		});
+
+		it('ignores body cancel errors', async () => {
+			await client.connect();
+			const { res, cancel } = withBody(ok());
+			cancel.mockRejectedValueOnce(new Error('boom'));
+			fetchMock.mockResolvedValueOnce(res);
+			await expect(client.publish('t', 'data')).resolves.toBeUndefined();
+		});
+	});
+
 	describe('retry delay', () => {
 		it('follows exponential backoff pattern', () => {
 			const raw = new TestHttpClient({ endpoint: 'http://x' });
