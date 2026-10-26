@@ -163,12 +163,16 @@ export abstract class BaseHttpClient extends EventEmitter implements IPublishCli
 		const url = this.buildEndpoint(config, targetTopic);
 		const headers = this.buildHeaders(config, payload);
 		const body = this.buildBody(payload);
-		const timeoutMs = config.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+		const timeoutMs =
+			typeof config.timeoutMs === 'number' && Number.isFinite(config.timeoutMs) && config.timeoutMs > 0
+				? config.timeoutMs
+				: DEFAULT_TIMEOUT_MS;
 
 		let lastError: Error | null = null;
 		// Retrying a POST is at-least-once: a server may accept a request before its
-		// response is lost. Destinations that require de-duplication should provide an
-		// idempotency key through their configured headers.
+		// response is lost. Destinations that require de-duplication should provide a
+		// stable per-message idempotency key (typically via destination-specific headers),
+		// not just static headers.
 		for (let attempt = 0; attempt < this.maxPublishRetries; attempt++) {
 			if (!this.ready) {
 				const error = new Error(`${this.providerName}: not connected`);
@@ -203,6 +207,7 @@ export abstract class BaseHttpClient extends EventEmitter implements IPublishCli
 
 			if (response.ok) {
 				this.onPublishSuccess(response, targetTopic);
+				await this.releaseResponseBody(response);
 				return;
 			}
 
@@ -212,6 +217,7 @@ export abstract class BaseHttpClient extends EventEmitter implements IPublishCli
 				statusText: response.statusText,
 			});
 			lastError = httpError;
+			await this.releaseResponseBody(response);
 
 			if (!this.isTransientError(response.status, httpError) || attempt === this.maxPublishRetries - 1) {
 				this.onPublishError(httpError, targetTopic);
@@ -224,6 +230,15 @@ export abstract class BaseHttpClient extends EventEmitter implements IPublishCli
 		}
 
 		throw lastError || new Error(`${this.providerName} publish failed after retries`);
+	}
+
+	protected async releaseResponseBody(response: Response): Promise<void> {
+		if (!response.body || response.bodyUsed) return;
+		try {
+			await response.body.cancel();
+		} catch {
+			// best-effort cleanup
+		}
 	}
 
 	protected _retryDelayMs(attempt: number): number {
