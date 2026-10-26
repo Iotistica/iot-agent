@@ -1,6 +1,7 @@
 import type { AgentLogger } from '../logging/agent-logger';
 import { LogComponents } from '../logging/types';
 import type { ContainerService, DeviceState } from './container-manager';
+import { isSocketMount } from './socket-mount';
 
 interface ManagedContainerSummary {
 	id: string;
@@ -94,6 +95,7 @@ export async function syncStateFromDocker(
 		let user: string | undefined;
 		let readonlyRootfs: boolean | undefined;
 		let resources: { limits?: { cpu?: string; memory?: string } } | undefined;
+		let enableSocketDestination = false;
 
 		try {
 			const containerInfo = await ctx.dockerManager.inspectContainer(container.id);
@@ -119,6 +121,13 @@ export async function syncStateFromDocker(
 			if (containerInfo.Mounts) {
 				volumes = containerInfo.Mounts
 					.filter((mount) => mount.Type === 'volume' || mount.Type === 'bind')
+					.filter((mount) => {
+						if (isSocketMount(mount.Source || '', mount.Destination || '')) {
+							enableSocketDestination = true;
+							return false;
+						}
+						return true;
+					})
 					.map((mount) => {
 						const source = mount.Type === 'volume' ? mount.Name : mount.Source;
 						return `${source}:${mount.Destination}`;
@@ -207,6 +216,7 @@ export async function syncStateFromDocker(
 				...(user ? { user } : {}),
 				...(readonlyRootfs ? { readonlyRootfs } : {}),
 				...(resources ? { resources } : {}),
+				...(enableSocketDestination ? { enableSocketDestination } : {}),
 			},
 		};
 
