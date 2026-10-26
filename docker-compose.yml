@@ -7,6 +7,7 @@ services:
       - "48481:48484"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+      - /run/agent/sockets:/run/agent/sockets
       - ./data:/data
     environment:
       STANDALONE: "true"
