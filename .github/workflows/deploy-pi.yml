@@ -1,0 +1,34 @@
+name: Deploy to Test Pi
+
+on:
+  workflow_run:
+    workflows: ["Agent Release"]
+    types: [completed]
+  workflow_dispatch:
+
+env:
+  PLINK: C:\Program Files\PuTTY\plink.exe
+  PLINK_ARGS: -batch -hostkey ed25519:0x77896901f86e55fe8c8dc71506060625f6c1751419b01ee1c3e026aea4417b6d
+
+jobs:
+  deploy:
+    name: Deploy Agent to Test Pi
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: [self-hosted, pi]
+
+    steps:
+      - name: Deploy via SSH
+        shell: cmd
+        run: >
+          "%PLINK%" %PLINK_ARGS%
+          -pw "${{ secrets.PI_SSH_PASS }}"
+          ${{ secrets.PI_SSH_USER }}@${{ secrets.PI_SSH_HOST }}
+          "curl -sfL https://get.iotistica.com/agent | sudo sh"
+
+      - name: Verify agent version
+        shell: cmd
+        run: >
+          "%PLINK%" %PLINK_ARGS%
+          -pw "${{ secrets.PI_SSH_PASS }}"
+          ${{ secrets.PI_SSH_USER }}@${{ secrets.PI_SSH_HOST }}
+          "sleep 5 && cat /opt/iotistica-agent/package.json | grep version | head -1"

@@ -437,6 +437,21 @@ router.get('/v1/device', async (req: Request, res: Response, next: NextFunction)
 });
 
 /**
+ * GET /v1/state
+ * Get persisted current and/or target state snapshots
+ */
+router.get('/v1/state', async (req: Request, res: Response, next: NextFunction) => {
+	try {
+		const type = req.query.type as string | undefined;
+		const validType = type === 'current' || type === 'target' ? type : undefined;
+		const state = await actions.getStateSnapshot(validType);
+		return res.status(200).json(state);
+	} catch (error) {
+		next(error);
+	}
+});
+
+/**
  * POST /v1/sync/pull
  * Trigger on-demand target-state pull from cloud API
  */

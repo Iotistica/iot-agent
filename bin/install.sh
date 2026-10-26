@@ -20,6 +20,8 @@ set -e
 #   IOTISTICA_INSTALL_MOSQUITTO    - Set to yes/true/1 to install and manage a local Mosquitto broker
 #   MQTT_BROKER_PORT               - Port for the local Mosquitto broker (default: 1883); set if 1883 is already in use
 #   INITIAL_ADMIN_PASSWORD          - Admin UI password (default: randomly generated on first start)
+#   MQTT_USERNAME                  - MQTT broker username (default: admin; prompted interactively on first install)
+#   MQTT_PASSWORD                  - MQTT broker password (default: auto-generated; prompted interactively on first install)
 #   AGENT_SHELL_HMAC_KEY           - HMAC secret for remote shell command verification
 #   FORCE_INSTALL                  - Legacy opt-in flag; set to 1 to allow automatic Docker installation
 
@@ -28,10 +30,17 @@ set -e
 
 SCRIPT_VERSION="AGENT_VERSION_PLACEHOLDER"
 
-echo "=================================="
-echo "Iotistica Agent Installer"
-echo "Version: $SCRIPT_VERSION"
-echo "=================================="
+echo "--------------------------------------------------------------------------------"
+echo "|                                                                              |"
+echo "|     ___       _   _     _   _                                               |"
+echo "|    |_ _|___  | |_(_)___| |_(_) ___ __ _                                     |"
+echo "|     | |/ _ \ | __| / __| __| |/ __/ _\` |                                    |"
+echo "|     | | (_) || |_| \__ \ |_| | (_| (_| |                                    |"
+echo "|    |___\___/  \__|_|___/\__|_|\___\__,_|                                     |"
+echo "|                                                                              |"
+echo "|                    Agent Installer v$SCRIPT_VERSION"
+echo "|                                                                              |"
+echo "--------------------------------------------------------------------------------"
 echo ""
 
 
@@ -186,6 +195,9 @@ should_manage_mosquitto() {
         SHOULD_INSTALL_MOSQUITTO="yes"
     elif [ "$IOTISTICA_INSTALL_MOSQUITTO" = "no" ] || [ "$IOTISTICA_INSTALL_MOSQUITTO" = "false" ] || [ "$IOTISTICA_INSTALL_MOSQUITTO" = "0" ]; then
         SHOULD_INSTALL_MOSQUITTO="no"
+    elif [ -f /etc/mosquitto/conf.d/iotistica.conf ]; then
+        # Previously managed by us — continue managing on upgrade
+        SHOULD_INSTALL_MOSQUITTO="yes"
     elif command -v mosquitto >/dev/null 2>&1; then
         SHOULD_INSTALL_MOSQUITTO="no"
     elif [ -e /dev/tty ]; then
@@ -213,6 +225,83 @@ is_port_in_use() {
     fi
 }
 
+generate_password() {
+    if command -v openssl >/dev/null 2>&1; then
+        openssl rand -base64 18 | tr -d '/+=' | head -c 16
+    else
+        tr -dc 'A-Za-z0-9' < /dev/urandom 2>/dev/null | head -c 16
+    fi
+}
+
+mask_password() {
+    local pw="$1"
+    local len=${#pw}
+    if [ "$len" -le 4 ]; then
+        printf '****\n'
+    else
+        printf '%s' "$(echo "$pw" | cut -c1-2)"
+        printf '%*s\n' $((len - 2)) '' | tr ' ' '*'
+    fi
+}
+
+prompt_mqtt_credentials() {
+    if [ -e /dev/tty ]; then
+        # Restore terminal echo on interrupt
+        trap 'stty echo 2>/dev/null' INT TERM
+
+        echo "" >/dev/tty
+        echo "Configure MQTT broker credentials:" >/dev/tty
+        echo "" >/dev/tty
+
+        echo -n "  MQTT username [admin]: " >/dev/tty
+        read INPUT_USER </dev/tty
+        MQTT_USERNAME_VALUE="${INPUT_USER:-admin}"
+
+        echo "" >/dev/tty
+        echo "  MQTT password options:" >/dev/tty
+        echo "    1) Enter a password" >/dev/tty
+        echo "    2) Auto-generate a secure password (recommended)" >/dev/tty
+        echo -n "  Choice [2]: " >/dev/tty
+        read PW_CHOICE </dev/tty
+        PW_CHOICE="${PW_CHOICE:-2}"
+
+        if [ "$PW_CHOICE" = "1" ]; then
+            while true; do
+                echo -n "  Password: " >/dev/tty
+                stty -echo 2>/dev/null
+                read INPUT_PW </dev/tty
+                stty echo 2>/dev/null
+                echo "" >/dev/tty
+                if [ -z "$INPUT_PW" ]; then
+                    echo "  Password cannot be empty." >/dev/tty
+                    continue
+                fi
+                echo -n "  Confirm password: " >/dev/tty
+                stty -echo 2>/dev/null
+                read CONFIRM_PW </dev/tty
+                stty echo 2>/dev/null
+                echo "" >/dev/tty
+                if [ "$INPUT_PW" != "$CONFIRM_PW" ]; then
+                    echo "  Passwords do not match. Try again." >/dev/tty
+                    continue
+                fi
+                MQTT_PASSWORD_VALUE="$INPUT_PW"
+                break
+            done
+        else
+            MQTT_PASSWORD_VALUE="$(generate_password)"
+            echo "  Generated password: ${MQTT_PASSWORD_VALUE}" >/dev/tty
+            echo "  (save this — it will not be shown again in full)" >/dev/tty
+        fi
+
+        trap - INT TERM
+        echo "" >/dev/tty
+    else
+        MQTT_USERNAME_VALUE="${MQTT_USERNAME:-admin}"
+        MQTT_PASSWORD_VALUE="${MQTT_PASSWORD:-$(generate_password)}"
+    fi
+}
+
 configure_mosquitto_file_auth() {
     echo ""
     echo "=================================="
@@ -220,10 +309,6 @@ configure_mosquitto_file_auth() {
     echo "=================================="
 
     MQTT_AUTH_DIR_VALUE="/etc/mosquitto"
-    MQTT_USERNAME_VALUE="${MQTT_USERNAME:-admin}"
-
-    MQTT_PASSWORD_VALUE="${MQTT_PASSWORD:-admin}"
-
     MQTT_BROKER_HOST_VALUE="${MQTT_BROKER_HOST:-localhost}"
     MQTT_BROKER_PORT_VALUE="${MQTT_BROKER_PORT:-1883}"
 
@@ -257,9 +342,6 @@ configure_mosquitto_file_auth() {
 
     MQTT_BROKER_URL_VALUE="mqtt://${MQTT_BROKER_HOST_VALUE}:${MQTT_BROKER_PORT_VALUE}"
 
-    export MQTT_BROKER_HOST_VALUE MQTT_BROKER_PORT_VALUE MQTT_BROKER_URL_VALUE
-    export MQTT_AUTH_DIR_VALUE MQTT_USERNAME_VALUE MQTT_PASSWORD_VALUE
-
     install_mosquitto_if_needed
 
     mkdir -p /etc/mosquitto/conf.d
@@ -285,13 +367,42 @@ EOFMOSQ
     touch /etc/mosquitto/acl
     touch /var/log/mosquitto/mosquitto.log
 
-    mosquitto_passwd -b -c /etc/mosquitto/passwd "$MQTT_USERNAME_VALUE" "$MQTT_PASSWORD_VALUE" 2>/dev/null
+    # Existing passwd file with entries — this is an upgrade, preserve credentials
+    if [ -s /etc/mosquitto/passwd ]; then
+        echo "✓ Existing MQTT credentials found — preserving"
+        MQTT_CREDENTIALS_PRESERVED="yes"
 
-    cat > /etc/mosquitto/acl << EOFACL
+        if [ -n "$MQTT_USERNAME" ] && [ -n "$MQTT_PASSWORD" ]; then
+            MQTT_USERNAME_VALUE="$MQTT_USERNAME"
+            MQTT_PASSWORD_VALUE="$MQTT_PASSWORD"
+            mosquitto_passwd -b /etc/mosquitto/passwd "$MQTT_USERNAME_VALUE" "$MQTT_PASSWORD_VALUE" 2>/dev/null
+            echo "  Added/updated user '${MQTT_USERNAME_VALUE}' (env override)"
+        elif [ -f /etc/iotistic/agent.env ]; then
+            MQTT_USERNAME_VALUE="$(grep '^MQTT_USERNAME=' /etc/iotistic/agent.env 2>/dev/null | cut -d= -f2-)"
+            MQTT_PASSWORD_VALUE="$(grep '^MQTT_PASSWORD=' /etc/iotistic/agent.env 2>/dev/null | cut -d= -f2-)"
+        fi
+    else
+        MQTT_CREDENTIALS_PRESERVED="no"
+
+        if [ -n "$MQTT_USERNAME" ] && [ -n "$MQTT_PASSWORD" ]; then
+            MQTT_USERNAME_VALUE="$MQTT_USERNAME"
+            MQTT_PASSWORD_VALUE="$MQTT_PASSWORD"
+        else
+            prompt_mqtt_credentials
+        fi
+
+        mosquitto_passwd -b -c /etc/mosquitto/passwd "$MQTT_USERNAME_VALUE" "$MQTT_PASSWORD_VALUE" 2>/dev/null
+        echo "✓ MQTT credentials configured (user: ${MQTT_USERNAME_VALUE})"
+
+        cat > /etc/mosquitto/acl << EOFACL
 # Iotistica managed ACL
 user ${MQTT_USERNAME_VALUE}
 topic readwrite #
 EOFACL
+    fi
+
+    export MQTT_BROKER_HOST_VALUE MQTT_BROKER_PORT_VALUE MQTT_BROKER_URL_VALUE
+    export MQTT_AUTH_DIR_VALUE MQTT_USERNAME_VALUE MQTT_PASSWORD_VALUE
 
     # root:mosquitto + 0640 lets the mosquitto service read the files without ACLs.
     # The iotistic agent user gets write access via setfacl when available (SD cards
@@ -494,6 +605,7 @@ echo ""
     MQTT_AUTH_DIR_VALUE=""
     MQTT_USERNAME_VALUE="${MQTT_USERNAME:-}"
     MQTT_PASSWORD_VALUE="${MQTT_PASSWORD:-}"
+    MQTT_CREDENTIALS_PRESERVED="no"
     MANAGE_LOCAL_MOSQUITTO="no"
 
     if should_manage_mosquitto; then
@@ -1039,8 +1151,12 @@ EOFJOURNALD
         fi
         if [ "$MANAGE_LOCAL_MOSQUITTO" = "yes" ]; then
             echo "Local MQTT broker: ${MQTT_BROKER_URL_VALUE}"
-            echo "  Username: ${MQTT_USERNAME_VALUE}"
-            echo "  Password: ${MQTT_PASSWORD_VALUE}"
+            if [ "$MQTT_CREDENTIALS_PRESERVED" = "yes" ]; then
+                echo "  Credentials: preserved from previous installation"
+            else
+                echo "  Username: ${MQTT_USERNAME_VALUE}"
+                echo "  Password: $(mask_password "$MQTT_PASSWORD_VALUE")"
+            fi
             echo ""
         fi
         echo "Useful commands:"

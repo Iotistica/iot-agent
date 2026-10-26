@@ -373,6 +373,62 @@ export async function agentPullTargetState(): Promise<void> {
 }
 
 /**
+ * iotctl state [current|target]
+ */
+export async function agentState(typeArg?: string): Promise<void> {
+  clearApiCache();
+  const type = typeArg === 'current' || typeArg === 'target' ? typeArg : undefined;
+  const endpoint = type ? `${DEVICE_API_V1}/state?type=${type}` : `${DEVICE_API_V1}/state`;
+
+  try {
+    const result = await apiRequest(endpoint);
+
+    if (result.current) {
+      const apps = result.current.apps || {};
+      const config = result.current.config || {};
+      logger.info('Current state', {
+        apps: Object.keys(apps).length,
+        endpoints: config.endpoints?.length || 0,
+      });
+
+      for (const id of Object.keys(apps)) {
+        const app = apps[id];
+        const services = (app.services || []).map((s: any) => ({
+          name: s.serviceName,
+          image: s.imageName,
+          status: s.serviceStatus || s.status || 'unknown',
+        }));
+        logger.info(`  App ${app.appName || id}`, { appId: id, services });
+      }
+    }
+
+    if (result.target) {
+      const apps = result.target.apps || {};
+      const config = result.target.config || {};
+      logger.info('Target state', {
+        apps: Object.keys(apps).length,
+        endpoints: config.endpoints?.length || 0,
+        configKeys: Object.keys(config),
+      });
+
+      for (const id of Object.keys(apps)) {
+        const app = apps[id];
+        const services = (app.services || []).map((s: any) => ({
+          name: s.serviceName,
+          image: s.imageName,
+        }));
+        logger.info(`  App ${app.appName || id}`, { appId: id, services });
+      }
+    }
+  } catch (error) {
+    if (error instanceof CLIError) throw error;
+    throw new CLIError('Failed to get state', 1, {
+      error: (error as Error).message,
+    });
+  }
+}
+
+/**
  * iotctl diagnostics
  */
 export async function runDiagnostics(): Promise<void> {

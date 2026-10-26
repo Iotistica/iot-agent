@@ -407,6 +407,18 @@ export function setStateManager(sm: StateManager | undefined): void {
 async function applyConfigUpdate(mutator: (config: Record<string, any>) => void): Promise<void> {
 	if (stateManager) {
 		const currentTarget = stateManager.getTargetState?.() ?? { apps: {}, config: {} };
+
+		// Local API app deployments write to ContainerManager directly, bypassing
+		// StateManager. If StateManager has no apps but ContainerManager does,
+		// use ContainerManager's apps to prevent config updates from wiping
+		// locally-deployed containers.
+		if (Object.keys(currentTarget.apps || {}).length === 0 && containerManager) {
+			const cmTarget = containerManager.getTargetState();
+			if (Object.keys(cmTarget.apps || {}).length > 0) {
+				currentTarget.apps = cmTarget.apps;
+			}
+		}
+
 		const nextConfig = { ...(currentTarget.config || {}) };
 
 		// Merge any endpoints that exist in the DB but are missing from target state.
@@ -703,6 +715,24 @@ export const getDeviceState = async () => {
 		status: 'Idle',
 		pro_installed: isProInstalled(),
 		docker_available: dockerAvailable,
+	};
+};
+
+/**
+ * Get persisted state snapshots (current + target)
+ * Used by: GET /v1/state
+ */
+export const getStateSnapshot = async (type?: 'current' | 'target') => {
+	if (!stateManager) throw new Error('State manager not initialized');
+	if (type === 'current') {
+		return { current: await stateManager.getCurrentState() };
+	}
+	if (type === 'target') {
+		return { target: stateManager.getTargetState() };
+	}
+	return {
+		current: await stateManager.getCurrentState(),
+		target: stateManager.getTargetState(),
 	};
 };
 

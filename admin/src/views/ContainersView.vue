@@ -881,9 +881,6 @@ async function deploy() {
             </div>
           </div>
           <div class="app-card-actions">
-            <a-tag :color="APP_STATUS_COLOR[statusForApp(fullApp(app))]" class="app-status">
-              {{ APP_STATUS_LABEL[statusForApp(fullApp(app))] }}
-            </a-tag>
             <a-dropdown :trigger="['click']">
               <a-button type="text" class="icon-menu-button" aria-label="Application actions" title="Application actions">
                 <EllipsisOutlined />
@@ -891,7 +888,6 @@ async function deploy() {
               <template #overlay>
                 <a-menu @click="handleAppMenuClick($event, app)">
                   <a-menu-item key="edit"><EditOutlined /> Edit application</a-menu-item>
-                  <a-menu-item key="toggle"><DownOutlined /> {{ collapsedApps.has(app.appId) ? 'Expand' : 'Collapse' }}</a-menu-item>
                   <a-menu-divider />
                   <a-menu-item key="delete" danger><DeleteOutlined /> Delete application</a-menu-item>
                 </a-menu>
