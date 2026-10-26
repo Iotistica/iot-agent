@@ -972,7 +972,7 @@ async function deploy() {
             </div>
           </div>
           <div class="card-footer">
-            <a-button size="small" type="dashed" block :disabled="!dockerAvailable" @click="openAddService(fullApp(app))">
+            <a-button size="small" type="dashed" :disabled="!dockerAvailable" @click="openAddService(fullApp(app))">
               <template #icon><PlusOutlined /></template>
               Add Service
             </a-button>
@@ -1787,11 +1787,11 @@ async function deploy() {
 /* ── Card grid ───────────────────────────────────────────── */
 .app-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(420px, 1fr));
   gap: 16px;
   align-items: start;
 }
-.app-grid--list { grid-template-columns: minmax(0, 1fr); }
+.app-grid--list { grid-template-columns: 1fr; }
 
 .app-card {
   border: 1px solid var(--border-color-card);
