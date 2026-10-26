@@ -425,6 +425,7 @@ export function planStepsToUpdateApp(
 				JSON.stringify(currentSvc.config.resources ?? {}) !== JSON.stringify(targetSvc.config.resources);
 			const healthcheckChanged = targetSvc.config.livenessProbe !== undefined &&
 				JSON.stringify(currentSvc.config.livenessProbe ?? null) !== JSON.stringify(targetSvc.config.livenessProbe);
+			const socketDestChanged = !!currentSvc.config.enableSocketDestination !== !!targetSvc.config.enableSocketDestination;
 
 			const nameChanged = currentSvc.serviceName !== targetSvc.serviceName
 				|| currentSvc.appName !== targetSvc.appName;
@@ -442,7 +443,8 @@ export function planStepsToUpdateApp(
 				userChanged ||
 				readonlyChanged ||
 				resourcesChanged ||
-				healthcheckChanged;
+				healthcheckChanged ||
+				socketDestChanged;
 
 			const status = currentSvc.status?.toLowerCase();
 			const containerStopped =
@@ -484,6 +486,7 @@ export function planStepsToUpdateApp(
 				if (readonlyChanged) changes.push(`readonlyRootfs: ${!!currentSvc.config.readonlyRootfs} -> ${!!targetSvc.config.readonlyRootfs}`);
 				if (resourcesChanged) changes.push('resources changed');
 				if (healthcheckChanged) changes.push('health check changed');
+				if (socketDestChanged) changes.push(`enableSocketDestination: ${!!currentSvc.config.enableSocketDestination} -> ${!!targetSvc.config.enableSocketDestination}`);
 				if (containerStopped) {
 					changes.push(`container stopped: ${currentSvc.status}`);
 				}

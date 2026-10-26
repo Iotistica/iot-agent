@@ -114,6 +114,7 @@ export interface ContainerService {
 		stopTimeout?: number;        // seconds to wait before force kill (default: 10)
 		user?: string;               // run as non-root user (e.g., '1000:1000', 'node')
 		readonlyRootfs?: boolean;    // make root filesystem read-only (security hardening)
+		enableSocketDestination?: boolean;
 		
 		// Security configuration (edge-hardened)
 		privileged?: boolean;        // BLOCKED on edge devices

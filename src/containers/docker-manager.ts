@@ -11,6 +11,12 @@ import { type ContainerService } from './container-manager';
 import { type AgentLogger } from '../logging/agent-logger';
 import { LogComponents } from '../logging/types';
 import { EventEmitter } from 'events';
+import {
+	SOCKET_CONTAINER_PATH,
+	ensureSocketDir,
+	removeSocketDir,
+	socketBindString,
+} from './socket-mount';
 
 export interface DockerContainerInfo {
 	id: string;
@@ -650,6 +656,17 @@ export class DockerManager extends EventEmitter {
 				}
 			}
 
+			// 3b. Socket destination bind mount
+			let socketDirNewlyCreated = false;
+			if (service.config.enableSocketDestination) {
+				if (binds.some(b => b.split(':')[1] === SOCKET_CONTAINER_PATH)) {
+					throw new Error(`Mount conflict: user-defined volume already targets ${SOCKET_CONTAINER_PATH}`);
+				}
+				const result = await ensureSocketDir(service.appId, service.serviceId);
+				binds.push(socketBindString(service.appId, service.serviceId));
+				socketDirNewlyCreated = result.created;
+			}
+
 			// 4. Parse resource limits (K8s-style)
 			const resourceLimits = this.parseResourceLimits(service);
 
@@ -730,21 +747,32 @@ export class DockerManager extends EventEmitter {
 					'iotistic.service-id': service.serviceId.toString(),
 					'iotistic.service-name': service.serviceName,
 					...(service.config.labels || {}),
+					...(service.config.enableSocketDestination
+						? { 'iotistic.socket-destination': 'true' }
+						: {}),
 				},
 			};
 
-			// 5. Create container
-			const container = await this.docker.createContainer(createOptions);
-			const containerId = container.id;
-			this.logger?.infoSync('Container created', {
-				component: LogComponents.dockerManager,
-				operation: 'startContainer',
-				serviceName: service.serviceName,
-				containerId: containerId.substring(0, 12),
-				imageName: service.imageName
-			});
-			// 6. Start container
-			await container.start();
+			// 5. Create container and start (with socket dir cleanup on failure)
+			let containerId: string;
+			try {
+				const container = await this.docker.createContainer(createOptions);
+				containerId = container.id;
+				this.logger?.infoSync('Container created', {
+					component: LogComponents.dockerManager,
+					operation: 'startContainer',
+					serviceName: service.serviceName,
+					containerId: containerId.substring(0, 12),
+					imageName: service.imageName
+				});
+				// 6. Start container
+				await container.start();
+			} catch (error) {
+				if (socketDirNewlyCreated) {
+					await removeSocketDir(service.appId, service.serviceId, this.logger);
+				}
+				throw error;
+			}
 
 			// 7. Connect to custom networks (if specified)
 			// Note: Default network already connected via NetworkMode in HostConfig
@@ -1063,9 +1091,13 @@ export class DockerManager extends EventEmitter {
 		service: ContainerService,
 		healthCheckTimeoutMs: number = 30000
 	): Promise<string> {
+		if (service.config.enableSocketDestination) {
+			return this.updateContainerStopStart(service);
+		}
+
 		const finalName = `${this.sanitizeNamePart(service.appName)}_${this.sanitizeNamePart(service.serviceName)}_${service.serviceId}`;
 		const tempName = `${finalName}_new_${Date.now()}`;
-		
+
 		this.logger?.infoSync('Starting zero-downtime container update', {
 			component: LogComponents.dockerManager,
 			operation: 'updateContainer',
@@ -1081,7 +1113,7 @@ export class DockerManager extends EventEmitter {
 			// 1. Find existing container
 			const oldContainer = await this.findContainerByName(finalName);
 			let oldContainerId: string | undefined;
-			
+
 			if (oldContainer) {
 				const oldInfo = await oldContainer.inspect();
 				oldContainerId = oldInfo.Id;
@@ -1113,7 +1145,7 @@ export class DockerManager extends EventEmitter {
 				for (const portMapping of service.config.ports) {
 					const portStr = typeof portMapping === 'string' ? portMapping : String(portMapping);
 					const [hostPort, containerPort] = portStr.split(':');
-					
+
 					if (hostPort && containerPort) {
 						const port = `${containerPort}/tcp`;
 						exposedPorts[port] = {};
@@ -1183,7 +1215,7 @@ export class DockerManager extends EventEmitter {
 
 			const newContainer = await this.docker.createContainer(createOptions);
 			const newContainerId = newContainer.id;
-			
+
 			this.logger?.infoSync('Created new container for update', {
 				component: LogComponents.dockerManager,
 				operation: 'updateContainer',
@@ -1201,14 +1233,14 @@ export class DockerManager extends EventEmitter {
 
 			// 5. Wait for health check
 			const isHealthy = await this.waitForHealthy(newContainerId, healthCheckTimeoutMs);
-			
+
 			if (!isHealthy) {
 				this.logger?.errorSync('New container failed health check, rolling back', new Error('Health check failed'), {
 					component: LogComponents.dockerManager,
 					operation: 'updateContainer',
 					newContainerId: newContainerId.substring(0, 12)
 				});
-				
+
 				// Rollback: stop and remove new container
 				try {
 					await this.stopContainer(newContainerId, 5);
@@ -1220,7 +1252,7 @@ export class DockerManager extends EventEmitter {
 						error: cleanupError.message
 					});
 				}
-				
+
 				throw new Error('Container health check failed during update');
 			}
 
@@ -1231,7 +1263,7 @@ export class DockerManager extends EventEmitter {
 					operation: 'updateContainer',
 					oldContainerId: oldContainerId.substring(0, 12)
 				});
-				
+
 				try {
 					await this.stopContainer(oldContainerId, 10);
 				} catch (error: any) {
@@ -1245,7 +1277,7 @@ export class DockerManager extends EventEmitter {
 
 			// 7. Rename new container to final name
 			await this.renameContainer(newContainerId, finalName);
-			
+
 			// 8. Remove old container (if exists)
 			if (oldContainerId) {
 				this.logger?.infoSync('Removing old container', {
@@ -1253,7 +1285,7 @@ export class DockerManager extends EventEmitter {
 					operation: 'updateContainer',
 					oldContainerId: oldContainerId.substring(0, 12)
 				});
-				
+
 				try {
 					await this.removeContainer(oldContainerId, true);
 				} catch (error: any) {
@@ -1279,6 +1311,151 @@ export class DockerManager extends EventEmitter {
 				component: LogComponents.dockerManager,
 				operation: 'updateContainer',
 				serviceName: service.serviceName
+			});
+			throw error;
+		}
+	}
+
+	/**
+	 * Update a socket-enabled container using stop-before-start strategy.
+	 * Avoids concurrent socket ownership — only one container can bind the socket at a time.
+	 * Does NOT remove the socket directory on failure (belongs to the service, not a single container).
+	 */
+	private async updateContainerStopStart(service: ContainerService): Promise<string> {
+		const finalName = `${this.sanitizeNamePart(service.appName)}_${this.sanitizeNamePart(service.serviceName)}_${service.serviceId}`;
+
+		this.logger?.infoSync('Starting stop-before-start container update (socket-enabled)', {
+			component: LogComponents.dockerManager,
+			operation: 'updateContainerStopStart',
+			serviceName: service.serviceName,
+			finalName,
+		});
+
+		try {
+			this.validateSecurityConfig(service);
+
+			// 1. Find and stop old container
+			const oldContainer = await this.findContainerByName(finalName);
+			let oldContainerId: string | undefined;
+
+			if (oldContainer) {
+				const oldInfo = await oldContainer.inspect();
+				oldContainerId = oldInfo.Id;
+				this.logger?.infoSync('Stopping old container for socket-enabled update', {
+					component: LogComponents.dockerManager,
+					operation: 'updateContainerStopStart',
+					oldContainerId: oldContainerId.substring(0, 12),
+				});
+				try {
+					await this.stopContainer(oldContainerId, 10);
+				} catch (error: any) {
+					this.logger?.warnSync('Failed to stop old container gracefully', {
+						component: LogComponents.dockerManager,
+						operation: 'updateContainerStopStart',
+						error: error.message,
+					});
+				}
+				try {
+					await this.removeContainer(oldContainerId, true);
+				} catch (error: any) {
+					this.logger?.warnSync('Failed to remove old container', {
+						component: LogComponents.dockerManager,
+						operation: 'updateContainerStopStart',
+						error: error.message,
+					});
+				}
+			}
+
+			// 2. Ensure image exists
+			if (!(await this.hasImage(service.imageName))) {
+				await this.pullImageWithRetry(service.imageName);
+			}
+
+			// 3. Ensure socket directory exists (do not track creation — no cleanup on failure)
+			await ensureSocketDir(service.appId, service.serviceId);
+
+			// 4. Build create options (same as startContainer)
+			const portBindings: Docker.PortMap = {};
+			const exposedPorts: Record<string, object> = {};
+			if (service.config.ports) {
+				for (const portMapping of service.config.ports) {
+					const portStr = typeof portMapping === 'string' ? portMapping : String(portMapping);
+					const [hostPort, containerPort] = portStr.split(':');
+					if (hostPort && containerPort) {
+						const port = `${containerPort}/tcp`;
+						exposedPorts[port] = {};
+						portBindings[port] = [{ HostPort: hostPort }];
+					}
+				}
+			}
+
+			const binds: string[] = [];
+			if (service.config.volumes) {
+				for (const volume of service.config.volumes) {
+					binds.push(volume);
+				}
+			}
+			binds.push(socketBindString(service.appId, service.serviceId));
+
+			const resourceLimits = this.parseResourceLimits(service);
+			const networkMode = service.config.networkMode || 'bridge';
+			if (networkMode === 'host' || networkMode.startsWith('container:')) {
+				Object.keys(portBindings).forEach(key => delete portBindings[key]);
+				Object.keys(exposedPorts).forEach(key => delete exposedPorts[key]);
+			}
+
+			const createOptions: Docker.ContainerCreateOptions = {
+				name: finalName,
+				Image: service.imageName,
+				Cmd: service.config.command,
+				User: service.config.user,
+				StopSignal: service.config.stopSignal,
+				StopTimeout: service.config.stopTimeout,
+				Env: service.config.environment
+					? Object.entries(service.config.environment).map(
+						([key, value]) => `${key}=${value}`,
+					)
+					: [],
+				ExposedPorts: exposedPorts,
+				HostConfig: {
+					PortBindings: portBindings,
+					Binds: binds.length > 0 ? binds : undefined,
+					NetworkMode: networkMode,
+					ReadonlyRootfs: service.config.readonlyRootfs || false,
+					RestartPolicy: {
+						Name: service.config.restart || 'unless-stopped',
+						MaximumRetryCount: 0,
+					},
+					...resourceLimits,
+				},
+				Labels: {
+					'iotistic.app-id': service.appId.toString(),
+					'iotistic.app-name': service.appName,
+					'iotistic.service-id': service.serviceId.toString(),
+					'iotistic.service-name': service.serviceName,
+					...(service.config.labels || {}),
+					'iotistic.socket-destination': 'true',
+				},
+			};
+
+			// 5. Create and start new container
+			const container = await this.docker.createContainer(createOptions);
+			const containerId = container.id;
+			await container.start();
+
+			this.logger?.infoSync('Stop-before-start update completed', {
+				component: LogComponents.dockerManager,
+				operation: 'updateContainerStopStart',
+				serviceName: service.serviceName,
+				containerId: containerId.substring(0, 12),
+			});
+
+			return containerId;
+		} catch (error: any) {
+			this.logger?.errorSync('Stop-before-start update failed', error, {
+				component: LogComponents.dockerManager,
+				operation: 'updateContainerStopStart',
+				serviceName: service.serviceName,
 			});
 			throw error;
 		}

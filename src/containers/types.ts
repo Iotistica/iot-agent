@@ -57,7 +57,8 @@ export interface ServiceConfig {
 		stopSignal?: string;
 		stopTimeout?: number;
 		readonlyRootfs?: boolean;
-		
+		enableSocketDestination?: boolean;
+
 		// Resource limits (K8s-style)
 		resources?: {
 			limits?: {
