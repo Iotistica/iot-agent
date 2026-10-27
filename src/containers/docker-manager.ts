@@ -729,7 +729,7 @@ export class DockerManager extends EventEmitter {
 						)
 						: []),
 					...(service.config.enableSocketDestination
-						? ['EDGE_IPC_SOCKET=/run/edge-ipc/app.sock']
+						? ['AGENT_IPC_SOCKET=/run/agent-ipc/app.sock']
 						: []),
 				],
 				ExposedPorts: exposedPorts,
@@ -753,7 +753,7 @@ export class DockerManager extends EventEmitter {
 					'iotistic.service-name': service.serviceName,
 					...(service.config.labels || {}),
 					...(service.config.enableSocketDestination
-						? { 'iotistic.socket-destination': 'true', 'iotistic.socket-path': '/run/edge-ipc/app.sock' }
+						? { 'iotistic.socket-destination': 'true', 'iotistic.socket-path': '/run/agent-ipc/app.sock' }
 						: {}),
 				},
 			};
@@ -1422,7 +1422,7 @@ export class DockerManager extends EventEmitter {
 							([key, value]) => `${key}=${value}`,
 						)
 						: []),
-					'EDGE_IPC_SOCKET=/run/edge-ipc/app.sock',
+					'AGENT_IPC_SOCKET=/run/agent-ipc/app.sock',
 				],
 				ExposedPorts: exposedPorts,
 				HostConfig: {
@@ -1443,7 +1443,7 @@ export class DockerManager extends EventEmitter {
 					'iotistic.service-name': service.serviceName,
 					...(service.config.labels || {}),
 					'iotistic.socket-destination': 'true',
-					'iotistic.socket-path': '/run/edge-ipc/app.sock',
+					'iotistic.socket-path': '/run/agent-ipc/app.sock',
 				},
 			};
 

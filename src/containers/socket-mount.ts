@@ -4,7 +4,7 @@ import type { AgentLogger } from '../logging/agent-logger.js';
 import { LogComponents } from '../logging/types.js';
 
 export const SOCKET_HOST_BASE = `${process.env.DATA_DIR || '/app/data'}/sockets`;
-export const SOCKET_CONTAINER_PATH = '/run/edge-ipc';
+export const SOCKET_CONTAINER_PATH = '/run/agent-ipc';
 
 function validateId(value: number, name: string): void {
 	if (!Number.isFinite(value) || !Number.isInteger(value) || value < 0) {

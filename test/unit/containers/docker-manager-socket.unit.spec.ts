@@ -80,7 +80,7 @@ describe('DockerManager socket destination', () => {
 			await mgr.startContainer(svc);
 
 			const createCall = mgr.docker.createContainer.mock.calls[0][0];
-			expect(createCall.HostConfig.Binds).toContain(`${SOCKET_HOST_BASE}/10_1:/run/edge-ipc`);
+			expect(createCall.HostConfig.Binds).toContain(`${SOCKET_HOST_BASE}/10_1:/run/agent-ipc`);
 		});
 
 		it('includes iotistic.socket-destination label when enabled', async () => {
@@ -100,27 +100,27 @@ describe('DockerManager socket destination', () => {
 			await mgr.startContainer(svc);
 
 			const createCall = mgr.docker.createContainer.mock.calls[0][0];
-			expect(createCall.Labels['iotistic.socket-path']).toBe('/run/edge-ipc/app.sock');
+			expect(createCall.Labels['iotistic.socket-path']).toBe('/run/agent-ipc/app.sock');
 		});
 
-		it('includes EDGE_IPC_SOCKET env var when enabled', async () => {
+		it('includes AGENT_IPC_SOCKET env var when enabled', async () => {
 			const { mgr } = makeDockerManager();
 			const svc = makeService({ config: { image: 'x', enableSocketDestination: true } });
 
 			await mgr.startContainer(svc);
 
 			const createCall = mgr.docker.createContainer.mock.calls[0][0];
-			expect(createCall.Env).toContain('EDGE_IPC_SOCKET=/run/edge-ipc/app.sock');
+			expect(createCall.Env).toContain('AGENT_IPC_SOCKET=/run/agent-ipc/app.sock');
 		});
 
-		it('does not include EDGE_IPC_SOCKET env var when disabled', async () => {
+		it('does not include AGENT_IPC_SOCKET env var when disabled', async () => {
 			const { mgr } = makeDockerManager();
 			const svc = makeService({ config: { image: 'x', enableSocketDestination: false } });
 
 			await mgr.startContainer(svc);
 
 			const createCall = mgr.docker.createContainer.mock.calls[0][0];
-			expect(createCall.Env).not.toContain('EDGE_IPC_SOCKET=/run/edge-ipc/app.sock');
+			expect(createCall.Env).not.toContain('AGENT_IPC_SOCKET=/run/agent-ipc/app.sock');
 		});
 
 		it('does not add socket bind when enableSocketDestination is false', async () => {
@@ -144,13 +144,13 @@ describe('DockerManager socket destination', () => {
 			expect(createCall.HostConfig.Binds).toBeUndefined();
 		});
 
-		it('rejects mount conflict when user volume targets /run/edge-ipc', async () => {
+		it('rejects mount conflict when user volume targets /run/agent-ipc', async () => {
 			const { mgr } = makeDockerManager();
 			const svc = makeService({
 				config: {
 					image: 'x',
 					enableSocketDestination: true,
-					volumes: ['/my/data:/run/edge-ipc'],
+					volumes: ['/my/data:/run/agent-ipc'],
 				},
 			});
 
@@ -208,7 +208,7 @@ describe('DockerManager socket destination', () => {
 
 			const createCall = mgr.docker.createContainer.mock.calls[0][0];
 			expect(createCall.HostConfig.Binds).toContain('data:/app/data');
-			expect(createCall.HostConfig.Binds).toContain(`${SOCKET_HOST_BASE}/10_1:/run/edge-ipc`);
+			expect(createCall.HostConfig.Binds).toContain(`${SOCKET_HOST_BASE}/10_1:/run/agent-ipc`);
 		});
 	});
 
@@ -221,7 +221,7 @@ describe('DockerManager socket destination', () => {
 
 			expect(id).toBe('abc123def456');
 			const createCall = mgr.docker.createContainer.mock.calls[0][0];
-			expect(createCall.HostConfig.Binds).toContain(`${SOCKET_HOST_BASE}/10_1:/run/edge-ipc`);
+			expect(createCall.HostConfig.Binds).toContain(`${SOCKET_HOST_BASE}/10_1:/run/agent-ipc`);
 			expect(createCall.Labels['iotistic.socket-destination']).toBe('true');
 		});
 
@@ -280,7 +280,7 @@ describe('docker-state-sync socket reconstruction', () => {
 						{
 							Type: 'bind',
 							Source: `${SOCKET_HOST_BASE}/1_2`,
-							Destination: '/run/edge-ipc',
+							Destination: '/run/agent-ipc',
 						},
 					],
 					Config: { Env: [], Labels: {}, Cmd: null, Entrypoint: null, User: '' },
@@ -297,7 +297,7 @@ describe('docker-state-sync socket reconstruction', () => {
 		expect(svc.config.volumes).toEqual([]);
 	});
 
-	it('ignores mount to /run/edge-ipc with non-agent source', async () => {
+	it('ignores mount to /run/agent-ipc with non-agent source', async () => {
 		const { syncStateFromDocker } = require('../../../src/containers/docker-state-sync');
 
 		const mockContainer = {
@@ -321,7 +321,7 @@ describe('docker-state-sync socket reconstruction', () => {
 						{
 							Type: 'bind',
 							Source: '/home/user/custom',
-							Destination: '/run/edge-ipc',
+							Destination: '/run/agent-ipc',
 						},
 					],
 					Config: { Env: [], Labels: {}, Cmd: null, Entrypoint: null, User: '' },
@@ -335,7 +335,7 @@ describe('docker-state-sync socket reconstruction', () => {
 		const state = await syncStateFromDocker(ctx);
 		const svc = state.apps[1].services[0];
 		expect(svc.config.enableSocketDestination).toBeUndefined();
-		expect(svc.config.volumes).toContain('/home/user/custom:/run/edge-ipc');
+		expect(svc.config.volumes).toContain('/home/user/custom:/run/agent-ipc');
 	});
 });
 

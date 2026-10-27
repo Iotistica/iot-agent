@@ -1,7 +1,7 @@
 import { createServer } from 'net';
 import { unlinkSync, chmodSync } from 'fs';
 
-const socketPath = process.env.EDGE_IPC_SOCKET || '/run/edge-ipc/app.sock';
+const socketPath = process.env.AGENT_IPC_SOCKET || '/run/agent-ipc/app.sock';
 
 try { unlinkSync(socketPath); } catch {}
 
