@@ -31,9 +31,10 @@ CLI_VERSION="${IOTISTICA_CLI_VERSION:-latest}"
 if [ -n "$DOWNLOAD_BASE_URL" ]; then
     # Parent installer exports DOWNLOAD_BASE_URL like:
     #   https://get.iotistica.com/agent/artifacts
+    #   https://get.iotistica.com/agent/builds/latest
     # CLI artifacts live at:
     #   https://get.iotistica.com/agent-cli/artifacts
-    CLI_DOWNLOAD_BASE="${DOWNLOAD_BASE_URL%/agent/artifacts}/agent-cli/artifacts"
+    CLI_DOWNLOAD_BASE="${DOWNLOAD_BASE_URL%%/agent*}/agent-cli/artifacts"
 else
     CLI_DOWNLOAD_BASE="https://get.iotistica.com/agent-cli/artifacts"
 fi
