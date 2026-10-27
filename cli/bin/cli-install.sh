@@ -141,7 +141,3 @@ if ! "$LAUNCHER_PATH" --version >/dev/null 2>&1; then
 fi
 
 echo "✓ iotctl installed to $LAUNCHER_PATH"
-echo ""
-echo "Try it:"
-echo "  iotctl status"
-echo "  iotctl device list"
