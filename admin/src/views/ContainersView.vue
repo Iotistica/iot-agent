@@ -1428,41 +1428,35 @@ async function deploy() {
                   <a-select-option value="exec">Command</a-select-option>
                 </a-select>
               </a-form-item>
-              <template v-if="svc.healthcheckType === 'http'">
-                <div style="display: flex; gap: 12px">
-                  <a-form-item label="Path" style="flex: 2">
-                    <a-input v-model:value="svc.healthcheckPath" placeholder="/health" />
-                  </a-form-item>
-                  <a-form-item label="Port" style="flex: 1">
-                    <a-input-number v-model:value="svc.healthcheckPort" :min="1" :max="65535" style="width: 100%" placeholder="8080" />
-                  </a-form-item>
-                </div>
-              </template>
-              <template v-if="svc.healthcheckType === 'tcp'">
-                <a-form-item label="Port">
-                  <a-input-number v-model:value="svc.healthcheckPort" :min="1" :max="65535" style="width: 100%" placeholder="8080" />
-                </a-form-item>
-              </template>
-              <template v-if="svc.healthcheckType === 'exec'">
-                <a-form-item label="Command">
-                  <a-input v-model:value="svc.healthcheckCommand" placeholder="curl -f http://localhost/health || exit 1" style="font-family: monospace; font-size: 12px" />
-                </a-form-item>
-              </template>
-              <template v-if="svc.healthcheckType !== 'none'">
-                <div style="display: flex; gap: 12px">
-                  <a-form-item label="Interval (s)" style="flex: 1">
-                    <a-input-number v-model:value="svc.healthcheckInterval" :min="1" style="width: 100%" />
-                  </a-form-item>
-                  <a-form-item label="Timeout (s)" style="flex: 1">
-                    <a-input-number v-model:value="svc.healthcheckTimeout" :min="1" style="width: 100%" />
-                  </a-form-item>
-                  <a-form-item label="Retries" style="flex: 1">
-                    <a-input-number v-model:value="svc.healthcheckRetries" :min="1" style="width: 100%" />
-                  </a-form-item>
-                </div>
-              </template>
             </a-collapse-panel>
           </a-collapse>
+          <div v-if="svc.healthcheckType !== 'none'" style="margin-top: 4px">
+            <div v-if="svc.healthcheckType === 'http'" style="display: flex; gap: 12px">
+              <a-form-item label="Path" style="flex: 2">
+                <a-input v-model:value="svc.healthcheckPath" placeholder="/health" />
+              </a-form-item>
+              <a-form-item label="Port" style="flex: 1">
+                <a-input-number v-model:value="svc.healthcheckPort" :min="1" :max="65535" style="width: 100%" placeholder="8080" />
+              </a-form-item>
+            </div>
+            <a-form-item v-if="svc.healthcheckType === 'tcp'" label="Port">
+              <a-input-number v-model:value="svc.healthcheckPort" :min="1" :max="65535" style="width: 100%" placeholder="8080" />
+            </a-form-item>
+            <a-form-item v-if="svc.healthcheckType === 'exec'" label="Command">
+              <a-input v-model:value="svc.healthcheckCommand" placeholder="curl -f http://localhost/health || exit 1" style="font-family: monospace; font-size: 12px" />
+            </a-form-item>
+            <div style="display: flex; gap: 12px">
+              <a-form-item label="Interval (s)" style="flex: 1">
+                <a-input-number v-model:value="svc.healthcheckInterval" :min="1" style="width: 100%" />
+              </a-form-item>
+              <a-form-item label="Timeout (s)" style="flex: 1">
+                <a-input-number v-model:value="svc.healthcheckTimeout" :min="1" style="width: 100%" />
+              </a-form-item>
+              <a-form-item label="Retries" style="flex: 1">
+                <a-input-number v-model:value="svc.healthcheckRetries" :min="1" style="width: 100%" />
+              </a-form-item>
+            </div>
+          </div>
         </div>
 
         <!-- Add service -->
