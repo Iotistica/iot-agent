@@ -269,16 +269,16 @@ jobs:
       - name: Build tarball
         run: |
           set -euo pipefail
-          VERSION="${{ needs.build.outputs.agent_version }}"
+          SHA="${{ needs.build.outputs.sha_short }}"
           ARCH="${{ matrix.arch }}"
           mkdir -p /tmp/artifacts
 
-          tar -czf /tmp/artifacts/agent-${VERSION}-${ARCH}.tar.gz \
+          tar -czf /tmp/artifacts/agent-${SHA}-${ARCH}.tar.gz \
             -C "${{ github.workspace }}" \
             dist/ package.json package-lock.json node_modules/ bin/ admin/dist/
 
           cd /tmp/artifacts
-          sha256sum agent-${VERSION}-${ARCH}.tar.gz > agent-${VERSION}-${ARCH}.tar.gz.sha256
+          sha256sum agent-${SHA}-${ARCH}.tar.gz > agent-${SHA}-${ARCH}.tar.gz.sha256
 
       - name: Stamp install.sh (x86_64 only)
         if: matrix.arch == 'x86_64'
@@ -395,37 +395,58 @@ jobs:
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
-      - name: Upload agent tarballs to Azure staging
+      - name: Upload agent tarballs to Azure
         run: |
           set -euo pipefail
-          VERSION="${{ needs.build.outputs.agent_version }}"
+          SHA="${{ needs.build.outputs.sha_short }}"
           ACCT=${{ secrets.AZURE_STORAGE_ACCOUNT }}
 
           for arch in x86_64 arm64; do
+            SRC="/tmp/all-artifacts/agent-package-${arch}/agent-${SHA}-${arch}.tar.gz"
+
+            # SHA-specific build
             az storage blob upload --account-name "$ACCT" --container-name scripts \
-              --name "agent/builds/${VERSION}/agent-${VERSION}-${arch}.tar.gz" \
-              --file "/tmp/all-artifacts/agent-package-${arch}/agent-${VERSION}-${arch}.tar.gz" \
+              --name "agent/builds/${SHA}/agent-${SHA}-${arch}.tar.gz" \
+              --file "$SRC" \
               --overwrite true --auth-mode key --only-show-errors --output none --content-type application/gzip
             az storage blob upload --account-name "$ACCT" --container-name scripts \
-              --name "agent/builds/${VERSION}/agent-${VERSION}-${arch}.tar.gz.sha256" \
-              --file "/tmp/all-artifacts/agent-package-${arch}/agent-${VERSION}-${arch}.tar.gz.sha256" \
+              --name "agent/builds/${SHA}/agent-${SHA}-${arch}.tar.gz.sha256" \
+              --file "${SRC}.sha256" \
+              --overwrite true --auth-mode key --only-show-errors --output none --content-type text/plain
+
+            # Rolling latest
+            az storage blob upload --account-name "$ACCT" --container-name scripts \
+              --name "agent/builds/latest/agent-latest-${arch}.tar.gz" \
+              --file "$SRC" \
+              --overwrite true --auth-mode key --only-show-errors --output none --content-type application/gzip
+            az storage blob upload --account-name "$ACCT" --container-name scripts \
+              --name "agent/builds/latest/agent-latest-${arch}.tar.gz.sha256" \
+              --file "${SRC}.sha256" \
               --overwrite true --auth-mode key --only-show-errors --output none --content-type text/plain
           done
 
-      - name: Upload install.sh to Azure staging
+      - name: Upload install.sh and metadata to Azure
         run: |
-          VERSION="${{ needs.build.outputs.agent_version }}"
+          SHA="${{ needs.build.outputs.sha_short }}"
           ACCT=${{ secrets.AZURE_STORAGE_ACCOUNT }}
+
+          # SHA-specific
           az storage blob upload --account-name "$ACCT" --container-name scripts \
-            --name "agent/builds/${VERSION}/install.sh" \
+            --name "agent/builds/${SHA}/install.sh" \
             --file "/tmp/all-artifacts/agent-package-x86_64/install.sh" \
             --overwrite true --auth-mode key --only-show-errors --output none --content-type text/x-shellscript
           az storage blob upload --account-name "$ACCT" --container-name scripts \
-            --name "agent/builds/${VERSION}/install.sh.sha256" \
-            --file "/tmp/all-artifacts/agent-package-x86_64/install.sh.sha256" \
-            --overwrite true --auth-mode key --only-show-errors --output none --content-type text/plain
+            --name "agent/builds/${SHA}/build-meta.json" \
+            --file "/tmp/all-artifacts/agent-package-x86_64/build-meta.json" \
+            --overwrite true --auth-mode key --only-show-errors --output none --content-type application/json
+
+          # Rolling latest
           az storage blob upload --account-name "$ACCT" --container-name scripts \
-            --name "agent/builds/${VERSION}/build-meta.json" \
+            --name "agent/builds/latest/install.sh" \
+            --file "/tmp/all-artifacts/agent-package-x86_64/install.sh" \
+            --overwrite true --auth-mode key --only-show-errors --output none --content-type text/x-shellscript
+          az storage blob upload --account-name "$ACCT" --container-name scripts \
+            --name "agent/builds/latest/build-meta.json" \
             --file "/tmp/all-artifacts/agent-package-x86_64/build-meta.json" \
             --overwrite true --auth-mode key --only-show-errors --output none --content-type application/json
 
@@ -469,11 +490,17 @@ jobs:
       - name: Azure Upload Summary
         if: always()
         run: |
-          VERSION="${{ needs.build.outputs.agent_version }}"
+          SHA="${{ needs.build.outputs.sha_short }}"
           echo "## Azure Upload Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Agent staging path:** \`agent/builds/${VERSION}/\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Agent build path:** \`agent/builds/${SHA}/\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Agent latest path:** \`agent/builds/latest/\`" >> $GITHUB_STEP_SUMMARY
           echo "**CLI path:** \`agent-cli/cli-latest-*.tar.gz\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Install from CI build" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`sh" >> $GITHUB_STEP_SUMMARY
+          echo "curl -sfL https://get.iotistica.com/agent/builds/latest/install.sh | sudo IOTISTICA_DOWNLOAD_BASE_URL=https://get.iotistica.com/agent/builds/latest sh" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
 
 
   # integration-tests:

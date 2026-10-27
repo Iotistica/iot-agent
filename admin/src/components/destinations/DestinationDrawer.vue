@@ -27,7 +27,7 @@ const DEMO_DESTINATION_TYPES = new Set(['noop'])
 const DESTINATION_TYPES = computed(() =>
   props.provisioned ? ALL_DESTINATION_TYPES : ALL_DESTINATION_TYPES.filter((t) => t !== 'iotistica'),
 )
-const TESTABLE_TYPES = ['influxdb', 'mqtt', 'timescaledb']
+const TESTABLE_TYPES = ['influxdb', 'mqtt', 'timescaledb', 'socket']
 
 const CONFIG_TEMPLATES: Record<string, Record<string, unknown>> = {
   azure: {

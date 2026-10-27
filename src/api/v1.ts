@@ -1700,6 +1700,25 @@ router.post('/v1/publish/destinations/test', requireRole('operator'), async (req
 			}
 		}
 
+		if (type === 'socket') {
+			const { createConnection } = await import('net');
+			const socketPath = typeof cfg?.socketPath === 'string' ? cfg.socketPath.trim() : '';
+			if (!socketPath) return res.status(200).json({ ok: false, error: 'Socket path is required' });
+			try {
+				await new Promise<void>((resolve, reject) => {
+					const sock = createConnection({ path: socketPath }, () => { sock.destroy(); resolve(); });
+					sock.on('error', reject);
+					const timer = setTimeout(() => { sock.destroy(); reject(new Error('Connection timed out')); }, 5000);
+					sock.on('connect', () => clearTimeout(timer));
+					sock.on('close', () => clearTimeout(timer));
+				});
+				return res.status(200).json({ ok: true, message: `Socket connected at ${socketPath}` });
+			} catch (err: any) {
+				const msg = err?.code === 'ENOENT' ? 'Socket not found — container may not be listening yet' : (err?.message ?? 'Connection failed');
+				return res.status(200).json({ ok: false, error: msg });
+			}
+		}
+
 		return res.status(200).json({ ok: false, error: `Connection test not supported for type "${type}"` });
 	} catch (error) {
 		next(error);
