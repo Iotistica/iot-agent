@@ -77,7 +77,7 @@ async function load() {
 type RunState = 'running' | 'stopped' | 'error' | 'creating' | 'unknown'
 
 function resolveState(svc: ContainerService): RunState {
-  // status can be a ServiceStatus object OR a raw Docker string ("running", "exited", etc.)
+  if (svc.serviceStatus === 'error') return 'error'
   const rawStatus = typeof svc.status === 'string'
     ? svc.status
     : (svc.status as any)?.state
