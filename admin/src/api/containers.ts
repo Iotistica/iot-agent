@@ -7,6 +7,7 @@ export interface AppTemplateService {
   volumes?: string[]
   environment?: Record<string, string>
   restart?: string
+  enableSocketDestination?: boolean
 }
 
 export interface AppTemplate {

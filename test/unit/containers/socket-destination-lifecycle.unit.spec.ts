@@ -4,6 +4,7 @@ jest.mock('../../../src/db/models/publish-destinations.model', () => {
 			getByName: jest.fn(),
 			create: jest.fn(),
 			update: jest.fn(),
+			delete: jest.fn(),
 			getById: jest.fn(),
 		},
 	};
@@ -13,7 +14,7 @@ jest.mock('../../../src/containers/socket-mount', () => ({
 	socketHostDir: (appId: number, serviceId: number) => `/run/agent/sockets/${appId}_${serviceId}`,
 }));
 
-import { ensureSocketDestination, disableSocketDestination } from '../../../src/containers/socket-destination-lifecycle';
+import { ensureSocketDestination, removeSocketDestination } from '../../../src/containers/socket-destination-lifecycle';
 import { PublishDestinationsModel } from '../../../src/db/models/publish-destinations.model';
 import type { ContainerService } from '../../../src/containers/container-manager';
 
@@ -125,26 +126,28 @@ describe('socket-destination-lifecycle', () => {
 		});
 	});
 
-	describe('disableSocketDestination', () => {
-		it('disables an existing destination', () => {
+	describe('removeSocketDestination', () => {
+		it('deletes an existing destination', () => {
 			mockGetByName.mockReturnValue({
 				id: 5,
 				name: 'socket:my-app/my-svc',
 				type: 'socket',
 				enabled: true,
 			});
+			const mockDelete = PublishDestinationsModel.delete as jest.Mock;
 
-			disableSocketDestination(makeService(), mockLogger);
+			removeSocketDestination(makeService(), mockLogger);
 
-			expect(mockUpdate).toHaveBeenCalledWith(5, { enabled: false });
+			expect(mockDelete).toHaveBeenCalledWith(5);
 		});
 
 		it('is a no-op when destination does not exist', () => {
 			mockGetByName.mockReturnValue(null);
+			const mockDelete = PublishDestinationsModel.delete as jest.Mock;
 
-			disableSocketDestination(makeService(), mockLogger);
+			removeSocketDestination(makeService(), mockLogger);
 
-			expect(mockUpdate).not.toHaveBeenCalled();
+			expect(mockDelete).not.toHaveBeenCalled();
 		});
 	});
 });

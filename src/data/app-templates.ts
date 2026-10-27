@@ -5,6 +5,7 @@ export interface AppTemplateService {
 	volumes?: string[];
 	environment?: Record<string, string>;
 	restart?: string;
+	enableSocketDestination?: boolean;
 }
 
 export interface AppTemplate {
@@ -282,6 +283,23 @@ export const APP_TEMPLATES: AppTemplate[] = [
 			image: 'redis:7-alpine',
 			ports: ['6379:6379'],
 			volumes: ['redis-data:/data'],
+			restart: 'unless-stopped',
+		}],
+	},
+
+	// ── Iotistica ──────────────────────────────────────────────────────────────
+	{
+		id: 'socket-listener',
+		name: 'Socket Listener',
+		category: 'Iotistica',
+		description: 'Test container that receives agent data over a Unix socket — use it to verify socket publish destinations.',
+		color: '#7C3AED',
+		letter: 'SL',
+		appName: 'socket-listener',
+		services: [{
+			serviceName: 'socket-listener',
+			image: 'iotistic/socket-listener:latest',
+			enableSocketDestination: true,
 			restart: 'unless-stopped',
 		}],
 	},

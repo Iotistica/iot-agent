@@ -48,7 +48,7 @@ async function submit() {
           <IotisticaLogo :size="40" />
           <span>Iotistica</span>
         </div>
-        <p class="login-sub">Sign in to continue</p>
+        
       </div>
 
       <a-alert

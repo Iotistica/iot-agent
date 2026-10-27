@@ -59,7 +59,7 @@ export function ensureSocketDestination(
 	return created;
 }
 
-export function disableSocketDestination(
+export function removeSocketDestination(
 	service: ContainerService,
 	logger?: AgentLogger,
 ) {
@@ -67,18 +67,18 @@ export function disableSocketDestination(
 	const existing = PublishDestinationsModel.getByName(name);
 
 	if (existing?.id === undefined) {
-		logger?.debugSync('No socket destination to disable', {
+		logger?.debugSync('No socket destination to remove', {
 			component: LogComponents.containerManager,
-			operation: 'disableSocketDestination',
+			operation: 'removeSocketDestination',
 			name,
 		});
 		return;
 	}
 
-	PublishDestinationsModel.update(existing.id, { enabled: false });
-	logger?.infoSync('Socket destination disabled', {
+	PublishDestinationsModel.delete(existing.id);
+	logger?.infoSync('Socket destination removed', {
 		component: LogComponents.containerManager,
-		operation: 'disableSocketDestination',
+		operation: 'removeSocketDestination',
 		destinationId: existing.id,
 		name,
 	});

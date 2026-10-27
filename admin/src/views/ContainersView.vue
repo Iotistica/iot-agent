@@ -98,6 +98,7 @@ const CATEGORY_COLOR: Record<string, string> = {
   'IoT Platform':'green',
   Database:     'red',
   AI:           'volcano',
+  Iotistica:    'purple',
 }
 
 const STATUS_COLOR: Record<RunState, string> = {
@@ -578,6 +579,7 @@ function deployTemplateAsNewApp(tpl: AppTemplate) {
     volumes: (s.volumes ?? []).join('\n'),
     envRows: envToRows(s.environment),
     restart: s.restart ?? 'unless-stopped',
+    enableSocketDestination: s.enableSocketDestination ?? false,
   }))
   drawerOpen.value = true
 }
@@ -609,6 +611,7 @@ async function confirmDeployTarget() {
           ...(s.environment && Object.keys(s.environment).length ? { environment: s.environment } : {}),
           ...(volumes.length ? { volumes } : {}),
           restart: s.restart ?? 'unless-stopped',
+          ...(s.enableSocketDestination ? { enableSocketDestination: true } : {}),
         },
       })
     }

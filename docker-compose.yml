@@ -7,8 +7,8 @@ services:
       - "48481:48484"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - /run/agent/sockets:/run/agent/sockets
-      - ./data:/data
+      - agent-data:/app/data
+      - /app/data/sockets:/app/data/sockets
     environment:
       STANDALONE: "true"
       API_SECURITY_MODE: "LOCAL_NETWORK"
@@ -17,6 +17,9 @@ services:
       MQTT_PASSWORD: "iotistic42!"
     networks:
       - iotistica-net
+
+volumes:
+  agent-data:
 
 networks:
   iotistica-net:

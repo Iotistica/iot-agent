@@ -133,6 +133,12 @@ jobs:
           echo "**Agent Version:** \`${{ steps.meta.outputs.agent_version }}\`" >> $GITHUB_STEP_SUMMARY
           echo "**CLI Version:** \`${{ steps.meta.outputs.cli_version }}\`" >> $GITHUB_STEP_SUMMARY
           echo "**Git SHA:** \`${{ steps.meta.outputs.sha_short }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**CI Build:** \`#${{ github.run_number }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Install" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`sh" >> $GITHUB_STEP_SUMMARY
+          echo "curl -sfL https://get.iotistica.com/agent/builds/latest/install.sh | sudo IOTISTICA_DOWNLOAD_BASE_URL=https://get.iotistica.com/agent/builds/latest sh" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
 
   docker:
     name: Docker Build, Scan & Push

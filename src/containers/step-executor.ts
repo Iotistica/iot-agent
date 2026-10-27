@@ -3,7 +3,7 @@ import type { RetryManager } from './retry-manager';
 import type { HealthCheckManager } from './health-check-manager';
 import type { AgentLogger } from '../logging/agent-logger';
 import { LogComponents } from '../logging/types';
-import { ensureSocketDestination, disableSocketDestination } from './socket-destination-lifecycle';
+import { ensureSocketDestination, removeSocketDestination } from './socket-destination-lifecycle';
 
 interface StepExecutorContext {
 	retryManager: RetryManager;
@@ -243,7 +243,7 @@ export async function executeStep(
 
 			if (svc?.config.enableSocketDestination) {
 				try {
-					disableSocketDestination(svc, ctx.logger);
+					removeSocketDestination(svc, ctx.logger);
 					ctx.reloadPublishBindings?.();
 				} catch (destErr: any) {
 					ctx.logger?.warnSync('Failed to disable socket destination', {
