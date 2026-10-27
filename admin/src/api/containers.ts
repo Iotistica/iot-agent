@@ -47,6 +47,7 @@ export interface ContainerService {
     retryCount: number
     nextRetry?: string
   }
+  socketConnected?: boolean
   config: {
     image: string
     ports?: string[]

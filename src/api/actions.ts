@@ -794,6 +794,7 @@ export const getAllApps = async () => {
 	if (!containerManager) return [];
 	const currentState = await requireCM().getCurrentState();
 	const targetState = requireCM().getTargetState();
+	const healthMap = devicePublish?.getDestinationHealthMap();
 
 	const allIds = new Set([
 		...Object.keys(currentState.apps).map(String),
@@ -815,6 +816,13 @@ export const getAllApps = async () => {
 			const error = serviceStatus === 'running'
 				? undefined
 				: (cur?.error ?? targetSvc.error);
+
+			let socketConnected: boolean | undefined;
+			if (targetSvc.config?.enableSocketDestination && healthMap) {
+				const dest = PublishDestinationsModel.getByName(`socket:${base.appName}/${targetSvc.serviceName}`);
+				if (dest?.id !== undefined) socketConnected = healthMap.get(dest.id) ?? false;
+			}
+
 			return {
 				...targetSvc,
 				containerId: cur?.containerId ?? targetSvc.containerId,
@@ -822,6 +830,7 @@ export const getAllApps = async () => {
 				status: cur?.status ?? targetSvc.status,
 				serviceStatus,
 				error,
+				...(socketConnected !== undefined ? { socketConnected } : {}),
 			};
 		});
 

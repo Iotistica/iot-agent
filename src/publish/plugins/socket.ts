@@ -34,10 +34,12 @@ export class SocketPublishClient extends EventEmitter implements IPublishClient 
 	private connected = false;
 	private currentDelay: number;
 	private attempts = 0;
+	private lastPublishAt = 0;
 
 	private readonly INITIAL_DELAY_MS = 500;
 	private readonly MAX_DELAY_MS = 8000;
 	private readonly FAST_RETRY_THRESHOLD = 5;
+	private readonly ACTIVE_WINDOW_MS = 120_000;
 
 	constructor(
 		private readonly config: SocketDestinationConfig,
@@ -73,18 +75,23 @@ export class SocketPublishClient extends EventEmitter implements IPublishClient 
 		const frame = JSON.stringify({ topic: effectiveTopic, data: typeof payload === 'string' ? payload : payload.toString('utf8'), ts: Date.now() }) + '\n';
 		return new Promise<void>((resolve, reject) => {
 			const flushed = this.socket!.write(frame, 'utf8', (err) => {
-				if (err) reject(err);
+				if (err) return reject(err);
+				this.lastPublishAt = Date.now();
 			});
 			if (flushed) {
+				this.lastPublishAt = Date.now();
 				resolve();
 			} else {
-				this.socket!.once('drain', () => resolve());
+				this.socket!.once('drain', () => {
+					this.lastPublishAt = Date.now();
+					resolve();
+				});
 			}
 		});
 	}
 
 	isConnected(): boolean {
-		return this.connected;
+		return this.connected || (this.lastPublishAt > 0 && Date.now() - this.lastPublishAt < this.ACTIVE_WINDOW_MS);
 	}
 
 	getPublishMode(): PublishMode {
