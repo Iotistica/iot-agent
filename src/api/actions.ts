@@ -781,6 +781,14 @@ export const getServiceContainerId = async (appId: number, serviceName: string):
 	return svc?.containerId;
 };
 
+export const getServiceInfo = async (appId: number, serviceName: string): Promise<any | undefined> => {
+	const currentState = await requireCM().getCurrentState();
+	const targetState = requireCM().getTargetState();
+	const cur = ((currentState.apps as any)[appId]?.services as any[] | undefined)?.find((s: any) => s.serviceName === serviceName);
+	const target = ((targetState.apps ?? {} as any)[appId]?.services as any[] | undefined)?.find((s: any) => s.serviceName === serviceName);
+	return cur ?? target;
+};
+
 /**
  * Expose the Docker instance for streaming operations in routes
  */

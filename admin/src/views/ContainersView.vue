@@ -952,7 +952,7 @@ async function deploy() {
             :key="svc.serviceId ?? svc.serviceName"
             class="service-row"
           >
-            <span class="service-state-dot" :class="[`state-${resolveState(svc)}`, { 'socket-active': svc.socketConnected }]" :aria-label="STATUS_LABEL[resolveState(svc)]" />
+            <span class="service-state-dot" :class="[`state-${resolveState(svc)}`, { 'socket-active': svc.socketConnected && resolveState(svc) === 'running' }]" :aria-label="STATUS_LABEL[resolveState(svc)]" />
             <div class="svc-identity">
               <button class="service-name service-name-button" type="button" @click="openServiceDetails(fullApp(app), svc)">
                 {{ svc.serviceName }}

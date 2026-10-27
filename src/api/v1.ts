@@ -254,7 +254,13 @@ router.get('/v1/apps/:appId/services/:serviceName/logs', async (req: Request, re
 
 	try {
 		const containerId = await actions.getServiceContainerId(appId, serviceName);
-		if (!containerId) { send({ error: 'Container is not running' }); res.end(); return; }
+		if (!containerId) {
+			const svcInfo = await actions.getServiceInfo(appId, serviceName);
+			const detail = svcInfo?.error?.message || svcInfo?.error?.type;
+			send({ error: detail ? `Container is not running: ${detail}` : 'Container is not running' });
+			res.end();
+			return;
+		}
 
 		const docker = actions.getDockerInstance();
 		if (!docker) { send({ error: 'Docker not available' }); res.end(); return; }
