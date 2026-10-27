@@ -43,6 +43,7 @@ export const DESTINATION_COLORS: Record<string, string> = {
   gcp: 'cyan',
   influxdb: '#22ADF6',
   timescaledb: '#336791',
+  socket: '#7C3AED',
   noop: 'default',
 }
 
