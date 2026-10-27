@@ -15,8 +15,9 @@ import {
   RocketOutlined,
   EllipsisOutlined,
   DownOutlined,
+  UpOutlined,
   EyeOutlined,
-  BarsOutlined,
+  CloseOutlined,
 } from '@ant-design/icons-vue'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import { containersApi, templatesApi } from '@/api/containers'
@@ -32,7 +33,6 @@ const loading = ref(false)
 const error = ref<string | null>(null)
 const actionInFlight = ref<Record<string, boolean>>({})
 const searchQuery = ref('')
-const viewMode = ref<'grid' | 'list'>('grid')
 const collapsedApps = ref(new Set<number>())
 let refreshRequested = false
 
@@ -189,15 +189,7 @@ function toggleApp(appId: number) {
   collapsedApps.value = next
 }
 
-function handleAppMenu(key: string, app: ContainerApp) {
-  if (key === 'edit') openAppDetails(apps.value.find(item => item.appId === app.appId) ?? app)
-  if (key === 'toggle') toggleApp(app.appId)
-  if (key === 'delete') confirmRemoveApp(app)
-}
 
-function handleAppMenuClick(event: { key: string | number }, app: ContainerApp) {
-  handleAppMenu(String(event.key), app)
-}
 
 function handleServiceMenu(key: string, app: ContainerApp, svc: ContainerService) {
   if (key === 'details') openServiceDetails(app, svc)
@@ -458,6 +450,62 @@ let logEs: EventSource | null = null
 const LOG_API_BASE = (import.meta.env.VITE_API_BASE_URL as string) || ''
 const MAX_LOG_LINES = 1000
 
+const logSearchOpen = ref(false)
+const logSearchQuery = ref('')
+const logSearchIndex = ref(-1)
+
+const logSearchMatches = computed(() => {
+  const q = logSearchQuery.value.toLowerCase()
+  if (!q) return [] as number[]
+  const hits: number[] = []
+  logLines.value.forEach((line, i) => {
+    if (line.msg.toLowerCase().includes(q) || line.ts.toLowerCase().includes(q)) hits.push(i)
+  })
+  return hits
+})
+
+function openLogSearch() {
+  logSearchOpen.value = true
+  logSearchIndex.value = -1
+  nextTick(() => {
+    const el = document.querySelector('.log-search-input input') as HTMLInputElement | null
+    el?.focus()
+  })
+}
+
+function closeLogSearch() {
+  logSearchOpen.value = false
+  logSearchQuery.value = ''
+  logSearchIndex.value = -1
+}
+
+function scrollToLogMatch(idx: number) {
+  const matches = logSearchMatches.value
+  if (!matches.length) return
+  logSearchIndex.value = idx
+  nextTick(() => {
+    const el = logOutputEl.value?.querySelector('.log-line.search-current') as HTMLElement | null
+    el?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+  })
+}
+
+function logSearchNext() {
+  const matches = logSearchMatches.value
+  if (!matches.length) return
+  scrollToLogMatch(logSearchIndex.value < matches.length - 1 ? logSearchIndex.value + 1 : 0)
+}
+
+function logSearchPrev() {
+  const matches = logSearchMatches.value
+  if (!matches.length) return
+  scrollToLogMatch(logSearchIndex.value > 0 ? logSearchIndex.value - 1 : matches.length - 1)
+}
+
+watch(logSearchQuery, () => {
+  logSearchIndex.value = logSearchMatches.value.length > 0 ? 0 : -1
+  if (logSearchIndex.value >= 0) nextTick(() => scrollToLogMatch(0))
+})
+
 function parseLogLine(raw: string, stream: 'stdout' | 'stderr'): LogLine {
   const m = raw.match(/^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+Z) (.*)$/)
   if (m) {
@@ -496,6 +544,9 @@ function openLogs(app: ContainerApp, svc: ContainerService) {
   logLines.value = []
   logFollow.value = true
   logAutoScroll.value = true
+  logSearchOpen.value = false
+  logSearchQuery.value = ''
+  logSearchIndex.value = -1
   logDrawerOpen.value = true
   connectLogs(app.appId, svc.serviceName)
 }
@@ -780,34 +831,57 @@ async function deploy() {
   <AppLayout title="Applications">
     <div class="heading">
       <p>Deploy and manage containerised services on this device.</p>
-      <div class="header-actions">
+    </div>
+
+    <a-row :gutter="12" class="stats" aria-label="Application summary">
+      <a-col :xs="12" :md="6">
+        <a-card size="small" class="metric-card">
+          <div class="metric-inner">
+            <span class="metric-icon icon-apps"><AppstoreOutlined /></span>
+            <a-statistic title="Applications" :value="apps.length" />
+          </div>
+        </a-card>
+      </a-col>
+      <a-col :xs="12" :md="6">
+        <a-card size="small" class="metric-card">
+          <div class="metric-inner">
+            <span class="metric-icon icon-services"><RocketOutlined /></span>
+            <a-statistic title="Services" :value="totalServices" />
+          </div>
+        </a-card>
+      </a-col>
+      <a-col :xs="12" :md="6">
+        <a-card size="small" class="metric-card">
+          <div class="metric-inner">
+            <span class="metric-icon icon-running"><PlayCircleOutlined /></span>
+            <a-statistic title="Running" :value="totalRunning" />
+          </div>
+        </a-card>
+      </a-col>
+      <a-col :xs="12" :md="6">
+        <a-card size="small" class="metric-card">
+          <div class="metric-inner">
+            <span class="metric-icon icon-stopped"><PoweroffOutlined /></span>
+            <a-statistic title="Stopped" :value="totalStopped" />
+          </div>
+        </a-card>
+      </a-col>
+    </a-row>
+
+    <div class="filters">
+      <a-input
+        v-model:value="searchQuery"
+        allow-clear
+        class="filter-search"
+        placeholder="Search applications or services"
+      >
+        <template #prefix><SearchOutlined /></template>
+      </a-input>
+      <a-button @click="searchQuery = ''">Clear</a-button>
+      <div class="filters-actions">
         <a-button :loading="loading" @click="load"><template #icon><ReloadOutlined /></template>Refresh</a-button>
         <a-button :disabled="!dockerAvailable" @click="openMarketplace"><template #icon><ShopOutlined /></template>Marketplace</a-button>
         <a-button type="primary" :disabled="!dockerAvailable" @click="openDeploy"><template #icon><PlusOutlined /></template>Add Application</a-button>
-      </div>
-    </div>
-
-    <div class="summary-toolbar">
-      <div class="summary-stats" aria-label="Application summary">
-        <span class="summary-stat"><strong>{{ apps.length }}</strong> apps</span>
-        <span class="summary-stat"><strong>{{ totalServices }}</strong> services</span>
-        <span class="summary-stat status-running"><a-badge status="success" /><strong>{{ totalRunning }}</strong> running</span>
-        <span class="summary-stat status-stopped"><a-badge status="default" /><strong>{{ totalStopped }}</strong> stopped</span>
-      </div>
-      <div class="summary-controls">
-        <a-input
-          v-model:value="searchQuery"
-          allow-clear
-          class="app-search"
-          placeholder="Search applications or services"
-          aria-label="Search applications or services"
-        >
-          <template #prefix><SearchOutlined /></template>
-        </a-input>
-        <a-radio-group v-model:value="viewMode" button-style="solid" aria-label="Application view">
-          <a-radio-button value="grid" aria-label="Grid view"><AppstoreOutlined /></a-radio-button>
-          <a-radio-button value="list" aria-label="List view"><BarsOutlined /></a-radio-button>
-        </a-radio-group>
       </div>
     </div>
 
@@ -845,7 +919,7 @@ async function deploy() {
       class="search-empty"
     />
 
-    <div v-else class="app-grid" :class="{ 'app-grid--list': viewMode === 'list' }">
+    <div v-else class="app-grid">
       <article v-for="app in filteredApps" :key="app.appId" class="app-card">
         <div class="card-header">
           <div class="card-header-left">
@@ -859,18 +933,6 @@ async function deploy() {
             </div>
           </div>
           <div class="app-card-actions">
-            <a-dropdown :trigger="['click']">
-              <a-button type="text" class="icon-menu-button" aria-label="Application actions" title="Application actions">
-                <EllipsisOutlined />
-              </a-button>
-              <template #overlay>
-                <a-menu @click="handleAppMenuClick($event, app)">
-                  <a-menu-item key="edit"><EditOutlined /> Edit application</a-menu-item>
-                  <a-menu-divider />
-                  <a-menu-item key="delete" danger><DeleteOutlined /> Delete application</a-menu-item>
-                </a-menu>
-              </template>
-            </a-dropdown>
             <a-button
               type="text"
               class="icon-menu-button expand-button"
@@ -913,9 +975,6 @@ async function deploy() {
                 <span v-else class="port-tag">{{ port }}</span>
               </template>
             </div>
-            <a-tag :color="STATUS_COLOR[resolveState(svc)]" class="service-status">
-              {{ STATUS_LABEL[resolveState(svc)] }}
-            </a-tag>
             <div class="svc-controls">
               <a-button
                 size="small"
@@ -927,7 +986,14 @@ async function deploy() {
                 <template #icon><PoweroffOutlined v-if="resolveState(svc) === 'running'" /><PlayCircleOutlined v-else /></template>
                 {{ resolveState(svc) === 'running' ? 'Stop' : 'Start' }}
               </a-button>
-             
+              <a-button
+                size="small"
+                :disabled="isServiceBusy(app.appId, svc.serviceName)"
+                @click="doAction(app, svc, 'restart')"
+              >
+                <template #icon><ReloadOutlined /></template>
+                Restart
+              </a-button>
               <a-dropdown :trigger="['click']">
                 <a-button size="small" aria-label="Service actions" title="Service actions">
                   <template #icon><EllipsisOutlined /></template>
@@ -937,7 +1003,6 @@ async function deploy() {
                     <a-menu-item key="details"><EyeOutlined /> View details</a-menu-item>
                     <a-menu-item key="logs"><FileTextOutlined /> View logs</a-menu-item>
                     <a-menu-item key="edit" :disabled="isServiceBusy(app.appId, svc.serviceName)"><EditOutlined /> Edit configuration</a-menu-item>
-                    <a-menu-item key="restart" :disabled="isServiceBusy(app.appId, svc.serviceName)"><ReloadOutlined /> Restart</a-menu-item>
                     <a-menu-divider />
                     <a-menu-item key="delete" danger :disabled="isServiceBusy(app.appId, svc.serviceName)"><DeleteOutlined /> Delete service</a-menu-item>
                   </a-menu>
@@ -949,6 +1014,14 @@ async function deploy() {
             <a-button size="small" type="dashed" :disabled="!dockerAvailable" @click="openAddService(fullApp(app))">
               <template #icon><PlusOutlined /></template>
               Add Service
+            </a-button>
+            <a-button size="small" @click="openAppDetails(fullApp(app))">
+              <template #icon><EditOutlined /></template>
+              Edit Application
+            </a-button>
+            <a-button size="small" danger class="delete-app-btn" @click="confirmRemoveApp(app)">
+              <template #icon><DeleteOutlined /></template>
+              Delete Application
             </a-button>
           </div>
         </div>
@@ -1734,6 +1807,30 @@ async function deploy() {
         </div>
         <a-button size="small" @click="logLines = []">Clear</a-button>
         <span class="log-count">{{ logLines.length }} lines</span>
+        <a-button size="small" @click="openLogSearch" title="Search logs">
+          <template #icon><SearchOutlined /></template>
+        </a-button>
+      </div>
+      <div v-if="logSearchOpen" class="log-search-bar">
+        <a-input
+          v-model:value="logSearchQuery"
+          class="log-search-input"
+          size="small"
+          placeholder="Search logs…"
+          allow-clear
+          @keydown.enter.prevent="logSearchNext"
+          @keydown.escape.prevent="closeLogSearch"
+        />
+        <span class="log-search-count">{{ logSearchMatches.length ? `${logSearchIndex + 1} / ${logSearchMatches.length}` : 'No results' }}</span>
+        <a-button size="small" :disabled="!logSearchMatches.length" @click="logSearchPrev" title="Previous">
+          <template #icon><UpOutlined /></template>
+        </a-button>
+        <a-button size="small" :disabled="!logSearchMatches.length" @click="logSearchNext" title="Next">
+          <template #icon><DownOutlined /></template>
+        </a-button>
+        <a-button size="small" @click="closeLogSearch" title="Close">
+          <template #icon><CloseOutlined /></template>
+        </a-button>
       </div>
       <div ref="logOutputEl" class="log-output">
         <div v-if="logLines.length === 0" class="log-empty">Waiting for logs…</div>
@@ -1741,7 +1838,10 @@ async function deploy() {
           v-for="(line, i) in logLines"
           :key="i"
           class="log-line"
-          :class="line.stream"
+          :class="[line.stream, {
+            'search-hit': logSearchQuery && logSearchMatches.includes(i),
+            'search-current': logSearchQuery && logSearchMatches[logSearchIndex] === i,
+          }]"
         >
           <span v-if="line.ts" class="log-ts">{{ line.ts }}</span>
           <span class="log-msg">{{ line.msg }}</span>
@@ -1755,13 +1855,19 @@ async function deploy() {
 <style scoped>
 .heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 16px; }
 .heading p { color: var(--text-tertiary); margin: 0; }
-.header-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-.summary-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 16px; }
-.summary-stats, .summary-controls { display: flex; align-items: center; gap: 12px; }
-.summary-stat { display: inline-flex; align-items: center; gap: 5px; color: var(--text-tertiary); font-size: 12px; white-space: nowrap; }
-.summary-stat strong { color: var(--text-primary); font-weight: 600; }
-.summary-controls { min-width: 0; }
-.app-search { width: 260px; }
+.filters { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-bottom: 14px; }
+.filter-search { width: 260px; flex-shrink: 0; }
+.filters-actions { display: flex; gap: 8px; margin-left: auto; flex-shrink: 0; }
+.stats { margin-bottom: 14px; }
+.stats :deep(.ant-card) { border-radius: 9px; border-color: var(--border-color-card); background: var(--bg-subtle); }
+.stats :deep(.ant-card-body) { padding: 17px 18px; }
+.metric-inner { display: flex; align-items: center; gap: 15px; min-height: 66px; }
+.metric-icon { width: 50px; height: 50px; flex-shrink: 0; border-radius: 14px; display: inline-flex; align-items: center; justify-content: center; font-size: 23px; }
+.icon-apps, .icon-services { background: var(--icon-bg-blue, rgba(22,119,255,0.1)); color: #1677ff; }
+.icon-running { background: rgba(60,183,125,0.12); color: #3cb77d; }
+.icon-stopped { background: rgba(140,140,140,0.12); color: #8b949e; }
+.metric-card :deep(.ant-statistic-title) { color: var(--text-tertiary); }
+.metric-card :deep(.ant-statistic-content) { font-size: 23px; }
 .search-empty { margin: 44px 0; }
 .loading-card { padding: 18px; }
 /* ── Card grid ───────────────────────────────────────────── */
@@ -1771,7 +1877,6 @@ async function deploy() {
   gap: 16px;
   align-items: start;
 }
-.app-grid--list { grid-template-columns: 1fr; }
 
 .app-card {
   border: 1px solid var(--border-color-card);
@@ -1842,7 +1947,7 @@ async function deploy() {
 .card-body { padding: 3px 0 10px; }
 .service-row {
   display: grid;
-  grid-template-columns: 8px minmax(120px, 1fr) minmax(0, auto) auto auto;
+  grid-template-columns: 8px minmax(120px, 1fr) minmax(0, auto) auto;
   align-items: center;
   gap: 10px;
   padding: 10px 14px;
@@ -1905,7 +2010,8 @@ a.port-tag:hover { border-color: #1677ff; }
   white-space: nowrap;
 }
 .no-services { padding: 14px; font-size: 12px; color: var(--text-placeholder); text-align: center; }
-.card-footer { padding: 8px 14px 0; }
+.card-footer { padding: 8px 14px 0; display: flex; align-items: center; gap: 8px; }
+.card-footer .delete-app-btn { margin-left: auto; }
 
 .details-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; color: var(--text-secondary); }
 .details-heading :deep(.ant-tag) { margin: 0; }
@@ -1930,16 +2036,14 @@ a.port-tag:hover { border-color: #1677ff; }
 
 @media (max-width: 768px) {
   .heading { align-items: flex-start; flex-direction: column; }
-  .summary-toolbar { align-items: stretch; flex-direction: column; }
-  .summary-stats { flex-wrap: wrap; gap: 8px 14px; }
-  .summary-controls { width: 100%; }
-  .app-search { flex: 1; width: auto; }
-  .app-grid { grid-template-columns: minmax(0, 1fr); }
+  .metric-inner { gap: 8px; }
+  .metric-icon { width: 38px; height: 38px; }
 }
 
 @media (max-width: 480px) {
-  .header-actions { width: 100%; }
-  .header-actions :deep(.ant-btn) { flex: 1; }
+  .filters-actions { width: 100%; margin-left: 0; }
+  .filters-actions :deep(.ant-btn) { flex: 1; }
+  .filter-search { width: 100%; }
   .service-row { grid-template-columns: 8px minmax(0, 1fr) auto; gap: 8px; padding: 9px 10px; }
   .service-status { grid-column: 3; grid-row: 1; }
   .service-ports { grid-column: 2; grid-row: 2; }
@@ -2027,6 +2131,37 @@ a.port-tag:hover { border-color: #1677ff; }
 
 .log-msg {
   flex: 1;
+}
+
+.log-search-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 16px;
+  background: #1c2128;
+  border-bottom: 1px solid #30363d;
+  flex-shrink: 0;
+}
+
+.log-search-input {
+  width: 220px;
+}
+
+.log-search-count {
+  font-size: 11px;
+  color: #8b949e;
+  min-width: 70px;
+  text-align: center;
+}
+
+.log-line.search-hit {
+  background: rgba(187, 128, 9, 0.15);
+}
+
+.log-line.search-current {
+  background: rgba(187, 128, 9, 0.35);
+  outline: 1px solid rgba(187, 128, 9, 0.6);
+  outline-offset: -1px;
 }
 
 /* ── Marketplace ─────────────────────────────────────────── */
