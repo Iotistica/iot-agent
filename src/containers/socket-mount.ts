@@ -28,7 +28,7 @@ export async function ensureSocketDir(
 ): Promise<{ path: string; created: boolean }> {
 	const dir = socketHostDir(appId, serviceId);
 	const existed = fs.existsSync(dir);
-	await fs.promises.mkdir(dir, { recursive: true, mode: 0o770 });
+	await fs.promises.mkdir(dir, { recursive: true, mode: 0o777 });
 	return { path: dir, created: !existed };
 }
 

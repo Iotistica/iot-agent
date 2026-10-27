@@ -1,5 +1,5 @@
 import { createServer } from 'net';
-import { unlinkSync } from 'fs';
+import { unlinkSync, chmodSync } from 'fs';
 
 const socketPath = process.env.EDGE_IPC_SOCKET || '/run/edge-ipc/app.sock';
 
@@ -18,7 +18,7 @@ const server = createServer((conn) => {
       buf = buf.slice(nl + 1);
       try {
         const msg = JSON.parse(line);
-        console.log(`[msg] topic=${msg.topic} ts=${msg.ts} data=${typeof msg.data === 'string' ? msg.data.slice(0, 120) : JSON.stringify(msg.data).slice(0, 120)}`);
+        console.log(`[msg] topic=${msg.topic} ts=${msg.ts} data=${typeof msg.data === 'string' ? msg.data : JSON.stringify(msg.data)}`);
       } catch {
         console.log(`[raw] ${line.slice(0, 200)}`);
       }
@@ -30,6 +30,7 @@ const server = createServer((conn) => {
 });
 
 server.listen(socketPath, () => {
+  chmodSync(socketPath, 0o666);
   console.log(`Socket listener ready at ${socketPath}`);
   console.log('Waiting for agent to publish data...');
 });

@@ -32,11 +32,11 @@ describe('socket-mount helpers', () => {
 
 	describe('socketHostDir', () => {
 		it('returns correct path for valid IDs', () => {
-			expect(socketHostDir(1, 42)).toBe('/run/agent/sockets/1_42');
+			expect(socketHostDir(1, 42)).toBe(`${SOCKET_HOST_BASE}/1_42`);
 		});
 
 		it('handles zero IDs', () => {
-			expect(socketHostDir(0, 0)).toBe('/run/agent/sockets/0_0');
+			expect(socketHostDir(0, 0)).toBe(`${SOCKET_HOST_BASE}/0_0`);
 		});
 
 		it('throws for negative appId', () => {
@@ -63,18 +63,18 @@ describe('socket-mount helpers', () => {
 	describe('socketBindString', () => {
 		it('returns host:container format', () => {
 			expect(socketBindString(3, 7)).toBe(
-				`/run/agent/sockets/3_7:${SOCKET_CONTAINER_PATH}`,
+				`${SOCKET_HOST_BASE}/3_7:${SOCKET_CONTAINER_PATH}`,
 			);
 		});
 	});
 
 	describe('isSocketMount', () => {
 		it('matches agent-managed socket mount', () => {
-			expect(isSocketMount('/run/agent/sockets/1_2', SOCKET_CONTAINER_PATH)).toBe(true);
+			expect(isSocketMount(`${SOCKET_HOST_BASE}/1_2`, SOCKET_CONTAINER_PATH)).toBe(true);
 		});
 
 		it('rejects wrong destination', () => {
-			expect(isSocketMount('/run/agent/sockets/1_2', '/some/other/path')).toBe(false);
+			expect(isSocketMount(`${SOCKET_HOST_BASE}/1_2`, '/some/other/path')).toBe(false);
 		});
 
 		it('rejects wrong source (user-created mount to same destination)', () => {
@@ -96,10 +96,10 @@ describe('socket-mount helpers', () => {
 			mkdirMock.mockResolvedValue(undefined);
 
 			const result = await ensureSocketDir(1, 2);
-			expect(result).toEqual({ path: '/run/agent/sockets/1_2', created: true });
-			expect(mkdirMock).toHaveBeenCalledWith('/run/agent/sockets/1_2', {
+			expect(result).toEqual({ path: `${SOCKET_HOST_BASE}/1_2`, created: true });
+			expect(mkdirMock).toHaveBeenCalledWith(`${SOCKET_HOST_BASE}/1_2`, {
 				recursive: true,
-				mode: 0o770,
+				mode: 0o777,
 			});
 		});
 
@@ -108,7 +108,7 @@ describe('socket-mount helpers', () => {
 			mkdirMock.mockResolvedValue(undefined);
 
 			const result = await ensureSocketDir(5, 10);
-			expect(result).toEqual({ path: '/run/agent/sockets/5_10', created: false });
+			expect(result).toEqual({ path: `${SOCKET_HOST_BASE}/5_10`, created: false });
 		});
 
 		it('propagates mkdir errors', async () => {
@@ -123,7 +123,7 @@ describe('socket-mount helpers', () => {
 		it('removes directory with force', async () => {
 			rmMock.mockResolvedValue(undefined);
 			await removeSocketDir(1, 2);
-			expect(rmMock).toHaveBeenCalledWith('/run/agent/sockets/1_2', {
+			expect(rmMock).toHaveBeenCalledWith(`${SOCKET_HOST_BASE}/1_2`, {
 				recursive: true,
 				force: true,
 			});
@@ -136,7 +136,7 @@ describe('socket-mount helpers', () => {
 			await expect(removeSocketDir(1, 2, logger)).resolves.toBeUndefined();
 			expect(logger.warnSync).toHaveBeenCalledWith(
 				'Failed to clean up socket directory',
-				expect.objectContaining({ dir: '/run/agent/sockets/1_2' }),
+				expect.objectContaining({ dir: `${SOCKET_HOST_BASE}/1_2` }),
 			);
 		});
 

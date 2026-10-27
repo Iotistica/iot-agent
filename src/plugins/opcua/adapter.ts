@@ -1480,7 +1480,7 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 		});
     
 		// Keep-alive failure - session timeout
-		client.on('keepalive_failure', () => {
+		(client as any).on('keepalive_failure', () => {
 			this.logger.warn(`Keep-alive failure for ${device.name}`);
 			this.scheduleReconnect(device, sessionWrapper, 'keepalive_failure');
 		});

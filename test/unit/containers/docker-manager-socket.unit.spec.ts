@@ -19,7 +19,7 @@ jest.mock('node:fs', () => {
 });
 
 import { DockerManager } from '../../../src/containers/docker-manager';
-import { SOCKET_CONTAINER_PATH } from '../../../src/containers/socket-mount';
+import { SOCKET_CONTAINER_PATH, SOCKET_HOST_BASE } from '../../../src/containers/socket-mount';
 import type { ContainerService } from '../../../src/containers/container-manager';
 import * as socketMount from '../../../src/containers/socket-mount';
 import fs from 'node:fs';
@@ -80,7 +80,7 @@ describe('DockerManager socket destination', () => {
 			await mgr.startContainer(svc);
 
 			const createCall = mgr.docker.createContainer.mock.calls[0][0];
-			expect(createCall.HostConfig.Binds).toContain('/run/agent/sockets/10_1:/run/edge-ipc');
+			expect(createCall.HostConfig.Binds).toContain(`${SOCKET_HOST_BASE}/10_1:/run/edge-ipc`);
 		});
 
 		it('includes iotistic.socket-destination label when enabled', async () => {
@@ -208,7 +208,7 @@ describe('DockerManager socket destination', () => {
 
 			const createCall = mgr.docker.createContainer.mock.calls[0][0];
 			expect(createCall.HostConfig.Binds).toContain('data:/app/data');
-			expect(createCall.HostConfig.Binds).toContain('/run/agent/sockets/10_1:/run/edge-ipc');
+			expect(createCall.HostConfig.Binds).toContain(`${SOCKET_HOST_BASE}/10_1:/run/edge-ipc`);
 		});
 	});
 
@@ -221,7 +221,7 @@ describe('DockerManager socket destination', () => {
 
 			expect(id).toBe('abc123def456');
 			const createCall = mgr.docker.createContainer.mock.calls[0][0];
-			expect(createCall.HostConfig.Binds).toContain('/run/agent/sockets/10_1:/run/edge-ipc');
+			expect(createCall.HostConfig.Binds).toContain(`${SOCKET_HOST_BASE}/10_1:/run/edge-ipc`);
 			expect(createCall.Labels['iotistic.socket-destination']).toBe('true');
 		});
 
@@ -279,7 +279,7 @@ describe('docker-state-sync socket reconstruction', () => {
 					Mounts: [
 						{
 							Type: 'bind',
-							Source: '/run/agent/sockets/1_2',
+							Source: `${SOCKET_HOST_BASE}/1_2`,
 							Destination: '/run/edge-ipc',
 						},
 					],

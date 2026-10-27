@@ -1,3 +1,11 @@
+jest.mock('dockerode', () => {
+	return jest.fn().mockImplementation(() => ({
+		createContainer: jest.fn(),
+		getNetwork: jest.fn(),
+		listContainers: jest.fn().mockResolvedValue([]),
+	}));
+});
+
 import { ContainerManager } from '../../../src/containers/container-manager';
 
 describe('ContainerManager.applyTargetState', () => {
