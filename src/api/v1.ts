@@ -443,6 +443,32 @@ router.get('/v1/device', async (req: Request, res: Response, next: NextFunction)
 });
 
 /**
+ * GET /v1/config
+ * Get target configuration key-values
+ */
+router.get('/v1/config', async (req: Request, res: Response, next: NextFunction) => {
+	try {
+		const config = actions.getConfig();
+		return res.status(200).json({ config });
+	} catch (error) {
+		next(error);
+	}
+});
+
+/**
+ * POST /v1/config
+ * Update configuration key-values
+ */
+router.post('/v1/config', requireRole('admin'), async (req: Request, res: Response, next: NextFunction) => {
+	try {
+		await actions.setConfig(req.body);
+		return res.status(200).json({ ok: true });
+	} catch (error) {
+		next(error);
+	}
+});
+
+/**
  * GET /v1/state
  * Get persisted current and/or target state snapshots
  */

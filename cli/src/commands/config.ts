@@ -64,7 +64,7 @@ export async function configGetApi(): Promise<void> {
  * iotctl config set <key> <value>
  */
 export async function configSet(key: string, value: string): Promise<void> {
-  if (!key || !value) {
+  if (!key || value === undefined) {
     throw new CLIError('Both key and value are required', 1, {
       usage: 'iotctl config set <key> <value>',
     });
@@ -95,17 +95,15 @@ export async function configSet(key: string, value: string): Promise<void> {
 /**
  * iotctl config get <key>
  */
-export async function configGet(key: string): Promise<void> {
-  if (!key) {
-    throw new CLIError('Key is required', 1, {
-      usage: 'iotctl config get <key>',
-    });
-  }
-
+export async function configGet(key?: string): Promise<void> {
   clearApiCache();
   try {
-    const deviceState = await apiCached(`${DEVICE_API_V1}/device`);
-    const config = deviceState.config || {};
+    const { config } = await apiCached(`${DEVICE_API_V1}/config`);
+
+    if (!key) {
+      logger.info('Configuration', config);
+      return;
+    }
 
     if (key in config) {
       logger.info('Configuration value', { key, value: config[key] });
@@ -114,7 +112,7 @@ export async function configGet(key: string): Promise<void> {
     }
   } catch (error) {
     throw new CLIError('Failed to retrieve configuration', 1, {
-      key,
+      ...(key ? { key } : {}),
       error: (error as Error).message,
     });
   }

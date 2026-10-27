@@ -459,6 +459,24 @@ async function applyConfigUpdate(mutator: (config: Record<string, any>) => void)
 }
 
 /**
+ * Get target configuration (for CLI config get)
+ */
+export function getConfig(): Record<string, any> {
+	if (!configManager) throw new Error('Config manager not initialized');
+	return configManager.getTargetConfig() as Record<string, any>;
+}
+
+/**
+ * Set configuration key-values (for CLI config set)
+ */
+export async function setConfig(updates: Record<string, any>): Promise<void> {
+	if (!configManager) throw new Error('Config manager not initialized');
+	const config = configManager.getTargetConfig() as Record<string, any>;
+	Object.assign(config, updates);
+	await configManager.setTarget(config as any);
+}
+
+/**
  * Get adapter manager (for accessing protocol adapters)
  */
 export function getAdapterManager(): AdapterManager | undefined {
@@ -997,6 +1015,7 @@ export const updateApp = async (appId: number, body: { appName: string }) => {
 	const app = (targetState.apps ?? {} as any)[appId];
 	if (!app) throw new Error(`App ${appId} not found`);
 
+	const oldAppName = app.appName;
 	const updatedServices = (app.services as any[]).map((s: any) => ({
 		...s,
 		appName: body.appName,
@@ -1007,6 +1026,16 @@ export const updateApp = async (appId: number, body: { appName: string }) => {
 		...targetState,
 		apps: { ...targetState.apps, [appId]: updatedApp },
 	} as any);
+
+	if (oldAppName !== body.appName) {
+		for (const svc of updatedServices) {
+			const oldName = `socket:${oldAppName}/${svc.serviceName}`;
+			const dest = PublishDestinationsModel.getByName(oldName);
+			if (dest?.id) {
+				PublishDestinationsModel.update(dest.id, { name: `socket:${body.appName}/${svc.serviceName}` });
+			}
+		}
+	}
 
 	return { appId, appName: body.appName };
 };
