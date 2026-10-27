@@ -75,8 +75,8 @@ export function removeSocketDestination(
 		return;
 	}
 
-	PublishDestinationsModel.delete(existing.id);
-	logger?.infoSync('Socket destination removed', {
+	PublishDestinationsModel.update(existing.id, { enabled: false });
+	logger?.infoSync('Socket destination disabled', {
 		component: LogComponents.containerManager,
 		operation: 'removeSocketDestination',
 		destinationId: existing.id,
