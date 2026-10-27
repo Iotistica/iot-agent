@@ -18,6 +18,7 @@ import {
   UpOutlined,
   EyeOutlined,
   CloseOutlined,
+  SwapOutlined,
 } from '@ant-design/icons-vue'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import { containersApi, templatesApi } from '@/api/containers'
@@ -560,6 +561,17 @@ function toggleFollow() {
   connectLogs(logApp.value.appId, logSvc.value.serviceName)
 }
 
+function switchService(serviceName: string) {
+  if (!logApp.value) return
+  const svc = logApp.value.services.find(s => s.serviceName === serviceName)
+  if (!svc || svc.serviceName === logSvc.value?.serviceName) return
+  logSvc.value = svc
+  logLines.value = []
+  logSearchQuery.value = ''
+  logSearchIndex.value = -1
+  connectLogs(logApp.value.appId, svc.serviceName)
+}
+
 watch(logLines, () => {
   if (logAutoScroll.value) nextTick(() => {
     if (logOutputEl.value) logOutputEl.value.scrollTop = logOutputEl.value.scrollHeight
@@ -933,6 +945,16 @@ async function deploy() {
             </div>
           </div>
           <div class="app-card-actions">
+            <a-dropdown :trigger="['click']">
+              <a-button type="text" class="icon-menu-button" aria-label="Application actions" title="Application actions">
+                <EllipsisOutlined />
+              </a-button>
+              <template #overlay>
+                <a-menu>
+                  <a-menu-item key="delete" danger @click="confirmRemoveApp(app)"><DeleteOutlined /> Delete Application</a-menu-item>
+                </a-menu>
+              </template>
+            </a-dropdown>
             <a-button
               type="text"
               class="icon-menu-button expand-button"
@@ -1018,10 +1040,6 @@ async function deploy() {
             <a-button size="small" @click="openAppDetails(fullApp(app))">
               <template #icon><EditOutlined /></template>
               Edit Application
-            </a-button>
-            <a-button size="small" danger class="delete-app-btn" @click="confirmRemoveApp(app)">
-              <template #icon><DeleteOutlined /></template>
-              Delete Application
             </a-button>
           </div>
         </div>
@@ -1791,11 +1809,29 @@ async function deploy() {
     <!-- Log viewer drawer -->
     <a-drawer
       v-model:open="logDrawerOpen"
-      :title="`Logs — ${logSvc?.serviceName ?? ''}`"
       width="720"
       :body-style="{ padding: 0, display: 'flex', flexDirection: 'column', height: '100%' }"
       @close="onLogDrawerClose"
     >
+      <template #title>
+        <div style="display: flex; align-items: center; gap: 10px">
+          <span>Logs — {{ logApp?.appName ?? '' }}</span>
+          <template v-if="logApp && logApp.services.length > 1">
+            <SwapOutlined style="color: var(--text-tertiary); font-size: 13px" />
+            <a-select
+              :value="logSvc?.serviceName"
+              size="small"
+              style="min-width: 140px"
+              @change="(v: any) => switchService(v)"
+            >
+              <a-select-option v-for="s in logApp.services" :key="s.serviceName" :value="s.serviceName">
+                {{ s.serviceName }}
+              </a-select-option>
+            </a-select>
+          </template>
+          <span v-else style="font-weight: 400; color: var(--text-secondary)">/ {{ logSvc?.serviceName ?? '' }}</span>
+        </div>
+      </template>
       <div class="log-toolbar">
         <div style="display: flex; align-items: center; gap: 8px">
           <a-switch v-model:checked="logFollow" size="small" @change="toggleFollow" />
