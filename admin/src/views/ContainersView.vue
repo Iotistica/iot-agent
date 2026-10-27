@@ -924,11 +924,7 @@ async function deploy() {
                 <template #icon><PoweroffOutlined v-if="resolveState(svc) === 'running'" /><PlayCircleOutlined v-else /></template>
                 {{ resolveState(svc) === 'running' ? 'Stop' : 'Start' }}
               </a-button>
-              <a-tooltip title="View service details">
-                <a-button size="small" aria-label="View service details" @click="openServiceDetails(fullApp(app), svc)">
-                  <template #icon><EyeOutlined /></template>
-                </a-button>
-              </a-tooltip>
+             
               <a-dropdown :trigger="['click']">
                 <a-button size="small" aria-label="Service actions" title="Service actions">
                   <template #icon><EllipsisOutlined /></template>
