@@ -870,7 +870,6 @@ echo ""
         # and will not load on aarch64. Unconditional — no detection needed.
         if [ "$ARCH" = "aarch64" ] && ! (cd /opt/iotistic/agent && node -e "require('better-sqlite3');require('node-pty')" > /dev/null 2>&1); then
             echo ""
-            echo "ARM64 device — compiling native modules from source (takes ~3 min)..."
             apt-get install -y -qq --no-install-recommends build-essential python3 libsqlite3-dev > /dev/null || {
                 echo "✗ Error: Failed to install build tools for native module compilation"
                 exit 1
