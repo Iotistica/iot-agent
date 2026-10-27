@@ -253,7 +253,7 @@ jobs:
             --platform linux/arm64 \
             node:24-slim bash -c "
               apt-get update -qq && apt-get install -y -qq build-essential python3
-              npm rebuild node-pty @serialport/bindings-cpp
+              npm rebuild better-sqlite3 node-pty @serialport/bindings-cpp
             "
 
       - name: Build Admin UI
