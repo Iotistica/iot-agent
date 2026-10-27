@@ -18,7 +18,6 @@ import {
   UpOutlined,
   EyeOutlined,
   CloseOutlined,
-  BarChartOutlined,
 } from '@ant-design/icons-vue'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import { containersApi, templatesApi } from '@/api/containers'
@@ -953,18 +952,11 @@ async function deploy() {
             :key="svc.serviceId ?? svc.serviceName"
             class="service-row"
           >
-            <span class="service-state-dot" :class="`state-${resolveState(svc)}`" :aria-label="STATUS_LABEL[resolveState(svc)]" />
+            <span class="service-state-dot" :class="[`state-${resolveState(svc)}`, { 'socket-active': svc.socketConnected }]" :aria-label="STATUS_LABEL[resolveState(svc)]" />
             <div class="svc-identity">
-              <div class="svc-name-row">
-                <button class="service-name service-name-button" type="button" @click="openServiceDetails(fullApp(app), svc)">
-                  {{ svc.serviceName }}
-                </button>
-                <a-tooltip v-if="svc.socketConnected !== undefined" :title="svc.socketConnected ? 'Socket connected — receiving data' : 'Socket disconnected'">
-                  <span class="socket-indicator" :class="{ connected: svc.socketConnected }">
-                    <BarChartOutlined />
-                  </span>
-                </a-tooltip>
-              </div>
+              <button class="service-name service-name-button" type="button" @click="openServiceDetails(fullApp(app), svc)">
+                {{ svc.serviceName }}
+              </button>
               <span class="service-image" :title="svc.imageName">{{ svc.imageName }}</span>
               <a-tooltip v-if="svc.error" :title="svc.error.message" placement="topLeft">
                 <span class="svc-error-hint">{{ svc.error.type }}</span>
@@ -2017,23 +2009,12 @@ a.port-tag:hover { border-color: #1677ff; }
   cursor: help;
   white-space: nowrap;
 }
-.svc-name-row { display: flex; align-items: center; gap: 6px; }
-.socket-indicator {
-  display: inline-flex;
-  align-items: center;
-  font-size: 13px;
-  color: var(--text-muted);
-  opacity: 0.45;
-  transition: color 0.3s, opacity 0.3s;
+.service-state-dot.socket-active {
+  animation: dot-blink 1s step-end infinite;
 }
-.socket-indicator.connected {
-  color: #52c41a;
-  opacity: 1;
-  animation: socket-pulse 2s ease-in-out infinite;
-}
-@keyframes socket-pulse {
+@keyframes dot-blink {
   0%, 100% { opacity: 1; }
-  50% { opacity: 0.4; }
+  50% { opacity: 0; }
 }
 .no-services { padding: 14px; font-size: 12px; color: var(--text-placeholder); text-align: center; }
 .card-footer { padding: 8px 14px 0; display: flex; align-items: center; gap: 8px; }
