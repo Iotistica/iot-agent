@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { message, Modal } from 'ant-design-vue'
-import { PlusOutlined, DeleteOutlined, WifiOutlined, CrownOutlined } from '@ant-design/icons-vue'
+import { PlusOutlined, DeleteOutlined, WifiOutlined, CrownOutlined, KeyOutlined } from '@ant-design/icons-vue'
 import type { TableColumnType } from 'ant-design-vue'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import { client as apiClient } from '@/api/client'
@@ -92,6 +92,29 @@ async function deleteUser(row: MqttUser) {
   }
 }
 
+const resetOpen = ref(false)
+const resetPassword = ref('')
+const resetting = ref(false)
+
+function openResetPassword() {
+  resetPassword.value = ''
+  resetOpen.value = true
+}
+
+async function submitResetPassword() {
+  if (!resetPassword.value.trim() || resetPassword.value.length < 4) return
+  resetting.value = true
+  try {
+    await apiClient.post('/v1/mqtt/users/admin/reset-password', { password: resetPassword.value.trim() })
+    message.success('Admin broker password updated — MQTT adapter will reconnect')
+    resetOpen.value = false
+  } catch (e: any) {
+    message.error(e?.response?.data?.error ?? 'Failed to reset password')
+  } finally {
+    resetting.value = false
+  }
+}
+
 function confirmDeleteSelected() {
   const count = selectedUsernames.value.length
   Modal.confirm({
@@ -160,11 +183,13 @@ onMounted(load)
         </template>
 
         <template v-else-if="column.key === 'actions'">
-          <a-tooltip v-if="record.superuser" title="Bootstrap admin cannot be deleted">
-            <a-button size="small" danger disabled>
-              <template #icon><DeleteOutlined /></template>
-            </a-button>
-          </a-tooltip>
+          <div v-if="record.superuser" style="display: flex; gap: 4px;">
+            <a-tooltip title="Reset broker password">
+              <a-button size="small" @click="openResetPassword">
+                <template #icon><KeyOutlined /></template>
+              </a-button>
+            </a-tooltip>
+          </div>
           <a-button v-else size="small" danger @click="confirmDelete(record)">
             <template #icon><DeleteOutlined /></template>
           </a-button>
@@ -215,6 +240,40 @@ onMounted(load)
         >
           <template #icon><WifiOutlined /></template>
           Create User
+        </a-button>
+      </div>
+    </a-drawer>
+    <!-- Reset Admin Password Drawer -->
+    <a-drawer
+      v-model:open="resetOpen"
+      title="Reset Broker Password"
+      placement="right"
+      :width="400"
+    >
+      <p style="color: var(--text-secondary); margin-bottom: 16px;">
+        Set a new password for the MQTT broker admin account. The agent's MQTT adapter will automatically reconnect with the updated credentials.
+      </p>
+      <a-form layout="vertical">
+        <a-form-item label="New Password" required>
+          <a-input-password
+            v-model:value="resetPassword"
+            placeholder="New password (min 4 characters)"
+            autocomplete="new-password"
+            @keydown.enter.prevent="submitResetPassword"
+          />
+        </a-form-item>
+      </a-form>
+
+      <div class="drawer-footer">
+        <a-button @click="resetOpen = false" style="margin-right: 8px">Cancel</a-button>
+        <a-button
+          type="primary"
+          :loading="resetting"
+          :disabled="!resetPassword.trim() || resetPassword.length < 4"
+          @click="submitResetPassword"
+        >
+          <template #icon><KeyOutlined /></template>
+          Update Password
         </a-button>
       </div>
     </a-drawer>

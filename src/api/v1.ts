@@ -3217,6 +3217,35 @@ router.delete('/v1/mqtt/users/:username', requireRole('admin'), async (req: Requ
 	} catch (err) { next(err); }
 });
 
+router.post('/v1/mqtt/users/admin/reset-password', requireRole('admin'), async (req: Request, res: Response, next: NextFunction) => {
+	try {
+		const { password } = req.body ?? {};
+		if (!password || typeof password !== 'string' || password.length < 4) {
+			return res.status(400).json({ error: 'Password must be at least 4 characters' });
+		}
+
+		const bootstrapUsername = process.env.MQTT_USERNAME ?? 'admin';
+		const passwordHash = generateMosquittoHash(password);
+
+		if (MqttUserModel.existsByUsername(bootstrapUsername)) {
+			MqttUserModel.update(bootstrapUsername, { password_hash: passwordHash });
+		} else {
+			MqttUserModel.create(bootstrapUsername, passwordHash, true);
+		}
+
+		process.env.MQTT_PASSWORD = password;
+
+		await actions.reconcileMqttAuth();
+
+		const am = actions.getAdapterManager();
+		if (am) {
+			try { await am.reloadAdapterGroup('mqtt'); } catch { /* non-fatal */ }
+		}
+
+		res.json({ ok: true, username: bootstrapUsername });
+	} catch (err) { next(err); }
+});
+
 router.get('/v1/mqtt/broker/status', (_req: Request, res: Response) => {
 	const monitor = BrokerMonitorService.getInstance();
 	res.json(monitor.getStatus());
