@@ -46,11 +46,16 @@ export class DiscoveryOptionsBuilder {
 	private mqtt(): MqttDiscoveryOptions | undefined {
 		if (this.configManager) {
 			const config = this.configManager.getMqttConfig();
-			if (!config.enabled || !config.brokerUrl) return undefined;
+			// Always return credentials so discovery rules with their own brokerUrl
+			// get auth even when MQTT isn't globally enabled.
+			const brokerUrl = config.brokerUrl || process.env.MQTT_BROKER_URL;
+			if (!brokerUrl) return undefined;
 
-			const options: MqttDiscoveryOptions = { brokerUrl: config.brokerUrl, topics: [] };
-			if (config.username)                    options.username = config.username;
-			if (config.password)                    options.password = config.password;
+			const options: MqttDiscoveryOptions = { brokerUrl, topics: [] };
+			if (config.username || process.env.MQTT_USERNAME)
+				options.username = config.username || process.env.MQTT_USERNAME;
+			if (config.password || process.env.MQTT_PASSWORD)
+				options.password = config.password || process.env.MQTT_PASSWORD;
 			if (config.discoveryRoots?.length)      options.topics = config.discoveryRoots;
 			if (config.monitorDurationMs)           options.samplingDurationMs = config.monitorDurationMs;
 			if (config.qos !== undefined)           options.qos = config.qos;

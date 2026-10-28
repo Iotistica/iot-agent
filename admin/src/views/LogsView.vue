@@ -7,7 +7,7 @@ import type { LogMessage, LogLevel, LogSourceType } from '@/api/logs'
 
 const logs = ref<LogMessage[]>([])
 const loading = ref(false)
-const autoRefresh = ref(false)
+const autoRefresh = ref(true)
 let refreshTimer: ReturnType<typeof setInterval> | null = null
 
 const filterLevel = ref<LogLevel | undefined>(undefined)
@@ -147,7 +147,7 @@ async function copyLogs() {
   setTimeout(() => { copied.value = false }, 2000)
 }
 
-onMounted(load)
+onMounted(() => { load(); refreshTimer = setInterval(load, 5000) })
 onUnmounted(() => { if (refreshTimer) clearInterval(refreshTimer) })
 </script>
 
