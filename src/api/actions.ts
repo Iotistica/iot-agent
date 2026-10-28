@@ -2576,6 +2576,7 @@ export const getSettings = async (): Promise<Record<string, any>> => {
 			name: agent?.name ?? null,
 			type: agent?.type ?? null,
 			version: agent?.agentVersion ?? null,
+			buildId: process.env.BUILD_ID ?? null,
 			provisioned: agentInfo.provisioned ?? false,
 			tenantId: agentInfo.tenantId ?? null,
 			apiEndpoint: agentInfo.apiEndpoint ?? null,
@@ -2591,7 +2592,7 @@ export const getSettings = async (): Promise<Record<string, any>> => {
 			targetSyncEnabled: agentInfo.targetSyncEnabled !== false,
 		};
 	} catch {
-		settings.agent = { uuid: null, name: null, type: null, version: null, provisioned: false, tenantId: null, apiEndpoint: null, registeredAt: null, mqttBrokerUrl: null, mqttUsername: null, mqttClientIdPrefix: null, mqttUseTls: null, macAddress: null, osVersion: null, targetSyncEnabled: true };
+		settings.agent = { uuid: null, name: null, type: null, version: null, buildId: process.env.BUILD_ID ?? null, provisioned: false, tenantId: null, apiEndpoint: null, registeredAt: null, mqttBrokerUrl: null, mqttUsername: null, mqttClientIdPrefix: null, mqttUseTls: null, macAddress: null, osVersion: null, targetSyncEnabled: true };
 	}
 
 	return settings;

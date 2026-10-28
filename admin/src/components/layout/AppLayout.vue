@@ -30,6 +30,7 @@ const { fetchDockerStatus } = useDockerStatus()
 const { isDark, toggle: toggleTheme } = useTheme()
 
 const agentVersion = ref<string | null>(null)
+const buildId = ref<string | null>(null)
 
 const username = computed(() => {
   return currentUser.value?.username || 'User'
@@ -61,6 +62,7 @@ onMounted(async () => {
   try {
     const settings = await settingsApi.get()
     agentVersion.value = settings.agent?.version ?? null
+    buildId.value = settings.agent?.buildId ?? null
   } catch {
     // Version is optional
   }
@@ -117,7 +119,7 @@ onMounted(async () => {
             v-if="agentVersion"
             class="version-badge"
           >
-            v{{ agentVersion }}
+            v{{ agentVersion }}<template v-if="buildId"> ({{ buildId }})</template>
           </a-tag>
 
           <span

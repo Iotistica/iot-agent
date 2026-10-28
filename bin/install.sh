@@ -916,6 +916,7 @@ echo ""
 
     cat > /etc/iotistic/agent.env << EOF
 AGENT_VERSION=${AGENT_VERSION}
+BUILD_ID=${BUILD_ID}
 DEVICE_API_PORT=${DEVICE_API_PORT}
 DEVICE_UUID=${DEVICE_UUID}
 NODE_ENV=production
