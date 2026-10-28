@@ -114,6 +114,28 @@ async function pollSystemStats() {
   } catch { /* non-fatal */ }
 }
 
+const purging = ref(false)
+function confirmPurge() {
+  Modal.confirm({
+    title: 'Purge unused Docker data?',
+    content: 'This removes all Docker images not used by a container and unused volumes. This cannot be undone.',
+    okText: 'Purge',
+    okType: 'danger',
+    async onOk() {
+      purging.value = true
+      try {
+        const r = await containersApi.purgeUnused()
+        message.success(`Purged ${r.images_deleted} images and ${r.volumes_deleted} volumes (${fmtMb(r.space_reclaimed)} freed)`)
+        await pollSystemStats()
+      } catch (e) {
+        message.error((e as any)?.message ?? 'Purge failed')
+      } finally {
+        purging.value = false
+      }
+    },
+  })
+}
+
 let perfTimer: ReturnType<typeof setInterval> | null = null
 onMounted(() => { pollSystemStats(); perfTimer = setInterval(pollSystemStats, 5000) })
 onUnmounted(() => { if (perfTimer) clearInterval(perfTimer) })
@@ -1011,6 +1033,25 @@ async function deploy() {
             </span>
           </div>
           <a-progress v-else :percent="sysStats.storage_percent ?? 0" :show-info="false" :stroke-color="storageColor(sysStats.storage_percent)" size="small" />
+        </a-card>
+      </a-col>
+      <a-col v-if="sysStats.docker_reclaimable" :xs="24" :md="12">
+        <a-card size="small" class="perf-card" style="margin-top: 12px">
+          <div class="perf-header">
+            <span class="perf-title">Reclaimable Storage</span>
+            <span class="perf-current">{{ fmtMb(sysStats.docker_reclaimable.total) }}</span>
+          </div>
+          <div class="perf-breakdown">
+            <span class="perf-breakdown-item">
+              <span class="perf-dot" style="background: #1677ff" />
+              Unused images: {{ fmtMb(sysStats.docker_reclaimable.images) }}
+            </span>
+            <span class="perf-breakdown-item">
+              <span class="perf-dot" style="background: #722ed1" />
+              Unused volumes: {{ fmtMb(sysStats.docker_reclaimable.volumes) }}
+            </span>
+          </div>
+          <a-button danger size="small" style="margin-top: 10px" :loading="purging" @click="confirmPurge">Purge</a-button>
         </a-card>
       </a-col>
     </a-row>
