@@ -973,6 +973,22 @@ export class AdapterManager extends EventEmitter {
 	 * etc. Falls back to doing nothing if the protocol has no starter registered —
 	 * callers should use _fullReload() instead when that's a possibility.
 	 */
+	async restartMqttAdapter(): Promise<void> {
+		const existing = this.adapters.get("mqtt");
+		if (existing && typeof existing.stop === "function") {
+			await existing.stop();
+		}
+		this.adapters.delete("mqtt");
+		this.groupProtocol.delete("mqtt");
+		const oldSocket = this.socketServers.get("mqtt");
+		if (oldSocket) {
+			await oldSocket.stop();
+			this.socketServers.delete("mqtt");
+		}
+		(this.config as any).mqtt = { enabled: true };
+		await this.startMQTTAdapter();
+	}
+
 	async reloadAdapterGroup(protocol: string): Promise<void> {
 		const normalizedProtocol = protocol.toLowerCase();
 

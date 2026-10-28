@@ -3239,7 +3239,7 @@ router.post('/v1/mqtt/users/admin/reset-password', requireRole('admin'), async (
 
 		const am = actions.getAdapterManager();
 		if (am) {
-			try { await am.reloadAdapterGroup('mqtt'); } catch { /* non-fatal */ }
+			try { await am.restartMqttAdapter(); } catch { /* non-fatal */ }
 		}
 
 		res.json({ ok: true, username: bootstrapUsername });
