@@ -194,7 +194,6 @@ function toggleApp(appId: number) {
 
 function handleServiceMenu(key: string, app: ContainerApp, svc: ContainerService) {
   if (key === 'details') openServiceDetails(app, svc)
-  if (key === 'logs') openLogs(app, svc)
   if (key === 'edit') openEditService(app, svc)
   if (key === 'restart') void doAction(app, svc, 'restart')
   if (key === 'delete') confirmRemoveService(app, svc)
@@ -550,6 +549,12 @@ function openLogs(app: ContainerApp, svc: ContainerService) {
   logSearchIndex.value = -1
   logDrawerOpen.value = true
   connectLogs(app.appId, svc.serviceName)
+}
+
+function openAppLogs(app: ContainerApp) {
+  const targetApp = fullApp(app)
+  const firstService = targetApp.services[0]
+  if (firstService) openLogs(targetApp, firstService)
 }
 
 function onLogDrawerClose() {
@@ -1023,7 +1028,6 @@ async function deploy() {
                 <template #overlay>
                   <a-menu @click="handleServiceMenuClick($event, fullApp(app), svc)">
                     <a-menu-item key="details"><EyeOutlined /> View details</a-menu-item>
-                    <a-menu-item key="logs"><FileTextOutlined /> View logs</a-menu-item>
                     <a-menu-item key="edit" :disabled="isServiceBusy(app.appId, svc.serviceName)"><EditOutlined /> Edit configuration</a-menu-item>
                     <a-menu-divider />
                     <a-menu-item key="delete" danger :disabled="isServiceBusy(app.appId, svc.serviceName)"><DeleteOutlined /> Delete service</a-menu-item>
@@ -1040,6 +1044,10 @@ async function deploy() {
             <a-button size="small" @click="openAppDetails(fullApp(app))">
               <template #icon><EditOutlined /></template>
               Edit Application
+            </a-button>
+            <a-button size="small" class="view-logs-btn" :disabled="app.services.length === 0" @click="openAppLogs(app)">
+              <template #icon><FileTextOutlined /></template>
+              View Logs
             </a-button>
           </div>
         </div>
@@ -2055,6 +2063,7 @@ a.port-tag:hover { border-color: #1677ff; }
 .no-services { padding: 14px; font-size: 12px; color: var(--text-placeholder); text-align: center; }
 .card-footer { padding: 8px 14px 0; display: flex; align-items: center; gap: 8px; }
 .card-footer .delete-app-btn { margin-left: auto; }
+.card-footer .view-logs-btn { margin-left: auto; }
 
 .details-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; color: var(--text-secondary); }
 .details-heading :deep(.ant-tag) { margin: 0; }
