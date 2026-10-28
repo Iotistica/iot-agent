@@ -290,7 +290,8 @@ jobs:
         if: matrix.arch == 'x86_64'
         run: |
           VERSION="${{ needs.build.outputs.agent_version }}"
-          sed "s/AGENT_VERSION_PLACEHOLDER/${VERSION}/g" bin/install.sh > /tmp/artifacts/install.sh
+          BUILD_ID="${{ needs.build.outputs.sha_short }}-$(date -u +%Y%m%d)"
+          sed -e "s/AGENT_VERSION_PLACEHOLDER/${VERSION}/g" -e "s/BUILD_ID_PLACEHOLDER/${BUILD_ID}/g" bin/install.sh > /tmp/artifacts/install.sh
           chmod +x /tmp/artifacts/install.sh
           cd /tmp/artifacts
           sha256sum install.sh > install.sh.sha256
