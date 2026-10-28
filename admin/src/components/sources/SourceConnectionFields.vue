@@ -253,20 +253,6 @@ onMounted(() => { if (props.protocol === 'bacnet') loadVendors() })
         @update:value="set('port', $event)"
       />
     </a-form-item>
-    <a-form-item label="Username" :name="['connection', 'username']">
-      <a-input
-        :value="get('username', '')"
-        autocomplete="off"
-        @update:value="set('username', $event)"
-      />
-    </a-form-item>
-    <a-form-item label="Password" :name="['connection', 'password']">
-      <a-input-password
-        :value="get('password', '')"
-        autocomplete="new-password"
-        @update:value="set('password', $event)"
-      />
-    </a-form-item>
     <a-form-item label="Topic" :name="['connection', 'topic']">
       <a-input
         :value="get('topic', '')"

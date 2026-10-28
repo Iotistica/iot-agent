@@ -1532,8 +1532,8 @@ router.post('/v1/endpoints/test', requireRole('operator'), async (req: Request, 
 			const url = /^mqtts?:\/\//.test(host) ? host : `mqtt://${host}:${port}`;
 
 			const mqttClient = mqttLib.connect(url, {
-				username: (connection.username as string) || undefined,
-				password: (connection.password as string) || undefined,
+				username: process.env.MQTT_USERNAME || undefined,
+				password: process.env.MQTT_PASSWORD || undefined,
 				connectTimeout: 5000,
 				reconnectPeriod: 0,
 			});
@@ -3257,6 +3257,10 @@ router.post('/v1/mqtt/users/admin/reset-password', requireRole('admin'), async (
 			try { await am.restartMqttAdapter(); } catch { /* non-fatal */ }
 		}
 
+		try {
+			BrokerMonitorService.getInstance().updateCredentials(bootstrapUsername, password);
+		} catch { /* non-fatal */ }
+
 		res.json({ ok: true, username: bootstrapUsername });
 	} catch (err) { next(err); }
 });
@@ -3319,7 +3323,7 @@ router.get('/v1/mqtt/broker/compression', (req: Request, res: Response) => {
 });
 
 router.post('/v1/mqtt/broker/test', requireRole('operator'), (req: Request, res: Response) => {
-	const { url, username, password } = req.body ?? {};
+	const { url } = req.body ?? {};
 	if (typeof url !== 'string' || !url.trim()) {
 		return res.status(400).json({ ok: false, error: '"url" is required' });
 	}
@@ -3330,7 +3334,8 @@ router.post('/v1/mqtt/broker/test', requireRole('operator'), (req: Request, res:
 			clean: true,
 			reconnectPeriod: 0,
 			connectTimeout: 8000,
-			...(username ? { username, password: password || process.env.LOCAL_MQTT_PASS || process.env.MQTT_PASSWORD || '' } : {}),
+			username: process.env.MQTT_USERNAME || undefined,
+			password: process.env.MQTT_PASSWORD || undefined,
 		});
 		const finish = (ok: boolean, error?: string) => {
 			if (settled) return;
@@ -3347,26 +3352,15 @@ router.post('/v1/mqtt/broker/test', requireRole('operator'), (req: Request, res:
 
 router.patch('/v1/mqtt/broker/config', requireRole('admin'), async (req: Request, res: Response, next: NextFunction) => {
 	try {
-		const { url, username, password } = req.body ?? {};
+		const { url } = req.body ?? {};
 		if (typeof url !== 'string' || !url.trim()) {
 			return res.status(400).json({ error: '"url" (string) is required' });
 		}
-		// If password is blank, keep whatever is already persisted or fall back to env vars
-		let resolvedPassword: string = password ?? '';
-		if (!resolvedPassword) {
-			const existing = await actions.getSettings();
-			resolvedPassword = existing.mqttMonitor?.password
-				?? process.env.LOCAL_MQTT_PASS
-				?? process.env.MQTT_PASSWORD
-				?? '';
-		}
-		// Persist to settings
 		await actions.updateSettings({
-			mqttMonitor: { url: url.trim(), username: username ?? '', password: resolvedPassword },
+			mqttMonitor: { url: url.trim() },
 		});
-		// Apply immediately — reconnect the live monitor
 		const monitor = BrokerMonitorService.getInstance();
-		monitor.reconfigure(url.trim(), username ?? '', resolvedPassword);
+		monitor.reconfigure(url.trim(), process.env.MQTT_USERNAME ?? 'admin', process.env.MQTT_PASSWORD ?? '');
 		return res.status(200).json({ ok: true });
 	} catch (error) {
 		next(error);

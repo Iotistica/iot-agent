@@ -200,7 +200,7 @@ function onDockerTypeChange() {
 
 // ── MQTT Broker Monitor config ────────────────────────────────────────────────
 
-const mqttForm = ref({ url: 'mqtt://localhost:1883', username: 'admin', password: '' })
+const mqttForm = ref({ url: 'mqtt://localhost:1883' })
 const mqttSaving = ref(false)
 const mqttTesting = ref(false)
 const mqttTestResult = ref<{ connected: boolean; topicCount: number } | null>(null)
@@ -210,8 +210,6 @@ const mqttTestError = ref<string | null>(null)
 function syncMqttForm() {
   const m = settings.value.mqttMonitor
   if (m?.url) mqttForm.value.url = m.url
-  if (m?.username !== undefined) mqttForm.value.username = m.username
-  // Never pre-fill password from API
 }
 
 async function saveMqttConfig() {
@@ -220,9 +218,7 @@ async function saveMqttConfig() {
   mqttTestError.value = null
   try {
     await apiClient.patch('/v1/mqtt/broker/config', {
-      url:      mqttForm.value.url.trim(),
-      username: mqttForm.value.username,
-      password: mqttForm.value.password,
+      url: mqttForm.value.url.trim(),
     })
     message.success('MQTT broker configuration saved')
   } catch (e: any) {
@@ -238,9 +234,7 @@ async function testMqttConnection() {
   mqttTestError.value = null
   try {
     const { data } = await apiClient.post('/v1/mqtt/broker/test', {
-      url:      mqttForm.value.url.trim(),
-      username: mqttForm.value.username,
-      password: mqttForm.value.password,
+      url: mqttForm.value.url.trim(),
     })
     if (data.ok) {
       mqttTestResult.value = { connected: true, topicCount: 0 }
@@ -1121,26 +1115,12 @@ async function saveAllAlertConfig() {
                 </a-col>
               </a-row>
 
-              <a-row :gutter="[16, 0]">
-                <a-col :xs="24" :sm="12" :lg="8">
-                  <a-form-item label="Username">
-                    <a-input
-                      v-model:value="mqttForm.username"
-                      placeholder="admin"
-                      autocomplete="off"
-                    />
-                  </a-form-item>
-                </a-col>
-                <a-col :xs="24" :sm="12" :lg="8">
-                  <a-form-item label="Password">
-                    <a-input-password
-                      v-model:value="mqttForm.password"
-                      :placeholder="settings.mqttMonitor?.url ? 'Password is configured — leave blank to keep' : 'Enter password'"
-                      autocomplete="new-password"
-                    />
-                  </a-form-item>
-                </a-col>
-              </a-row>
+              <a-alert
+                type="info"
+                show-icon
+                style="margin-bottom: 16px"
+                message="Broker credentials are managed via the MQTT Users page."
+              />
 
               <a-alert
                 v-if="mqttTestResult?.connected"

@@ -18,10 +18,10 @@ function initBrokerMonitor(ctx: AgentInitContext): void {
 	try {
 		const monitor = BrokerMonitorService.getInstance();
 
-		// Apply persisted config if present (overrides env var defaults)
+		// Apply persisted URL if present (credentials always come from env vars)
 		const cfg = (ctx.configManager?.getTargetConfig?.() as any)?.mqttMonitor;
 		if (cfg?.url) {
-			monitor.reconfigure(cfg.url, cfg.username ?? '', cfg.password ?? '');
+			monitor.reconfigure(cfg.url, process.env.MQTT_USERNAME ?? 'admin', process.env.MQTT_PASSWORD ?? '');
 		} else {
 			monitor.start();
 		}
