@@ -136,6 +136,10 @@ function writeAtomic(filePath: string, content: string): void {
 	fs.mkdirSync(path.dirname(filePath), { recursive: true });
 	fs.writeFileSync(tmp, content, 'utf8');
 	fs.renameSync(tmp, filePath);
+	// Trigger inotify IN_CLOSE_WRITE so systemd PathModified detects the change
+	// (rename alone doesn't fire it, and sudo reload fails under NoNewPrivileges)
+	const fd = fs.openSync(filePath, 'r+');
+	fs.closeSync(fd);
 }
 
 // ----- main class -----------------------------------------------------------
