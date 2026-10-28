@@ -456,13 +456,43 @@ const logSearchIndex = ref(-1)
 
 const logSearchMatches = computed(() => {
   const q = logSearchQuery.value.toLowerCase()
-  if (!q) return [] as number[]
-  const hits: number[] = []
+  if (!q) return [] as { line: number; start: number }[]
+  const hits: { line: number; start: number }[] = []
   logLines.value.forEach((line, i) => {
-    if (line.msg.toLowerCase().includes(q) || line.ts.toLowerCase().includes(q)) hits.push(i)
+    const msg = line.msg.toLowerCase()
+    let pos = msg.indexOf(q)
+    while (pos !== -1) {
+      hits.push({ line: i, start: pos })
+      pos = msg.indexOf(q, pos + q.length)
+    }
   })
   return hits
 })
+
+const logSearchFirstIndex = computed(() => {
+  const first = new Map<number, number>()
+  logSearchMatches.value.forEach((m, idx) => {
+    if (!first.has(m.line)) first.set(m.line, idx)
+  })
+  return first
+})
+
+function logSegments(line: LogLine, i: number) {
+  const first = logSearchFirstIndex.value.get(i)
+  if (!logSearchQuery.value || first === undefined) return [{ text: line.msg, hit: false, current: false }]
+  const len = logSearchQuery.value.length
+  const segs: { text: string; hit: boolean; current: boolean }[] = []
+  let cursor = 0
+  const matches = logSearchMatches.value
+  for (let k = first; k < matches.length && matches[k].line === i; k++) {
+    const { start } = matches[k]
+    if (start > cursor) segs.push({ text: line.msg.slice(cursor, start), hit: false, current: false })
+    segs.push({ text: line.msg.slice(start, start + len), hit: true, current: k === logSearchIndex.value })
+    cursor = start + len
+  }
+  if (cursor < line.msg.length) segs.push({ text: line.msg.slice(cursor), hit: false, current: false })
+  return segs
+}
 
 function openLogSearch() {
   logSearchOpen.value = true
@@ -484,7 +514,7 @@ function scrollToLogMatch(idx: number) {
   if (!matches.length) return
   logSearchIndex.value = idx
   nextTick(() => {
-    const el = logOutputEl.value?.querySelector('.log-line.search-current') as HTMLElement | null
+    const el = logOutputEl.value?.querySelector('.log-msg mark.search-current') as HTMLElement | null
     el?.scrollIntoView({ block: 'center', behavior: 'smooth' })
   })
 }
@@ -1882,13 +1912,10 @@ async function deploy() {
           v-for="(line, i) in logLines"
           :key="i"
           class="log-line"
-          :class="[line.stream, {
-            'search-hit': logSearchQuery && logSearchMatches.includes(i),
-            'search-current': logSearchQuery && logSearchMatches[logSearchIndex] === i,
-          }]"
+          :class="line.stream"
         >
           <span v-if="line.ts" class="log-ts">{{ line.ts }}</span>
-          <span class="log-msg">{{ line.msg }}</span>
+          <span class="log-msg"><template v-for="(seg, j) in logSegments(line, i)" :key="j"><mark v-if="seg.hit" class="search-hit" :class="{ 'search-current': seg.current }">{{ seg.text }}</mark><template v-else>{{ seg.text }}</template></template></span>
         </div>
       </div>
     </a-drawer>
@@ -2206,14 +2233,16 @@ a.port-tag:hover { border-color: #1677ff; }
   text-align: center;
 }
 
-.log-line.search-hit {
-  background: rgba(187, 128, 9, 0.15);
+.log-msg mark.search-hit {
+  background: rgba(187, 128, 9, 0.45);
+  color: inherit;
+  border-radius: 2px;
 }
 
-.log-line.search-current {
-  background: rgba(187, 128, 9, 0.35);
-  outline: 1px solid rgba(187, 128, 9, 0.6);
-  outline-offset: -1px;
+.log-msg mark.search-current {
+  background: #e3b341;
+  color: #0d1117;
+  outline: 1px solid #f2cc60;
 }
 
 /* ── Marketplace ─────────────────────────────────────────── */
