@@ -27,7 +27,7 @@ const PAYLOAD_FORMATS = [
   { value: 'custom', label: 'Iotistica' },
   { value: 'tags',   label: 'Tags' },
   { value: 'ecp',    label: 'ECP' },
-  { value: 'ml',     label: 'ML / Training' },
+  { value: 'ml',     label: 'ML' },
 ]
 const COMPRESSIONS = [
   { label: 'None', value: null, hint: '' },

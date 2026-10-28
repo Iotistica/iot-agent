@@ -236,7 +236,7 @@ onMounted(load)
         </template>
 
         <template v-else-if="column.key === 'payload_format'">
-          {{ record.payload_format === 'custom' ? 'Iotistica' : record.payload_format === 'ml' ? 'ML / Training' : record.payload_format }}
+          {{ record.payload_format === 'custom' ? 'Iotistica' : record.payload_format === 'ml' ? 'ML' : record.payload_format }}
         </template>
 
         <template v-else-if="column.key === 'compression'">
