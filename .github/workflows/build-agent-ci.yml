@@ -196,6 +196,7 @@ jobs:
           build-args: |
             BUILDKIT_INLINE_CACHE=1
             APK_CACHE_BUST=${{ steps.cachebust.outputs.date }}
+            BUILD_ID=${{ needs.build.outputs.sha_short }}-${{ steps.cachebust.outputs.date }}
 
       - name: Scan Agent image with Trivy
         uses: ./.github/actions/trivy-scan

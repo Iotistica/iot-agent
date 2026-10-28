@@ -258,9 +258,11 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_PASSWORD }}
 
-      - name: Set cache-bust date
+      - name: Set cache-bust date and build ID
         id: cachebust
-        run: echo "date=$(date -u +%Y%m%d)" >> $GITHUB_OUTPUT
+        run: |
+          echo "date=$(date -u +%Y%m%d)" >> $GITHUB_OUTPUT
+          echo "build_id=${GITHUB_SHA::7}-$(date -u +%Y%m%d)" >> $GITHUB_OUTPUT
 
       - name: Build and push
         uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5
@@ -278,6 +280,7 @@ jobs:
           build-args: |
             BUILDKIT_INLINE_CACHE=1
             APK_CACHE_BUST=${{ steps.cachebust.outputs.date }}
+            BUILD_ID=${{ steps.cachebust.outputs.build_id }}
 
   # ── Deploy to Azure Container App ───────────────────────────────────────────
   deploy-container-app:
