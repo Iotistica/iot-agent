@@ -146,7 +146,8 @@ router.post('/v1/apps/purge-unused', requireRole('operator'), async (_req: Reque
 			return res.status(503).json({ error: 'Docker not available' });
 		}
 		const images: any = await docker.pruneImages({ filters: { dangling: { false: true } } });
-		const volumes: any = await docker.pruneVolumes();
+		const volumePruneOptions: NonNullable<Parameters<typeof docker.pruneVolumes>[0]> & { all: boolean } = { all: true };
+		const volumes: any = await docker.pruneVolumes(volumePruneOptions);
 		const toMb = (b: number) => Math.round(b / 1048576);
 		const imageBytes = images?.SpaceReclaimed ?? 0;
 		const volumeBytes = volumes?.SpaceReclaimed ?? 0;
