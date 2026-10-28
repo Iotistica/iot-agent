@@ -502,6 +502,7 @@ export interface AgentSettingsInfo {
   name: string | null
   type: string | null
   version: string | null
+  buildId?: string | null
   provisioned: boolean
   tenantId?: string | null
   apiEndpoint?: string | null
