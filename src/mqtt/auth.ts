@@ -188,8 +188,7 @@ export class MqttFileAuthReconciler {
 			if (![1, 2, 3].includes(access)) continue;
 			if (bootstrapUsername && username === bootstrapUsername) continue;
 
-			// Append /# to match base topic and any subtopics (e.g. .../d/<id>/temperature)
-			const topic = rawTopic.endsWith('/#') ? rawTopic : `${rawTopic}/#`;
+			const topic = rawTopic === '#' || rawTopic.endsWith('/#') ? rawTopic : `${rawTopic}/#`;
 
 			users.push({ username, passwordPlaintext: plaintext, passwordFileHash, isSuperuser: false });
 			acls.push({ username, topic, access });
