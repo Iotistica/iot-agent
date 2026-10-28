@@ -92,6 +92,36 @@ router.post('/v1/apps/:appId/start', requireRole('operator'), async (req: Reques
 	}
 });
 
+// ── Container system stats (CPU + Docker disk breakdown) ─────────────────────
+
+router.get('/v1/apps/system-stats', async (_req: Request, res: Response, next: NextFunction) => {
+	try {
+		const [cpu, storage] = await Promise.all([getCpuUsage(), getStorageInfo()]);
+
+		let dockerDisk: { images: number; volumes: number; total: number } | null = null;
+		try {
+			const docker = actions.getDockerInstance();
+			if (docker) {
+				const df = await docker.df();
+				const imageBytes = (df.Images ?? []).reduce((sum: number, img: any) => sum + (img.Size ?? 0), 0);
+				const volumeBytes = (df.Volumes ?? []).reduce((sum: number, vol: any) => sum + (vol.UsageData?.Size ?? 0), 0);
+				const toMb = (b: number) => Math.round(b / 1048576);
+				dockerDisk = { images: toMb(imageBytes), volumes: toMb(volumeBytes), total: toMb(imageBytes + volumeBytes) };
+			}
+		} catch { /* Docker not available — return null */ }
+
+		return res.status(200).json({
+			cpu_usage: cpu,
+			storage_used: storage.used,
+			storage_total: storage.total,
+			storage_percent: storage.percent,
+			docker_disk: dockerDisk,
+		});
+	} catch (error) {
+		next(error);
+	}
+});
+
 /**
  * GET /v1/apps/:appId
  * Get application information

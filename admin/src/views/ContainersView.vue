@@ -22,7 +22,8 @@ import {
 } from '@ant-design/icons-vue'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import { containersApi, templatesApi } from '@/api/containers'
-import type { ContainerApp, ContainerService, AppTemplate } from '@/api/containers'
+import type { ContainerApp, ContainerService, AppTemplate, AppSystemStats } from '@/api/containers'
+import SparklineChart from '@/components/SparklineChart.vue'
 import { useDockerStatus } from '@/composables/useDockerStatus'
 
 const { dockerAvailable } = useDockerStatus()
@@ -72,6 +73,50 @@ async function load() {
     }
   }
 }
+
+// ── System performance ───────────────────────────────────────────────────────
+
+const PERF_HISTORY = 60
+const sysStats = ref<AppSystemStats | null>(null)
+const cpuHistory = ref<number[]>([])
+const storageHistory = ref<number[]>([])
+
+function pushHistory(buf: number[], val: number) {
+  buf.push(val)
+  if (buf.length > PERF_HISTORY) buf.shift()
+}
+
+function cpuColor(v: number): string {
+  if (v >= 90) return '#ff4d4f'
+  if (v >= 70) return '#faad14'
+  return '#3cb77d'
+}
+
+function storageColor(v: number | null): string {
+  if (v == null) return '#8b949e'
+  if (v >= 90) return '#ff4d4f'
+  if (v >= 75) return '#faad14'
+  return '#1677ff'
+}
+
+function fmtMb(mb: number | null): string {
+  if (mb == null) return '—'
+  if (mb >= 1024) return `${(mb / 1024).toFixed(1)} GB`
+  return `${mb} MB`
+}
+
+async function pollSystemStats() {
+  try {
+    const data = await containersApi.getSystemStats()
+    sysStats.value = data
+    pushHistory(cpuHistory.value, data.cpu_usage ?? 0)
+    pushHistory(storageHistory.value, data.storage_percent ?? 0)
+  } catch { /* non-fatal */ }
+}
+
+let perfTimer: ReturnType<typeof setInterval> | null = null
+onMounted(() => { pollSystemStats(); perfTimer = setInterval(pollSystemStats, 5000) })
+onUnmounted(() => { if (perfTimer) clearInterval(perfTimer) })
 
 // ── Status helpers ─────────────────────────────────────────────────────────────
 
@@ -911,6 +956,61 @@ async function deploy() {
             <span class="metric-icon icon-stopped"><PoweroffOutlined /></span>
             <a-statistic title="Stopped" :value="totalStopped" />
           </div>
+        </a-card>
+      </a-col>
+    </a-row>
+
+    <!-- System Performance -->
+    <a-row :gutter="12" class="perf-row" v-if="sysStats">
+      <a-col :xs="24" :md="12">
+        <a-card size="small" class="perf-card">
+          <div class="perf-header">
+            <span class="perf-title">CPU Utilization</span>
+            <span class="perf-current" :style="{ color: cpuColor(sysStats.cpu_usage) }">{{ sysStats.cpu_usage }}%</span>
+          </div>
+          <div class="perf-chart">
+            <SparklineChart
+              :data="cpuHistory"
+              :color="cpuColor(sysStats.cpu_usage)"
+              :fill-color="`${cpuColor(sysStats.cpu_usage)}22`"
+              :height="52"
+              :max-value="100"
+              full-width
+            />
+          </div>
+          <a-progress :percent="sysStats.cpu_usage" :show-info="false" :stroke-color="cpuColor(sysStats.cpu_usage)" size="small" />
+        </a-card>
+      </a-col>
+      <a-col :xs="24" :md="12">
+        <a-card size="small" class="perf-card">
+          <div class="perf-header">
+            <span class="perf-title">Storage Usage</span>
+            <span class="perf-current" :style="{ color: storageColor(sysStats.storage_percent) }">
+              {{ sysStats.storage_percent ?? '—' }}%
+              <span class="perf-sub">{{ fmtMb(sysStats.storage_used) }} / {{ fmtMb(sysStats.storage_total) }}</span>
+            </span>
+          </div>
+          <div class="perf-chart">
+            <SparklineChart
+              :data="storageHistory"
+              :color="storageColor(sysStats.storage_percent)"
+              :fill-color="`${storageColor(sysStats.storage_percent)}22`"
+              :height="52"
+              :max-value="100"
+              full-width
+            />
+          </div>
+          <div v-if="sysStats.docker_disk" class="perf-breakdown">
+            <span class="perf-breakdown-item">
+              <span class="perf-dot" style="background: #1677ff" />
+              Images: {{ fmtMb(sysStats.docker_disk.images) }}
+            </span>
+            <span class="perf-breakdown-item">
+              <span class="perf-dot" style="background: #722ed1" />
+              Volumes: {{ fmtMb(sysStats.docker_disk.volumes) }}
+            </span>
+          </div>
+          <a-progress v-else :percent="sysStats.storage_percent ?? 0" :show-info="false" :stroke-color="storageColor(sysStats.storage_percent)" size="small" />
         </a-card>
       </a-col>
     </a-row>
@@ -1932,6 +2032,17 @@ async function deploy() {
 .stats { margin-bottom: 14px; }
 .stats :deep(.ant-card) { border-radius: 9px; border-color: var(--border-color-card); background: var(--bg-subtle); }
 .stats :deep(.ant-card-body) { padding: 17px 18px; }
+.perf-row { margin-bottom: 14px; }
+.perf-card :deep(.ant-card-body) { padding: 14px 16px; }
+.perf-card { border-radius: 9px; border-color: var(--border-color-card); background: var(--bg-subtle); }
+.perf-header { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 6px; }
+.perf-title { font-size: 13px; color: var(--text-tertiary); font-weight: 500; }
+.perf-current { font-size: 18px; font-weight: 600; }
+.perf-sub { font-size: 12px; font-weight: 400; color: var(--text-tertiary); margin-left: 6px; }
+.perf-chart { margin-bottom: 6px; }
+.perf-breakdown { display: flex; gap: 16px; font-size: 12px; color: var(--text-secondary); margin-top: 4px; }
+.perf-breakdown-item { display: flex; align-items: center; gap: 5px; }
+.perf-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
 .metric-inner { display: flex; align-items: center; gap: 15px; min-height: 66px; }
 .metric-icon { width: 50px; height: 50px; flex-shrink: 0; border-radius: 14px; display: inline-flex; align-items: center; justify-content: center; font-size: 23px; }
 .icon-apps, .icon-services { background: var(--icon-bg-blue, rgba(22,119,255,0.1)); color: #1677ff; }

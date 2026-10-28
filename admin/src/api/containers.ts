@@ -191,4 +191,20 @@ export const containersApi = {
       .post(`/v1/apps/${appId}/services/${encodeURIComponent(serviceName)}/${action}`)
       .then(() => undefined)
   },
+
+  getSystemStats(): Promise<AppSystemStats> {
+    return client.get<AppSystemStats>('/v1/apps/system-stats').then(r => r.data)
+  },
+}
+
+export interface AppSystemStats {
+  cpu_usage: number
+  storage_used: number | null
+  storage_total: number | null
+  storage_percent: number | null
+  docker_disk: {
+    images: number
+    volumes: number
+    total: number
+  } | null
 }
