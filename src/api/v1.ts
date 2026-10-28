@@ -3235,6 +3235,21 @@ router.post('/v1/mqtt/users/admin/reset-password', requireRole('admin'), async (
 
 		process.env.MQTT_PASSWORD = password;
 
+		// Persist to env file so the new password survives agent restarts
+		const envFile = '/etc/iotistic/agent.env';
+		try {
+			const fs = await import('fs');
+			if (fs.existsSync(envFile)) {
+				let content = fs.readFileSync(envFile, 'utf8');
+				if (/^MQTT_PASSWORD=.*/m.test(content)) {
+					content = content.replace(/^MQTT_PASSWORD=.*/m, `MQTT_PASSWORD=${password}`);
+				} else {
+					content = content.trimEnd() + `\nMQTT_PASSWORD=${password}\n`;
+				}
+				fs.writeFileSync(envFile, content, 'utf8');
+			}
+		} catch { /* non-fatal — env file may not exist in dev/docker mode */ }
+
 		await actions.reconcileMqttAuth();
 
 		const am = actions.getAdapterManager();
