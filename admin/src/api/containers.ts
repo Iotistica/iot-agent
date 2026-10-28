@@ -195,6 +195,10 @@ export const containersApi = {
   getSystemStats(): Promise<AppSystemStats> {
     return client.get<AppSystemStats>('/v1/apps/system-stats').then(r => r.data)
   },
+
+  purgeUnused(): Promise<{ images_deleted: number; volumes_deleted: number; space_reclaimed: number }> {
+    return client.post('/v1/apps/purge-unused').then(r => r.data)
+  },
 }
 
 export interface AppSystemStats {
@@ -203,6 +207,11 @@ export interface AppSystemStats {
   storage_total: number | null
   storage_percent: number | null
   docker_disk: {
+    images: number
+    volumes: number
+    total: number
+  } | null
+  docker_reclaimable: {
     images: number
     volumes: number
     total: number
