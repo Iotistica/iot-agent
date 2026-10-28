@@ -79,7 +79,6 @@ async function load() {
 const PERF_HISTORY = 60
 const sysStats = ref<AppSystemStats | null>(null)
 const cpuHistory = ref<number[]>([])
-const storageHistory = ref<number[]>([])
 
 function pushHistory(buf: number[], val: number) {
   buf.push(val)
@@ -105,12 +104,33 @@ function fmtMb(mb: number | null): string {
   return `${mb} MB`
 }
 
+const dockerStorageSegments = computed(() => {
+  const disk = sysStats.value?.docker_disk
+  if (!disk) return []
+
+  const images = Math.max(0, disk.images)
+  const volumes = Math.max(0, disk.volumes)
+  const reclaimable = sysStats.value?.docker_reclaimable
+  const unusedImages = Math.min(images, Math.max(0, reclaimable?.images ?? 0))
+  const unusedVolumes = Math.min(volumes, Math.max(0, reclaimable?.volumes ?? 0))
+  const total = images + volumes
+  if (total === 0) return []
+
+  return [
+    { label: 'Images in use', size: images - unusedImages, color: '#1677ff' },
+    { label: 'Unused images', size: unusedImages, color: '#69b1ff' },
+    { label: 'Volumes in use', size: volumes - unusedVolumes, color: '#722ed1' },
+    { label: 'Unused volumes', size: unusedVolumes, color: '#b37feb' },
+  ]
+    .filter(segment => segment.size > 0)
+    .map(segment => ({ ...segment, width: (segment.size / total) * 100 }))
+})
+
 async function pollSystemStats() {
   try {
     const data = await containersApi.getSystemStats()
     sysStats.value = data
     pushHistory(cpuHistory.value, data.cpu_usage ?? 0)
-    pushHistory(storageHistory.value, data.storage_percent ?? 0)
   } catch { /* non-fatal */ }
 }
 
@@ -1012,46 +1032,41 @@ async function deploy() {
               <span class="perf-sub">{{ fmtMb(sysStats.storage_used) }} / {{ fmtMb(sysStats.storage_total) }}</span>
             </span>
           </div>
-          <div class="perf-chart">
-            <SparklineChart
-              :data="storageHistory"
-              :color="storageColor(sysStats.storage_percent)"
-              :fill-color="`${storageColor(sysStats.storage_percent)}22`"
-              :height="52"
-              :max-value="100"
-              full-width
-            />
-          </div>
-          <div v-if="sysStats.docker_disk" class="perf-breakdown">
-            <span class="perf-breakdown-item">
-              <span class="perf-dot" style="background: #1677ff" />
-              Images: {{ fmtMb(sysStats.docker_disk.images) }}
-            </span>
-            <span class="perf-breakdown-item">
-              <span class="perf-dot" style="background: #722ed1" />
-              Volumes: {{ fmtMb(sysStats.docker_disk.volumes) }}
-            </span>
+          <div v-if="dockerStorageSegments.length" class="docker-storage">
+            <div class="docker-storage-bar" role="img" :aria-label="`Docker storage usage: ${fmtMb(sysStats.docker_disk?.images ?? null)} images and ${fmtMb(sysStats.docker_disk?.volumes ?? null)} volumes`">
+              <span
+                v-for="segment in dockerStorageSegments"
+                :key="segment.label"
+                class="docker-storage-segment"
+                :title="`${segment.label}: ${fmtMb(segment.size)}`"
+                :style="{ width: `${segment.width}%`, background: segment.color }"
+              />
+            </div>
+            <div class="perf-breakdown storage-breakdown">
+              <span class="perf-breakdown-item">
+                <span class="perf-dot" style="background: #1677ff" />
+                Images: {{ fmtMb(sysStats.docker_disk?.images ?? null) }}
+              </span>
+              <span class="perf-breakdown-item">
+                <span class="perf-dot" style="background: #722ed1" />
+                Volumes: {{ fmtMb(sysStats.docker_disk?.volumes ?? null) }}
+              </span>
+              <span v-if="sysStats.docker_reclaimable" class="perf-breakdown-item">
+                <span class="perf-dot storage-reclaimable-dot" />
+                Space to claim: {{ fmtMb(sysStats.docker_reclaimable.total) }}
+              </span>
+              <a-button
+                v-if="sysStats.docker_reclaimable"
+                danger
+                size="small"
+                :loading="purging"
+                @click="confirmPurge"
+              >
+                Purge
+              </a-button>
+            </div>
           </div>
           <a-progress v-else :percent="sysStats.storage_percent ?? 0" :show-info="false" :stroke-color="storageColor(sysStats.storage_percent)" size="small" />
-        </a-card>
-      </a-col>
-      <a-col v-if="sysStats.docker_reclaimable" :xs="24" :md="12">
-        <a-card size="small" class="perf-card" style="margin-top: 12px">
-          <div class="perf-header">
-            <span class="perf-title">Reclaimable Storage</span>
-            <span class="perf-current">{{ fmtMb(sysStats.docker_reclaimable.total) }}</span>
-          </div>
-          <div class="perf-breakdown">
-            <span class="perf-breakdown-item">
-              <span class="perf-dot" style="background: #1677ff" />
-              Unused images: {{ fmtMb(sysStats.docker_reclaimable.images) }}
-            </span>
-            <span class="perf-breakdown-item">
-              <span class="perf-dot" style="background: #722ed1" />
-              Unused volumes: {{ fmtMb(sysStats.docker_reclaimable.volumes) }}
-            </span>
-          </div>
-          <a-button danger size="small" style="margin-top: 10px" :loading="purging" @click="confirmPurge">Purge</a-button>
         </a-card>
       </a-col>
     </a-row>
@@ -2084,6 +2099,11 @@ async function deploy() {
 .perf-breakdown { display: flex; gap: 16px; font-size: 12px; color: var(--text-secondary); margin-top: 4px; }
 .perf-breakdown-item { display: flex; align-items: center; gap: 5px; }
 .perf-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.docker-storage { margin-top: 16px; }
+.docker-storage-bar { display: flex; width: 100%; height: 12px; overflow: hidden; border-radius: 6px; background: var(--border-color); }
+.docker-storage-segment { height: 100%; transition: width 0.3s ease; }
+.storage-breakdown { align-items: center; flex-wrap: wrap; gap: 10px 16px; margin-top: 10px; }
+.storage-reclaimable-dot { background: linear-gradient(90deg, #69b1ff 50%, #b37feb 50%); }
 .metric-inner { display: flex; align-items: center; gap: 15px; min-height: 66px; }
 .metric-icon { width: 50px; height: 50px; flex-shrink: 0; border-radius: 14px; display: inline-flex; align-items: center; justify-content: center; font-size: 23px; }
 .icon-apps, .icon-services { background: var(--icon-bg-blue, rgba(22,119,255,0.1)); color: #1677ff; }
