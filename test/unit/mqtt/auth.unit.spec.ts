@@ -142,6 +142,20 @@ describe('MqttFileAuthReconciler.reconcile', () => {
 		expect(verifyMosquittoHash('adminpass', hash)).toBe(true);
 	});
 
+	it('uses the stored bootstrap admin hash instead of the environment password', async () => {
+		const resetHash = generateMosquittoHash('reset-password');
+		const reconciler = new MqttFileAuthReconciler();
+		await reconciler.reconcile([], opts(tmpDir), [
+			{ username: 'admin', passwordHash: resetHash, isSuperuser: true },
+		]);
+
+		const content = fs.readFileSync(path.join(tmpDir, 'passwd'), 'utf8');
+		const hash = content.split('\n').find(line => line.startsWith('admin:'))!.split(':')[1];
+		expect(hash).toBe(resetHash);
+		expect(verifyMosquittoHash('reset-password', hash)).toBe(true);
+		expect(verifyMosquittoHash('adminpass', hash)).toBe(false);
+	});
+
 	it('ACL file gives superuser readwrite # access', async () => {
 		const reconciler = new MqttFileAuthReconciler();
 		await reconciler.reconcile([], opts(tmpDir));

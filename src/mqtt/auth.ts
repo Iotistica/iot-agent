@@ -154,8 +154,8 @@ export class MqttFileAuthReconciler {
 	/**
    * Reconcile passwd and ACL files from the current endpoint manifest.
    *
-   * Always includes a bootstrap superuser from MQTT_USERNAME / MQTT_PASSWORD
-   * env vars so the agent's own MQTT client can authenticate.
+   * Includes the bootstrap superuser from MQTT_USERNAME / MQTT_PASSWORD env
+   * vars, unless a locally stored admin password has been set.
    *
   * Endpoint users require either auth.mqtt.passwordFileHash or
   * auth.mqtt.passwordPlaintext to be present.
@@ -173,7 +173,12 @@ export class MqttFileAuthReconciler {
 		// Bootstrap superuser from env vars
 		const bootstrapUsername = process.env.MQTT_USERNAME?.trim();
 		const bootstrapPassword = process.env.MQTT_PASSWORD?.trim();
-		if (bootstrapUsername && bootstrapPassword) {
+		const storedBootstrapUser = localUsers?.find(
+			u => u.username?.trim() === bootstrapUsername && u.isSuperuser && u.passwordHash,
+		);
+		if (bootstrapUsername && storedBootstrapUser) {
+			users.push({ username: bootstrapUsername, passwordFileHash: storedBootstrapUser.passwordHash, isSuperuser: true });
+		} else if (bootstrapUsername && bootstrapPassword) {
 			users.push({ username: bootstrapUsername, passwordPlaintext: bootstrapPassword, isSuperuser: true });
 		}
 
