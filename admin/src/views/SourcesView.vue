@@ -142,8 +142,7 @@ function connSummary(ep: Endpoint): string {
   }
   if (ep.protocol === 'mqtt') {
     const host = String(c.host ?? c.url ?? '')
-    const port = c.port ? `:${c.port}` : ''
-    return `${host}${port}`
+    return `${host}:${c.port ?? 1883}`
   }
   if (ep.protocol === 'bacnet') {
     const ip = String(c.ipAddress ?? c.host ?? '')
