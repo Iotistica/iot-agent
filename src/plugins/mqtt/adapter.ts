@@ -95,6 +95,7 @@ export class MqttAdapter extends BaseProtocolAdapter {
 			onConnect: (client, connack, firstConnect) => {
 				this.client = client;
 				this.connected = true;
+				this.setAllDeviceStatusesConnected(true);
 				this.emit("device-connected", "mqtt-broker");
 
 				this.brokerStatusTopic = this.brokerClient.getBrokerStatusTopic();
@@ -136,6 +137,7 @@ export class MqttAdapter extends BaseProtocolAdapter {
 			},
 			onOffline: () => {
 				this.connected = false;
+				this.setAllDeviceStatusesConnected(false);
 				this.logger.warn("MQTT broker offline");
 				this.emit("device-disconnected", "mqtt-broker");
 			},
@@ -148,6 +150,7 @@ export class MqttAdapter extends BaseProtocolAdapter {
 			},
 			onClose: () => {
 				this.connected = false;
+				this.setAllDeviceStatusesConnected(false);
 				this.logger.debug("MQTT connection closed");
 			},
 			onMessage: (topic, payload, retain) => {
@@ -199,6 +202,18 @@ export class MqttAdapter extends BaseProtocolAdapter {
 		}
 
 		this.initializeMqttDeviceStatuses();
+	}
+
+	// Broker connectivity drives the source status; LWT can still override per device.
+	private setAllDeviceStatusesConnected(connected: boolean): void {
+		const now = new Date();
+		for (const status of this.deviceStatuses.values()) {
+			status.connected = connected;
+			status.communicationQuality = connected ? "good" : "offline";
+			if (connected) {
+				status.lastPoll = now;
+			}
+		}
 	}
 
 	private compileMetricPath(
