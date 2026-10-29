@@ -466,7 +466,7 @@ function openEditService(app: ContainerApp, svc: ContainerService) {
   editSvcForm.value = {
     serviceName: svc.serviceName,
     image: svc.imageName,
-    ports: [...(c.ports ?? [])],
+    ports: portsToRows(c.ports),
     envRows: envToRows(c.environment),
     volumes: formatLines(c.volumes),
     restart: c.restart ?? '',
@@ -772,7 +772,7 @@ function deployTemplateAsNewApp(tpl: AppTemplate) {
     ...emptyService(),
     serviceName: s.serviceName,
     image: s.image,
-    ports: [...(s.ports ?? [])],
+    ports: portsToRows(s.ports),
     volumes: (s.volumes ?? []).join('\n'),
     envRows: envToRows(s.environment),
     restart: s.restart ?? 'unless-stopped',
@@ -830,7 +830,7 @@ const deploying = ref(false)
 interface ServiceForm {
   serviceName: string
   image: string
-  ports: string[]
+  ports: PortMappingRow[]
   envRows: { name: string; value: string }[]
   volumes: string
   restart: string
@@ -883,6 +883,20 @@ function envToRows(env?: Record<string, string>): { name: string; value: string 
   return Object.entries(env).map(([name, value]) => ({ name, value }))
 }
 
+interface PortMappingRow {
+  host: string
+  container: string
+}
+
+function portsToRows(ports?: string[]): PortMappingRow[] {
+  return (ports ?? []).map(port => {
+    const separator = port.lastIndexOf(':')
+    return separator === -1
+      ? { host: '', container: port }
+      : { host: port.slice(0, separator), container: port.slice(separator + 1) }
+  })
+}
+
 function rowsToEnv(rows: { name: string; value: string }[]): Record<string, string> | undefined {
   const out: Record<string, string> = {}
   for (const row of rows) {
@@ -892,8 +906,15 @@ function rowsToEnv(rows: { name: string; value: string }[]): Record<string, stri
   return Object.keys(out).length ? out : undefined
 }
 
-function cleanPorts(rows: string[]): string[] {
-  return rows.map(p => p.trim()).filter(Boolean)
+function cleanPorts(rows: PortMappingRow[]): string[] {
+  return rows
+    .map(({ host, container }) => {
+      const cleanHost = host.trim()
+      const cleanContainer = container.trim()
+      if (cleanHost && cleanContainer) return `${cleanHost}:${cleanContainer}`
+      return cleanHost || cleanContainer
+    })
+    .filter(Boolean)
 }
 
 function formatLines(arr?: string[]): string {
@@ -1272,13 +1293,14 @@ async function deploy() {
         </a-form-item>
         <a-form-item label="Port mappings">
           <div style="display: flex; flex-direction: column; gap: 6px">
-            <div v-for="(_, pi) in addSvcForm.ports" :key="pi" style="display: flex; gap: 8px; align-items: center">
-              <a-input v-model:value="addSvcForm.ports[pi]" placeholder="host:container (e.g. 8080:80)" style="flex: 1; font-family: monospace; font-size: 12px" />
+            <div v-for="(port, pi) in addSvcForm.ports" :key="pi" style="display: flex; gap: 8px; align-items: center">
+              <a-input v-model:value="port.host" placeholder="Host port" style="flex: 2; font-family: monospace; font-size: 12px" />
+              <a-input v-model:value="port.container" placeholder="Container port" style="flex: 3; font-family: monospace; font-size: 12px" />
               <a-button type="text" size="small" danger @click="addSvcForm.ports.splice(pi, 1)">
                 <template #icon><DeleteOutlined /></template>
               </a-button>
             </div>
-            <a-button type="dashed" size="small" @click="addSvcForm.ports.push('')" style="width: fit-content">
+            <a-button type="dashed" size="small" @click="addSvcForm.ports.push({ host: '', container: '' })" style="width: fit-content">
               <template #icon><PlusOutlined /></template> Add port
             </a-button>
           </div>
@@ -1425,13 +1447,14 @@ async function deploy() {
         </a-form-item>
         <a-form-item label="Port mappings">
           <div style="display: flex; flex-direction: column; gap: 6px">
-            <div v-for="(_, pi) in editSvcForm.ports" :key="pi" style="display: flex; gap: 8px; align-items: center">
-              <a-input v-model:value="editSvcForm.ports[pi]" placeholder="host:container (e.g. 8080:80)" style="flex: 1; font-family: monospace; font-size: 12px" />
+            <div v-for="(port, pi) in editSvcForm.ports" :key="pi" style="display: flex; gap: 8px; align-items: center">
+              <a-input v-model:value="port.host" placeholder="Host port" style="flex: 2; font-family: monospace; font-size: 12px" />
+              <a-input v-model:value="port.container" placeholder="Container port" style="flex: 3; font-family: monospace; font-size: 12px" />
               <a-button type="text" size="small" danger @click="editSvcForm.ports.splice(pi, 1)">
                 <template #icon><DeleteOutlined /></template>
               </a-button>
             </div>
-            <a-button type="dashed" size="small" @click="editSvcForm.ports.push('')" style="width: fit-content">
+            <a-button type="dashed" size="small" @click="editSvcForm.ports.push({ host: '', container: '' })" style="width: fit-content">
               <template #icon><PlusOutlined /></template> Add port
             </a-button>
           </div>
@@ -1658,13 +1681,14 @@ async function deploy() {
 
           <a-form-item label="Port mappings" style="margin-bottom: 10px">
             <div style="display: flex; flex-direction: column; gap: 6px">
-              <div v-for="(_, pi) in svc.ports" :key="pi" style="display: flex; gap: 8px; align-items: center">
-                <a-input v-model:value="svc.ports[pi]" placeholder="host:container (e.g. 8080:80)" style="flex: 1; font-family: monospace; font-size: 12px" />
+              <div v-for="(port, pi) in svc.ports" :key="pi" style="display: flex; gap: 8px; align-items: center">
+                <a-input v-model:value="port.host" placeholder="Host port" style="flex: 2; font-family: monospace; font-size: 12px" />
+                <a-input v-model:value="port.container" placeholder="Container port" style="flex: 3; font-family: monospace; font-size: 12px" />
                 <a-button type="text" size="small" danger @click="svc.ports.splice(pi, 1)">
                   <template #icon><DeleteOutlined /></template>
                 </a-button>
               </div>
-              <a-button type="dashed" size="small" @click="svc.ports.push('')" style="width: fit-content">
+              <a-button type="dashed" size="small" @click="svc.ports.push({ host: '', container: '' })" style="width: fit-content">
                 <template #icon><PlusOutlined /></template> Add port
               </a-button>
             </div>
