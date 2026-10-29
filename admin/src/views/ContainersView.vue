@@ -119,13 +119,15 @@ const dockerStorageSegments = computed(() => {
   if (total === 0) return []
 
   return [
-    { label: 'Images in use', size: images - unusedImages, color: '#1677ff' },
-    { label: 'Unused images', size: unusedImages, color: '#69b1ff' },
-    { label: 'Volumes in use', size: volumes - unusedVolumes, color: '#722ed1' },
-    { label: 'Unused volumes', size: unusedVolumes, color: '#b37feb' },
+    { label: 'Images', size: images, used: images - unusedImages, unused: unusedImages, color: '#1677ff', unusedColor: '#69b1ff' },
+    { label: 'Volumes', size: volumes, used: volumes - unusedVolumes, unused: unusedVolumes, color: '#722ed1', unusedColor: '#b37feb' },
   ]
     .filter(segment => segment.size > 0)
-    .map(segment => ({ ...segment, width: (segment.size / total) * 100 }))
+    .map(segment => ({
+      ...segment,
+      usedHeight: (segment.used / total) * 100,
+      unusedHeight: (segment.unused / total) * 100,
+    }))
 })
 
 async function pollSystemStats() {
@@ -1057,7 +1059,6 @@ async function deploy() {
               full-width
             />
           </div>
-          <a-progress :percent="sysStats.cpu_usage" :show-info="false" :stroke-color="cpuColor(sysStats.cpu_usage)" size="small" />
         </a-card>
       </a-col>
       <a-col :xs="24" :md="12">
@@ -1070,14 +1071,26 @@ async function deploy() {
             </span>
           </div>
           <div v-if="dockerStorageSegments.length" class="docker-storage">
-            <div class="docker-storage-bar" role="img" :aria-label="`Docker storage usage: ${fmtMb(sysStats.docker_disk?.images ?? null)} images and ${fmtMb(sysStats.docker_disk?.volumes ?? null)} volumes`">
+            <div class="docker-storage-chart" role="img" :aria-label="`Docker storage usage: ${fmtMb(sysStats.docker_disk?.images ?? null)} images and ${fmtMb(sysStats.docker_disk?.volumes ?? null)} volumes`">
               <span
                 v-for="segment in dockerStorageSegments"
                 :key="segment.label"
-                class="docker-storage-segment"
+                class="docker-storage-column"
                 :title="`${segment.label}: ${fmtMb(segment.size)}`"
-                :style="{ width: `${segment.width}%`, background: segment.color }"
-              />
+              >
+                <span class="docker-storage-column-bar">
+                  <span
+                    class="docker-storage-segment"
+                    :style="{ height: `${segment.usedHeight}%`, background: segment.color }"
+                  />
+                  <span
+                    v-if="segment.unusedHeight"
+                    class="docker-storage-segment"
+                    :style="{ height: `${segment.unusedHeight}%`, background: segment.unusedColor }"
+                  />
+                </span>
+                <span class="docker-storage-label">{{ segment.label }}</span>
+              </span>
             </div>
             <div class="perf-breakdown storage-breakdown">
               <span class="perf-breakdown-item">
@@ -2166,8 +2179,11 @@ async function deploy() {
 .perf-breakdown-item { display: flex; align-items: center; gap: 5px; }
 .perf-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
 .docker-storage { margin-top: 16px; }
-.docker-storage-bar { display: flex; width: 100%; height: 12px; overflow: hidden; border-radius: 6px; background: var(--border-color); }
-.docker-storage-segment { height: 100%; transition: width 0.3s ease; }
+.docker-storage-chart { display: flex; justify-content: center; gap: 48px; height: 58px; }
+.docker-storage-column { display: flex; flex-direction: column; align-items: center; justify-content: flex-end; width: 44px; }
+.docker-storage-column-bar { display: flex; flex-direction: column-reverse; width: 28px; height: 42px; overflow: hidden; border-radius: 4px 4px 0 0; background: var(--border-color); }
+.docker-storage-segment { display: block; width: 100%; transition: height 0.3s ease; }
+.docker-storage-label { font-size: 11px; line-height: 16px; color: var(--text-tertiary); }
 .storage-breakdown { align-items: center; flex-wrap: wrap; gap: 10px 16px; margin-top: 10px; }
 .storage-reclaimable-dot { background: linear-gradient(90deg, #69b1ff 50%, #b37feb 50%); }
 .metric-inner { display: flex; align-items: center; gap: 15px; min-height: 66px; }
