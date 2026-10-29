@@ -409,13 +409,12 @@ async function applyConfigUpdate(mutator: (config: Record<string, any>) => void)
 		const currentTarget = stateManager.getTargetState?.() ?? { apps: {}, config: {} };
 
 		// Local API app deployments write to ContainerManager directly, bypassing
-		// StateManager. If StateManager has no apps but ContainerManager does,
-		// use ContainerManager's apps to prevent config updates from wiping
-		// locally-deployed containers.
-		if (Object.keys(currentTarget.apps || {}).length === 0 && containerManager) {
+		// StateManager. Merge those apps into config updates, while keeping
+		// StateManager's app definitions authoritative when IDs overlap.
+		if (containerManager) {
 			const cmTarget = containerManager.getTargetState();
 			if (Object.keys(cmTarget.apps || {}).length > 0) {
-				currentTarget.apps = cmTarget.apps;
+				currentTarget.apps = { ...cmTarget.apps, ...(currentTarget.apps || {}) };
 			}
 		}
 
