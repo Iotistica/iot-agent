@@ -319,6 +319,34 @@ export const APP_TEMPLATES: AppTemplate[] = [
 		}],
 	},
 
+	{
+		id: 'mqtt-sim',
+		name: 'MQTT Simulator',
+		category: 'Iotistica',
+		description: 'Publishes simulated industrial telemetry (temperature, pressure, flow, vibration, motor, tank level, humidity) over MQTT.',
+		color: '#660066',
+		letter: 'MS',
+		appName: 'mqtt-sim',
+		services: [{
+			serviceName: 'mqtt-sim',
+			image: 'iotistic/mqtt-sim:latest',
+			environment: {
+				MQTT_BROKER_HOST: 'mosquitto',
+				MQTT_BROKER_PORT: '1883',
+				MQTT_USERNAME: '',
+				MQTT_PASSWORD: '',
+				MQTT_TLS: 'false',
+				DEVICE_ID: 'sim-001',
+				MQTT_TOPIC: 'factory/sim-001/telemetry',
+				METRICS: 'temperature,pressure,flow_rate,vibration,motor_speed,motor_current,tank_level,humidity',
+				PUBLISH_INTERVAL_S: '1',
+				MQTT_QOS: '0',
+				LOG_LEVEL: 'INFO',
+			},
+			restart: 'unless-stopped',
+		}],
+	},
+
 	// ── AI ──────────────────────────────────────────────────────────────────────
 	{
 		id: 'ollama',
