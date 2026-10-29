@@ -319,6 +319,21 @@ export const APP_TEMPLATES: AppTemplate[] = [
 		}],
 	},
 
+	{
+		id: 'sim-mqtt',
+		name: 'MQTT Simulator',
+		category: 'Iotistica',
+		description: 'Simulates IoT devices publishing sensor telemetry to an MQTT broker — ideal for testing pipelines and dashboards.',
+		color: '#660066',
+		letter: 'MQ',
+		appName: 'sim-mqtt',
+		services: [{
+			serviceName: 'sim-mqtt',
+			image: 'iotistic/sim-mqtt:latest',
+			restart: 'unless-stopped',
+		}],
+	},
+
 	// ── AI ──────────────────────────────────────────────────────────────────────
 	{
 		id: 'ollama',
