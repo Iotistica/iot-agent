@@ -421,7 +421,7 @@ async function submitAddService() {
   if (!addSvcForm.value.serviceName.trim()) { message.error('Service name is required'); return }
   if (!addSvcForm.value.image.trim()) { message.error('Docker image is required'); return }
 
-  const ports = parseLines(addSvcForm.value.ports)
+  const ports = cleanPorts(addSvcForm.value.ports)
   const volumes = parseLines(addSvcForm.value.volumes)
   const environment = rowsToEnv(addSvcForm.value.envRows)
 
@@ -466,7 +466,7 @@ function openEditService(app: ContainerApp, svc: ContainerService) {
   editSvcForm.value = {
     serviceName: svc.serviceName,
     image: svc.imageName,
-    ports: formatLines(c.ports),
+    ports: [...(c.ports ?? [])],
     envRows: envToRows(c.environment),
     volumes: formatLines(c.volumes),
     restart: c.restart ?? '',
@@ -495,7 +495,7 @@ async function submitEditService() {
   if (!app || !original) return
   if (!editSvcForm.value.image.trim()) { message.error('Docker image is required'); return }
 
-  const ports = parseLines(editSvcForm.value.ports)
+  const ports = cleanPorts(editSvcForm.value.ports)
   const volumes = parseLines(editSvcForm.value.volumes)
   const environment = rowsToEnv(editSvcForm.value.envRows)
 
@@ -772,7 +772,7 @@ function deployTemplateAsNewApp(tpl: AppTemplate) {
     ...emptyService(),
     serviceName: s.serviceName,
     image: s.image,
-    ports: (s.ports ?? []).join('\n'),
+    ports: [...(s.ports ?? [])],
     volumes: (s.volumes ?? []).join('\n'),
     envRows: envToRows(s.environment),
     restart: s.restart ?? 'unless-stopped',
@@ -830,7 +830,7 @@ const deploying = ref(false)
 interface ServiceForm {
   serviceName: string
   image: string
-  ports: string
+  ports: string[]
   envRows: { name: string; value: string }[]
   volumes: string
   restart: string
@@ -853,7 +853,7 @@ interface ServiceForm {
 
 function emptyService(): ServiceForm {
   return {
-    serviceName: '', image: '', ports: '', envRows: [], volumes: '', restart: 'unless-stopped',
+    serviceName: '', image: '', ports: [], envRows: [], volumes: '', restart: 'unless-stopped',
     networkMode: 'bridge', command: '', entrypoint: '', user: '',
     cpuLimit: '', memoryLimit: '', enableSocketDestination: false, readonlyRootfs: false,
     healthcheckType: 'none', healthcheckPath: '', healthcheckPort: undefined,
@@ -890,6 +890,10 @@ function rowsToEnv(rows: { name: string; value: string }[]): Record<string, stri
     if (k) out[k] = row.value
   }
   return Object.keys(out).length ? out : undefined
+}
+
+function cleanPorts(rows: string[]): string[] {
+  return rows.map(p => p.trim()).filter(Boolean)
 }
 
 function formatLines(arr?: string[]): string {
@@ -944,7 +948,7 @@ async function deploy() {
     await containersApi.deploy({
       appName: appName.value.trim(),
       services: services.value.map(svc => {
-        const ports = parseLines(svc.ports)
+        const ports = cleanPorts(svc.ports)
         const volumes = parseLines(svc.volumes)
         const environment = rowsToEnv(svc.envRows)
         return {
@@ -1267,8 +1271,17 @@ async function deploy() {
           <a-input v-model:value="addSvcForm.image" placeholder="redis:7, myregistry/app:latest" style="font-family: monospace; font-size: 12px" />
         </a-form-item>
         <a-form-item label="Port mappings">
-          <a-textarea v-model:value="addSvcForm.ports" placeholder="6379:6379&#10;8080:80" :rows="2" />
-          <div style="font-size: 11px; color: var(--text-muted); margin-top: 3px">One per line — host:container</div>
+          <div style="display: flex; flex-direction: column; gap: 6px">
+            <div v-for="(_, pi) in addSvcForm.ports" :key="pi" style="display: flex; gap: 8px; align-items: center">
+              <a-input v-model:value="addSvcForm.ports[pi]" placeholder="host:container (e.g. 8080:80)" style="flex: 1; font-family: monospace; font-size: 12px" />
+              <a-button type="text" size="small" danger @click="addSvcForm.ports.splice(pi, 1)">
+                <template #icon><DeleteOutlined /></template>
+              </a-button>
+            </div>
+            <a-button type="dashed" size="small" @click="addSvcForm.ports.push('')" style="width: fit-content">
+              <template #icon><PlusOutlined /></template> Add port
+            </a-button>
+          </div>
         </a-form-item>
         <a-form-item label="Environment variables">
           <div style="display: flex; flex-direction: column; gap: 6px">
@@ -1411,8 +1424,17 @@ async function deploy() {
           <a-input v-model:value="editSvcForm.image" placeholder="redis:7, myregistry/app:latest" style="font-family: monospace; font-size: 12px" />
         </a-form-item>
         <a-form-item label="Port mappings">
-          <a-textarea v-model:value="editSvcForm.ports" placeholder="6379:6379&#10;8080:80" :rows="2" />
-          <div style="font-size: 11px; color: var(--text-muted); margin-top: 3px">One per line — host:container</div>
+          <div style="display: flex; flex-direction: column; gap: 6px">
+            <div v-for="(_, pi) in editSvcForm.ports" :key="pi" style="display: flex; gap: 8px; align-items: center">
+              <a-input v-model:value="editSvcForm.ports[pi]" placeholder="host:container (e.g. 8080:80)" style="flex: 1; font-family: monospace; font-size: 12px" />
+              <a-button type="text" size="small" danger @click="editSvcForm.ports.splice(pi, 1)">
+                <template #icon><DeleteOutlined /></template>
+              </a-button>
+            </div>
+            <a-button type="dashed" size="small" @click="editSvcForm.ports.push('')" style="width: fit-content">
+              <template #icon><PlusOutlined /></template> Add port
+            </a-button>
+          </div>
         </a-form-item>
         <a-form-item label="Environment variables">
           <div style="display: flex; flex-direction: column; gap: 6px">
@@ -1635,12 +1657,17 @@ async function deploy() {
           </a-form-item>
 
           <a-form-item label="Port mappings" style="margin-bottom: 10px">
-            <a-textarea
-              v-model:value="svc.ports"
-              placeholder="8080:80&#10;8443:443"
-              :rows="2"
-            />
-            <div style="font-size: 11px; color: var(--text-muted); margin-top: 3px">One per line — host:container</div>
+            <div style="display: flex; flex-direction: column; gap: 6px">
+              <div v-for="(_, pi) in svc.ports" :key="pi" style="display: flex; gap: 8px; align-items: center">
+                <a-input v-model:value="svc.ports[pi]" placeholder="host:container (e.g. 8080:80)" style="flex: 1; font-family: monospace; font-size: 12px" />
+                <a-button type="text" size="small" danger @click="svc.ports.splice(pi, 1)">
+                  <template #icon><DeleteOutlined /></template>
+                </a-button>
+              </div>
+              <a-button type="dashed" size="small" @click="svc.ports.push('')" style="width: fit-content">
+                <template #icon><PlusOutlined /></template> Add port
+              </a-button>
+            </div>
           </a-form-item>
 
           <a-form-item label="Environment variables" style="margin-bottom: 10px">
