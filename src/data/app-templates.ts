@@ -329,7 +329,7 @@ export const APP_TEMPLATES: AppTemplate[] = [
 		appName: 'mqtt-sim',
 		services: [{
 			serviceName: 'mqtt-sim',
-			image: 'iotistic/mqtt-sim:latest',
+			image: 'iotistic/sim-mqtt:latest',
 			environment: {
 				MQTT_BROKER_HOST: 'mosquitto',
 				MQTT_BROKER_PORT: '1883',
