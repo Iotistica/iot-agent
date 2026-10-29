@@ -19,6 +19,8 @@ import {
   EyeOutlined,
   CloseOutlined,
   SwapOutlined,
+  CopyOutlined,
+  CheckOutlined,
 } from '@ant-design/icons-vue'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import { containersApi, templatesApi } from '@/api/containers'
@@ -540,6 +542,15 @@ const MAX_LOG_LINES = 1000
 const logSearchOpen = ref(false)
 const logSearchQuery = ref('')
 const logSearchIndex = ref(-1)
+const logCopied = ref(false)
+
+async function copyContainerLogs() {
+  if (logLines.value.length === 0) return
+  const text = logLines.value.map(line => `${line.ts ? `${line.ts} ` : ''}${line.msg}`).join('\n')
+  await navigator.clipboard.writeText(text)
+  logCopied.value = true
+  setTimeout(() => { logCopied.value = false }, 2000)
+}
 
 const logSearchMatches = computed(() => {
   const q = logSearchQuery.value.toLowerCase()
@@ -661,6 +672,7 @@ function openLogs(app: ContainerApp, svc: ContainerService) {
   logLines.value = []
   logFollow.value = true
   logAutoScroll.value = true
+  logCopied.value = false
   logSearchOpen.value = false
   logSearchQuery.value = ''
   logSearchIndex.value = -1
@@ -2039,6 +2051,9 @@ async function deploy() {
         <span class="log-count">{{ logLines.length }} lines</span>
         <a-button size="small" @click="openLogSearch" title="Search logs">
           <template #icon><SearchOutlined /></template>
+        </a-button>
+        <a-button v-if="logLines.length > 0" size="small" @click="copyContainerLogs" :title="logCopied ? 'Copied' : 'Copy logs'">
+          <template #icon><CheckOutlined v-if="logCopied" /><CopyOutlined v-else /></template>
         </a-button>
       </div>
       <div v-if="logSearchOpen" class="log-search-bar">
