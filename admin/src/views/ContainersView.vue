@@ -1264,11 +1264,11 @@ async function deploy() {
               <template #icon><PlusOutlined /></template>
               Add Service
             </a-button>
-            <a-button size="small" @click="openAppDetails(fullApp(app))">
+            <a-button size="small" type="dashed" @click="openAppDetails(fullApp(app))">
               <template #icon><EditOutlined /></template>
               Edit Application
             </a-button>
-            <a-button size="small" class="view-logs-btn" :disabled="app.services.length === 0" @click="openAppLogs(app)">
+            <a-button size="small" type="dashed" class="view-logs-btn" :disabled="app.services.length === 0" @click="openAppLogs(app)">
               <template #icon><FileTextOutlined /></template>
               View Logs
             </a-button>
@@ -2327,6 +2327,7 @@ a.port-tag:hover { border-color: #1677ff; }
 }
 .no-services { padding: 14px; font-size: 12px; color: var(--text-placeholder); text-align: center; }
 .card-footer { padding: 8px 14px 0; display: flex; align-items: center; gap: 8px; }
+.card-footer :deep(.ant-btn) { border-color: #1677ff; }
 .card-footer .delete-app-btn { margin-left: auto; }
 .card-footer .view-logs-btn { margin-left: auto; }
 
