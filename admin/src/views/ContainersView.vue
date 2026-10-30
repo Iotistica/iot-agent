@@ -1267,15 +1267,15 @@ async function deploy() {
             </div>
           </div>
           <div class="card-footer">
-            <a-button size="small" type="dashed" :disabled="!dockerAvailable" @click="openAddService(fullApp(app))">
+            <a-button size="small" type="default" :disabled="!dockerAvailable" @click="openAddService(fullApp(app))">
               <template #icon><PlusOutlined /></template>
               Add Service
             </a-button>
-            <a-button size="small" type="dashed" @click="openAppDetails(fullApp(app))">
+            <a-button size="small" type="default" @click="openAppDetails(fullApp(app))">
               <template #icon><EditOutlined /></template>
               Edit Application
             </a-button>
-            <a-button size="small" type="dashed" class="view-logs-btn" :disabled="app.services.length === 0" @click="openAppLogs(app)">
+            <a-button size="small" type="default" class="view-logs-btn" :disabled="app.services.length === 0" @click="openAppLogs(app)">
               <template #icon><FileTextOutlined /></template>
               View Logs
             </a-button>
