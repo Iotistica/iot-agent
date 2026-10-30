@@ -94,72 +94,128 @@ router.post('/v1/apps/:appId/start', requireRole('operator'), async (req: Reques
 
 // ── Container system stats (CPU + Docker disk breakdown) ─────────────────────
 
+
 router.get('/v1/apps/system-stats', async (_req: Request, res: Response, next: NextFunction) => {
-	try {
-		const [cpu, storage] = await Promise.all([getCpuUsage(), getStorageInfo()]);
+  try {
+    const [cpu, storage] = await Promise.all([
+      getCpuUsage(),
+      getStorageInfo(),
+    ]);
 
-		let dockerDisk: { images: number; volumes: number; total: number } | null = null;
-		let dockerReclaimable: { images: number; volumes: number; total: number } | null = null;
-		try {
-			const docker = actions.getDockerInstance();
-			if (docker) {
-				const df = await docker.df();
-				const imageBytes = (df.Images ?? []).reduce((sum: number, img: any) => sum + (img.Size ?? 0), 0);
-				const volumeBytes = (df.Volumes ?? []).reduce((sum: number, vol: any) => sum + (vol.UsageData?.Size ?? 0), 0);
-				const toMb = (b: number) => Math.round(b / 1048576);
-				dockerDisk = { images: toMb(imageBytes), volumes: toMb(volumeBytes), total: toMb(imageBytes + volumeBytes) };
-				const unusedImageBytes = (df.Images ?? [])
-					.filter((img: any) => img.Containers === 0)
-					.reduce((sum: number, img: any) => sum + (img.Size ?? 0), 0);
-				const unusedVolumeBytes = (df.Volumes ?? [])
-					.filter((vol: any) => vol.UsageData?.RefCount === 0)
-					.reduce((sum: number, vol: any) => sum + (vol.UsageData?.Size ?? 0), 0);
-				dockerReclaimable = {
-					images: toMb(unusedImageBytes),
-					volumes: toMb(unusedVolumeBytes),
-					total: toMb(unusedImageBytes + unusedVolumeBytes),
-				};
-			}
-		} catch { /* Docker not available — return null */ }
+    let dockerDisk: { images: number; volumes: number; total: number } | null = null;
+    let dockerReclaimable: { images: number; volumes: number; total: number } | null = null;
 
-		return res.status(200).json({
-			cpu_usage: cpu,
-			storage_used: storage.used,
-			storage_total: storage.total,
-			storage_percent: storage.percent,
-			docker_disk: dockerDisk,
-			docker_reclaimable: dockerReclaimable,
-		});
-	} catch (error) {
-		next(error);
-	}
+    try {
+      const docker = actions.getDockerInstance();
+
+      if (docker) {
+        const df = await docker.df();
+
+        const images = df.Images ?? [];
+        const volumes = df.Volumes ?? [];
+
+        // Image size excluding layers shared with other images.
+        const imageBytes = images.reduce(
+          (sum: number, img: any) =>
+            sum + Math.max(0, (img.Size ?? 0) - (img.SharedSize ?? 0)),
+          0,
+        );
+
+        // Reclaimable unique image layers.
+        const unusedImageBytes = images
+          .filter((img: any) => img.Containers === 0)
+          .reduce(
+            (sum: number, img: any) =>
+              sum + Math.max(0, (img.Size ?? 0) - (img.SharedSize ?? 0)),
+            0,
+          );
+
+        const volumeBytes = volumes.reduce(
+          (sum: number, vol: any) =>
+            sum + Math.max(0, vol.UsageData?.Size ?? 0),
+          0,
+        );
+
+        const unusedVolumeBytes = volumes
+          .filter((vol: any) => vol.UsageData?.RefCount === 0)
+          .reduce(
+            (sum: number, vol: any) =>
+              sum + Math.max(0, vol.UsageData?.Size ?? 0),
+            0,
+          );
+
+        const toMb = (bytes: number) => Math.round(bytes / 1048576);
+
+        dockerDisk = {
+          images: toMb(imageBytes),
+          volumes: toMb(volumeBytes),
+          total: toMb(imageBytes + volumeBytes),
+        };
+
+        dockerReclaimable = {
+          images: toMb(unusedImageBytes),
+          volumes: toMb(unusedVolumeBytes),
+          // Purge only removes images, not volumes.
+          total: toMb(unusedImageBytes),
+        };
+      }
+    } catch {
+      // Docker unavailable — return null.
+    }
+
+    return res.status(200).json({
+      cpu_usage: cpu,
+      storage_used: storage.used,
+      storage_total: storage.total,
+      storage_percent: storage.percent,
+      docker_disk: dockerDisk,
+      docker_reclaimable: dockerReclaimable,
+    });
+  } catch (error) {
+    next(error);
+  }
 });
+
 
 /**
  * POST /v1/apps/purge-unused
  * Remove unused Docker images and volumes
  */
-router.post('/v1/apps/purge-unused', requireRole('operator'), async (_req: Request, res: Response, next: NextFunction) => {
-	try {
-		const docker = actions.getDockerInstance();
-		if (!docker) {
-			return res.status(503).json({ error: 'Docker not available' });
-		}
-		const images: any = await docker.pruneImages({ filters: { dangling: { false: true } } });
-		const volumePruneOptions: NonNullable<Parameters<typeof docker.pruneVolumes>[0]> & { all: boolean } = { all: true };
-		const volumes: any = await docker.pruneVolumes(volumePruneOptions);
-		const toMb = (b: number) => Math.round(b / 1048576);
-		const imageBytes = images?.SpaceReclaimed ?? 0;
-		const volumeBytes = volumes?.SpaceReclaimed ?? 0;
-		return res.status(200).json({
-			images_deleted: (images?.ImagesDeleted ?? []).length,
-			volumes_deleted: (volumes?.VolumesDeleted ?? []).length,
-			space_reclaimed: toMb(imageBytes + volumeBytes),
-		});
-	} catch (error) {
-		next(error);
-	}
-});
+
+router.post(
+  '/v1/apps/purge-unused',
+  requireRole('operator'),
+  async (_req: Request, res: Response, next: NextFunction) => {
+    try {
+      const docker = actions.getDockerInstance();
+
+      if (!docker) {
+        return res.status(503).json({
+          error: 'Docker not available',
+        });
+      }
+
+      // Remove all images not referenced by any container.
+      // Do not delete volumes.
+      const images: any = await docker.pruneImages({
+        filters: {
+          dangling: { false: true },
+        },
+      });
+
+      const imageBytes = images?.SpaceReclaimed ?? 0;
+
+      return res.status(200).json({
+        images_deleted: (images?.ImagesDeleted ?? []).length,
+        volumes_deleted: 0,
+        space_reclaimed: Math.round(imageBytes / 1048576),
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
 
 /**
  * GET /v1/apps/:appId
