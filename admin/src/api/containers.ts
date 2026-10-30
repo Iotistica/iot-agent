@@ -210,6 +210,7 @@ export interface AppSystemStats {
     images: number
     volumes: number
     total: number
+    images_by_app: Array<{ app_id: number; app_name: string; size: number }>
   } | null
   docker_reclaimable: {
     images: number

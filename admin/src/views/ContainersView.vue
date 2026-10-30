@@ -112,8 +112,16 @@ const dockerStorageSegments = computed(() => {
 
   const reclaimable = sysStats.value?.docker_reclaimable
   const items = [
-    { label: 'Images', size: disk.images, unused: reclaimable?.images ?? 0, color: '#1677ff', unusedColor: '#69b1ff' },
-    { label: 'Volumes', size: disk.volumes, unused: reclaimable?.volumes ?? 0, color: '#722ed1', unusedColor: '#b37feb' },
+    { key: 'images', label: 'Images', size: disk.images, unused: reclaimable?.images ?? 0, color: '#1677ff', unusedColor: '#69b1ff' },
+    { key: 'volumes', label: 'Volumes', size: disk.volumes, unused: reclaimable?.volumes ?? 0, color: '#722ed1', unusedColor: '#b37feb' },
+    ...(disk.images_by_app ?? []).map(app => ({
+      key: `app-${app.app_id}`,
+      label: app.app_name,
+      size: app.size,
+      unused: 0,
+      color: '#1677ff',
+      unusedColor: '#1677ff',
+    })),
   ]
   const normalized = items.map(item => {
     const size = Number.isFinite(item.size) ? Math.max(0, item.size) : 0
@@ -1072,12 +1080,12 @@ async function deploy() {
             </span>
           </div>
           <div v-if="dockerStorageSegments.length" class="docker-storage">
-            <div class="docker-storage-chart" role="img" :aria-label="`Docker storage: ${fmtMb(sysStats.docker_disk?.images ?? null)} images, ${fmtMb(sysStats.docker_disk?.volumes ?? null)} volumes`">
+            <div class="docker-storage-chart" role="img" :aria-label="`Docker storage: ${fmtMb(sysStats.docker_disk?.images ?? null)} images, ${fmtMb(sysStats.docker_disk?.volumes ?? null)} volumes${(sysStats.docker_disk?.images_by_app ?? []).map(app => `, ${app.app_name}: ${fmtMb(app.size)}`).join('')}`">
               <div
                 v-for="segment in dockerStorageSegments"
-                :key="segment.label"
+                :key="segment.key"
                 class="docker-storage-column"
-                :title="`${segment.label}: ${fmtMb(segment.size)} (${fmtMb(segment.unused)} reclaimable)`"
+                :title="`${segment.label}: ${fmtMb(segment.size)}${segment.key === 'images' || segment.key === 'volumes' ? ` (${fmtMb(segment.unused)} reclaimable)` : ' image usage'}`"
               >
                 <span class="docker-storage-value">{{ fmtMb(segment.size) }}</span>
                 <div class="docker-storage-column-bar">
@@ -2183,12 +2191,14 @@ async function deploy() {
 .perf-breakdown-item { display: flex; align-items: center; gap: 5px; }
 .perf-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
 .docker-storage { margin-top: 12px; }
-.docker-storage-chart { display: flex; justify-content: center; align-items: flex-end; gap: 48px; height: 110px; }
-.docker-storage-column { display: flex; flex-direction: column; align-items: center; justify-content: flex-end; width: 70px; height: 100%; min-width: 0; }
+.docker-storage-chart { display: flex; justify-content: flex-start; align-items: flex-end; gap: 18px; height: 110px; overflow-x: auto; }
+.docker-storage-column { display: flex; flex-direction: column; align-items: center; justify-content: flex-end; width: 70px; height: 100%; min-width: 70px; }
+.docker-storage-column:first-child { margin-left: auto; }
+.docker-storage-column:last-child { margin-right: auto; }
 .docker-storage-value { font-size: 11px; font-weight: 600; color: var(--text-secondary); margin-bottom: 5px; white-space: nowrap; }
 .docker-storage-column-bar { display: flex; flex-direction: column-reverse; width: 34px; height: 72px; flex-shrink: 0; overflow: hidden; border-radius: 5px 5px 0 0; background: var(--border-color); }
 .docker-storage-segment { display: block; width: 100%; flex-shrink: 0; transition: height 0.3s ease; }
-.docker-storage-label { font-size: 11px; line-height: 18px; color: var(--text-tertiary); margin-top: 3px; }
+.docker-storage-label { font-size: 11px; line-height: 18px; color: var(--text-tertiary); margin-top: 3px; max-width: 90px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .storage-breakdown { align-items: center; flex-wrap: wrap; gap: 10px 16px; margin-top: 10px; }
 .storage-reclaimable-dot { background: linear-gradient(90deg, #69b1ff 50%, #b37feb 50%); }
 .metric-inner { display: flex; align-items: center; gap: 15px; min-height: 66px; }
