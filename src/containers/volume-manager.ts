@@ -6,6 +6,7 @@ import { docker } from '../lib/docker-utils';
 import * as logger from '../logging';
 import { ResourceRecreationAttemptError } from './errors';
 import { Volume } from './volume';
+import { buildContainerSecurityOptions } from './container-security';
 
 /**
  * Volume health verification options
@@ -54,6 +55,7 @@ export async function verifyVolumeHealth(
 			HostConfig: {
 				Binds: [`${volumeName}:/data`],
 				AutoRemove: true, // Clean up automatically
+				...buildContainerSecurityOptions(),
 			},
 			AttachStdout: false,
 			AttachStderr: false,
@@ -316,6 +318,7 @@ async function acquireVolumeLock(
 				},
 				HostConfig: {
 					AutoRemove: false, // Manual cleanup for observability
+					...buildContainerSecurityOptions(),
 				},
 			});
 			

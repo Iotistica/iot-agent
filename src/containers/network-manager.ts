@@ -6,6 +6,7 @@ import { isNotFoundError } from '../lib/errors';
 import * as logger from '../logging';
 import { Network } from './network';
 import { ResourceRecreationAttemptError } from './errors';
+import { buildContainerSecurityOptions } from './container-security';
 
 /**
  * Acquire a lock for network operations using Docker container
@@ -39,6 +40,7 @@ async function acquireNetworkLock(
 				},
 				HostConfig: {
 					AutoRemove: false,
+					...buildContainerSecurityOptions(),
 				},
 			});
 			

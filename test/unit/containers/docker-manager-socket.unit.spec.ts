@@ -66,6 +66,15 @@ function makeDockerManager() {
 	return { mgr, mockContainer };
 }
 
+function expectSecureHostConfig(hostConfig: any) {
+	expect(hostConfig).toMatchObject({
+		Privileged: false,
+		CapDrop: ['ALL'],
+		SecurityOpt: ['no-new-privileges:true'],
+		PidsLimit: 256,
+	});
+}
+
 describe('DockerManager socket destination', () => {
 	beforeEach(() => {
 		jest.clearAllMocks();
@@ -144,17 +153,113 @@ describe('DockerManager socket destination', () => {
 			expect(createCall.HostConfig.Binds).toBeUndefined();
 		});
 
+		it('applies the security baseline to new containers', async () => {
+			const { mgr } = makeDockerManager();
+
+			await mgr.startContainer(makeService());
+
+			expectSecureHostConfig(mgr.docker.createContainer.mock.calls[0][0].HostConfig);
+		});
+
+		it('preserves resource limits alongside the security baseline', async () => {
+			const { mgr } = makeDockerManager();
+			mgr.parseResourceLimits.mockReturnValue({ Memory: 512 * 1024 * 1024 });
+
+			await mgr.startContainer(makeService());
+
+			const hostConfig = mgr.docker.createContainer.mock.calls[0][0].HostConfig;
+			expectSecureHostConfig(hostConfig);
+			expect(hostConfig.Memory).toBe(512 * 1024 * 1024);
+		});
+
+		it('reuses an existing container only when its security settings comply', async () => {
+			const { mgr } = makeDockerManager();
+			const existing = {
+				inspect: jest.fn().mockResolvedValue({
+					Id: 'secure123456',
+					State: { Running: true, Status: 'running' },
+					HostConfig: {
+						Privileged: false,
+						CapDrop: ['ALL'],
+						SecurityOpt: ['no-new-privileges:true'],
+						PidsLimit: 256,
+					},
+				}),
+				start: jest.fn(),
+				stop: jest.fn(),
+				remove: jest.fn(),
+			};
+			mgr.findContainerByName.mockResolvedValue(existing);
+
+			const id = await mgr.startContainer(makeService());
+
+			expect(id).toBe('secure123456');
+			expect(mgr.docker.createContainer).not.toHaveBeenCalled();
+			expect(existing.start).not.toHaveBeenCalled();
+			expect(existing.stop).not.toHaveBeenCalled();
+			expect(existing.remove).not.toHaveBeenCalled();
+		});
+
+		it('recreates an existing container that does not meet the security baseline', async () => {
+			const { mgr } = makeDockerManager();
+			const existing = {
+				inspect: jest.fn().mockResolvedValue({
+					Id: 'insecure123456',
+					State: { Running: true, Status: 'running' },
+					HostConfig: { Privileged: false },
+				}),
+				start: jest.fn(),
+				stop: jest.fn().mockResolvedValue(undefined),
+				remove: jest.fn().mockResolvedValue(undefined),
+			};
+			mgr.findContainerByName.mockResolvedValue(existing);
+
+			await mgr.startContainer(makeService());
+
+			expect(existing.stop).toHaveBeenCalledWith({ t: 10 });
+			expect(existing.remove).toHaveBeenCalled();
+			expect(mgr.docker.createContainer).toHaveBeenCalledTimes(1);
+			expectSecureHostConfig(mgr.docker.createContainer.mock.calls[0][0].HostConfig);
+		});
+
+		it('does not reuse containers that add capabilities despite the baseline settings', async () => {
+			const { mgr } = makeDockerManager();
+			const existing = {
+				inspect: jest.fn().mockResolvedValue({
+					Id: 'capadd123456',
+					State: { Running: false, Status: 'exited' },
+					HostConfig: {
+						Privileged: false,
+						CapDrop: ['ALL'],
+						CapAdd: ['SYS_ADMIN'],
+						SecurityOpt: ['no-new-privileges:true'],
+						PidsLimit: 256,
+					},
+				}),
+				start: jest.fn(),
+				stop: jest.fn(),
+				remove: jest.fn().mockResolvedValue(undefined),
+			};
+			mgr.findContainerByName.mockResolvedValue(existing);
+
+			await mgr.startContainer(makeService());
+
+			expect(existing.start).not.toHaveBeenCalled();
+			expect(existing.remove).toHaveBeenCalled();
+			expectSecureHostConfig(mgr.docker.createContainer.mock.calls[0][0].HostConfig);
+		});
+
 		it('rejects mount conflict when user volume targets /run/agent-ipc', async () => {
 			const { mgr } = makeDockerManager();
 			const svc = makeService({
 				config: {
 					image: 'x',
 					enableSocketDestination: true,
-					volumes: ['/my/data:/run/agent-ipc'],
+					volumes: ['mydata:/run/agent-ipc'],
 				},
 			});
 
-			await expect(mgr.startContainer(svc)).rejects.toThrow('Mount conflict');
+			await expect(mgr.startContainer(svc)).rejects.toThrow('reserved socket mount target');
 		});
 
 		it('cleans up newly created directory when createContainer fails', async () => {
@@ -223,6 +328,7 @@ describe('DockerManager socket destination', () => {
 			const createCall = mgr.docker.createContainer.mock.calls[0][0];
 			expect(createCall.HostConfig.Binds).toContain(`${SOCKET_HOST_BASE}/10_1:/run/agent-ipc`);
 			expect(createCall.Labels['iotistic.socket-destination']).toBe('true');
+			expectSecureHostConfig(createCall.HostConfig);
 		});
 
 		it('stops and removes old container before creating new one', async () => {
@@ -251,6 +357,18 @@ describe('DockerManager socket destination', () => {
 			await expect(mgr.updateContainer(svc)).rejects.toThrow('create failed');
 			expect(removeSpy).not.toHaveBeenCalled();
 			removeSpy.mockRestore();
+		});
+
+		describe('updateContainer (blue-green)', () => {
+			it('applies the security baseline to the replacement container', async () => {
+				const { mgr } = makeDockerManager();
+				mgr.waitForHealthy = jest.fn().mockResolvedValue(true);
+				mgr.renameContainer = jest.fn().mockResolvedValue(undefined);
+
+				await mgr.updateContainer(makeService());
+
+				expectSecureHostConfig(mgr.docker.createContainer.mock.calls[0][0].HostConfig);
+			});
 		});
 	});
 });
