@@ -525,6 +525,22 @@ export class DockerManager extends EventEmitter {
 	}
 
 	/**
+	* Configure container logs
+	*/
+	
+	private getContainerLogConfig(): Docker.HostConfig['LogConfig'] {
+	return {
+		Type: 'local',
+		Config: {
+		'max-size': '10m',
+		'max-file': '3',
+		'compress': 'true',
+		},
+	};
+	}
+
+
+	/**
 	* Clear image cache (call after pulling images)
 	*/
 	clearImageCache(): void {
@@ -735,6 +751,7 @@ export class DockerManager extends EventEmitter {
 				ExposedPorts: exposedPorts,
 				Healthcheck: healthcheck,
 				HostConfig: {
+					LogConfig: this.getContainerLogConfig(),
 					PortBindings: portBindings,
 					Binds: binds.length > 0 ? binds : undefined,
 					NetworkMode: service.config.networkMode || 'bridge',
@@ -1199,6 +1216,7 @@ export class DockerManager extends EventEmitter {
 					: [],
 				ExposedPorts: exposedPorts,
 				HostConfig: {
+					LogConfig: this.getContainerLogConfig(),
 					PortBindings: portBindings,
 					Binds: binds.length > 0 ? binds : undefined,
 					NetworkMode: service.config.networkMode || 'bridge',
@@ -1426,6 +1444,7 @@ export class DockerManager extends EventEmitter {
 				],
 				ExposedPorts: exposedPorts,
 				HostConfig: {
+					LogConfig: this.getContainerLogConfig(),
 					PortBindings: portBindings,
 					Binds: binds.length > 0 ? binds : undefined,
 					NetworkMode: networkMode,
