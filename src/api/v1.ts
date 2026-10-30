@@ -11,6 +11,7 @@ import * as actions from './actions';
 import { ModbusAdapter } from '../plugins/modbus/adapter.js';
 import { normalizeModbusRegisters } from '../plugins/modbus/types.js';
 import { getMemoryDiagnostics, getRestartPolicyStatus } from '../system/memory.js';
+import { getDockerImageUsageByApp } from './docker-image-usage';
 import {
 	getCpuUsage,
 	getMemoryInfo,
@@ -102,7 +103,12 @@ router.get('/v1/apps/system-stats', async (_req: Request, res: Response, next: N
 			getStorageInfo(),
 		]);
 
-		let dockerDisk: { images: number; volumes: number; total: number } | null = null;
+		let dockerDisk: {
+			images: number;
+			volumes: number;
+			total: number;
+			images_by_app: Array<{ app_id: number; app_name: string; size: number }>;
+		} | null = null;
 		let dockerReclaimable: { images: number; volumes: number; total: number } | null = null;
 
 		try {
@@ -113,6 +119,7 @@ router.get('/v1/apps/system-stats', async (_req: Request, res: Response, next: N
 
 				const images = df.Images ?? [];
 				const volumes = df.Volumes ?? [];
+				const apps = await actions.getAllApps().catch(() => []);
 
 				// Image size excluding layers shared with other images.
 				const imageBytes = images.reduce(
@@ -145,11 +152,17 @@ router.get('/v1/apps/system-stats', async (_req: Request, res: Response, next: N
 					);
 
 				const toMb = (bytes: number) => Math.round(bytes / 1048576);
+				const imagesByApp = getDockerImageUsageByApp(apps, images);
 
 				dockerDisk = {
 					images: toMb(imageBytes),
 					volumes: toMb(volumeBytes),
 					total: toMb(imageBytes + volumeBytes),
+					images_by_app: imagesByApp.map(app => ({
+						app_id: app.appId,
+						app_name: app.appName,
+						size: toMb(app.bytes),
+					})),
 				};
 
 				dockerReclaimable = {
