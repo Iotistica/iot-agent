@@ -392,7 +392,7 @@ export class DockerManager extends EventEmitter {
 					violations.push(`host mount resolves outside allowed data subdirectories: ${source}`);
 				}
 			} else if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(source) || source === '.' || source === '..') {
-			violations.push(`invalid Docker named volume: ${source}`);
+			 violations.push(`invalid Docker named volume: ${source}`);
 			}
 		}
 		if (violations.length) {
