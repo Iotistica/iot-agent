@@ -69,7 +69,7 @@ function onMenuClick({ key }: { key: string }) {
       <div class="logo-row">
         <IotisticaLogo :size="36" />
         <template v-if="!collapsed">
-          <span class="logo-title">Iotistica</span>
+          <span class="logo-title">Iotistica Edge</span>
           <a-tag v-if="proInstalled" class="pro-badge">PRO</a-tag>
         </template>
       </div>
