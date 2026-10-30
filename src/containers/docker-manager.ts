@@ -11,6 +11,7 @@ import { type ContainerService } from './container-manager';
 import { type AgentLogger } from '../logging/agent-logger';
 import { LogComponents } from '../logging/types';
 import { EventEmitter } from 'events';
+import { buildContainerSecurityOptions } from './container-security';
 import { realpathSync, existsSync } from 'fs';
 import { isAbsolute, relative, resolve, sep } from 'path';
 import {
@@ -392,7 +393,7 @@ export class DockerManager extends EventEmitter {
 					violations.push(`host mount resolves outside allowed data subdirectories: ${source}`);
 				}
 			} else if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(source) || source === '.' || source === '..') {
-			violations.push(`invalid Docker named volume: ${source}`);
+				violations.push(`invalid Docker named volume: ${source}`);
 			}
 		}
 		if (violations.length) {
@@ -417,11 +418,21 @@ export class DockerManager extends EventEmitter {
 				MaximumRetryCount: 0,
 			},
 			...this.parseResourceLimits(service),
-			Privileged: false,
-			CapDrop: ['ALL'],
-			SecurityOpt: ['no-new-privileges:true'],
-			PidsLimit: 256,
+			...buildContainerSecurityOptions(),
 		};
+	}
+
+	private hasSecureHostConfig(hostConfig?: Docker.HostConfig): boolean {
+		return hostConfig?.Privileged === false
+			&& hostConfig.CapDrop?.includes('ALL') === true
+			&& !hostConfig.CapAdd?.length
+			&& hostConfig.SecurityOpt?.includes('no-new-privileges:true') === true
+			&& hostConfig.PidsLimit === 256
+			&& hostConfig.PidMode !== 'host'
+			&& hostConfig.IpcMode !== 'host'
+			&& hostConfig.UsernsMode !== 'host'
+			&& hostConfig.NetworkMode !== 'host'
+			&& !hostConfig.NetworkMode?.startsWith('container:');
 	}
 
 	private validateSecurityConfig(service: ContainerService): void {
@@ -670,7 +681,18 @@ export class DockerManager extends EventEmitter {
 			
 			if (existing) {
 				const info = await existing.inspect();
-				if (info.State.Running) {
+				if (!this.hasSecureHostConfig(info.HostConfig)) {
+					this.logger?.warnSync('Existing container does not meet the security baseline; recreating', {
+						component: LogComponents.dockerManager,
+						operation: 'startContainer',
+						serviceName: service.serviceName,
+						containerId: info.Id.substring(0, 12),
+					});
+					if (info.State.Running) {
+						await existing.stop({ t: 10 });
+					}
+					await existing.remove();
+				} else if (info.State.Running) {
 					this.logger?.infoSync('Container already running, reusing existing', {
 						component: LogComponents.dockerManager,
 						operation: 'startContainer',
@@ -1922,4 +1944,3 @@ export class DockerManager extends EventEmitter {
 }
 
 export default DockerManager;
-
