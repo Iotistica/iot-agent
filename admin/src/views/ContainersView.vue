@@ -110,24 +110,24 @@ const dockerStorageSegments = computed(() => {
   const disk = sysStats.value?.docker_disk
   if (!disk) return []
 
-  const images = Math.max(0, disk.images)
-  const volumes = Math.max(0, disk.volumes)
   const reclaimable = sysStats.value?.docker_reclaimable
-  const unusedImages = Math.min(images, Math.max(0, reclaimable?.images ?? 0))
-  const unusedVolumes = Math.min(volumes, Math.max(0, reclaimable?.volumes ?? 0))
-  const total = images + volumes
-  if (total === 0) return []
-
-  return [
-    { label: 'Images', size: images, used: images - unusedImages, unused: unusedImages, color: '#1677ff', unusedColor: '#69b1ff' },
-    { label: 'Volumes', size: volumes, used: volumes - unusedVolumes, unused: unusedVolumes, color: '#722ed1', unusedColor: '#b37feb' },
+  const items = [
+    { label: 'Images', size: disk.images, unused: reclaimable?.images ?? 0, color: '#1677ff', unusedColor: '#69b1ff' },
+    { label: 'Volumes', size: disk.volumes, unused: reclaimable?.volumes ?? 0, color: '#722ed1', unusedColor: '#b37feb' },
   ]
-    .filter(segment => segment.size > 0)
-    .map(segment => ({
-      ...segment,
-      usedHeight: (segment.used / total) * 100,
-      unusedHeight: (segment.unused / total) * 100,
-    }))
+  const normalized = items.map(item => {
+    const size = Number.isFinite(item.size) ? Math.max(0, item.size) : 0
+    const unused = Number.isFinite(item.unused) ? Math.min(size, Math.max(0, item.unused)) : 0
+    return { ...item, size, unused, used: size - unused }
+  })
+  const maxSize = Math.max(0, ...normalized.map(item => item.size))
+  if (maxSize === 0) return []
+
+  return normalized.map(item => ({
+    ...item,
+    usedHeight: (item.used / maxSize) * 100,
+    unusedHeight: (item.unused / maxSize) * 100,
+  }))
 })
 
 async function pollSystemStats() {
@@ -1071,26 +1071,20 @@ async function deploy() {
             </span>
           </div>
           <div v-if="dockerStorageSegments.length" class="docker-storage">
-            <div class="docker-storage-chart" role="img" :aria-label="`Docker storage usage: ${fmtMb(sysStats.docker_disk?.images ?? null)} images and ${fmtMb(sysStats.docker_disk?.volumes ?? null)} volumes`">
-              <span
+            <div class="docker-storage-chart" role="img" :aria-label="`Docker storage: ${fmtMb(sysStats.docker_disk?.images ?? null)} images, ${fmtMb(sysStats.docker_disk?.volumes ?? null)} volumes`">
+              <div
                 v-for="segment in dockerStorageSegments"
                 :key="segment.label"
                 class="docker-storage-column"
-                :title="`${segment.label}: ${fmtMb(segment.size)}`"
+                :title="`${segment.label}: ${fmtMb(segment.size)} (${fmtMb(segment.unused)} reclaimable)`"
               >
-                <span class="docker-storage-column-bar">
-                  <span
-                    class="docker-storage-segment"
-                    :style="{ height: `${segment.usedHeight}%`, background: segment.color }"
-                  />
-                  <span
-                    v-if="segment.unusedHeight"
-                    class="docker-storage-segment"
-                    :style="{ height: `${segment.unusedHeight}%`, background: segment.unusedColor }"
-                  />
-                </span>
+                <span class="docker-storage-value">{{ fmtMb(segment.size) }}</span>
+                <div class="docker-storage-column-bar">
+                  <div class="docker-storage-segment" :style="{ height: `${segment.usedHeight}%`, backgroundColor: segment.color }" />
+                  <div class="docker-storage-segment" :style="{ height: `${segment.unusedHeight}%`, backgroundColor: segment.unusedColor }" />
+                </div>
                 <span class="docker-storage-label">{{ segment.label }}</span>
-              </span>
+              </div>
             </div>
             <div class="perf-breakdown storage-breakdown">
               <span class="perf-breakdown-item">
@@ -2178,12 +2172,13 @@ async function deploy() {
 .perf-breakdown { display: flex; gap: 16px; font-size: 12px; color: var(--text-secondary); margin-top: 4px; }
 .perf-breakdown-item { display: flex; align-items: center; gap: 5px; }
 .perf-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
-.docker-storage { margin-top: 16px; }
-.docker-storage-chart { display: flex; justify-content: center; gap: 48px; height: 58px; }
-.docker-storage-column { display: flex; flex-direction: column; align-items: center; justify-content: flex-end; width: 44px; }
-.docker-storage-column-bar { display: flex; flex-direction: column-reverse; width: 28px; height: 42px; overflow: hidden; border-radius: 4px 4px 0 0; background: var(--border-color); }
-.docker-storage-segment { display: block; width: 100%; transition: height 0.3s ease; }
-.docker-storage-label { font-size: 11px; line-height: 16px; color: var(--text-tertiary); }
+.docker-storage { margin-top: 12px; }
+.docker-storage-chart { display: flex; justify-content: center; align-items: flex-end; gap: 48px; height: 110px; }
+.docker-storage-column { display: flex; flex-direction: column; align-items: center; justify-content: flex-end; width: 70px; height: 100%; min-width: 0; }
+.docker-storage-value { font-size: 11px; font-weight: 600; color: var(--text-secondary); margin-bottom: 5px; white-space: nowrap; }
+.docker-storage-column-bar { display: flex; flex-direction: column-reverse; width: 34px; height: 72px; flex-shrink: 0; overflow: hidden; border-radius: 5px 5px 0 0; background: var(--border-color); }
+.docker-storage-segment { display: block; width: 100%; flex-shrink: 0; transition: height 0.3s ease; }
+.docker-storage-label { font-size: 11px; line-height: 18px; color: var(--text-tertiary); margin-top: 3px; }
 .storage-breakdown { align-items: center; flex-wrap: wrap; gap: 10px 16px; margin-top: 10px; }
 .storage-reclaimable-dot { background: linear-gradient(90deg, #69b1ff 50%, #b37feb 50%); }
 .metric-inner { display: flex; align-items: center; gap: 15px; min-height: 66px; }
