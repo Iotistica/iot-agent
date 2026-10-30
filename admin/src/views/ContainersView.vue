@@ -2161,9 +2161,22 @@ async function deploy() {
 .stats { margin-bottom: 14px; }
 .stats :deep(.ant-card) { border-radius: 9px; border-color: var(--border-color-card); background: var(--bg-subtle); }
 .stats :deep(.ant-card-body) { padding: 17px 18px; }
-.perf-row { margin-bottom: 14px; }
+.perf-row {
+  margin-bottom: 14px;
+  align-items: stretch;
+}
+.perf-row > .ant-col {
+  display: flex;
+}
 .perf-card :deep(.ant-card-body) { padding: 14px 16px; }
-.perf-card { border-radius: 9px; border-color: var(--border-color-card); background: var(--bg-subtle); }
+.perf-card {
+  width: 100%;
+  height: 100%;
+  border-radius: 9px;
+  border-color: var(--border-color-card);
+  background: var(--bg-subtle);
+}
+
 .perf-header { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 6px; }
 .perf-title { font-size: 13px; color: var(--text-tertiary); font-weight: 500; }
 .perf-current { font-size: 18px; font-weight: 600; }
