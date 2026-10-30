@@ -11,8 +11,8 @@ import { type ContainerService } from './container-manager';
 import { type AgentLogger } from '../logging/agent-logger';
 import { LogComponents } from '../logging/types';
 import { EventEmitter } from 'events';
-import { buildContainerSecurityOptions } from './container-security';
-import { realpathSync, existsSync } from 'fs';
+import { resolveContainerSecurityPolicy, hostConfigMatchesPolicy } from './container-security';
+import { realpathSync, existsSync, statSync } from 'fs';
 import { isAbsolute, relative, resolve, sep } from 'path';
 import {
 	SOCKET_CONTAINER_PATH,
@@ -351,6 +351,8 @@ export class DockerManager extends EventEmitter {
 	/** Validate user mounts separately from the agent-managed IPC socket mount. */
 	private validateContainerSecurity(service: ContainerService): void {
 		this.validateSecurityConfig(service);
+		resolveContainerSecurityPolicy(service.config);
+		this.warnOnBindMountOwnership(service);
 		const violations: string[] = [];
 		const networkMode = service.config.networkMode || 'bridge';
 		if (networkMode === 'host' || networkMode.startsWith('container:')) {
@@ -418,21 +420,41 @@ export class DockerManager extends EventEmitter {
 				MaximumRetryCount: 0,
 			},
 			...this.parseResourceLimits(service),
-			...buildContainerSecurityOptions(),
+			...resolveContainerSecurityPolicy(service.config).hostConfig,
 		};
 	}
 
-	private hasSecureHostConfig(hostConfig?: Docker.HostConfig): boolean {
-		return hostConfig?.Privileged === false
-			&& hostConfig.CapDrop?.includes('ALL') === true
-			&& !hostConfig.CapAdd?.length
-			&& hostConfig.SecurityOpt?.includes('no-new-privileges:true') === true
-			&& hostConfig.PidsLimit === 256
-			&& hostConfig.PidMode !== 'host'
-			&& hostConfig.IpcMode !== 'host'
-			&& hostConfig.UsernsMode !== 'host'
-			&& hostConfig.NetworkMode !== 'host'
-			&& !hostConfig.NetworkMode?.startsWith('container:');
+	private hasSecureHostConfig(service: ContainerService, hostConfig?: Docker.HostConfig): boolean {
+		return hostConfigMatchesPolicy(hostConfig, resolveContainerSecurityPolicy(service.config));
+	}
+
+	/**
+	 * Read-only diagnostic: warn when a host bind mount is owned by a different UID than
+	 * the configured container user. Ownership is never changed automatically.
+	 */
+	private warnOnBindMountOwnership(service: ContainerService): void {
+		const user = service.config.user;
+		const uid = user !== undefined ? Number(String(user).split(':')[0]) : NaN;
+		if (!Number.isInteger(uid)) return;
+		for (const bind of service.config.volumes || []) {
+			const source = typeof bind === 'string' ? bind.split(':')[0] : '';
+			if (!isAbsolute(source) || !existsSync(source)) continue;
+			try {
+				const st = statSync(source);
+				if (st.uid !== uid && (st.mode & 0o002) === 0) {
+					this.logger?.warnSync('Bind mount is not owned by the container user; writes may fail', {
+						component: LogComponents.dockerManager,
+						operation: 'warnOnBindMountOwnership',
+						serviceName: service.serviceName,
+						source,
+						ownerUid: st.uid,
+						containerUid: uid,
+					});
+				}
+			} catch {
+				// diagnostic only
+			}
+		}
 	}
 
 	private validateSecurityConfig(service: ContainerService): void {
@@ -681,7 +703,7 @@ export class DockerManager extends EventEmitter {
 			
 			if (existing) {
 				const info = await existing.inspect();
-				if (!this.hasSecureHostConfig(info.HostConfig)) {
+				if (!this.hasSecureHostConfig(service, info.HostConfig)) {
 					this.logger?.warnSync('Existing container does not meet the security baseline; recreating', {
 						component: LogComponents.dockerManager,
 						operation: 'startContainer',

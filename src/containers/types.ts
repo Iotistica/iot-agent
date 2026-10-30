@@ -21,6 +21,8 @@ import { LogComponents } from '../logging/types';
 // COMMON TYPES (shared across all drivers)
 // ============================================================================
 
+import type { ServiceSecurityConfig, SecurityPolicySummary } from './container-security';
+
 /**
  * Container service definition - driver-agnostic
  */
@@ -58,6 +60,7 @@ export interface ServiceConfig {
 		stopTimeout?: number;
 		readonlyRootfs?: boolean;
 		enableSocketDestination?: boolean;
+		security?: ServiceSecurityConfig;
 
 		// Resource limits (K8s-style)
 		resources?: {
@@ -135,6 +138,7 @@ export interface ServiceError {
 	timestamp: string;
 	retryCount: number;
 	nextRetry?: string;
+	securityPolicy?: SecurityPolicySummary;
 }
 
 /**

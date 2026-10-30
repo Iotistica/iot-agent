@@ -1,6 +1,7 @@
 import type { AgentLogger } from '../logging/agent-logger';
 import { LogComponents } from '../logging/types';
 import type { RetryManager } from './retry-manager';
+import { resolveContainerSecurityPolicy, permissionFailureHint } from './container-security';
 import type { ContainerService, DeviceState } from './container-manager';
 
 interface StateHelpersContext {
@@ -54,10 +55,19 @@ export function markServiceAsError(
 
 	const retryState = ctx.retryManager.getState(retryKey);
 
+	let securityPolicy;
+	try {
+		securityPolicy = resolveContainerSecurityPolicy(service.config).summary;
+	} catch {
+		// invalid override: the error message already explains why
+	}
+	const hint = permissionFailureHint(message);
+
 	service.serviceStatus = 'error';
 	service.error = {
 		type: errorType,
-		message,
+		message: hint && !message.includes(hint) ? `${message} ${hint}` : message,
+		securityPolicy,
 		timestamp: new Date().toISOString(),
 		retryCount: retryState?.count || 0,
 		nextRetry: retryState?.nextRetry?.toISOString(),

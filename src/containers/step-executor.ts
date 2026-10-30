@@ -85,6 +85,65 @@ export function getStepKey(step: AppStep): string {
 	}
 }
 
+const STABLE_UPTIME_MS = 5 * 60 * 1000;
+const lastRestartAt = new Map<string, number>();
+const lastConfigFingerprint = new Map<string, string>();
+
+/** A changed deployment config (e.g. new security exceptions) deserves a fresh retry budget. */
+function resetRetriesOnConfigChange(
+	ctx: StepExecutorContext,
+	stepKey: string,
+	service: ContainerService,
+): void {
+	const fingerprint = JSON.stringify([service.imageName, service.config]);
+	const previous = lastConfigFingerprint.get(stepKey);
+	if (previous !== undefined && previous !== fingerprint) {
+		ctx.retryManager.clearState(stepKey);
+	}
+	lastConfigFingerprint.set(stepKey, fingerprint);
+}
+
+/**
+ * Bounded restart gate shared by create and restart paths. Throws while in backoff
+ * or once the terminal (CrashLoopBackOff) state is reached.
+ */
+function assertRestartAllowed(
+	ctx: StepExecutorContext,
+	stepKey: string,
+	appId: number,
+	serviceId: number,
+): void {
+	if (ctx.retryManager.shouldRetry(stepKey)) {
+		return;
+	}
+	const state = ctx.retryManager.getState(stepKey);
+	if (ctx.retryManager.isTerminal(stepKey)) {
+		ctx.markServiceAsError(
+			appId,
+			serviceId,
+			'CrashLoopBackOff',
+			`Giving up after ${state?.count ?? 0} failed start attempts: ${state?.lastError ?? 'unknown error'}`,
+		);
+		throw new Error(`Max start retries exceeded for service ${serviceId}`);
+	}
+	throw new Error(
+		`Service ${serviceId} start is in backoff until ${state?.nextRetry?.toISOString() ?? 'later'}`,
+	);
+}
+
+function recordStartFailure(
+	ctx: StepExecutorContext,
+	stepKey: string,
+	appId: number,
+	serviceId: number,
+	error: any,
+): void {
+	const message = error?.message ?? String(error);
+	ctx.retryManager.recordFailure(stepKey, message, error?.retryable === false ? false : undefined);
+	const terminal = ctx.retryManager.isTerminal(stepKey);
+	ctx.markServiceAsError(appId, serviceId, terminal ? 'CrashLoopBackOff' : 'StartFailure', message);
+}
+
 export async function executeStep(
 	step: AppStep,
 	ctx: StepExecutorContext,
@@ -176,6 +235,16 @@ export async function executeStep(
 				serviceId: step.serviceId,
 			});
 
+			const restartKey = getStepKey(step);
+			const now = Date.now();
+			if (now - (lastRestartAt.get(restartKey) ?? now) >= STABLE_UPTIME_MS) {
+				ctx.retryManager.clearState(restartKey);
+			}
+			assertRestartAllowed(ctx, restartKey, step.appId, step.serviceId);
+			lastRestartAt.set(restartKey, now);
+			// Count every restart of an exited container; a stable run resets the counter above.
+			ctx.retryManager.recordFailure(restartKey, 'Container exited; restarting', true);
+
 			try {
 				const service = ctx.getServiceFromCurrentState(step.appId, step.serviceId);
 				if (!service) {
@@ -224,12 +293,7 @@ export async function executeStep(
 						serviceId: step.serviceId,
 					},
 				);
-				ctx.markServiceAsError(
-					step.appId,
-					step.serviceId,
-					'StartFailure',
-					error.message,
-				);
+				recordStartFailure(ctx, restartKey, step.appId, step.serviceId, error);
 				throw error;
 			}
 			break;
@@ -258,8 +322,11 @@ export async function executeStep(
 		}
 
 		case 'startContainer': {
+			resetRetriesOnConfigChange(ctx, stepKey, step.service);
+			assertRestartAllowed(ctx, stepKey, step.appId, step.service.serviceId);
 			try {
 				const containerId = await ctx.startContainer(step.service);
+				ctx.retryManager.recordSuccess(stepKey);
 				ctx.addServiceToCurrentState(step.appId, step.service, containerId);
 				ctx.markServiceAsRunning(step.appId, step.service.serviceId);
 				await ctx.attachLogsToContainer(containerId, step.service);
@@ -288,12 +355,7 @@ export async function executeStep(
 						serviceName: step.service.serviceName,
 					},
 				);
-				ctx.markServiceAsError(
-					step.appId,
-					step.service.serviceId,
-					'StartFailure',
-					error.message,
-				);
+				recordStartFailure(ctx, stepKey, step.appId, step.service.serviceId, error);
 				throw error;
 			}
 			break;
