@@ -529,14 +529,14 @@ export class DockerManager extends EventEmitter {
 	*/
 	
 	private getContainerLogConfig(): Docker.HostConfig['LogConfig'] {
-	return {
-		Type: 'local',
-		Config: {
-		'max-size': '10m',
-		'max-file': '3',
-		'compress': 'true',
-		},
-	};
+		return {
+			Type: 'local',
+			Config: {
+			'max-size': '10m',
+			'max-file': '3',
+			'compress': 'true',
+			},
+		};
 	}
 
 
