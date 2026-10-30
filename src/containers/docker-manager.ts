@@ -532,9 +532,9 @@ export class DockerManager extends EventEmitter {
 		return {
 			Type: 'local',
 			Config: {
-			'max-size': '10m',
-			'max-file': '3',
-			'compress': 'true',
+				'max-size': '10m',
+				'max-file': '3',
+				'compress': 'true',
 			},
 		};
 	}
