@@ -11,6 +11,8 @@ import { type ContainerService } from './container-manager';
 import { type AgentLogger } from '../logging/agent-logger';
 import { LogComponents } from '../logging/types';
 import { EventEmitter } from 'events';
+import { realpathSync, existsSync } from 'fs';
+import { isAbsolute, relative, resolve, sep } from 'path';
 import {
 	SOCKET_CONTAINER_PATH,
 	ensureSocketDir,
@@ -345,6 +347,83 @@ export class DockerManager extends EventEmitter {
 		return s.replace(/[^a-zA-Z0-9_.-]/g, '_');
 	}
 
+	/** Validate user mounts separately from the agent-managed IPC socket mount. */
+	private validateContainerSecurity(service: ContainerService): void {
+		this.validateSecurityConfig(service);
+		const violations: string[] = [];
+		const networkMode = service.config.networkMode || 'bridge';
+		if (networkMode === 'host' || networkMode.startsWith('container:')) {
+			violations.push(`network mode ${networkMode} is not permitted`);
+		}
+
+		const allowedRoot = resolve(process.env.IOTISTICA_BIND_ROOT || '/opt/iotistica/data');
+		// A symlinked root or ancestor must not allow escaping the intended directory.
+		const canonicalRoot = existsSync(allowedRoot) ? realpathSync(allowedRoot) : allowedRoot;
+		for (const bind of service.config.volumes || []) {
+			if (typeof bind !== 'string') {
+				violations.push('volume mount must be a string');
+				continue;
+			}
+			const parts = bind.split(':');
+			if (parts.length < 2 || parts.length > 3 || !parts[0] || !parts[1] || !parts[1].startsWith('/') ||
+				(parts.length === 3 && !['ro', 'rw'].includes(parts[2]))) {
+				violations.push(`invalid volume mount: ${bind}`);
+				continue;
+			}
+			const [source, target] = parts;
+			if (target === SOCKET_CONTAINER_PATH || target.startsWith(`${SOCKET_CONTAINER_PATH}/`)) {
+				violations.push(`reserved socket mount target: ${target}`);
+			}
+			if (isAbsolute(source)) {
+				const resolvedSource = resolve(source);
+				const rel = relative(allowedRoot, resolvedSource);
+				if (rel === '' || rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
+					violations.push(`host mount outside allowed data subdirectories: ${source}`);
+					continue;
+				}
+				// Require the directory to exist; do not let Docker silently create host paths.
+				if (!existsSync(resolvedSource)) {
+					violations.push(`host mount directory does not exist: ${source}`);
+					continue;
+				}
+				const canonicalSource = realpathSync(resolvedSource);
+				const canonicalRel = relative(canonicalRoot, canonicalSource);
+				if (canonicalRel === '' || canonicalRel === '..' || canonicalRel.startsWith(`..${sep}`) || isAbsolute(canonicalRel)) {
+					violations.push(`host mount resolves outside allowed data subdirectories: ${source}`);
+				}
+			} else if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(source) || source === '.' || source === '..') {
+			violations.push(`invalid Docker named volume: ${source}`);
+			}
+		}
+		if (violations.length) {
+			throw new Error(`Container security policy violation: ${violations.join('; ')}`);
+		}
+	}
+
+	/** Shared Docker security baseline for create and both update strategies. */
+	private buildSecureHostConfig(
+		service: ContainerService,
+		portBindings: Docker.PortMap,
+		binds: string[],
+	): Docker.HostConfig {
+		return {
+			LogConfig: this.getContainerLogConfig(),
+			PortBindings: portBindings,
+			Binds: binds.length ? binds : undefined,
+			NetworkMode: service.config.networkMode || 'bridge',
+			ReadonlyRootfs: service.config.readonlyRootfs || false,
+			RestartPolicy: {
+				Name: service.config.restart || 'unless-stopped',
+				MaximumRetryCount: 0,
+			},
+			...this.parseResourceLimits(service),
+			Privileged: false,
+			CapDrop: ['ALL'],
+			SecurityOpt: ['no-new-privileges:true'],
+			PidsLimit: 256,
+		};
+	}
+
 	private validateSecurityConfig(service: ContainerService): void {
 		const violations: string[] = [];
 
@@ -583,7 +662,7 @@ export class DockerManager extends EventEmitter {
 
 		try {
 			// 0a. Validate security configuration (CRITICAL for edge devices)
-			this.validateSecurityConfig(service);
+			this.validateContainerSecurity(service);
 
 			// 0b. Check for existing container (idempotency)
 			const containerName = `${this.sanitizeNamePart(service.appName)}_${this.sanitizeNamePart(service.serviceName)}_${service.serviceId}`;
@@ -684,7 +763,6 @@ export class DockerManager extends EventEmitter {
 			}
 
 			// 4. Parse resource limits (K8s-style)
-			const resourceLimits = this.parseResourceLimits(service);
 
 			// 5. Parse health check configuration
 			let healthcheck: Docker.HealthConfig | undefined;
@@ -750,19 +828,7 @@ export class DockerManager extends EventEmitter {
 				],
 				ExposedPorts: exposedPorts,
 				Healthcheck: healthcheck,
-				HostConfig: {
-					LogConfig: this.getContainerLogConfig(),
-					PortBindings: portBindings,
-					Binds: binds.length > 0 ? binds : undefined,
-					NetworkMode: service.config.networkMode || 'bridge',
-					ReadonlyRootfs: service.config.readonlyRootfs || false,
-					RestartPolicy: {
-						Name: service.config.restart || 'unless-stopped',
-						MaximumRetryCount: 0,
-					},
-					// Apply resource limits
-					...resourceLimits,
-				},
+				HostConfig: this.buildSecureHostConfig(service, portBindings, binds),
 				Labels: {
 					'iotistic.app-id': service.appId.toString(),
 					'iotistic.app-name': service.appName,
@@ -1130,7 +1196,7 @@ export class DockerManager extends EventEmitter {
 
 		try {
 			// 0. Validate security configuration (CRITICAL for edge devices)
-			this.validateSecurityConfig(service);
+			this.validateContainerSecurity(service);
 
 			// 1. Find existing container
 			const oldContainer = await this.findContainerByName(finalName);
@@ -1183,7 +1249,6 @@ export class DockerManager extends EventEmitter {
 				}
 			}
 
-			const resourceLimits = this.parseResourceLimits(service);
 
 			// Guard: Remove port bindings for incompatible network modes
 			const networkMode = service.config.networkMode || 'bridge';
@@ -1215,18 +1280,7 @@ export class DockerManager extends EventEmitter {
 					)
 					: [],
 				ExposedPorts: exposedPorts,
-				HostConfig: {
-					LogConfig: this.getContainerLogConfig(),
-					PortBindings: portBindings,
-					Binds: binds.length > 0 ? binds : undefined,
-					NetworkMode: service.config.networkMode || 'bridge',
-					ReadonlyRootfs: service.config.readonlyRootfs || false,
-					RestartPolicy: {
-						Name: service.config.restart || 'unless-stopped',
-						MaximumRetryCount: 0,
-					},
-					...resourceLimits,
-				},
+				HostConfig: this.buildSecureHostConfig(service, portBindings, binds),
 				Labels: {
 					'iotistic.app-id': service.appId.toString(),
 					'iotistic.app-name': service.appName,
@@ -1355,7 +1409,7 @@ export class DockerManager extends EventEmitter {
 		});
 
 		try {
-			this.validateSecurityConfig(service);
+			this.validateContainerSecurity(service);
 
 			// 1. Find and stop old container
 			const oldContainer = await this.findContainerByName(finalName);
@@ -1420,7 +1474,6 @@ export class DockerManager extends EventEmitter {
 			}
 			binds.push(socketBindString(service.appId, service.serviceId));
 
-			const resourceLimits = this.parseResourceLimits(service);
 			const networkMode = service.config.networkMode || 'bridge';
 			if (networkMode === 'host' || networkMode.startsWith('container:')) {
 				Object.keys(portBindings).forEach(key => delete portBindings[key]);
@@ -1443,18 +1496,7 @@ export class DockerManager extends EventEmitter {
 					'AGENT_IPC_SOCKET=/run/agent-ipc/app.sock',
 				],
 				ExposedPorts: exposedPorts,
-				HostConfig: {
-					LogConfig: this.getContainerLogConfig(),
-					PortBindings: portBindings,
-					Binds: binds.length > 0 ? binds : undefined,
-					NetworkMode: networkMode,
-					ReadonlyRootfs: service.config.readonlyRootfs || false,
-					RestartPolicy: {
-						Name: service.config.restart || 'unless-stopped',
-						MaximumRetryCount: 0,
-					},
-					...resourceLimits,
-				},
+				HostConfig: this.buildSecureHostConfig(service, portBindings, binds),
 				Labels: {
 					'iotistic.app-id': service.appId.toString(),
 					'iotistic.app-name': service.appName,
