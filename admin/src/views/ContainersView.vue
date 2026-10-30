@@ -370,17 +370,18 @@ async function saveAppDetails() {
 
 function confirmRemoveApp(app: ContainerApp) {
   Modal.confirm({
-    title: `Remove "${app.appName}"?`,
+    title: `Delete "${app.appName}"?`,
     content: 'All services in this application will be stopped and removed.',
     okType: 'danger',
-    okText: 'Remove',
+    okText: 'Delete',
     async onOk() {
       try {
         await containersApi.remove(app.appId)
-        message.success(`${app.appName} removed`)
+        message.success(`${app.appName} deleted`)
+        appDetailsOpen.value = false
         await load()
       } catch (e: unknown) {
-        message.error((e as any)?.message ?? 'Remove failed')
+        message.error((e as any)?.message ?? 'Delete failed')
       }
     },
   })
@@ -1180,16 +1181,6 @@ async function deploy() {
             </div>
           </div>
           <div class="app-card-actions">
-            <a-dropdown :trigger="['click']">
-              <a-button type="text" class="icon-menu-button" aria-label="Application actions" title="Application actions">
-                <EllipsisOutlined />
-              </a-button>
-              <template #overlay>
-                <a-menu>
-                  <a-menu-item key="delete" danger @click="confirmRemoveApp(app)"><DeleteOutlined /> Delete Application</a-menu-item>
-                </a-menu>
-              </template>
-            </a-dropdown>
             <a-button
               type="text"
               class="icon-menu-button expand-button"
@@ -1630,11 +1621,17 @@ async function deploy() {
         </div>
       </a-form>
       <template #footer>
-        <div style="display: flex; justify-content: flex-end; gap: 8px">
-          <a-button @click="appDetailsOpen = false">Cancel</a-button>
-          <a-button type="primary" :loading="appDetailsSaving" @click="saveAppDetails">
-            Save Changes
+        <div style="display: flex; justify-content: space-between; gap: 8px">
+          <a-button v-if="appDetailsTarget" danger @click="confirmRemoveApp(appDetailsTarget)">
+            <template #icon><DeleteOutlined /></template>
+            Delete
           </a-button>
+          <div style="display: flex; gap: 8px">
+            <a-button @click="appDetailsOpen = false">Cancel</a-button>
+            <a-button type="primary" :loading="appDetailsSaving" @click="saveAppDetails">
+              Save Changes
+            </a-button>
+          </div>
         </div>
       </template>
     </a-drawer>
