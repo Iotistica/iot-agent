@@ -13,10 +13,6 @@ import {
   SettingOutlined,
   TeamOutlined,
   SafetyOutlined,
-  UserOutlined,
-  KeyOutlined,
-  QuestionCircleOutlined,
-  CustomerServiceOutlined,
   WifiOutlined,
   ClusterOutlined,
   DatabaseOutlined,
@@ -43,15 +39,10 @@ const selectedKey = computed(() => route.path)
 const openKeys = computed(() => {
   const keys: string[] = []
   if (route.path.startsWith('/admin')) keys.push('administration')
-  if (route.path.startsWith('/user')) keys.push('user-settings')
   return keys
 })
 
 function onMenuClick({ key }: { key: string }) {
-  if (key === 'help') {
-    window.open('https://docs.iotistica.com/docs/intro', '_blank')
-    return
-  }
   router.push(key)
 }
 </script>
@@ -174,41 +165,6 @@ function onMenuClick({ key }: { key: string }) {
       </a-menu>
     </div>
 
-    <div class="nav-bottom">
-      <a-menu
-        theme="dark"
-        mode="inline"
-        :inline-collapsed="collapsed"
-        :selected-keys="[selectedKey]"
-        :open-keys="openKeys"
-        @click="onMenuClick"
-      >
-        <a-sub-menu key="user-settings">
-          <template #icon><UserOutlined /></template>
-          <template #title>User</template>
-
-          <a-menu-item key="/user/profile">
-            <template #icon><UserOutlined /></template>
-            Profile
-          </a-menu-item>
-
-          <a-menu-item key="/user/api-tokens">
-            <template #icon><KeyOutlined /></template>
-            API Tokens
-          </a-menu-item>
-        </a-sub-menu>
-
-        <a-menu-item key="help">
-          <template #icon><QuestionCircleOutlined /></template>
-          Help
-        </a-menu-item>
-
-        <a-menu-item key="/support">
-          <template #icon><CustomerServiceOutlined /></template>
-          Support
-        </a-menu-item>
-      </a-menu>
-    </div>
 
     <div class="sidebar-footer">
       <a-button type="text" size="small" class="collapse-btn" @click="toggle">
@@ -292,11 +248,6 @@ function onMenuClick({ key }: { key: string }) {
   background: #141414 !important;
 }
 
-.nav-bottom {
-  flex-shrink: 0;
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
-  padding-top: 4px;
-}
 
 :deep(.ant-layout-sider) {
   background: #0a0a0a !important;

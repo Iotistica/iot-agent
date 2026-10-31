@@ -8,6 +8,8 @@ import {
   BulbOutlined,
   BulbFilled,
   DownOutlined,
+  QuestionCircleOutlined,
+  CustomerServiceOutlined,
 } from '@ant-design/icons-vue'
 
 import AppSidebar from './AppSidebar.vue'
@@ -52,6 +54,10 @@ function handleUserMenu({
 }) {
   if (key === 'logout') {
     void handleLogout()
+  } else if (key === 'help') {
+    window.open('https://docs.iotistica.com/docs/intro', '_blank')
+  } else if (typeof key === 'string' && key.startsWith('/')) {
+    void router.push(key)
   }
 }
 
@@ -154,12 +160,21 @@ onMounted(async () => {
 
             <template #overlay>
               <a-menu @click="handleUserMenu">
-                <a-menu-item
-                  key="user-info"
-                  disabled
-                >
+                <a-menu-item key="/user/profile">
                   <UserOutlined />
-                  {{ username }}
+                  Profile
+                </a-menu-item>
+
+                <a-menu-divider />
+
+                <a-menu-item key="help">
+                  <QuestionCircleOutlined />
+                  Help
+                </a-menu-item>
+
+                <a-menu-item key="/support">
+                  <CustomerServiceOutlined />
+                  Support
                 </a-menu-item>
 
                 <a-menu-divider />
