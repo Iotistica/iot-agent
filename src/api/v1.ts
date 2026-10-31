@@ -619,7 +619,8 @@ router.delete('/v1/apps/:appId/services/:serviceName', requireRole('operator'), 
 router.get('/v1/apps/:appId/services/:serviceName/logs', async (req: Request, res: Response) => {
 	const appId = parseInt(req.params.appId);
 	const { serviceName } = req.params;
-	const tail = Math.min(parseInt(req.query.tail as string) || 200, 2000);
+	const raw = parseInt(req.query.tail as string, 10);
+	const tail = Number.isNaN(raw) ? 200 : Math.min(Math.max(raw, 0), 2000);
 	const follow = req.query.follow === 'true';
 	const timestamps = req.query.timestamps !== 'false';
 

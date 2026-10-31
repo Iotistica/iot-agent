@@ -709,9 +709,9 @@ function parseLogLine(raw: string, stream: 'stdout' | 'stderr'): LogLine {
   return { msg: raw, stream, ts: '' }
 }
 
-function connectLogs(appId: number, serviceName: string) {
+function connectLogs(appId: number, serviceName: string, tail = 200) {
   if (logEs) { logEs.close(); logEs = null }
-  const url = `${LOG_API_BASE}/v1/apps/${appId}/services/${encodeURIComponent(serviceName)}/logs?tail=200&follow=${logFollow.value}&timestamps=true`
+  const url = `${LOG_API_BASE}/v1/apps/${appId}/services/${encodeURIComponent(serviceName)}/logs?tail=${tail}&follow=${logFollow.value}&timestamps=true`
   const es = new EventSource(url)
   logEs = es
   es.onmessage = (ev) => {
@@ -750,6 +750,13 @@ function openAppLogs(app: ContainerApp) {
   const targetApp = fullApp(app)
   const firstService = targetApp.services[0]
   if (firstService) openLogs(targetApp, firstService)
+}
+
+function clearLogs() {
+  logLines.value = []
+  if (logApp.value && logSvc.value) {
+    connectLogs(logApp.value.appId, logSvc.value.serviceName, 0)
+  }
 }
 
 function onLogDrawerClose() {
@@ -2208,7 +2215,7 @@ async function deploy() {
           <a-switch v-model:checked="logAutoScroll" size="small" />
           <span class="log-toolbar-label">Auto-scroll</span>
         </div>
-        <a-button size="small" @click="logLines = []">Clear</a-button>
+        <a-button size="small" @click="clearLogs">Clear</a-button>
         <span class="log-count">{{ logLines.length }} lines</span>
         <a-button size="small" @click="openLogSearch" title="Search logs">
           <template #icon><SearchOutlined /></template>
