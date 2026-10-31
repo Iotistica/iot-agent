@@ -15,6 +15,7 @@ import { StateSnapshotModel } from "../db/models/index.js";
 import { cloneDeep, deepEqual } from "../lib/collection-utils.js";
 import {
 	MqttFileAuthReconciler,
+	generateMosquittoHash,
 	resolveMosquittoAuthDir,
 	type ContainerManager as MqttAuthContainerManager,
 } from "../mqtt/auth.js";
@@ -179,6 +180,10 @@ export class ConfigManager extends EventEmitter {
 
 		// Load current config from database (persisted reconciled state)
 		await this.loadCurrentConfigFromDB();
+
+		// Store bootstrap MQTT admin in the database on first startup so credentials
+		// survive container rebuilds (the SQLite DB lives on a persistent volume).
+		await this.ensureBootstrapAdminStored();
 
 		// Ensure local MQTT auth tables are initialized immediately at startup.
 		// This guarantees bootstrap MQTT credentials exist before endpoint-driven
@@ -1206,6 +1211,28 @@ export class ConfigManager extends EventEmitter {
 			);
 		}
 	}
+	private async ensureBootstrapAdminStored(): Promise<void> {
+		const username = process.env.MQTT_USERNAME?.trim();
+		const password = process.env.MQTT_PASSWORD?.trim();
+		if (!username || !password) return;
+
+		try {
+			const { MqttUserModel } = await import("../db/models/mqtt-user.model.js");
+			if (MqttUserModel.existsByUsername(username)) return;
+
+			const hash = generateMosquittoHash(password);
+			MqttUserModel.create(username, hash, true);
+
+			this.logger?.infoSync("Bootstrap MQTT admin stored in mqtt_users", {
+				component: LogComponents.configManager,
+				operation: "ensureBootstrapAdminStored",
+				username,
+			});
+		} catch {
+			// Non-fatal — DB may not be ready on first boot
+		}
+	}
+
 	private async syncMosquittoAuthToFiles(devices: any[]): Promise<void> {
 		try {
 			const reconciler = new MqttFileAuthReconciler(this.logger);

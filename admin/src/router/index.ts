@@ -93,7 +93,7 @@ const router = createRouter({
     },
     {
       path: '/admin/mqtt-users',
-      redirect: '/admin/users?tab=mqtt',
+      redirect: '/mqtt-broker?tab=users',
     },
     {
       path: '/admin/backups',

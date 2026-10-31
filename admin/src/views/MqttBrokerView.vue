@@ -1,13 +1,25 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue'
-import { useRouter } from 'vue-router'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import TopicTree from '@/components/mqtt/TopicTree.vue'
 import MessageViewer from '@/components/mqtt/MessageViewer.vue'
+import MqttSettingsTab from '@/components/mqtt/MqttSettingsTab.vue'
+import MqttUsersTab from '@/components/mqtt/MqttUsersTab.vue'
 import { mqttApi, type TopicNode, type BrokerMetrics } from '@/api/mqtt'
-import { WifiOutlined, GlobalOutlined, TeamOutlined, NodeIndexOutlined, LoginOutlined, LogoutOutlined } from '@ant-design/icons-vue'
+import { WifiOutlined, GlobalOutlined, TeamOutlined, NodeIndexOutlined, LoginOutlined, LogoutOutlined, SettingOutlined, UserOutlined } from '@ant-design/icons-vue'
 
+const route = useRoute()
 const router = useRouter()
+
+const VALID_TABS = ['monitor', 'settings', 'users'] as const
+const activeTab = ref(
+  typeof route.query.tab === 'string' && (VALID_TABS as readonly string[]).includes(route.query.tab) ? route.query.tab : 'monitor'
+)
+
+watch(activeTab, (tab) => {
+  router.replace({ query: tab === 'monitor' ? {} : { tab } })
+})
 
 const metrics    = ref<BrokerMetrics | null>(null)
 const topicTree  = ref<Record<string, TopicNode>>({})
@@ -102,128 +114,144 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
       <p>Local Mosquitto broker — live topic tree, throughput metrics, and message inspection.</p>
     </div>
 
-    <!-- Connection banner -->
-      <a-alert
-        v-if="!loading && !connected"
-        type="warning"
-        show-icon
-        style="margin-bottom: 16px"
-      >
-        <template #message>Not connected to local MQTT broker</template>
-        <template #description>
-          <div style="margin-top: 4px">
-            Check that the broker URL and credentials are configured correctly.
-          </div>
-          <a-button
-            type="primary"
-            size="small"
-            style="margin-top: 12px"
-            @click="router.push('/settings?tab=mqtt-monitor')"
-          >
-            Go to Settings
-          </a-button>
-        </template>
-      </a-alert>
+    <a-tabs v-model:activeKey="activeTab">
+      <a-tab-pane key="monitor">
+        <template #tab><WifiOutlined /> Monitor</template>
 
-      <!-- Metric cards -->
-      <a-row :gutter="12" class="stats">
-
-        <a-col :xs="12" :sm="6">
-          <a-card size="small" class="metric-card">
-            <div class="metric-inner">
-              <span class="metric-icon icon-clients"><TeamOutlined /></span>
-              <a-statistic title="Connected clients" :value="metrics?.clients.connected ?? '—'" :value-style="connected ? { color: '#52c41a' } : {}">
-                <template #suffix><span class="metric-sub">of {{ metrics?.clients.total ?? '—' }}</span></template>
-              </a-statistic>
+        <!-- Connection banner -->
+        <a-alert
+          v-if="!loading && !connected"
+          type="warning"
+          show-icon
+          style="margin-bottom: 16px"
+        >
+          <template #message>Not connected to local MQTT broker</template>
+          <template #description>
+            <div style="margin-top: 4px">
+              Check that the broker URL and credentials are configured correctly.
             </div>
-          </a-card>
-        </a-col>
-
-        <a-col :xs="12" :sm="6">
-          <a-card size="small" class="metric-card">
-            <div class="metric-inner">
-              <span class="metric-icon icon-topics"><NodeIndexOutlined /></span>
-              <a-statistic title="Topics" :value="metrics ? Object.keys(topicTree).length > 0 ? countTopics(topicTree) : 0 : '—'">
-                <template #suffix><span class="metric-sub">{{ metrics?.subscriptions ?? '—' }} subs</span></template>
-              </a-statistic>
-            </div>
-          </a-card>
-        </a-col>
-
-        <a-col :xs="12" :sm="6">
-          <a-card size="small" class="metric-card">
-            <div class="metric-inner">
-              <span class="metric-icon icon-in"><LoginOutlined /></span>
-              <a-statistic title="Msg rate in" :value="metrics ? `${metrics.messageRateIn}/s` : '—'">
-                <template #suffix><span class="metric-sub">{{ metrics ? fmtKB(metrics.throughputIn) : '' }}</span></template>
-              </a-statistic>
-            </div>
-          </a-card>
-        </a-col>
-
-        <a-col :xs="12" :sm="6">
-          <a-card size="small" class="metric-card">
-            <div class="metric-inner">
-              <span class="metric-icon icon-out"><LogoutOutlined /></span>
-              <a-statistic title="Msg rate out" :value="metrics ? `${metrics.messageRateOut}/s` : '—'">
-                <template #suffix><span class="metric-sub">{{ metrics ? fmtKB(metrics.throughputOut) : '' }}</span></template>
-              </a-statistic>
-            </div>
-          </a-card>
-        </a-col>
-
-      </a-row>
-
-      <!-- Main split panel -->
-      <div class="split-panel">
-
-        <!-- Left: topic tree -->
-        <div class="tree-pane">
-          <div class="pane-header">
-            <span class="pane-title">
-              <WifiOutlined style="margin-right:6px" />
-              Topics
-            </span>
-            <span class="pane-count">{{ countTopics(topicTree) }}</span>
-          </div>
-          <div class="tree-filter">
-            <a-input
-              v-model:value="filterText"
-              placeholder="Filter topics…"
-              allow-clear
+            <a-button
+              type="primary"
               size="small"
-            />
-          </div>
-          <div class="tree-scroll">
-            <a-spin :spinning="loading" size="small">
-              <div v-if="!loading && Object.keys(filteredTree).length === 0" class="tree-empty">
-                No topics yet — messages will appear as the broker receives them
+              style="margin-top: 12px"
+              @click="activeTab = 'settings'"
+            >
+              Go to Settings
+            </a-button>
+          </template>
+        </a-alert>
+
+        <!-- Metric cards -->
+        <a-row :gutter="12" class="stats">
+
+          <a-col :xs="12" :sm="6">
+            <a-card size="small" class="metric-card">
+              <div class="metric-inner">
+                <span class="metric-icon icon-clients"><TeamOutlined /></span>
+                <a-statistic title="Connected clients" :value="metrics?.clients.connected ?? '—'" :value-style="connected ? { color: '#52c41a' } : {}">
+                  <template #suffix><span class="metric-sub">of {{ metrics?.clients.total ?? '—' }}</span></template>
+                </a-statistic>
               </div>
-              <TopicTree
-                v-else
-                :nodes="filteredTree"
-                :selected-topic="selected?.fullTopic ?? null"
-                @select="selected = $event"
+            </a-card>
+          </a-col>
+
+          <a-col :xs="12" :sm="6">
+            <a-card size="small" class="metric-card">
+              <div class="metric-inner">
+                <span class="metric-icon icon-topics"><NodeIndexOutlined /></span>
+                <a-statistic title="Topics" :value="metrics ? Object.keys(topicTree).length > 0 ? countTopics(topicTree) : 0 : '—'">
+                  <template #suffix><span class="metric-sub">{{ metrics?.subscriptions ?? '—' }} subs</span></template>
+                </a-statistic>
+              </div>
+            </a-card>
+          </a-col>
+
+          <a-col :xs="12" :sm="6">
+            <a-card size="small" class="metric-card">
+              <div class="metric-inner">
+                <span class="metric-icon icon-in"><LoginOutlined /></span>
+                <a-statistic title="Msg rate in" :value="metrics ? `${metrics.messageRateIn}/s` : '—'">
+                  <template #suffix><span class="metric-sub">{{ metrics ? fmtKB(metrics.throughputIn) : '' }}</span></template>
+                </a-statistic>
+              </div>
+            </a-card>
+          </a-col>
+
+          <a-col :xs="12" :sm="6">
+            <a-card size="small" class="metric-card">
+              <div class="metric-inner">
+                <span class="metric-icon icon-out"><LogoutOutlined /></span>
+                <a-statistic title="Msg rate out" :value="metrics ? `${metrics.messageRateOut}/s` : '—'">
+                  <template #suffix><span class="metric-sub">{{ metrics ? fmtKB(metrics.throughputOut) : '' }}</span></template>
+                </a-statistic>
+              </div>
+            </a-card>
+          </a-col>
+
+        </a-row>
+
+        <!-- Main split panel -->
+        <div class="split-panel">
+
+          <!-- Left: topic tree -->
+          <div class="tree-pane">
+            <div class="pane-header">
+              <span class="pane-title">
+                <WifiOutlined style="margin-right:6px" />
+                Topics
+              </span>
+              <span class="pane-count">{{ countTopics(topicTree) }}</span>
+            </div>
+            <div class="tree-filter">
+              <a-input
+                v-model:value="filterText"
+                placeholder="Filter topics…"
+                allow-clear
+                size="small"
               />
-            </a-spin>
+            </div>
+            <div class="tree-scroll">
+              <a-spin :spinning="loading" size="small">
+                <div v-if="!loading && Object.keys(filteredTree).length === 0" class="tree-empty">
+                  No topics yet — messages will appear as the broker receives them
+                </div>
+                <TopicTree
+                  v-else
+                  :nodes="filteredTree"
+                  :selected-topic="selected?.fullTopic ?? null"
+                  @select="selected = $event"
+                />
+              </a-spin>
+            </div>
           </div>
-        </div>
 
-        <!-- Right: message viewer -->
-        <div class="viewer-pane">
-          <div class="pane-header">
-            <span class="pane-title">
-              <GlobalOutlined style="margin-right:6px" />
-              Message
-            </span>
-            <span v-if="metrics?.version" class="broker-version">{{ metrics.version }}</span>
+          <!-- Right: message viewer -->
+          <div class="viewer-pane">
+            <div class="pane-header">
+              <span class="pane-title">
+                <GlobalOutlined style="margin-right:6px" />
+                Message
+              </span>
+              <span v-if="metrics?.version" class="broker-version">{{ metrics.version }}</span>
+            </div>
+            <div class="viewer-scroll">
+              <MessageViewer :node="selected" />
+            </div>
           </div>
-          <div class="viewer-scroll">
-            <MessageViewer :node="selected" />
-          </div>
-        </div>
 
-      </div>
+        </div>
+      </a-tab-pane>
+
+      <a-tab-pane key="settings">
+        <template #tab><SettingOutlined /> Settings</template>
+        <MqttSettingsTab />
+      </a-tab-pane>
+
+      <a-tab-pane key="users">
+        <template #tab><UserOutlined /> Users</template>
+        <MqttUsersTab />
+      </a-tab-pane>
+    </a-tabs>
 
   </AppLayout>
 </template>

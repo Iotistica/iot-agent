@@ -183,7 +183,11 @@ EOFMOSQ
 touch /etc/mosquitto/passwd /etc/mosquitto/acl
 touch /var/log/mosquitto/mosquitto.log
 
-mosquitto_passwd -b -c /etc/mosquitto/passwd "$MQTT_USERNAME" "$MQTT_PASSWORD"
+if [ -s /etc/mosquitto/passwd ]; then
+    mosquitto_passwd -b /etc/mosquitto/passwd "$MQTT_USERNAME" "$MQTT_PASSWORD" 2>/dev/null
+else
+    mosquitto_passwd -b -c /etc/mosquitto/passwd "$MQTT_USERNAME" "$MQTT_PASSWORD" 2>/dev/null
+fi
 
 cat > /etc/mosquitto/acl << EOFACL
 # Iotistica managed ACL

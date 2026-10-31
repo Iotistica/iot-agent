@@ -4,7 +4,7 @@ import { useRoute } from 'vue-router'
 import { message } from 'ant-design-vue'
 import type { TableColumnType } from 'ant-design-vue'
 import {
-  SaveOutlined, ReloadOutlined, LinkOutlined, CheckCircleOutlined, WifiOutlined, EditOutlined,
+  SaveOutlined, ReloadOutlined, LinkOutlined, CheckCircleOutlined, EditOutlined,
   QuestionCircleOutlined,
 } from '@ant-design/icons-vue'
 import AppLayout from '@/components/layout/AppLayout.vue'
@@ -21,7 +21,7 @@ import { destinationsApi } from '@/api/destinations'
 const route = useRoute()
 const { hasRole } = useAuth()
 
-const VALID_TABS = ['agent', 'features', 'logging', 'intervals', 'docker', 'mqtt-monitor', 'units', 'alerts']
+const VALID_TABS = ['agent', 'features', 'logging', 'intervals', 'docker', 'units', 'alerts']
 const activeTab = ref(
   typeof route.query.tab === 'string' && VALID_TABS.includes(route.query.tab) ? route.query.tab : 'agent'
 )
@@ -44,7 +44,7 @@ async function load() {
   try {
     settings.value = await settingsApi.get()
     lastSaved = JSON.parse(JSON.stringify(settings.value))
-    syncMqttForm()
+
   } catch (e: any) {
     loadError.value = e?.message ?? 'Failed to load settings'
   } finally {
@@ -196,56 +196,6 @@ async function testDockerConnection() {
 function onDockerTypeChange() {
   dockerTestResult.value = null
   dockerTestError.value = null
-}
-
-// ── MQTT Broker Monitor config ────────────────────────────────────────────────
-
-const mqttForm = ref({ url: 'mqtt://localhost:1883' })
-const mqttSaving = ref(false)
-const mqttTesting = ref(false)
-const mqttTestResult = ref<{ connected: boolean; topicCount: number } | null>(null)
-const mqttTestError = ref<string | null>(null)
-
-// Populate from loaded settings
-function syncMqttForm() {
-  const m = settings.value.mqttMonitor
-  if (m?.url) mqttForm.value.url = m.url
-}
-
-async function saveMqttConfig() {
-  mqttSaving.value = true
-  mqttTestResult.value = null
-  mqttTestError.value = null
-  try {
-    await apiClient.patch('/v1/mqtt/broker/config', {
-      url: mqttForm.value.url.trim(),
-    })
-    message.success('MQTT broker configuration saved')
-  } catch (e: any) {
-    message.error(e?.response?.data?.error ?? e?.message ?? 'Save failed')
-  } finally {
-    mqttSaving.value = false
-  }
-}
-
-async function testMqttConnection() {
-  mqttTesting.value = true
-  mqttTestResult.value = null
-  mqttTestError.value = null
-  try {
-    const { data } = await apiClient.post('/v1/mqtt/broker/test', {
-      url: mqttForm.value.url.trim(),
-    })
-    if (data.ok) {
-      mqttTestResult.value = { connected: true, topicCount: 0 }
-    } else {
-      mqttTestError.value = data.error ?? 'Connection failed'
-    }
-  } catch (e: any) {
-    mqttTestError.value = e?.response?.data?.error ?? e?.message ?? 'Test failed'
-  } finally {
-    mqttTesting.value = false
-  }
 }
 
 // ── Units: custom unit mappings ─────────────────────────────────────────────
@@ -1088,71 +1038,6 @@ async function saveAllAlertConfig() {
               </a-button>
             </div>
           </a-spin>
-        </a-tab-pane>
-
-        <!-- ══ MQTT MONITOR ═══════════════════════════════════════════════════ -->
-        <a-tab-pane key="mqtt-monitor" tab="MQTT">
-          <p class="settings-intro">
-            Connection settings for the local MQTT broker the agent monitors.
-            Changes take effect immediately — the monitor reconnects without a restart.
-          </p>
-
-          <a-card size="small" class="settings-card" title="Local Broker Connection">
-            <a-form layout="vertical">
-              <a-row :gutter="[16, 0]">
-                <a-col :xs="24" :lg="16">
-                  <a-form-item label="Broker URL" required>
-                    <a-input
-                      v-model:value="mqttForm.url"
-                      placeholder="mqtt://localhost:1883"
-                      style="font-family: monospace; font-size: 13px"
-                    />
-                    <div style="font-size: 12px; color: var(--text-tertiary); margin-top: 4px">
-                      Use <code>mqtt://</code> for plain TCP or <code>mqtts://</code> for TLS.
-                      In Docker deployments use the container hostname (e.g. <code>mqtt://iotistic-mosquitto-agent:1883</code>).
-                    </div>
-                  </a-form-item>
-                </a-col>
-              </a-row>
-
-              <a-alert
-                type="info"
-                show-icon
-                style="margin-bottom: 16px"
-                message="Broker credentials are managed via the MQTT Users page."
-              />
-
-              <a-alert
-                v-if="mqttTestResult?.connected"
-                type="success"
-                show-icon
-                style="margin-bottom: 12px"
-              >
-                <template #icon><CheckCircleOutlined /></template>
-                <template #message>
-                  Connection successful
-                </template>
-              </a-alert>
-              <a-alert
-                v-else-if="mqttTestError"
-                type="error"
-                :message="mqttTestError"
-                show-icon
-                style="margin-bottom: 12px"
-              />
-            </a-form>
-          </a-card>
-
-          <div class="save-bar">
-            <a-button :loading="mqttTesting" @click="testMqttConnection">
-              <template #icon><WifiOutlined /></template>
-              Test Connection
-            </a-button>
-            <a-button v-if="hasRole('admin')" type="primary" :loading="mqttSaving" :disabled="!mqttForm.url.trim()" @click="saveMqttConfig">
-              <template #icon><SaveOutlined /></template>
-              Save
-            </a-button>
-          </div>
         </a-tab-pane>
 
         <a-tab-pane key="units" tab="Units">
