@@ -499,6 +499,18 @@ router.get('/v1/apps', async (req: Request, res: Response, next: NextFunction) =
  */
 router.post('/v1/apps', requireRole('operator'), async (req: Request, res: Response, next: NextFunction) => {
 	try {
+		const services: any[] = req.body?.services ?? [];
+		const allPorts = services.flatMap((s: any) => s.config?.ports ?? []);
+		if (allPorts.length > 0) {
+			const conflicts = actions.findPortConflicts(allPorts);
+			if (conflicts.length > 0) {
+				return res.status(409).json({
+					error: 'Port conflict',
+					message: conflicts.map(c => `Port ${c.hostPort} is already used by service '${c.serviceName}' in application '${c.appName}'`).join('; '),
+					conflicts,
+				});
+			}
+		}
 		const result = await actions.deployApp(req.body);
 		return res.status(201).json(result);
 	} catch (error) {
@@ -547,6 +559,17 @@ router.post('/v1/apps/:appId/services', requireRole('operator'), async (req: Req
 	try {
 		const appId = parseInt(req.params.appId);
 		if (isNaN(appId)) return res.status(400).json({ error: 'Invalid app id' });
+		const svcPorts: string[] = req.body?.config?.ports ?? [];
+		if (svcPorts.length > 0) {
+			const conflicts = actions.findPortConflicts(svcPorts, appId, req.body?.serviceName);
+			if (conflicts.length > 0) {
+				return res.status(409).json({
+					error: 'Port conflict',
+					message: conflicts.map(c => `Port ${c.hostPort} is already used by service '${c.serviceName}' in application '${c.appName}'`).join('; '),
+					conflicts,
+				});
+			}
+		}
 		const result = await actions.addService(appId, req.body);
 		return res.status(201).json(result);
 	} catch (error) {

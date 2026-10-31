@@ -404,17 +404,33 @@ export function setStateManager(sm: StateManager | undefined): void {
 	stateManager = sm;
 }
 
+/**
+ * Propagate ContainerManager's current apps to StateManager so the two
+ * stores stay in sync.  Without this, local app mutations (deploy, remove,
+ * add/remove service) only touch CM, and the next applyConfigUpdate() can
+ * resurrect deleted apps from StateManager's stale copy.
+ */
+async function syncAppsToStateManager(): Promise<void> {
+	if (!stateManager || !containerManager) return;
+	const smState = stateManager.getTargetState?.() ?? { apps: {}, config: {} };
+	const cmApps = requireCM().getTargetState().apps ?? {};
+	smState.apps = cmApps;
+	await stateManager.setTarget(smState);
+}
+
 async function applyConfigUpdate(mutator: (config: Record<string, any>) => void): Promise<void> {
 	if (stateManager) {
 		const currentTarget = stateManager.getTargetState?.() ?? { apps: {}, config: {} };
 
-		// Local API app deployments write to ContainerManager directly, bypassing
-		// StateManager. Merge those apps into config updates, while keeping
-		// StateManager's app definitions authoritative when IDs overlap.
+		// ContainerManager is the authoritative source for apps — all local API
+		// operations (deploy, remove, add/remove service) write to CM first.
+		// Cloud polls also reach CM via StateManager reconciliation.  Using CM's
+		// apps prevents stale entries in StateManager from resurrecting apps
+		// that were deleted locally.
 		if (containerManager) {
 			const cmTarget = containerManager.getTargetState();
 			if (Object.keys(cmTarget.apps || {}).length > 0) {
-				currentTarget.apps = { ...cmTarget.apps, ...(currentTarget.apps || {}) };
+				currentTarget.apps = { ...(currentTarget.apps || {}), ...cmTarget.apps };
 			}
 		}
 
@@ -866,6 +882,63 @@ export const getAllApps = async () => {
 };
 
 /**
+ * Extract the host port from a port mapping string like "8080:80", "8080", "0.0.0.0:8080:80/tcp".
+ * Returns the host port as a string, or null if unparseable.
+ */
+function extractHostPort(portMapping: string): string | null {
+	const stripped = portMapping.replace(/\/(tcp|udp|sctp)$/i, '');
+	const parts = stripped.split(':');
+	if (parts.length === 1) return parts[0];
+	if (parts.length === 2) return parts[0];
+	if (parts.length === 3) return parts[1];
+	return null;
+}
+
+/**
+ * Check whether the given port bindings conflict with any existing service
+ * in another app (or the same app, excluding a specific service).
+ */
+export function findPortConflicts(
+	ports: string[],
+	excludeAppId?: number,
+	excludeServiceName?: string,
+): Array<{ port: string; hostPort: string; appName: string; serviceName: string }> {
+	if (!containerManager || ports.length === 0) return [];
+
+	const targetState = requireCM().getTargetState();
+	const conflicts: Array<{ port: string; hostPort: string; appName: string; serviceName: string }> = [];
+
+	const requestedHostPorts = new Map<string, string>();
+	for (const p of ports) {
+		const hp = extractHostPort(p);
+		if (hp) requestedHostPorts.set(hp, p);
+	}
+	if (requestedHostPorts.size === 0) return [];
+
+	for (const [id, app] of Object.entries(targetState.apps ?? {})) {
+		const appId = Number(id);
+		for (const svc of (app as any).services ?? []) {
+			if (appId === excludeAppId && svc.serviceName === excludeServiceName) continue;
+			if (svc.state === 'stopped') continue;
+			const svcPorts: string[] = svc.config?.ports ?? [];
+			for (const sp of svcPorts) {
+				const hp = extractHostPort(sp);
+				if (hp && requestedHostPorts.has(hp)) {
+					conflicts.push({
+						port: requestedHostPorts.get(hp)!,
+						hostPort: hp,
+						appName: (app as any).appName,
+						serviceName: svc.serviceName,
+					});
+				}
+			}
+		}
+	}
+
+	return conflicts;
+}
+
+/**
  * Deploy a new app (or update existing) by adding it to target state
  * Used by: POST /v1/apps
  */
@@ -910,6 +983,7 @@ export const deployApp = async (body: {
 	};
 
 	await requireCM().setTarget(newTargetState as any);
+	await syncAppsToStateManager();
 	return { appId, appName: body.appName };
 };
 
@@ -952,6 +1026,7 @@ export const addService = async (
 		...targetState,
 		apps: { ...targetState.apps, [appId]: updatedApp },
 	} as any);
+	await syncAppsToStateManager();
 
 	return newService;
 };
@@ -1001,6 +1076,7 @@ export const updateService = async (
 		...targetState,
 		apps: { ...targetState.apps, [appId]: updatedApp },
 	} as any);
+	await syncAppsToStateManager();
 
 	return updated;
 };
@@ -1036,6 +1112,7 @@ export const updateApp = async (appId: number, body: { appName: string }) => {
 		}
 	}
 
+	await syncAppsToStateManager();
 	return { appId, appName: body.appName };
 };
 
@@ -1058,6 +1135,7 @@ export const removeService = async (appId: number, serviceName: string) => {
 		...targetState,
 		apps: { ...targetState.apps, [appId]: updatedApp },
 	} as any);
+	await syncAppsToStateManager();
 };
 
 /**
@@ -1074,6 +1152,7 @@ export const removeApp = async (appId: number) => {
 	delete newApps[appId];
 
 	await requireCM().setTarget({ ...targetState, apps: newApps } as any);
+	await syncAppsToStateManager();
 };
 
 /**
@@ -1115,6 +1194,7 @@ export const serviceAction = async (
 				...targetState,
 				apps: { ...targetState.apps, [appId]: updatedApp },
 			} as any);
+			await syncAppsToStateManager();
 		}
 	}
 
