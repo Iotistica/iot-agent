@@ -20,6 +20,7 @@ import {
   SwapOutlined,
   CopyOutlined,
   CheckOutlined,
+  SearchOutlined,
 } from '@ant-design/icons-vue'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import { containersApi, templatesApi } from '@/api/containers'
@@ -2552,11 +2553,12 @@ a.port-tag:hover { border-color: #1677ff; }
 .log-toolbar {
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: 8px 16px;
   padding: 8px 16px;
   background: #161b22;
   border-bottom: 1px solid #30363d;
   flex-shrink: 0;
+  flex-wrap: wrap;
 }
 
 .log-toolbar-label {
