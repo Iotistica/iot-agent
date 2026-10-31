@@ -1218,10 +1218,23 @@ export class ConfigManager extends EventEmitter {
 
 		try {
 			const { MqttUserModel } = await import("../db/models/mqtt-user.model.js");
-			if (MqttUserModel.existsByUsername(username)) return;
+
+			if (MqttUserModel.existsByUsername(username)) {
+				const storedPlaintext = MqttUserModel.getStoredPlaintext(username);
+				if (storedPlaintext && storedPlaintext !== password) {
+					process.env.MQTT_PASSWORD = storedPlaintext;
+					this.persistEnvPassword(storedPlaintext);
+					this.logger?.infoSync("Restored MQTT admin password from database (env var overridden)", {
+						component: LogComponents.configManager,
+						operation: "ensureBootstrapAdminStored",
+						username,
+					});
+				}
+				return;
+			}
 
 			const hash = generateMosquittoHash(password);
-			MqttUserModel.create(username, hash, true);
+			MqttUserModel.create(username, hash, true, password);
 
 			this.logger?.infoSync("Bootstrap MQTT admin stored in mqtt_users", {
 				component: LogComponents.configManager,
@@ -1230,6 +1243,23 @@ export class ConfigManager extends EventEmitter {
 			});
 		} catch {
 			// Non-fatal — DB may not be ready on first boot
+		}
+	}
+
+	private persistEnvPassword(password: string): void {
+		try {
+			const fs = require("fs") as typeof import("fs");
+			const envFile = "/etc/iotistic/agent.env";
+			if (!fs.existsSync(envFile)) return;
+			let content = fs.readFileSync(envFile, "utf8");
+			if (/^MQTT_PASSWORD=.*/m.test(content)) {
+				content = content.replace(/^MQTT_PASSWORD=.*/m, `MQTT_PASSWORD=${password}`);
+			} else {
+				content = content.trimEnd() + `\nMQTT_PASSWORD=${password}\n`;
+			}
+			fs.writeFileSync(envFile, content, "utf8");
+		} catch {
+			// Non-fatal — env file may not exist in Docker mode
 		}
 	}
 

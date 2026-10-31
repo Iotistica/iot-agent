@@ -3542,9 +3542,9 @@ router.post('/v1/mqtt/users/admin/reset-password', requireRole('admin'), async (
 		const passwordHash = generateMosquittoHash(password);
 
 		if (MqttUserModel.existsByUsername(bootstrapUsername)) {
-			MqttUserModel.update(bootstrapUsername, { password_hash: passwordHash });
+			MqttUserModel.update(bootstrapUsername, { password_hash: passwordHash, password_plaintext: password });
 		} else {
-			MqttUserModel.create(bootstrapUsername, passwordHash, true);
+			MqttUserModel.create(bootstrapUsername, passwordHash, true, password);
 		}
 
 		process.env.MQTT_PASSWORD = password;

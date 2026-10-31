@@ -267,6 +267,7 @@ CREATE TABLE IF NOT EXISTS "mqtt_users" (
 	"id"	integer NOT NULL,
 	"username"	varchar(255) NOT NULL,
 	"password_hash"	varchar(255) NOT NULL,
+	"password_plaintext"	varchar(255) DEFAULT NULL,
 	"is_superuser"	boolean NOT NULL DEFAULT '0',
 	"is_active"	boolean NOT NULL DEFAULT '1',
 	"created_at"	datetime DEFAULT CURRENT_TIMESTAMP,

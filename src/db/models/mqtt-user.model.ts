@@ -47,21 +47,22 @@ export class MqttUserModel {
 		return row ? parseRow(row) : null;
 	}
 
-	static create(username: string, passwordHash: string, isSuperuser = false): MqttUser {
+	static create(username: string, passwordHash: string, isSuperuser = false, passwordPlaintext?: string): MqttUser {
 		const now = new Date().toISOString();
 		this.db()
-			.prepare('INSERT INTO mqtt_users (username, password_hash, is_superuser, is_active, created_at, updated_at) VALUES (?, ?, ?, 1, ?, ?)')
-			.run(username, passwordHash, isSuperuser ? 1 : 0, now, now);
+			.prepare('INSERT INTO mqtt_users (username, password_hash, password_plaintext, is_superuser, is_active, created_at, updated_at) VALUES (?, ?, ?, ?, 1, ?, ?)')
+			.run(username, passwordHash, passwordPlaintext ?? null, isSuperuser ? 1 : 0, now, now);
 		return this.getByUsername(username)!;
 	}
 
-	static update(username: string, fields: { is_active?: boolean; is_superuser?: boolean; password_hash?: string }): MqttUser | null {
+	static update(username: string, fields: { is_active?: boolean; is_superuser?: boolean; password_hash?: string; password_plaintext?: string | null }): MqttUser | null {
 		const sets: string[] = [];
 		const values: (string | number | null)[] = [];
 
 		if (fields.is_active !== undefined)    { sets.push('is_active = ?');    values.push(fields.is_active ? 1 : 0); }
 		if (fields.is_superuser !== undefined)  { sets.push('is_superuser = ?'); values.push(fields.is_superuser ? 1 : 0); }
 		if (fields.password_hash !== undefined) { sets.push('password_hash = ?'); values.push(fields.password_hash); }
+		if (fields.password_plaintext !== undefined) { sets.push('password_plaintext = ?'); values.push(fields.password_plaintext); }
 		if (sets.length === 0) return this.getByUsername(username);
 
 		sets.push('updated_at = ?');
@@ -79,6 +80,13 @@ export class MqttUserModel {
 			.prepare('SELECT 1 FROM mqtt_users WHERE username = ?')
 			.get(username);
 		return row !== undefined;
+	}
+
+	static getStoredPlaintext(username: string): string | null {
+		const row = this.db()
+			.prepare('SELECT password_plaintext FROM mqtt_users WHERE username = ?')
+			.get(username) as { password_plaintext: string | null } | undefined;
+		return row?.password_plaintext ?? null;
 	}
 
 	/** Returns all active users with their stored password hash, for use by the auth reconciler. */
