@@ -367,6 +367,21 @@ export class RetryManager {
 	/**
 	* Clear retry state for a specific key (memory and database)
 	*/
+	/**
+	* Clear every state whose key starts with `prefix`, except `keepKey`.
+	* Used to drop retry records for superseded service configs.
+	*/
+	public clearStatesWithPrefix(prefix: string, keepKey?: string): number {
+		let removed = 0;
+		for (const key of [...this.retryState.keys()]) {
+			if (key.startsWith(prefix) && key !== keepKey) {
+				this.clearState(key);
+				removed++;
+			}
+		}
+		return removed;
+	}
+
 	public clearState(key: string): void {
 		this.retryState.delete(key);
 		this.deleteFromDatabase(key).catch(() => {

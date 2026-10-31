@@ -3,7 +3,7 @@ import type { RetryManager } from './retry-manager';
 import type { HealthCheckManager } from './health-check-manager';
 import type { AgentLogger } from '../logging/agent-logger';
 import { LogComponents } from '../logging/types';
-import { serviceRetryKey } from './state-helpers';
+import { serviceRetryKey, pruneObsoleteServiceRetries } from './state-helpers';
 import { ensureSocketDestination, removeSocketDestination } from './socket-destination-lifecycle';
 
 interface StepExecutorContext {
@@ -223,6 +223,9 @@ export async function executeStep(
 			});
 
 			const stoppedService = ctx.getServiceFromCurrentState(step.appId, step.serviceId);
+			if (stoppedService) {
+				pruneObsoleteServiceRetries(ctx.retryManager, step.appId, stoppedService);
+			}
 			const restartKey = stoppedService
 				? serviceRetryKey(step.appId, stoppedService)
 				: getStepKey(step);
@@ -316,6 +319,7 @@ export async function executeStep(
 		}
 
 		case 'startContainer': {
+			pruneObsoleteServiceRetries(ctx.retryManager, step.appId, step.service);
 			const startKey = serviceRetryKey(step.appId, step.service);
 			assertRestartAllowed(ctx, startKey, step.appId, step.service.serviceId);
 			try {

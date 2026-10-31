@@ -433,9 +433,13 @@ export class DockerManager extends EventEmitter {
 			const info = await this.docker.getContainer(containerId).inspect();
 			const started = Date.parse(info.State?.StartedAt || '');
 			if (!Number.isFinite(started) || started <= 0) return undefined;
-			const finished = info.State?.Running ? NaN : Date.parse(info.State?.FinishedAt || '');
-			const end = Number.isFinite(finished) && finished > 0 ? finished : Date.now();
-			return Math.max(0, end - started);
+			if (info.State?.Running) {
+				return Math.max(0, Date.now() - started);
+			}
+			// Stopped: Docker reports "0001-01-01T00:00:00Z" when never finished; never fall back to now.
+			const finished = Date.parse(info.State?.FinishedAt || '');
+			if (!Number.isFinite(finished) || finished <= 0 || finished < started) return undefined;
+			return finished - started;
 		} catch {
 			return undefined;
 		}

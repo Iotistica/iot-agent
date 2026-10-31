@@ -14,6 +14,8 @@ import {
 	permissionFailureHint,
 	ContainerSecurityPolicyError,
 } from '../../../src/containers/container-security';
+import { RetryManager } from '../../../src/containers/retry-manager';
+import { pruneObsoleteServiceRetries } from '../../../src/containers/state-helpers';
 import { executeStep } from '../../../src/containers/step-executor';
 import { markServiceAsError, serviceRetryKey } from '../../../src/containers/state-helpers';
 import type { ContainerService } from '../../../src/containers/container-manager';
@@ -157,6 +159,9 @@ describe('bounded restart retries', () => {
 			}),
 			recordSuccess: jest.fn((k: string) => state.delete(k)),
 			clearState: jest.fn((k: string) => state.delete(k)),
+			clearStatesWithPrefix: jest.fn((prefix: string, keep?: string) => {
+				for (const k of [...state.keys()]) if (k.startsWith(prefix) && k !== keep) state.delete(k);
+			}),
 			getState: jest.fn((k: string) => state.get(k)),
 			isTerminal: jest.fn((k: string) => !!state.get(k)?.terminal),
 		};
@@ -238,17 +243,91 @@ describe('bounded restart retries', () => {
 
 			const unknown = makeCtx(jest.fn().mockResolvedValue('new'), jest.fn().mockResolvedValue(undefined));
 			await executeStep(stopped(), unknown.ctx);
-			expect(unknown.retryManager.clearState).not.toHaveBeenCalled();
+			expect(unknown.retryManager.clearState).not.toHaveBeenCalledWith(serviceRetryKey(10, unknown.appService));
 		});
 
 		it('time passing between attempts never resets the budget', async () => {
-			const { ctx, retryManager } = makeCtx(jest.fn().mockResolvedValue('new'));
+			const { ctx, retryManager, appService } = makeCtx(jest.fn().mockResolvedValue('new'));
 			jest.useFakeTimers().setSystemTime(0);
 			await executeStep(stopped(), ctx);
 			jest.setSystemTime(60 * 60 * 1000);
 			await executeStep(stopped(), ctx);
 			jest.useRealTimers();
-			expect(retryManager.clearState).not.toHaveBeenCalled();
+			expect(retryManager.clearState).not.toHaveBeenCalledWith(serviceRetryKey(10, appService));
 		});
+	});
+});
+
+describe('getContainerRunDurationMs', () => {
+	const run = async (state: any) => {
+		const mgr: any = Object.create(DockerManager.prototype);
+		mgr.docker = { getContainer: () => ({ inspect: jest.fn().mockResolvedValue({ State: state }) }) };
+		return mgr.getContainerRunDurationMs('c');
+	};
+	const started = new Date(Date.now() - 3600_000).toISOString();
+
+	it('uses StartedAt..FinishedAt for stopped containers', async () => {
+		const finished = new Date(Date.parse(started) + 1000).toISOString();
+		expect(await run({ Running: false, StartedAt: started, FinishedAt: finished })).toBe(1000);
+	});
+	it.each([
+		['missing', undefined],
+		['empty', ''],
+		['garbage', 'not-a-date'],
+		['docker zero value', '0001-01-01T00:00:00Z'],
+		['before start', '2000-01-01T00:00:00Z'],
+	])('returns undefined for a stopped container with %s FinishedAt', async (_n, FinishedAt) => {
+		expect(await run({ Running: false, StartedAt: started, FinishedAt })).toBeUndefined();
+	});
+	it('returns undefined when StartedAt is invalid or never started', async () => {
+		expect(await run({ Running: false, StartedAt: '0001-01-01T00:00:00Z', FinishedAt: started })).toBeUndefined();
+	});
+	it('uses now for running containers', async () => {
+		expect(await run({ Running: true, StartedAt: started })).toBeGreaterThanOrEqual(3600_000 - 5);
+	});
+	it('returns undefined when inspect fails', async () => {
+		const mgr: any = Object.create(DockerManager.prototype);
+		mgr.docker = { getContainer: () => ({ inspect: jest.fn().mockRejectedValue(new Error('no such container')) }) };
+		expect(await mgr.getContainerRunDurationMs('c')).toBeUndefined();
+	});
+});
+
+describe('obsolete retry state cleanup', () => {
+	it('removes only superseded keys of the same service', () => {
+		const rm = new RetryManager();
+		const v1 = svc({ environment: { V: '1' } });
+		const v2 = svc({ environment: { V: '2' } });
+		const other = { ...svc(), serviceId: 11 } as ContainerService;
+		const otherSame = { ...svc(), serviceId: 1, appId: 11 } as ContainerService;
+		const keys = [serviceRetryKey(10, v1), serviceRetryKey(10, v2), serviceRetryKey(10, other), serviceRetryKey(11, otherSame), 'service:10:1', 'image:img'];
+		keys.forEach((k) => rm.recordFailure(k, 'x', true));
+
+		pruneObsoleteServiceRetries(rm, 10, v2);
+
+		const left = [...rm.getAllStates().keys()];
+		expect(left).toContain(serviceRetryKey(10, v2));
+		expect(left).toContain(serviceRetryKey(10, other));
+		expect(left).toContain(serviceRetryKey(11, otherSame));
+		expect(left).toContain('image:img');
+		expect(left).not.toContain(serviceRetryKey(10, v1));
+		expect(left).not.toContain('service:10:1');
+		expect(rm.getState(serviceRetryKey(10, v2))?.count).toBe(1);
+	});
+
+	it('executeStep keeps the active budget (still in backoff) and drops the old config record', async () => {
+		const rm = new RetryManager();
+		const oldSvc = svc({ environment: { V: '1' } });
+		const newSvc = svc({ environment: { V: '2' } });
+		rm.recordFailure(serviceRetryKey(10, oldSvc), 'x', true);
+		rm.recordFailure(serviceRetryKey(10, newSvc), 'y', true);
+		const ctx: any = {
+			retryManager: rm,
+			startContainer: jest.fn().mockRejectedValue(new Error('still failing')),
+			markServiceAsError: jest.fn(),
+		};
+		await expect(executeStep({ action: 'startContainer', appId: 10, service: newSvc } as any, ctx)).rejects.toThrow(/backoff/);
+		expect(ctx.startContainer).not.toHaveBeenCalled();
+		expect(rm.getState(serviceRetryKey(10, oldSvc))).toBeUndefined();
+		expect(rm.getState(serviceRetryKey(10, newSvc))?.count).toBe(1);
 	});
 });

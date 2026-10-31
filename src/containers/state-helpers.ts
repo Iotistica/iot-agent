@@ -31,6 +31,20 @@ export function serviceRetryKey(appId: number, service: ContainerService): strin
 	return `service:${appId}:${service.serviceId}:${hash}`;
 }
 
+/**
+ * Drop retry records of this service created for other config hashes (and the legacy
+ * un-hashed key). Other services and the current config's budget are untouched.
+ */
+export function pruneObsoleteServiceRetries(
+	retryManager: Pick<RetryManager, 'clearStatesWithPrefix' | 'clearState'>,
+	appId: number,
+	service: ContainerService,
+): void {
+	const current = serviceRetryKey(appId, service);
+	retryManager.clearStatesWithPrefix(`service:${appId}:${service.serviceId}:`, current);
+	retryManager.clearState(`service:${appId}:${service.serviceId}`);
+}
+
 export function markServiceAsError(
 	ctx: StateHelpersContext,
 	appId: number,
