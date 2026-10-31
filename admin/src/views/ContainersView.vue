@@ -25,12 +25,11 @@ import AppLayout from '@/components/layout/AppLayout.vue'
 import { containersApi, templatesApi } from '@/api/containers'
 import type { ContainerApp, ContainerService, MarketplaceImage } from '@/api/containers'
 import MarketplaceCatalog from '@/components/MarketplaceCatalog.vue'
-import SparklineChart from '@/components/SparklineChart.vue'
 import { useDockerStatus } from '@/composables/useDockerStatus'
 import { useSystemStats } from '@/composables/useSystemStats'
 
 const { dockerAvailable } = useDockerStatus()
-const { sysStats, cpuHistory, appMetrics, storageSegments, startPolling, stopPolling, pollNow, cpuColor, storageColor, fmtMb } = useSystemStats()
+const { sysStats, cpuSamples, lastUpdatedAt, appMetrics, storageSegments, statsLoading, startPolling, stopPolling, pollNow, fmtMb } = useSystemStats()
 const route = useRoute()
 const router = useRouter()
 
@@ -95,6 +94,91 @@ async function load() {
 }
 
 // ── System performance (via composable — persists across navigations) ────────
+
+const cpuTopCount = ref(3)
+const storageTopCount = ref(3)
+const cpuCurrent = computed(() => {
+  const value = sysStats.value?.cpu_usage
+  return typeof value === 'number' && Number.isFinite(value) ? value : null
+})
+const cpuPeak = computed(() => cpuSamples.value.length
+  ? Math.max(...cpuSamples.value.map(sample => sample.value))
+  : null)
+const cpuChartPoints = computed(() => cpuSamples.value.map((sample, index) => ({
+  ...sample,
+  x: cpuSamples.value.length > 1 ? (index / (cpuSamples.value.length - 1)) * 300 : 150,
+  y: 5 + ((100 - Math.max(0, Math.min(100, sample.value))) / 100) * 80,
+})))
+const cpuChartLine = computed(() => cpuChartPoints.value.reduce((path, point, index, points) => {
+  if (index === 0) return `M${point.x.toFixed(1)},${point.y.toFixed(1)}`
+  const previous = points[index - 1]
+  const third = (point.x - previous.x) / 3
+  return `${path} C${(previous.x + third).toFixed(1)},${previous.y.toFixed(1)} ${(point.x - third).toFixed(1)},${point.y.toFixed(1)} ${point.x.toFixed(1)},${point.y.toFixed(1)}`
+}, ''))
+const cpuChartArea = computed(() => cpuChartLine.value
+  ? `${cpuChartLine.value} L300,90 L0,90 Z`
+  : '')
+const cpuTimeLabel = (timestamp: number) => new Date(timestamp).toLocaleTimeString([], {
+  hour: '2-digit',
+  minute: '2-digit',
+})
+const lastUpdatedLabel = computed(() => lastUpdatedAt.value
+  ? new Date(lastUpdatedAt.value).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+  : '')
+
+const storageChart = computed(() => {
+  const stats = sysStats.value
+  const used = stats?.storage_used
+  const total = stats?.storage_total
+  if (typeof used !== 'number' || typeof total !== 'number'
+    || !Number.isFinite(used) || !Number.isFinite(total)
+    || total <= 0 || used < 0 || used > total) return null
+
+  const disk = stats?.docker_disk
+  const breakdown = disk
+    && Number.isFinite(disk.images) && disk.images >= 0
+    && Number.isFinite(disk.volumes) && disk.volumes >= 0
+    && disk.images + disk.volumes <= used
+    ? disk
+    : null
+  const categories = breakdown
+    ? [
+      { name: 'Images', value: breakdown.images, color: '#1677ff' },
+      { name: 'Volumes', value: breakdown.volumes, color: '#722ed1' },
+      { name: 'Other used', value: used - breakdown.images - breakdown.volumes, color: '#9254de' },
+      { name: 'Free space', value: total - used, color: '#454b55' },
+    ]
+    : [
+      { name: 'Used', value: used, color: '#1677ff' },
+      { name: 'Free space', value: total - used, color: '#454b55' },
+    ]
+
+  return { used, total, percent: (used / total) * 100, categories }
+})
+const storageDonutStyle = computed(() => {
+  const chart = storageChart.value
+  if (!chart) return {}
+  let offset = 0
+  const stops = chart.categories.map(category => {
+    const start = offset
+    offset += (category.value / chart.total) * 100
+    return `${category.color} ${start}% ${offset}%`
+  })
+  return { background: `conic-gradient(${stops.join(', ')})` }
+})
+const topCpuConsumers = computed(() => [...appMetrics.value]
+  .filter(app => Number.isFinite(app.cpu_percent) && app.cpu_percent >= 0)
+  .sort((a, b) => b.cpu_percent - a.cpu_percent)
+  .slice(0, cpuTopCount.value))
+const topCpuScale = computed(() => Math.max(...topCpuConsumers.value.map(app => app.cpu_percent), 0))
+const topStorageConsumers = computed(() => [...storageSegments.value]
+  .filter(app => Number.isFinite(app.size) && app.size >= 0)
+  .sort((a, b) => b.size - a.size)
+  .slice(0, storageTopCount.value))
+const topStorageScale = computed(() => Math.max(...topStorageConsumers.value.map(app => app.size), 0))
+function barWidth(value: number, scale: number) {
+  return scale > 0 ? `${(value / scale) * 100}%` : '0%'
+}
 
 const purging = ref(false)
 function confirmPurge() {
@@ -993,85 +1077,135 @@ async function deploy() {
       </a-col>
     </a-row>
 
-    <!-- System Performance -->
-    <a-row :gutter="12" class="perf-row" v-if="sysStats">
-      <a-col :xs="24" :md="12">
-        <a-card size="small" class="perf-card">
-          <div class="perf-header">
-            <span class="perf-title">CPU Utilization</span>
-            <span class="perf-current" :style="{ color: cpuColor(sysStats.cpu_usage) }">{{ sysStats.cpu_usage }}%</span>
+    <section class="resource-grid" aria-label="Resource monitoring">
+      <a-card size="small" class="resource-card">
+        <div class="resource-header">
+          <div>
+            <h3>CPU Utilization</h3>
+            <span class="resource-subtitle">Current</span>
           </div>
-          <div class="perf-chart perf-chart--bleed">
-            <SparklineChart
-              :data="cpuHistory"
-              :color="cpuColor(sysStats.cpu_usage)"
-              :fill-color="`${cpuColor(sysStats.cpu_usage)}22`"
-              :height="72"
-              :max-value="100"
-              full-width
-            />
-          </div>
-          <div v-if="appMetrics.length" class="app-cpu-list">
-            <div v-for="app in appMetrics" :key="app.app_id" class="app-cpu-row">
-              <span class="app-cpu-name">{{ app.app_name }}</span>
-              <div class="app-cpu-bar-track">
-                <div class="app-cpu-bar-fill" :style="{ width: `${Math.min(app.cpu_percent, 100)}%`, backgroundColor: cpuColor(app.cpu_percent) }" />
-              </div>
-              <span class="app-cpu-value" :style="{ color: cpuColor(app.cpu_percent) }">{{ app.cpu_percent.toFixed(1) }}%</span>
-            </div>
-          </div>
-        </a-card>
-      </a-col>
-      <a-col :xs="24" :md="12">
-        <a-card size="small" class="perf-card">
-          <div class="perf-header">
-            <span class="perf-title">Storage Usage</span>
-            <span class="perf-current" :style="{ color: storageColor(sysStats.storage_percent) }">
-              {{ sysStats.storage_percent ?? '—' }}%
-              <span class="perf-sub">{{ fmtMb(sysStats.storage_used) }} / {{ fmtMb(sysStats.storage_total) }}</span>
-            </span>
-          </div>
-          <div v-if="sysStats.docker_disk" class="storage-overview">
-            <div class="storage-summary">
-              <span class="storage-badge">
-                <span class="perf-dot" style="background: #1677ff" />
-                Images: {{ fmtMb(sysStats.docker_disk.images) }}
-              </span>
-              <span class="storage-badge">
-                <span class="perf-dot" style="background: #722ed1" />
-                Volumes: {{ fmtMb(sysStats.docker_disk.volumes) }}
-              </span>
-              <span v-if="sysStats.docker_reclaimable" class="storage-badge storage-badge--reclaimable">
-                <span class="perf-dot storage-reclaimable-dot" />
-                Reclaimable: {{ fmtMb(sysStats.docker_reclaimable.total) }}
-              </span>
-              <a-button
-                v-if="sysStats.docker_reclaimable"
-                danger
-                size="small"
-                :loading="purging"
-                @click="confirmPurge"
+          <span v-if="lastUpdatedLabel" class="resource-updated">Updated {{ lastUpdatedLabel }}</span>
+        </div>
+        <div class="cpu-summary">
+          <strong>{{ cpuCurrent == null ? '—' : `${cpuCurrent.toFixed(1)}%` }}</strong>
+          <span v-if="cpuPeak != null" class="cpu-peak">Peak {{ cpuPeak.toFixed(1) }}% · recent samples</span>
+        </div>
+        <div class="cpu-chart-layout">
+          <div class="cpu-y-axis" aria-hidden="true"><span>100%</span><span>50%</span><span>0%</span></div>
+          <div class="cpu-chart-wrap">
+            <svg
+              v-if="cpuChartPoints.length > 1"
+              class="cpu-chart"
+              viewBox="0 0 300 90"
+              preserveAspectRatio="none"
+              role="img"
+              aria-label="CPU utilization history, percentage scale from zero to one hundred"
+            >
+              <line v-for="y in [5, 45, 85]" :key="y" x1="0" :y1="y" x2="300" :y2="y" class="cpu-grid-line" />
+              <path :d="cpuChartArea" class="cpu-chart-area" />
+              <path :d="cpuChartLine" class="cpu-chart-line" />
+              <circle
+                v-for="point in cpuChartPoints"
+                :key="point.timestamp"
+                :cx="point.x"
+                :cy="point.y"
+                r="1.8"
+                class="cpu-chart-point"
               >
-                Purge
-              </a-button>
+                <title>{{ cpuTimeLabel(point.timestamp) }} · {{ point.value.toFixed(1) }}%</title>
+              </circle>
+            </svg>
+            <div v-else class="resource-empty">
+              {{ statsLoading ? 'Loading CPU history…' : cpuSamples.length ? 'Collecting CPU history…' : 'Historical CPU samples unavailable' }}
             </div>
-            <div v-if="storageSegments.length" class="app-storage-list">
-              <div v-for="app in storageSegments" :key="app.app_id" class="app-storage-row">
-                <span class="app-storage-name">{{ app.app_name }}</span>
-                <div class="app-storage-bar-track">
-                  <div
-                    class="app-storage-bar-fill"
-                    :style="{ width: `${storageSegments.length > 0 ? (app.size / storageSegments[0].size) * 100 : 0}%` }"
-                  />
-                </div>
-                <span class="app-storage-value">{{ fmtMb(app.size) }}</span>
-              </div>
+            <div v-if="cpuChartPoints.length > 1" class="cpu-time-axis">
+              <span>{{ cpuTimeLabel(cpuChartPoints[0].timestamp) }}</span>
+              <span>{{ cpuTimeLabel(cpuChartPoints[cpuChartPoints.length - 1].timestamp) }}</span>
             </div>
           </div>
-          <a-progress v-else :percent="sysStats.storage_percent ?? 0" :show-info="false" :stroke-color="storageColor(sysStats.storage_percent)" size="small" />
-        </a-card>
-      </a-col>
-    </a-row>
+        </div>
+      </a-card>
+
+      <a-card size="small" class="resource-card">
+        <div class="resource-header">
+          <div>
+            <h3>Storage Usage</h3>
+            <span class="resource-subtitle">Used / total capacity</span>
+          </div>
+          <div v-if="sysStats?.docker_reclaimable" class="storage-actions">
+            <span>Reclaimable {{ fmtMb(sysStats.docker_reclaimable.total) }}</span>
+            <a-button danger size="small" :loading="purging" @click="confirmPurge">Purge</a-button>
+          </div>
+        </div>
+        <div v-if="storageChart" class="storage-layout">
+          <div class="storage-donut" :style="storageDonutStyle" role="img" :aria-label="`${storageChart.percent.toFixed(1)} percent storage used`">
+            <div class="storage-donut-center">
+              <strong>{{ storageChart.percent.toFixed(0) }}%</strong>
+              <span>Used</span>
+            </div>
+          </div>
+          <div class="storage-legend">
+            <div
+              v-for="category in storageChart.categories"
+              :key="category.name"
+              class="storage-legend-row"
+              :title="`${category.name}: ${fmtMb(category.value)} (${(category.value / storageChart.total * 100).toFixed(1)}%)`"
+            >
+              <span class="storage-legend-name"><i :style="{ backgroundColor: category.color }" />{{ category.name }}</span>
+              <span>{{ fmtMb(category.value) }} ({{ (category.value / storageChart.total * 100).toFixed(0) }}%)</span>
+            </div>
+            <div class="storage-capacity">{{ fmtMb(storageChart.used) }} / {{ fmtMb(storageChart.total) }}</div>
+          </div>
+        </div>
+        <div v-else class="resource-empty">
+          {{ statsLoading ? 'Loading storage metrics…' : 'Storage capacity data unavailable' }}
+        </div>
+      </a-card>
+
+      <a-card size="small" class="resource-card">
+        <div class="resource-header">
+          <div>
+            <h3>Top CPU Consumers</h3>
+            <span class="resource-subtitle">Current CPU usage</span>
+          </div>
+          <select v-model.number="cpuTopCount" class="top-count-select" aria-label="Number of top CPU consumers">
+            <option :value="3">Top 3</option>
+            <option :value="5">Top 5</option>
+            <option :value="10">Top 10</option>
+          </select>
+        </div>
+        <div v-if="topCpuConsumers.length" class="consumer-list">
+          <div v-for="app in topCpuConsumers" :key="app.app_id" class="consumer-row">
+            <span class="consumer-name" :title="app.app_name">{{ app.app_name }}</span>
+            <div class="consumer-track"><span class="consumer-fill consumer-fill--cpu" :style="{ width: barWidth(app.cpu_percent, topCpuScale) }" /></div>
+            <span class="consumer-value">{{ app.cpu_percent.toFixed(1) }}%</span>
+          </div>
+        </div>
+        <div v-else class="resource-empty">{{ statsLoading ? 'Loading CPU metrics…' : 'No current CPU metrics available' }}</div>
+      </a-card>
+
+      <a-card size="small" class="resource-card">
+        <div class="resource-header">
+          <div>
+            <h3>Top Storage Consumers</h3>
+            <span class="resource-subtitle">Current app image storage</span>
+          </div>
+          <select v-model.number="storageTopCount" class="top-count-select" aria-label="Number of top storage consumers">
+            <option :value="3">Top 3</option>
+            <option :value="5">Top 5</option>
+            <option :value="10">Top 10</option>
+          </select>
+        </div>
+        <div v-if="topStorageConsumers.length" class="consumer-list">
+          <div v-for="app in topStorageConsumers" :key="app.app_id" class="consumer-row">
+            <span class="consumer-name" :title="app.app_name">{{ app.app_name }}</span>
+            <div class="consumer-track"><span class="consumer-fill consumer-fill--storage" :style="{ width: barWidth(app.size, topStorageScale) }" /></div>
+            <span class="consumer-value">{{ fmtMb(app.size) }}</span>
+          </div>
+        </div>
+        <div v-else class="resource-empty">{{ statsLoading ? 'Loading storage metrics…' : 'No current app image storage metrics available' }}</div>
+      </a-card>
+    </section>
 
     <div class="filters">
       <a-input
@@ -2075,50 +2209,57 @@ async function deploy() {
 .stats { margin-bottom: 14px; }
 .stats :deep(.ant-card) { border-radius: 9px; border-color: var(--border-color-card); background: var(--bg-subtle); }
 .stats :deep(.ant-card-body) { padding: 17px 18px; }
-.perf-row {
+.resource-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
   margin-bottom: 14px;
-  align-items: stretch;
 }
-.perf-row > .ant-col {
-  display: flex;
-}
-.perf-card :deep(.ant-card-body) { padding: 14px 16px; }
-.perf-card {
-  width: 100%;
-  height: 100%;
+.resource-card {
+  min-width: 0;
   border-radius: 9px;
   border-color: var(--border-color-card);
   background: var(--bg-subtle);
 }
-
-.perf-header { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 6px; }
-.perf-title { font-size: 13px; color: var(--text-tertiary); font-weight: 500; }
-.perf-current { font-size: 18px; font-weight: 600; }
-.perf-sub { font-size: 12px; font-weight: 400; color: var(--text-tertiary); margin-left: 6px; }
-.perf-chart { margin-bottom: 6px; }
-.perf-chart--bleed { margin: 0 -16px 4px; }
-.perf-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
-.storage-reclaimable-dot { background: linear-gradient(90deg, #69b1ff 50%, #b37feb 50%); }
-
-/* ── Per-app CPU breakdown ────────────────────────────────── */
-.app-cpu-list { display: flex; flex-direction: column; gap: 6px; margin-top: 4px; }
-.app-cpu-row { display: flex; align-items: center; gap: 8px; }
-.app-cpu-name { font-size: 12px; color: var(--text-secondary); min-width: 90px; max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.app-cpu-bar-track { flex: 1; height: 6px; border-radius: 3px; background: var(--border-color); overflow: hidden; }
-.app-cpu-bar-fill { height: 100%; border-radius: 3px; transition: width 0.4s ease, background-color 0.3s ease; }
-.app-cpu-value { font-size: 12px; font-weight: 600; min-width: 48px; text-align: right; }
-
-/* ── Storage overview ────────────────────────────────────── */
-.storage-overview { margin-top: 8px; }
-.storage-summary { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; font-size: 12px; color: var(--text-secondary); margin-bottom: 10px; }
-.storage-badge { display: flex; align-items: center; gap: 5px; }
-.storage-badge--reclaimable { color: var(--text-tertiary); }
-.app-storage-list { display: flex; flex-direction: column; gap: 6px; }
-.app-storage-row { display: flex; align-items: center; gap: 8px; }
-.app-storage-name { font-size: 12px; color: var(--text-secondary); min-width: 90px; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.app-storage-bar-track { flex: 1; height: 6px; border-radius: 3px; background: var(--border-color); overflow: hidden; }
-.app-storage-bar-fill { height: 100%; border-radius: 3px; background: #1677ff; transition: width 0.4s ease; }
-.app-storage-value { font-size: 12px; font-weight: 600; color: var(--text-secondary); min-width: 56px; text-align: right; }
+.resource-card :deep(.ant-card-body) { padding: 14px 16px; }
+.resource-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; min-height: 34px; }
+.resource-header h3 { margin: 0; color: var(--text-secondary); font-size: 13px; font-weight: 600; }
+.resource-subtitle, .resource-updated { color: var(--text-tertiary); font-size: 11px; }
+.resource-updated { text-align: right; white-space: nowrap; }
+.cpu-summary { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin: 4px 0 2px; }
+.cpu-summary strong { color: #3cb77d; font-size: 25px; line-height: 1.15; }
+.cpu-peak { color: var(--text-tertiary); font-size: 11px; }
+.cpu-chart-layout { display: flex; gap: 8px; height: 104px; }
+.cpu-y-axis { display: flex; flex-direction: column; justify-content: space-between; padding: 1px 0 15px; color: var(--text-tertiary); font-size: 9px; }
+.cpu-chart-wrap { min-width: 0; flex: 1; }
+.cpu-chart { display: block; width: 100%; height: 84px; overflow: visible; }
+.cpu-grid-line { stroke: var(--border-color); stroke-width: 0.7; }
+.cpu-chart-area { fill: rgba(60, 183, 125, 0.14); }
+.cpu-chart-line { fill: none; stroke: #3cb77d; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.cpu-chart-point { fill: #3cb77d; stroke: var(--bg-subtle); stroke-width: 0.7; }
+.cpu-time-axis { display: flex; justify-content: space-between; color: var(--text-tertiary); font-size: 9px; }
+.resource-empty { display: flex; align-items: center; justify-content: center; min-height: 90px; color: var(--text-tertiary); font-size: 12px; text-align: center; }
+.storage-layout { display: flex; align-items: center; justify-content: center; gap: 24px; min-height: 116px; }
+.storage-donut { display: grid; width: 108px; height: 108px; flex: 0 0 108px; place-items: center; border-radius: 50%; }
+.storage-donut-center { display: flex; width: 68px; height: 68px; flex-direction: column; align-items: center; justify-content: center; border-radius: 50%; background: var(--bg-subtle); }
+.storage-donut-center strong { color: var(--text-secondary); font-size: 17px; line-height: 1.2; }
+.storage-donut-center span { color: var(--text-tertiary); font-size: 10px; }
+.storage-legend { display: flex; min-width: 0; flex: 1; flex-direction: column; gap: 5px; font-size: 11px; }
+.storage-legend-row, .storage-legend-name { display: flex; align-items: center; }
+.storage-legend-row { justify-content: space-between; gap: 8px; color: var(--text-secondary); }
+.storage-legend-name { min-width: 0; gap: 6px; }
+.storage-legend-name i { width: 7px; height: 7px; flex: 0 0 7px; border-radius: 50%; }
+.storage-capacity { margin-top: 2px; color: var(--text-tertiary); }
+.storage-actions { display: flex; align-items: center; gap: 8px; color: var(--text-tertiary); font-size: 10px; white-space: nowrap; }
+.top-count-select { flex: 0 0 auto; border: 1px solid var(--border-color); border-radius: 5px; padding: 3px 6px; background: var(--bg-subtle); color: var(--text-secondary); font-size: 11px; }
+.consumer-list { display: flex; max-height: 176px; flex-direction: column; gap: 9px; overflow-y: auto; padding: 6px 0 2px; }
+.consumer-row { display: flex; min-width: 0; align-items: center; gap: 9px; }
+.consumer-name { width: 84px; flex: 0 1 84px; overflow: hidden; color: var(--text-secondary); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.consumer-track { height: 7px; min-width: 30px; flex: 1; overflow: hidden; border-radius: 5px; background: var(--border-color); }
+.consumer-fill { display: block; height: 100%; border-radius: inherit; transition: width 0.35s ease; }
+.consumer-fill--cpu { background: #3cb77d; }
+.consumer-fill--storage { background: #1677ff; }
+.consumer-value { min-width: 56px; color: var(--text-secondary); font-size: 11px; text-align: right; white-space: nowrap; }
 .metric-inner { display: flex; align-items: center; gap: 15px; min-height: 66px; }
 .metric-icon { width: 50px; height: 50px; flex-shrink: 0; border-radius: 14px; display: inline-flex; align-items: center; justify-content: center; font-size: 23px; }
 .icon-apps, .icon-services { background: var(--icon-bg-blue, rgba(22,119,255,0.1)); color: #1677ff; }
@@ -2305,6 +2446,7 @@ a.port-tag:hover { border-color: #1677ff; }
   .heading { align-items: flex-start; flex-direction: column; }
   .metric-inner { gap: 8px; }
   .metric-icon { width: 38px; height: 38px; }
+  .resource-grid { grid-template-columns: minmax(0, 1fr); }
 }
 
 @media (max-width: 480px) {
@@ -2320,6 +2462,12 @@ a.port-tag:hover { border-color: #1677ff; }
   .app-card-actions { gap: 0; }
   .app-status { display: none; }
   .environment-row { align-items: flex-start; flex-direction: column; gap: 4px; }
+  .resource-card :deep(.ant-card-body) { padding: 12px; }
+  .storage-layout { gap: 14px; }
+  .storage-donut { width: 92px; height: 92px; flex-basis: 92px; }
+  .storage-donut-center { width: 60px; height: 60px; }
+  .consumer-name { width: 72px; flex-basis: 72px; }
+  .consumer-row { gap: 7px; }
 }
 
 /* ── Deploy form ─────────────────────────────────────────── */
