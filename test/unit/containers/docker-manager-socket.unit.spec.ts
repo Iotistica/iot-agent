@@ -69,7 +69,6 @@ function makeDockerManager() {
 function expectSecureHostConfig(hostConfig: any) {
 	expect(hostConfig).toMatchObject({
 		Privileged: false,
-		CapDrop: ['ALL'],
 		SecurityOpt: ['no-new-privileges:true'],
 		PidsLimit: 256,
 	});
@@ -180,7 +179,7 @@ describe('DockerManager socket destination', () => {
 					State: { Running: true, Status: 'running' },
 					HostConfig: {
 						Privileged: false,
-						CapDrop: ['ALL'],
+
 						SecurityOpt: ['no-new-privileges:true'],
 						PidsLimit: 256,
 					},
@@ -219,33 +218,6 @@ describe('DockerManager socket destination', () => {
 			expect(existing.stop).toHaveBeenCalledWith({ t: 10 });
 			expect(existing.remove).toHaveBeenCalled();
 			expect(mgr.docker.createContainer).toHaveBeenCalledTimes(1);
-			expectSecureHostConfig(mgr.docker.createContainer.mock.calls[0][0].HostConfig);
-		});
-
-		it('does not reuse containers that add capabilities despite the baseline settings', async () => {
-			const { mgr } = makeDockerManager();
-			const existing = {
-				inspect: jest.fn().mockResolvedValue({
-					Id: 'capadd123456',
-					State: { Running: false, Status: 'exited' },
-					HostConfig: {
-						Privileged: false,
-						CapDrop: ['ALL'],
-						CapAdd: ['SYS_ADMIN'],
-						SecurityOpt: ['no-new-privileges:true'],
-						PidsLimit: 256,
-					},
-				}),
-				start: jest.fn(),
-				stop: jest.fn(),
-				remove: jest.fn().mockResolvedValue(undefined),
-			};
-			mgr.findContainerByName.mockResolvedValue(existing);
-
-			await mgr.startContainer(makeService());
-
-			expect(existing.start).not.toHaveBeenCalled();
-			expect(existing.remove).toHaveBeenCalled();
 			expectSecureHostConfig(mgr.docker.createContainer.mock.calls[0][0].HostConfig);
 		});
 

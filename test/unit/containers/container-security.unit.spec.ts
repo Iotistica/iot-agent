@@ -45,25 +45,18 @@ describe('resolveContainerSecurityPolicy', () => {
 	it('applies secure defaults to standard images', () => {
 		const p = resolveContainerSecurityPolicy({});
 		expect(p.hostConfig).toEqual({
-			Privileged: false, CapDrop: ['ALL'], SecurityOpt: ['no-new-privileges:true'], PidsLimit: 256,
+			Privileged: false, SecurityOpt: ['no-new-privileges:true'], PidsLimit: 256,
 		});
 		expect(p.summary.customized).toBe(false);
 	});
 
-	it('adds only declared, allowlisted capabilities and keeps CapDrop ALL', () => {
-		const p = resolveContainerSecurityPolicy({ security: { capabilities: ['setuid', 'CAP_SETGID', 'CHOWN', 'CHOWN'] } });
-		expect(p.hostConfig.CapAdd).toEqual(['CHOWN', 'SETGID', 'SETUID']);
-		expect(p.hostConfig.CapDrop).toEqual(['ALL']);
-		expect(p.hostConfig.Privileged).toBe(false);
+	it('allows custom pidsLimit', () => {
+		const p = resolveContainerSecurityPolicy({ security: { pidsLimit: 512 } });
+		expect(p.hostConfig.PidsLimit).toBe(512);
 		expect(p.summary.customized).toBe(true);
 	});
 
 	it.each([
-		[{ capabilities: ['ALL'] }],
-		[{ capabilities: ['SYS_ADMIN'] }],
-		[{ capabilities: ['NET_ADMIN'] }],
-		[{ capabilities: 'CHOWN' }],
-		[{ capabilities: [1] }],
 		[{ pidsLimit: 0 }],
 		[{ pidsLimit: 1.5 }],
 		[{ pidsLimit: 100000 }],
@@ -74,25 +67,21 @@ describe('resolveContainerSecurityPolicy', () => {
 		expect(() => resolveContainerSecurityPolicy({ security })).toThrow(ContainerSecurityPolicyError);
 	});
 
-	it('hostConfigMatchesPolicy detects drift in capabilities and pids limit', () => {
+	it('hostConfigMatchesPolicy detects drift in pids limit', () => {
 		const def = resolveContainerSecurityPolicy({});
-		const withCaps = resolveContainerSecurityPolicy({ security: { capabilities: ['CHOWN'] } });
 		expect(hostConfigMatchesPolicy(def.hostConfig, def)).toBe(true);
-		expect(hostConfigMatchesPolicy(def.hostConfig, withCaps)).toBe(false);
-		expect(hostConfigMatchesPolicy({ ...withCaps.hostConfig }, def)).toBe(false);
 		expect(hostConfigMatchesPolicy({ ...def.hostConfig, PidsLimit: 1000 }, def)).toBe(false);
-		expect(hostConfigMatchesPolicy({ ...def.hostConfig, CapAdd: ['ALL'] }, def)).toBe(false);
 	});
 
 	it('gives a non-mutating hint for permission failures', () => {
-		expect(permissionFailureHint("mkdir: cannot create directory '/var/lib/influxdb2': Permission denied")).toMatch(/config\.security\.capabilities/);
+		expect(permissionFailureHint("mkdir: cannot create directory '/var/lib/influxdb2': Permission denied")).toMatch(/no-new-privileges/);
 		expect(permissionFailureHint('image not found')).toBeUndefined();
 	});
 });
 
 describe('DockerManager lifecycle uses one resolved policy', () => {
-	const config = { security: { capabilities: ['CHOWN', 'SETUID', 'SETGID'], pidsLimit: 512 }, volumes: ['data:/var/lib/data'], environment: { A: 'b' }, resources: undefined };
-	const expected = { Privileged: false, CapDrop: ['ALL'], CapAdd: ['CHOWN', 'SETGID', 'SETUID'], SecurityOpt: ['no-new-privileges:true'], PidsLimit: 512 };
+	const config = { security: { pidsLimit: 512 }, volumes: ['data:/var/lib/data'], environment: { A: 'b' }, resources: undefined };
+	const expected = { Privileged: false, SecurityOpt: ['no-new-privileges:true'], PidsLimit: 512 };
 
 	it('startContainer', async () => {
 		const mgr = manager();
@@ -114,13 +103,7 @@ describe('DockerManager lifecycle uses one resolved policy', () => {
 		expect(mgr.docker.createContainer.mock.calls[0][0].HostConfig).toMatchObject(expected);
 	});
 
-	it('rejects invalid overrides before creating a container', async () => {
-		const mgr = manager();
-		await expect(mgr.startContainer(svc({ security: { capabilities: ['SYS_ADMIN'] } }))).rejects.toThrow(/not permitted/);
-		expect(mgr.docker.createContainer).not.toHaveBeenCalled();
-	});
-
-	it('recreates an existing container whose capabilities differ from the resolved policy', async () => {
+	it('recreates an existing container whose policy differs from the resolved policy', async () => {
 		const mgr = manager();
 		const old = {
 			inspect: jest.fn().mockResolvedValue({ Id: 'old', State: { Running: false }, HostConfig: resolveContainerSecurityPolicy({}).hostConfig }),
@@ -186,13 +169,13 @@ describe('bounded restart retries', () => {
 	it('stops recreating a failing container after the retry budget and reports CrashLoopBackOff with policy', async () => {
 		const start = jest.fn().mockRejectedValue(new Error('Permission denied'));
 		const { ctx, appService } = makeCtx(start);
-		const step: any = { action: 'startContainer', appId: 10, service: svc({ security: { capabilities: ['CHOWN'] } }) };
+		const step: any = { action: 'startContainer', appId: 10, service: svc({ security: { pidsLimit: 512 } }) };
 		for (let i = 0; i < 3; i++) await expect(executeStep(step, ctx)).rejects.toThrow('Permission denied');
 		expect(appService.error?.type).toBe('CrashLoopBackOff');
 		await expect(executeStep(step, ctx)).rejects.toThrow(/Max start retries exceeded/);
 		expect(start).toHaveBeenCalledTimes(3);
 		expect(appService.error?.message).toMatch(/Giving up after 3/);
-		expect(appService.error?.message).toMatch(/config\.security\.capabilities/);
+		expect(appService.error?.message).toMatch(/no-new-privileges/);
 	});
 
 	it('treats invalid security policy as terminal immediately', async () => {
@@ -201,7 +184,7 @@ describe('bounded restart retries', () => {
 		const step: any = { action: 'startContainer', appId: 10, service: svc() };
 		await expect(executeStep(step, ctx)).rejects.toThrow('Invalid security config');
 		expect(appService.error?.type).toBe('CrashLoopBackOff');
-		expect(appService.error?.securityPolicy?.capDrop).toEqual(['ALL']);
+		expect(appService.error?.securityPolicy?.pidsLimit).toBe(256);
 		await expect(executeStep(step, ctx)).rejects.toThrow(/Max start retries/);
 		expect(start).toHaveBeenCalledTimes(1);
 	});

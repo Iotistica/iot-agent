@@ -2,49 +2,25 @@ import type Docker from 'dockerode';
 
 export function buildContainerSecurityOptions(): Pick<
 	Docker.HostConfig,
-	'Privileged' | 'CapDrop' | 'SecurityOpt' | 'PidsLimit'
+	'Privileged' | 'SecurityOpt' | 'PidsLimit'
 	> {
 	return {
 		Privileged: false,
-		CapDrop: ['ALL'],
 		SecurityOpt: ['no-new-privileges:true'],
 		PidsLimit: 256,
 	};
 }
-
-/**
- * Capabilities an application may request through `config.security.capabilities`.
- * Deliberately narrow: no SYS_ADMIN, NET_ADMIN, NET_RAW, SYS_PTRACE, SYS_MODULE, etc.
- */
-export const ALLOWED_CAPABILITY_EXCEPTIONS: readonly string[] = [
-	'CHOWN',
-	'DAC_OVERRIDE',
-	'FOWNER',
-	'FSETID',
-	'KILL',
-	'SETGID',
-	'SETUID',
-	'SETPCAP',
-	'SETFCAP',
-	'NET_BIND_SERVICE',
-	'SYS_CHROOT',
-	'MKNOD',
-	'AUDIT_WRITE',
-];
 
 export const DEFAULT_PIDS_LIMIT = 256;
 export const MAX_PIDS_LIMIT = 4096;
 
 /** Per-application security requirements declared in the deployment config. */
 export interface ServiceSecurityConfig {
-	capabilities?: string[];
 	pidsLimit?: number;
 }
 
 export interface SecurityPolicySummary {
 	privileged: false;
-	capDrop: string[];
-	capAdd: string[];
 	noNewPrivileges: true;
 	pidsLimit: number;
 	/** True when the app declared exceptions to the secure defaults. */
@@ -52,9 +28,7 @@ export interface SecurityPolicySummary {
 }
 
 export interface ResolvedSecurityPolicy {
-	hostConfig: Pick<Docker.HostConfig, 'Privileged' | 'CapDrop' | 'SecurityOpt' | 'PidsLimit'> & {
-		CapAdd?: string[];
-	};
+	hostConfig: Pick<Docker.HostConfig, 'Privileged' | 'SecurityOpt' | 'PidsLimit'>;
 	summary: SecurityPolicySummary;
 }
 
@@ -77,7 +51,6 @@ export function resolveContainerSecurityPolicy(
 ): ResolvedSecurityPolicy {
 	const base = buildContainerSecurityOptions();
 	const raw = config?.security;
-	let capAdd: string[] = [];
 	let pidsLimit = DEFAULT_PIDS_LIMIT;
 
 	if (raw !== undefined && raw !== null) {
@@ -85,31 +58,11 @@ export function resolveContainerSecurityPolicy(
 			throw new ContainerSecurityPolicyError('Invalid security config: "security" must be an object');
 		}
 		const security = raw as Record<string, unknown>;
-		const unknownKeys = Object.keys(security).filter((k) => k !== 'capabilities' && k !== 'pidsLimit');
+		const unknownKeys = Object.keys(security).filter((k) => k !== 'pidsLimit');
 		if (unknownKeys.length) {
 			throw new ContainerSecurityPolicyError(
 				`Invalid security config: unsupported option(s) ${unknownKeys.join(', ')}`,
 			);
-		}
-
-		if (security.capabilities !== undefined) {
-			if (!Array.isArray(security.capabilities)) {
-				throw new ContainerSecurityPolicyError('Invalid security config: "capabilities" must be an array');
-			}
-			const normalized = new Set<string>();
-			for (const cap of security.capabilities) {
-				if (typeof cap !== 'string') {
-					throw new ContainerSecurityPolicyError('Invalid security config: capability names must be strings');
-				}
-				const name = cap.trim().toUpperCase().replace(/^CAP_/, '');
-				if (!ALLOWED_CAPABILITY_EXCEPTIONS.includes(name)) {
-					throw new ContainerSecurityPolicyError(
-						`Invalid security config: capability "${cap}" is not permitted (allowed: ${ALLOWED_CAPABILITY_EXCEPTIONS.join(', ')})`,
-					);
-				}
-				normalized.add(name);
-			}
-			capAdd = [...normalized].sort();
 		}
 
 		if (security.pidsLimit !== undefined) {
@@ -127,15 +80,12 @@ export function resolveContainerSecurityPolicy(
 		hostConfig: {
 			...base,
 			PidsLimit: pidsLimit,
-			...(capAdd.length ? { CapAdd: capAdd } : {}),
 		},
 		summary: {
 			privileged: false,
-			capDrop: ['ALL'],
-			capAdd,
 			noNewPrivileges: true,
 			pidsLimit,
-			customized: capAdd.length > 0 || pidsLimit !== DEFAULT_PIDS_LIMIT,
+			customized: pidsLimit !== DEFAULT_PIDS_LIMIT,
 		},
 	};
 }
@@ -146,12 +96,7 @@ export function hostConfigMatchesPolicy(
 	policy: ResolvedSecurityPolicy,
 ): boolean {
 	if (!hostConfig) return false;
-	const actualCaps = [...(hostConfig.CapAdd || [])].map((c) => c.toUpperCase().replace(/^CAP_/, '')).sort();
-	const expectedCaps = [...(policy.hostConfig.CapAdd || [])].sort();
 	return hostConfig.Privileged === false
-		&& hostConfig.CapDrop?.includes('ALL') === true
-		&& actualCaps.length === expectedCaps.length
-		&& actualCaps.every((c, i) => c === expectedCaps[i])
 		&& hostConfig.SecurityOpt?.includes('no-new-privileges:true') === true
 		&& hostConfig.PidsLimit === policy.hostConfig.PidsLimit
 		&& hostConfig.PidMode !== 'host'
@@ -167,7 +112,6 @@ export function hostConfigMatchesPolicy(
  */
 export function permissionFailureHint(message: string): string | undefined {
 	if (!/permission denied|operation not permitted|eacces|eperm/i.test(message)) return undefined;
-	return 'Hint: the container runs with all capabilities dropped. If the image entrypoint must chown/switch user, '
-		+ 'declare narrowly scoped capabilities in config.security.capabilities (e.g. CHOWN, SETUID, SETGID, DAC_OVERRIDE), '
-		+ 'set config.user to a UID that owns the volume, or fix ownership of the volume/bind mount manually.';
+	return 'Hint: the container runs with no-new-privileges. If the entrypoint needs to chown or switch user, '
+		+ 'set config.user to a UID that owns the volume, or fix ownership of the volume/bind mount on the host.';
 }

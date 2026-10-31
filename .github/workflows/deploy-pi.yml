@@ -2,7 +2,8 @@ name: Deploy to Test Pi
 
 on:
   workflow_run:
-    workflows: ["Agent Release"]
+    workflows: ["Agent Release", "CI Build, Test & Push Agent"]
+    branches: [main]
     types: [completed]
   workflow_dispatch:
 
