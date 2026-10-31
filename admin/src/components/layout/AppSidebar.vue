@@ -22,6 +22,7 @@ import {
   DatabaseOutlined,
   CodeOutlined,
   NodeIndexOutlined,
+  ShopOutlined,
   MenuFoldOutlined,
   MenuUnfoldOutlined,
 } from '@ant-design/icons-vue'
@@ -124,6 +125,11 @@ function onMenuClick({ key }: { key: string }) {
         <a-menu-item key="/applications">
           <template #icon><ContainerOutlined /></template>
           Applications
+        </a-menu-item>
+
+        <a-menu-item key="/marketplace">
+          <template #icon><ShopOutlined /></template>
+          Marketplace
         </a-menu-item>
 
         <a-menu-item key="/anomaly">

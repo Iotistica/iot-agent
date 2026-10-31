@@ -85,3 +85,6 @@ export type { DataExplorerViewRecord } from './data-explorer-view.model';
 // ML Dataset definitions (per-user dataset configurations for the ML Dataset Builder)
 export { MlDatasetModel } from './ml-dataset.model';
 export type { MlDatasetRecord } from './ml-dataset.model';
+
+// Database-backed application marketplace catalog
+export { AppMarketplaceModel } from './app-marketplace.model';

@@ -148,6 +148,18 @@ export const templatesApi = {
   getAll(): Promise<{ templates: AppTemplate[]; categories: string[] }> {
     return client.get('/v1/app-templates').then(r => r.data)
   },
+  get(id: string): Promise<AppTemplate> {
+    return client.get<AppTemplate>(`/v1/app-templates/${encodeURIComponent(id)}`).then(r => r.data)
+  },
+  create(template: AppTemplate): Promise<AppTemplate> {
+    return client.post<AppTemplate>('/v1/app-templates', template).then(r => r.data)
+  },
+  update(id: string, template: AppTemplate): Promise<AppTemplate> {
+    return client.put<AppTemplate>(`/v1/app-templates/${encodeURIComponent(id)}`, template).then(r => r.data)
+  },
+  delete(id: string): Promise<void> {
+    return client.delete(`/v1/app-templates/${encodeURIComponent(id)}`).then(() => undefined)
+  },
 }
 
 export const containersApi = {
