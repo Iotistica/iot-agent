@@ -299,10 +299,6 @@ onMounted(load)
                     <template #icon><EditOutlined /></template>
                     Edit
                   </a-button>
-                  <a-button danger size="small" @click.stop="remove(template)">
-                    <template #icon><DeleteOutlined /></template>
-                    Delete
-                  </a-button>
                 </template>
               </div>
               <a-button
@@ -323,10 +319,8 @@ onMounted(load)
     <a-modal
       v-model:open="formOpen"
       :title="editingId ? 'Edit Marketplace Image' : 'Add Marketplace Image'"
-      :confirm-loading="saving"
-      ok-text="Save"
       width="600px"
-      @ok="save"
+      :footer="null"
     >
       <a-form layout="vertical">
         <!-- Display section -->
@@ -361,7 +355,10 @@ onMounted(load)
             <a-input v-model:value="form.letter" maxlength="5" placeholder="NR" />
           </a-form-item>
           <a-form-item label="Icon color" required>
-            <a-input v-model:value="form.color" placeholder="#1677ff" />
+            <div style="display: flex; gap: 8px; align-items: center">
+              <input type="color" :value="form.color" class="color-picker-swatch" @input="form.color = ($event.target as HTMLInputElement).value" />
+              <a-input v-model:value="form.color" placeholder="#1677ff" style="flex: 1" />
+            </div>
           </a-form-item>
         </div>
 
@@ -438,6 +435,15 @@ onMounted(load)
           </a-collapse-panel>
         </a-collapse>
       </a-form>
+      <div class="modal-footer">
+        <a-button v-if="editingId" danger @click="remove(templates.find(t => t.id === editingId)!)">
+          <template #icon><DeleteOutlined /></template>
+          Delete
+        </a-button>
+        <div style="flex: 1" />
+        <a-button @click="formOpen = false">Cancel</a-button>
+        <a-button type="primary" :loading="saving" @click="save">Save</a-button>
+      </div>
     </a-modal>
 
     <!-- Add Category mini-modal -->
@@ -625,5 +631,39 @@ onMounted(load)
   height: 10px;
   border-radius: 50%;
   flex-shrink: 0;
+}
+
+.color-picker-swatch {
+  width: 36px;
+  height: 32px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  padding: 2px;
+  cursor: pointer;
+  background: none;
+  flex-shrink: 0;
+}
+
+.color-picker-swatch::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+
+.color-picker-swatch::-webkit-color-swatch {
+  border: none;
+  border-radius: 4px;
+}
+
+.color-picker-swatch::-moz-color-swatch {
+  border: none;
+  border-radius: 4px;
+}
+
+.modal-footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 0 0;
+  border-top: 1px solid var(--border-color);
+  margin-top: 16px;
 }
 </style>

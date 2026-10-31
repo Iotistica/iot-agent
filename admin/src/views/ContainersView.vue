@@ -1303,7 +1303,7 @@ async function deploy() {
       :body-style="{ paddingBottom: '80px' }"
     >
       <a-form layout="vertical">
-        <a-form-item label="Marketplace image" required>
+        <a-form-item label="Docker image" required>
           <a-select
             v-model:value="addSvcSelectedImage"
             show-search

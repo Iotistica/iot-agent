@@ -216,6 +216,7 @@ function onMenuClick({ key }: { key: string }) {
   text-overflow: ellipsis;
   white-space: nowrap;
   min-width: 0;
+  line-height: 1.3;
 }
 
 .nav-main {
