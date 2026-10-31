@@ -1,5 +1,5 @@
 import { getDatabase } from '../sqlite.js';
-import type { AppTemplate } from '../../data/app-templates.js';
+import type { MarketplaceImage } from '../../data/app-templates.js';
 
 interface TemplateRow {
 	id: string;
@@ -11,21 +11,21 @@ export class AppMarketplaceModel {
 		return getDatabase();
 	}
 
-	static getAll(): AppTemplate[] {
+	static getAll(): MarketplaceImage[] {
 		const rows = this.getDb()
 			.prepare('SELECT id, template_json FROM app_marketplace_templates ORDER BY sort_order ASC, id ASC')
 			.all() as unknown as TemplateRow[];
-		return rows.map(row => JSON.parse(row.template_json) as AppTemplate);
+		return rows.map(row => JSON.parse(row.template_json) as MarketplaceImage);
 	}
 
-	static getById(id: string): AppTemplate | null {
+	static getById(id: string): MarketplaceImage | null {
 		const row = this.getDb()
 			.prepare('SELECT id, template_json FROM app_marketplace_templates WHERE id = ? LIMIT 1')
 			.get(id) as unknown as TemplateRow | undefined;
-		return row ? JSON.parse(row.template_json) as AppTemplate : null;
+		return row ? JSON.parse(row.template_json) as MarketplaceImage : null;
 	}
 
-	static create(template: AppTemplate): AppTemplate {
+	static create(template: MarketplaceImage): MarketplaceImage {
 		this.getDb().prepare(`
 			INSERT INTO app_marketplace_templates (id, template_json, sort_order)
 			VALUES (?, ?, COALESCE((SELECT MAX(sort_order) + 1 FROM app_marketplace_templates), 0))
@@ -33,7 +33,7 @@ export class AppMarketplaceModel {
 		return template;
 	}
 
-	static update(id: string, template: AppTemplate): AppTemplate | null {
+	static update(id: string, template: MarketplaceImage): MarketplaceImage | null {
 		const result = this.getDb().prepare(`
 			UPDATE app_marketplace_templates
 			SET template_json = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')

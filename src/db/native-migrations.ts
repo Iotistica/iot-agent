@@ -41,6 +41,7 @@ import { migration as addDatasetToSubscriptions } from './migrations/20261016000
 import { migration as addSchemaDriftRules } from './migrations/20261017000000_add_schema_drift_rules.js';
 import { migration as addSchemaDriftRuleTemplates } from './migrations/20261017010000_add_schema_drift_rule_templates.js';
 import { migration as addAppMarketplace } from './migrations/20261018000000_add_app_marketplace.js';
+import { migration as flattenMarketplace } from './migrations/20261031000000_flatten_marketplace.js';
 import type { NativeSqliteMigration } from './migration-types.js';
 
 export const nativeMigrations: NativeSqliteMigration[] = [
@@ -87,4 +88,5 @@ export const nativeMigrations: NativeSqliteMigration[] = [
 	addSchemaDriftRules,
 	addSchemaDriftRuleTemplates,
 	addAppMarketplace,
+	flattenMarketplace,
 ];

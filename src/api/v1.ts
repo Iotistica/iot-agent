@@ -25,7 +25,8 @@ import { UserModel } from '../db/models/admin-user.model.js';
 import { AdminSessionModel } from '../db/models/admin-session.model.js';
 import { requireRole, parseCookie, SESSION_COOKIE } from './middleware/roles.js';
 import { AppMarketplaceModel } from '../db/models/app-marketplace.model.js';
-import type { AppTemplate, AppTemplateService } from '../data/app-templates.js';
+import type { MarketplaceImage } from '../data/app-templates.js';
+import { MarketplaceCategoriesModel } from '../db/models/marketplace-categories.model.js';
 
 export const router = express.Router();
 
@@ -251,15 +252,15 @@ router.get('/v1/apps/:appId', async (req: Request, res: Response, next: NextFunc
 	}
 });
 
-function validateAppTemplate(value: unknown): { template?: AppTemplate; error?: string } {
+function validateMarketplaceImage(value: unknown): { image?: MarketplaceImage; error?: string } {
 	if (!value || typeof value !== 'object' || Array.isArray(value)) {
 		return { error: 'Marketplace entry must be an object' };
 	}
 
 	const entry = value as Record<string, unknown>;
-	const requiredStrings = ['id', 'name', 'category', 'description', 'color', 'letter', 'appName'];
+	const requiredStrings = ['id', 'name', 'category', 'description', 'color', 'letter', 'image'];
 	for (const field of requiredStrings) {
-		if (typeof entry[field] !== 'string' || !entry[field].trim()) {
+		if (typeof entry[field] !== 'string' || !(entry[field] as string).trim()) {
 			return { error: `${field} is required` };
 		}
 	}
@@ -272,57 +273,44 @@ function validateAppTemplate(value: unknown): { template?: AppTemplate; error?: 
 	if ((entry.letter as string).length > 5) {
 		return { error: 'letter must be 5 characters or fewer' };
 	}
-	if (!Array.isArray(entry.services) || entry.services.length === 0) {
-		return { error: 'services must contain at least one service' };
+	if (entry.ports !== undefined &&
+		(!Array.isArray(entry.ports) || entry.ports.some(port => typeof port !== 'string'))) {
+		return { error: 'ports must be an array of strings' };
+	}
+	if (entry.volumes !== undefined &&
+		(!Array.isArray(entry.volumes) || entry.volumes.some(volume => typeof volume !== 'string'))) {
+		return { error: 'volumes must be an array of strings' };
+	}
+	if (entry.environment !== undefined &&
+		(!entry.environment || typeof entry.environment !== 'object' || Array.isArray(entry.environment) ||
+			Object.values(entry.environment as Record<string, unknown>).some(item => typeof item !== 'string'))) {
+		return { error: 'environment must contain string values' };
+	}
+	for (const optStr of ['restart', 'command', 'entrypoint', 'user', 'networkMode']) {
+		if (entry[optStr] !== undefined && typeof entry[optStr] !== 'string') {
+			return { error: `${optStr} must be a string` };
+		}
+	}
+	if (entry.enableSocketDestination !== undefined && typeof entry.enableSocketDestination !== 'boolean') {
+		return { error: 'enableSocketDestination must be a boolean' };
 	}
 
-	const services: AppTemplateService[] = [];
-	for (const value of entry.services) {
-		if (!value || typeof value !== 'object' || Array.isArray(value)) {
-			return { error: 'Each service must be an object' };
-		}
-		const service = value as Record<string, unknown>;
-		if (typeof service.serviceName !== 'string' || !service.serviceName.trim() ||
-			typeof service.image !== 'string' || !service.image.trim()) {
-			return { error: 'Each service requires a serviceName and image' };
-		}
-		if (service.ports !== undefined &&
-			(!Array.isArray(service.ports) || service.ports.some(port => typeof port !== 'string'))) {
-			return { error: 'Service ports must be an array of strings' };
-		}
-		if (service.volumes !== undefined &&
-			(!Array.isArray(service.volumes) || service.volumes.some(volume => typeof volume !== 'string'))) {
-			return { error: 'Service volumes must be an array of strings' };
-		}
-		if (service.environment !== undefined &&
-			(!service.environment || typeof service.environment !== 'object' || Array.isArray(service.environment) ||
-				Object.values(service.environment).some(item => typeof item !== 'string'))) {
-			return { error: 'Service environment must contain string values' };
-		}
-		if (service.restart !== undefined && typeof service.restart !== 'string') {
-			return { error: 'Service restart must be a string' };
-		}
-		if (service.enableSocketDestination !== undefined && typeof service.enableSocketDestination !== 'boolean') {
-			return { error: 'Service enableSocketDestination must be a boolean' };
-		}
-		services.push(service as unknown as AppTemplateService);
-	}
-
-	return { template: { ...entry, services } as unknown as AppTemplate };
+	return { image: entry as unknown as MarketplaceImage };
 }
 
-function getMarketplaceCategories(templates: AppTemplate[]): string[] {
-	return ['All', ...Array.from(new Set(templates.map(template => template.category)))];
+function getMarketplaceCategories(): string[] {
+	const dbCategories = MarketplaceCategoriesModel.getAll().map(c => c.name);
+	return ['All', ...dbCategories];
 }
 
 /**
  * GET /v1/app-templates
- * Returns the database-backed catalog of one-click deployable application templates.
+ * Returns the database-backed catalog of marketplace images.
  */
 router.get('/v1/app-templates', (_req: Request, res: Response, next: NextFunction) => {
 	try {
 		const templates = AppMarketplaceModel.getAll();
-		return res.status(200).json({ templates, categories: getMarketplaceCategories(templates) });
+		return res.status(200).json({ templates, categories: getMarketplaceCategories() });
 	} catch (error) {
 		next(error);
 	}
@@ -339,13 +327,13 @@ router.get('/v1/app-templates/:id', (req: Request, res: Response, next: NextFunc
 });
 
 router.post('/v1/app-templates', requireRole('admin'), (req: Request, res: Response, next: NextFunction) => {
-	const { template, error } = validateAppTemplate(req.body);
-	if (error || !template) return res.status(400).json({ error });
+	const { image, error } = validateMarketplaceImage(req.body);
+	if (error || !image) return res.status(400).json({ error });
 	try {
-		if (AppMarketplaceModel.getById(template.id)) {
+		if (AppMarketplaceModel.getById(image.id)) {
 			return res.status(409).json({ error: 'A marketplace entry with this id already exists' });
 		}
-		return res.status(201).json(AppMarketplaceModel.create(template));
+		return res.status(201).json(AppMarketplaceModel.create(image));
 	} catch (err) {
 		if (err instanceof Error && err.message.includes('UNIQUE constraint failed')) {
 			return res.status(409).json({ error: 'A marketplace entry with this id already exists' });
@@ -355,13 +343,13 @@ router.post('/v1/app-templates', requireRole('admin'), (req: Request, res: Respo
 });
 
 router.put('/v1/app-templates/:id', requireRole('admin'), (req: Request, res: Response, next: NextFunction) => {
-	const { template, error } = validateAppTemplate(req.body);
-	if (error || !template) return res.status(400).json({ error });
-	if (template.id !== req.params.id) {
+	const { image, error } = validateMarketplaceImage(req.body);
+	if (error || !image) return res.status(400).json({ error });
+	if (image.id !== req.params.id) {
 		return res.status(400).json({ error: 'Marketplace entry id cannot be changed' });
 	}
 	try {
-		const updated = AppMarketplaceModel.update(req.params.id, template);
+		const updated = AppMarketplaceModel.update(req.params.id, image);
 		if (!updated) return res.status(404).json({ error: 'Marketplace entry not found' });
 		return res.status(200).json(updated);
 	} catch (err) {
@@ -374,6 +362,51 @@ router.delete('/v1/app-templates/:id', requireRole('admin'), (req: Request, res:
 		if (!AppMarketplaceModel.delete(req.params.id)) {
 			return res.status(404).json({ error: 'Marketplace entry not found' });
 		}
+		return res.status(204).send();
+	} catch (error) {
+		next(error);
+	}
+});
+
+/**
+ * Marketplace categories CRUD
+ */
+router.get('/v1/marketplace-categories', (_req: Request, res: Response, next: NextFunction) => {
+	try {
+		return res.status(200).json(MarketplaceCategoriesModel.getAll());
+	} catch (error) {
+		next(error);
+	}
+});
+
+router.post('/v1/marketplace-categories', requireRole('admin'), (req: Request, res: Response, next: NextFunction) => {
+	try {
+		const { name, color } = req.body as { name?: string; color?: string };
+		if (!name || typeof name !== 'string' || !name.trim()) {
+			return res.status(400).json({ error: 'name is required' });
+		}
+		if (color !== undefined && (typeof color !== 'string' || !/^#[0-9a-f]{6}$/i.test(color))) {
+			return res.status(400).json({ error: 'color must be a six-digit hex color' });
+		}
+		const category = MarketplaceCategoriesModel.create(name.trim(), color);
+		return res.status(201).json(category);
+	} catch (err) {
+		if (err instanceof Error && err.message.includes('UNIQUE constraint')) {
+			return res.status(409).json({ error: 'A category with this name already exists' });
+		}
+		next(err);
+	}
+});
+
+router.delete('/v1/marketplace-categories/:id', requireRole('admin'), (req: Request, res: Response, next: NextFunction) => {
+	try {
+		const images = AppMarketplaceModel.getAll();
+		const cat = MarketplaceCategoriesModel.getAll().find(c => c.id === req.params.id);
+		if (!cat) return res.status(404).json({ error: 'Category not found' });
+		if (images.some(img => img.category === cat.name)) {
+			return res.status(409).json({ error: 'Cannot delete a category that is in use by marketplace images' });
+		}
+		MarketplaceCategoriesModel.delete(req.params.id);
 		return res.status(204).send();
 	} catch (error) {
 		next(error);

@@ -1,24 +1,29 @@
 import { client } from './client'
 
-export interface AppTemplateService {
-  serviceName: string
-  image: string
-  ports?: string[]
-  volumes?: string[]
-  environment?: Record<string, string>
-  restart?: string
-  enableSocketDestination?: boolean
-}
-
-export interface AppTemplate {
+export interface MarketplaceImage {
   id: string
   name: string
   category: string
   description: string
   color: string
   letter: string
-  appName: string
-  services: AppTemplateService[]
+  image: string
+  ports?: string[]
+  volumes?: string[]
+  environment?: Record<string, string>
+  restart?: string
+  command?: string
+  entrypoint?: string
+  user?: string
+  networkMode?: string
+  enableSocketDestination?: boolean
+}
+
+export interface MarketplaceCategory {
+  id: string
+  name: string
+  color: string | null
+  sort_order: number
 }
 
 export type ServiceStatus = {
@@ -145,20 +150,32 @@ export const dockerConfigApi = {
 }
 
 export const templatesApi = {
-  getAll(): Promise<{ templates: AppTemplate[]; categories: string[] }> {
+  getAll(): Promise<{ templates: MarketplaceImage[]; categories: string[] }> {
     return client.get('/v1/app-templates').then(r => r.data)
   },
-  get(id: string): Promise<AppTemplate> {
-    return client.get<AppTemplate>(`/v1/app-templates/${encodeURIComponent(id)}`).then(r => r.data)
+  get(id: string): Promise<MarketplaceImage> {
+    return client.get<MarketplaceImage>(`/v1/app-templates/${encodeURIComponent(id)}`).then(r => r.data)
   },
-  create(template: AppTemplate): Promise<AppTemplate> {
-    return client.post<AppTemplate>('/v1/app-templates', template).then(r => r.data)
+  create(image: MarketplaceImage): Promise<MarketplaceImage> {
+    return client.post<MarketplaceImage>('/v1/app-templates', image).then(r => r.data)
   },
-  update(id: string, template: AppTemplate): Promise<AppTemplate> {
-    return client.put<AppTemplate>(`/v1/app-templates/${encodeURIComponent(id)}`, template).then(r => r.data)
+  update(id: string, image: MarketplaceImage): Promise<MarketplaceImage> {
+    return client.put<MarketplaceImage>(`/v1/app-templates/${encodeURIComponent(id)}`, image).then(r => r.data)
   },
   delete(id: string): Promise<void> {
     return client.delete(`/v1/app-templates/${encodeURIComponent(id)}`).then(() => undefined)
+  },
+}
+
+export const categoriesApi = {
+  getAll(): Promise<MarketplaceCategory[]> {
+    return client.get<MarketplaceCategory[]>('/v1/marketplace-categories').then(r => r.data)
+  },
+  create(name: string, color?: string): Promise<MarketplaceCategory> {
+    return client.post<MarketplaceCategory>('/v1/marketplace-categories', { name, color }).then(r => r.data)
+  },
+  delete(id: string): Promise<void> {
+    return client.delete(`/v1/marketplace-categories/${encodeURIComponent(id)}`).then(() => undefined)
   },
 }
 

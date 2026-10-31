@@ -2,11 +2,11 @@
 import { useRouter } from 'vue-router'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import MarketplaceCatalog from '@/components/MarketplaceCatalog.vue'
-import type { AppTemplate } from '@/api/containers'
+import type { MarketplaceImage } from '@/api/containers'
 
 const router = useRouter()
 
-function deploy(template: AppTemplate) {
+function deploy(template: MarketplaceImage) {
   void router.push({ path: '/applications', query: { template: template.id } })
 }
 </script>

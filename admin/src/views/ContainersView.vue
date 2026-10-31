@@ -23,7 +23,7 @@ import {
 } from '@ant-design/icons-vue'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import { containersApi, templatesApi } from '@/api/containers'
-import type { ContainerApp, ContainerService, AppTemplate, AppSystemStats } from '@/api/containers'
+import type { ContainerApp, ContainerService, MarketplaceImage, AppSystemStats } from '@/api/containers'
 import MarketplaceCatalog from '@/components/MarketplaceCatalog.vue'
 import SparklineChart from '@/components/SparklineChart.vue'
 import { useDockerStatus } from '@/composables/useDockerStatus'
@@ -56,6 +56,7 @@ function stopRefresh() {
 onMounted(async () => {
   await load()
   startRefresh()
+  loadMarketplaceImages()
   const templateId = route.query.template
   if (typeof templateId === 'string') {
     await router.replace({ path: '/applications', query: { ...route.query, template: undefined } })
@@ -421,16 +422,43 @@ const addSvcDrawerOpen = ref(false)
 const addSvcTargetApp = ref<ContainerApp | null>(null)
 const addSvcForm = ref<ServiceForm>(emptyService())
 const addSvcSaving = ref(false)
+const marketplaceImages = ref<MarketplaceImage[]>([])
+const addSvcSelectedImage = ref<string | null>(null)
+
+async function loadMarketplaceImages() {
+  try {
+    const result = await templatesApi.getAll()
+    marketplaceImages.value = result.templates
+  } catch { /* non-fatal */ }
+}
+
+function onImageSelected(imageId: string) {
+  const img = marketplaceImages.value.find(i => i.id === imageId)
+  if (!img) return
+  addSvcForm.value = imageToServiceForm(img)
+}
 
 function openAddService(app: ContainerApp) {
   addSvcTargetApp.value = app
   addSvcForm.value = emptyService()
+  addSvcSelectedImage.value = null
   addSvcDrawerOpen.value = true
+  if (marketplaceImages.value.length === 0) loadMarketplaceImages()
+}
+
+function filterImageOption(input: string, option: any) {
+  const img = marketplaceImages.value.find(i => i.id === option.value)
+  if (!img) return false
+  const q = input.toLowerCase()
+  return img.name.toLowerCase().includes(q) ||
+    img.category.toLowerCase().includes(q) ||
+    img.image.toLowerCase().includes(q)
 }
 
 async function submitAddService() {
   const app = addSvcTargetApp.value
   if (!app) return
+  if (!addSvcSelectedImage.value) { message.error('Please select an image from the marketplace'); return }
   if (!addSvcForm.value.serviceName.trim()) { message.error('Service name is required'); return }
   if (!addSvcForm.value.image.trim()) { message.error('Docker image is required'); return }
 
@@ -735,12 +763,29 @@ function openMarketplace() {
 // ── Deploy target picker (marketplace) ───────────────────────────────────────
 
 const deployTargetOpen = ref(false)
-const deployTargetTpl = ref<AppTemplate | null>(null)
+const deployTargetTpl = ref<MarketplaceImage | null>(null)
 const deployTargetMode = ref<'new' | 'existing'>('new')
 const deployTargetAppId = ref<number | null>(null)
 const deployTargetBusy = ref(false)
 
-function deployTemplate(tpl: AppTemplate) {
+function imageToServiceForm(img: MarketplaceImage): ServiceForm {
+  return {
+    ...emptyService(),
+    serviceName: img.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, ''),
+    image: img.image,
+    ports: portsToRows(img.ports),
+    volumes: (img.volumes ?? []).join('\n'),
+    envRows: envToRows(img.environment),
+    restart: img.restart ?? 'unless-stopped',
+    networkMode: img.networkMode ?? 'bridge',
+    command: img.command ?? '',
+    entrypoint: img.entrypoint ?? '',
+    user: img.user ?? '',
+    enableSocketDestination: img.enableSocketDestination ?? false,
+  }
+}
+
+function deployTemplate(tpl: MarketplaceImage) {
   if (apps.value.length === 0) {
     deployTemplateAsNewApp(tpl)
     return
@@ -751,20 +796,11 @@ function deployTemplate(tpl: AppTemplate) {
   deployTargetOpen.value = true
 }
 
-function deployTemplateAsNewApp(tpl: AppTemplate) {
+function deployTemplateAsNewApp(tpl: MarketplaceImage) {
   marketOpen.value = false
   deployTargetOpen.value = false
-  appName.value = tpl.appName
-  services.value = tpl.services.map(s => ({
-    ...emptyService(),
-    serviceName: s.serviceName,
-    image: s.image,
-    ports: portsToRows(s.ports),
-    volumes: (s.volumes ?? []).join('\n'),
-    envRows: envToRows(s.environment),
-    restart: s.restart ?? 'unless-stopped',
-    enableSocketDestination: s.enableSocketDestination ?? false,
-  }))
+  appName.value = tpl.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
+  services.value = [imageToServiceForm(tpl)]
   drawerOpen.value = true
 }
 
@@ -782,26 +818,26 @@ async function confirmDeployTarget() {
 
   deployTargetBusy.value = true
   try {
-    for (const s of tpl.services) {
-      const ports = s.ports ?? []
-      const volumes = s.volumes ?? []
-      await containersApi.addService(targetAppId, {
-        serviceName: s.serviceName,
-        imageName: s.image,
-        state: 'running',
-        config: {
-          image: s.image,
-          ...(ports.length ? { ports } : {}),
-          ...(s.environment && Object.keys(s.environment).length ? { environment: s.environment } : {}),
-          ...(volumes.length ? { volumes } : {}),
-          restart: s.restart ?? 'unless-stopped',
-          ...(s.enableSocketDestination ? { enableSocketDestination: true } : {}),
-        },
-      })
-    }
+    const svcForm = imageToServiceForm(tpl)
+    const ports = cleanPorts(svcForm.ports)
+    const volumes = parseLines(svcForm.volumes)
+    const environment = rowsToEnv(svcForm.envRows)
+    await containersApi.addService(targetAppId, {
+      serviceName: svcForm.serviceName,
+      imageName: tpl.image,
+      state: 'running',
+      config: {
+        image: tpl.image,
+        ...(ports.length ? { ports } : {}),
+        ...(environment && Object.keys(environment).length ? { environment } : {}),
+        ...(volumes.length ? { volumes } : {}),
+        restart: svcForm.restart || undefined,
+        ...buildAdvancedConfig(svcForm),
+      },
+    })
     message.success(`${tpl.name} added to ${apps.value.find(a => a.appId === targetAppId)?.appName ?? 'app'}`)
   } catch (e: unknown) {
-    message.error((e as any)?.message ?? 'Failed to add services')
+    message.error((e as any)?.message ?? 'Failed to add service')
   } finally {
     deployTargetBusy.value = false
     deployTargetOpen.value = false
@@ -1267,11 +1303,27 @@ async function deploy() {
       :body-style="{ paddingBottom: '80px' }"
     >
       <a-form layout="vertical">
+        <a-form-item label="Marketplace image" required>
+          <a-select
+            v-model:value="addSvcSelectedImage"
+            show-search
+            :filter-option="filterImageOption"
+            placeholder="Select an image…"
+            style="width: 100%"
+            @change="onImageSelected"
+          >
+            <a-select-option v-for="img in marketplaceImages" :key="img.id" :value="img.id">
+              <div style="display: flex; align-items: center; gap: 8px">
+                <span class="img-picker-avatar" :style="{ background: img.color }">{{ img.letter }}</span>
+                <span style="font-weight: 500">{{ img.name }}</span>
+                <a-tag size="small" style="margin: 0; font-size: 10px">{{ img.category }}</a-tag>
+                <span style="color: var(--text-muted); font-family: monospace; font-size: 11px; margin-left: auto">{{ img.image }}</span>
+              </div>
+            </a-select-option>
+          </a-select>
+        </a-form-item>
         <a-form-item label="Service name" required>
           <a-input v-model:value="addSvcForm.serviceName" placeholder="e.g. redis, worker" />
-        </a-form-item>
-        <a-form-item label="Docker image" required>
-          <a-input v-model:value="addSvcForm.image" placeholder="redis:7, myregistry/app:latest" style="font-family: monospace; font-size: 12px" />
         </a-form-item>
         <a-form-item label="Port mappings">
           <div style="display: flex; flex-direction: column; gap: 6px">
@@ -1868,8 +1920,7 @@ async function deploy() {
         </a-radio-group>
       </div>
       <div style="font-size: 12px; color: var(--text-tertiary)">
-        {{ deployTargetTpl?.services.length === 1 ? '1 service' : `${deployTargetTpl?.services.length} services` }}
-        will be added: <span style="font-family: monospace">{{ deployTargetTpl?.services.map(s => s.serviceName).join(', ') }}</span>
+        1 service will be added: <span style="font-family: monospace">{{ deployTargetTpl?.image }}</span>
       </div>
     </a-modal>
 
@@ -2279,7 +2330,7 @@ a.port-tag:hover { border-color: #1677ff; }
 }
 .no-services { padding: 14px; font-size: 12px; color: var(--text-placeholder); text-align: center; }
 .card-footer { padding: 8px 14px 0; display: flex; align-items: center; gap: 8px; }
-.card-footer :deep(.ant-btn) { border-color: #1677ff; }
+.card-footer :deep(.ant-btn) { border-color: var(--border-color); }
 .card-footer .delete-app-btn { margin-left: auto; }
 .card-footer .view-logs-btn { margin-left: auto; }
 
@@ -2452,5 +2503,19 @@ a.port-tag:hover { border-color: #1677ff; }
 .deploy-target-option.active {
   border-color: #1677ff;
   background: var(--bg-selected-light);
+}
+
+.img-picker-avatar {
+  width: 22px;
+  height: 22px;
+  border-radius: 5px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 9px;
+  font-weight: 700;
+  color: #fff;
+  font-family: 'SFMono-Regular', Consolas, monospace;
+  flex-shrink: 0;
 }
 </style>
