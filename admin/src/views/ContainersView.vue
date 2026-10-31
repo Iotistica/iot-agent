@@ -500,7 +500,12 @@ async function submitAddService() {
     addSvcDrawerOpen.value = false
     await load()
   } catch (e: unknown) {
-    message.error((e as any)?.message ?? 'Failed to add service')
+    const err = e as any
+    if (err?.status === 409) {
+      message.warning(err.message ?? 'Port conflict — one or more host ports are already in use')
+    } else {
+      message.error(err?.message ?? 'Failed to add service')
+    }
   } finally {
     addSvcSaving.value = false
   }
@@ -573,7 +578,12 @@ async function submitEditService() {
     editSvcDrawerOpen.value = false
     await load()
   } catch (e: unknown) {
-    message.error((e as any)?.message ?? 'Failed to update service')
+    const err = e as any
+    if (err?.status === 409) {
+      message.warning(err.message ?? 'Port conflict — one or more host ports are already in use')
+    } else {
+      message.error(err?.message ?? 'Failed to update service')
+    }
   } finally {
     editSvcSaving.value = false
   }
@@ -852,7 +862,12 @@ async function confirmDeployTarget() {
     })
     message.success(`${tpl.name} added to ${apps.value.find(a => a.appId === targetAppId)?.appName ?? 'app'}`)
   } catch (e: unknown) {
-    message.error((e as any)?.message ?? 'Failed to add service')
+    const err = e as any
+    if (err?.status === 409) {
+      message.warning(err.message ?? 'Port conflict — one or more host ports are already in use')
+    } else {
+      message.error(err?.message ?? 'Failed to add service')
+    }
   } finally {
     deployTargetBusy.value = false
     deployTargetOpen.value = false
@@ -955,6 +970,32 @@ function cleanPorts(rows: PortMappingRow[]): string[] {
     .filter(Boolean)
 }
 
+interface PortOwner { appId: number; appName: string; serviceName: string }
+
+const usedHostPorts = computed(() => {
+  const map = new Map<string, PortOwner>()
+  for (const app of apps.value) {
+    for (const svc of app.services) {
+      for (const p of svc.config.ports ?? []) {
+        const withoutProto = p.split('/')[0]
+        const parts = withoutProto.split(':')
+        const hp = parts.length === 3 ? parts[1].trim() : parts.length === 2 ? parts[0].trim() : null
+        if (hp) map.set(hp, { appId: app.appId, appName: app.appName, serviceName: svc.serviceName })
+      }
+    }
+  }
+  return map
+})
+
+function portConflictMsg(hostPort: string, excludeAppId?: number, excludeServiceName?: string): string | null {
+  const hp = hostPort.trim()
+  if (!hp) return null
+  const owner = usedHostPorts.value.get(hp)
+  if (!owner) return null
+  if (excludeAppId != null && owner.appId === excludeAppId && excludeServiceName === owner.serviceName) return null
+  return `Port ${hp} is already used by ${owner.serviceName} in ${owner.appName}`
+}
+
 function formatLines(arr?: string[]): string {
   return arr ? arr.join('\n') : ''
 }
@@ -1029,7 +1070,12 @@ async function deploy() {
     drawerOpen.value = false
     await load()
   } catch (e: unknown) {
-    message.error((e as any)?.message ?? 'Deploy failed')
+    const err = e as any
+    if (err?.status === 409) {
+      message.warning(err.message ?? 'Port conflict — one or more host ports are already in use')
+    } else {
+      message.error(err?.message ?? 'Deploy failed')
+    }
   } finally {
     deploying.value = false
   }
@@ -1398,12 +1444,15 @@ async function deploy() {
         </a-form-item>
         <a-form-item label="Port mappings">
           <div style="display: flex; flex-direction: column; gap: 6px">
-            <div v-for="(port, pi) in addSvcForm.ports" :key="pi" style="display: flex; gap: 8px; align-items: center">
-              <a-input v-model:value="port.host" placeholder="Host port" style="flex: 2; font-family: monospace; font-size: 12px" />
-              <a-input v-model:value="port.container" placeholder="Container port" style="flex: 3; font-family: monospace; font-size: 12px" />
-              <a-button type="text" size="small" danger @click="addSvcForm.ports.splice(pi, 1)">
-                <template #icon><DeleteOutlined /></template>
-              </a-button>
+            <div v-for="(port, pi) in addSvcForm.ports" :key="pi" style="display: flex; flex-direction: column; gap: 2px">
+              <div style="display: flex; gap: 8px; align-items: center">
+                <a-input v-model:value="port.host" placeholder="Host port" style="flex: 2; font-family: monospace; font-size: 12px" :status="portConflictMsg(port.host) ? 'warning' : undefined" />
+                <a-input v-model:value="port.container" placeholder="Container port" style="flex: 3; font-family: monospace; font-size: 12px" />
+                <a-button type="text" size="small" danger @click="addSvcForm.ports.splice(pi, 1)">
+                  <template #icon><DeleteOutlined /></template>
+                </a-button>
+              </div>
+              <div v-if="portConflictMsg(port.host)" style="color: #faad14; font-size: 11px; padding-left: 2px">{{ portConflictMsg(port.host) }}</div>
             </div>
             <a-button type="dashed" size="small" @click="addSvcForm.ports.push({ host: '', container: '' })" style="width: fit-content">
               <template #icon><PlusOutlined /></template> Add port
@@ -1552,12 +1601,15 @@ async function deploy() {
         </a-form-item>
         <a-form-item label="Port mappings">
           <div style="display: flex; flex-direction: column; gap: 6px">
-            <div v-for="(port, pi) in editSvcForm.ports" :key="pi" style="display: flex; gap: 8px; align-items: center">
-              <a-input v-model:value="port.host" placeholder="Host port" style="flex: 2; font-family: monospace; font-size: 12px" />
-              <a-input v-model:value="port.container" placeholder="Container port" style="flex: 3; font-family: monospace; font-size: 12px" />
-              <a-button type="text" size="small" danger @click="editSvcForm.ports.splice(pi, 1)">
-                <template #icon><DeleteOutlined /></template>
-              </a-button>
+            <div v-for="(port, pi) in editSvcForm.ports" :key="pi" style="display: flex; flex-direction: column; gap: 2px">
+              <div style="display: flex; gap: 8px; align-items: center">
+                <a-input v-model:value="port.host" placeholder="Host port" style="flex: 2; font-family: monospace; font-size: 12px" :status="portConflictMsg(port.host, editSvcTargetApp?.appId, editSvcTargetSvc?.serviceName) ? 'warning' : undefined" />
+                <a-input v-model:value="port.container" placeholder="Container port" style="flex: 3; font-family: monospace; font-size: 12px" />
+                <a-button type="text" size="small" danger @click="editSvcForm.ports.splice(pi, 1)">
+                  <template #icon><DeleteOutlined /></template>
+                </a-button>
+              </div>
+              <div v-if="portConflictMsg(port.host, editSvcTargetApp?.appId, editSvcTargetSvc?.serviceName)" style="color: #faad14; font-size: 11px; padding-left: 2px">{{ portConflictMsg(port.host, editSvcTargetApp?.appId, editSvcTargetSvc?.serviceName) }}</div>
             </div>
             <a-button type="dashed" size="small" @click="editSvcForm.ports.push({ host: '', container: '' })" style="width: fit-content">
               <template #icon><PlusOutlined /></template> Add port
@@ -1792,12 +1844,15 @@ async function deploy() {
 
           <a-form-item label="Port mappings" style="margin-bottom: 10px">
             <div style="display: flex; flex-direction: column; gap: 6px">
-              <div v-for="(port, pi) in svc.ports" :key="pi" style="display: flex; gap: 8px; align-items: center">
-                <a-input v-model:value="port.host" placeholder="Host port" style="flex: 2; font-family: monospace; font-size: 12px" />
-                <a-input v-model:value="port.container" placeholder="Container port" style="flex: 3; font-family: monospace; font-size: 12px" />
-                <a-button type="text" size="small" danger @click="svc.ports.splice(pi, 1)">
-                  <template #icon><DeleteOutlined /></template>
-                </a-button>
+              <div v-for="(port, pi) in svc.ports" :key="pi" style="display: flex; flex-direction: column; gap: 2px">
+                <div style="display: flex; gap: 8px; align-items: center">
+                  <a-input v-model:value="port.host" placeholder="Host port" style="flex: 2; font-family: monospace; font-size: 12px" :status="portConflictMsg(port.host) ? 'warning' : undefined" />
+                  <a-input v-model:value="port.container" placeholder="Container port" style="flex: 3; font-family: monospace; font-size: 12px" />
+                  <a-button type="text" size="small" danger @click="svc.ports.splice(pi, 1)">
+                    <template #icon><DeleteOutlined /></template>
+                  </a-button>
+                </div>
+                <div v-if="portConflictMsg(port.host)" style="color: #faad14; font-size: 11px; padding-left: 2px">{{ portConflictMsg(port.host) }}</div>
               </div>
               <a-button type="dashed" size="small" @click="svc.ports.push({ host: '', container: '' })" style="width: fit-content">
                 <template #icon><PlusOutlined /></template> Add port
