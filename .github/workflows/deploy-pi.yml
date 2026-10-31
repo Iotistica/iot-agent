@@ -23,7 +23,7 @@ jobs:
           "%PLINK%" %PLINK_ARGS%
           -pw "${{ secrets.PI_SSH_PASS }}"
           ${{ secrets.PI_SSH_USER }}@${{ secrets.PI_SSH_HOST }}
-          "curl -sfL https://get.iotistica.com/agent | sudo sh"
+          "curl -sfL https://get.iotistica.com/agent/builds/latest/install.sh | sudo IOTISTICA_DOWNLOAD_BASE_URL=https://get.iotistica.com/agent/builds/latest sh"
 
       - name: Verify agent version
         shell: cmd
