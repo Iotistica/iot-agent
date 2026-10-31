@@ -3,6 +3,7 @@ import type { RetryManager } from './retry-manager';
 import type { HealthCheckManager } from './health-check-manager';
 import type { AgentLogger } from '../logging/agent-logger';
 import { LogComponents } from '../logging/types';
+import { serviceRetryKey, pruneObsoleteServiceRetries } from './state-helpers';
 import { ensureSocketDestination, removeSocketDestination } from './socket-destination-lifecycle';
 
 interface StepExecutorContext {
@@ -42,6 +43,7 @@ interface StepExecutorContext {
 	unpauseContainer: (containerId: string) => Promise<void>;
 	removeContainer: (containerId: string) => Promise<void>;
 	startContainer: (service: ContainerService) => Promise<string>;
+	getContainerRunDurationMs?: (containerId: string) => Promise<number | undefined>;
 	attachLogsToContainer: (
 		containerId: string,
 		service: ContainerService,
@@ -83,6 +85,50 @@ export function getStepKey(step: AppStep): string {
 			return `unknown:${(exhaustiveCheck as { action: string }).action}`;
 		}
 	}
+}
+
+/** A run at least this long (verified from Docker timestamps) earns a fresh retry budget. */
+const STABLE_UPTIME_MS = 5 * 60 * 1000;
+
+/**
+ * Bounded restart gate shared by create and restart paths. Throws while in backoff
+ * or once the terminal (CrashLoopBackOff) state is reached.
+ */
+function assertRestartAllowed(
+	ctx: StepExecutorContext,
+	stepKey: string,
+	appId: number,
+	serviceId: number,
+): void {
+	if (ctx.retryManager.shouldRetry(stepKey)) {
+		return;
+	}
+	const state = ctx.retryManager.getState(stepKey);
+	if (ctx.retryManager.isTerminal(stepKey)) {
+		ctx.markServiceAsError(
+			appId,
+			serviceId,
+			'CrashLoopBackOff',
+			`Giving up after ${state?.count ?? 0} failed start attempts: ${state?.lastError ?? 'unknown error'}`,
+		);
+		throw new Error(`Max start retries exceeded for service ${serviceId}`);
+	}
+	throw new Error(
+		`Service ${serviceId} start is in backoff until ${state?.nextRetry?.toISOString() ?? 'later'}`,
+	);
+}
+
+function recordStartFailure(
+	ctx: StepExecutorContext,
+	stepKey: string,
+	appId: number,
+	serviceId: number,
+	error: any,
+): void {
+	const message = error?.message ?? String(error);
+	ctx.retryManager.recordFailure(stepKey, message, error?.retryable === false ? false : undefined);
+	const terminal = ctx.retryManager.isTerminal(stepKey);
+	ctx.markServiceAsError(appId, serviceId, terminal ? 'CrashLoopBackOff' : 'StartFailure', message);
 }
 
 export async function executeStep(
@@ -176,6 +222,21 @@ export async function executeStep(
 				serviceId: step.serviceId,
 			});
 
+			const stoppedService = ctx.getServiceFromCurrentState(step.appId, step.serviceId);
+			if (stoppedService) {
+				pruneObsoleteServiceRetries(ctx.retryManager, step.appId, stoppedService);
+			}
+			const restartKey = stoppedService
+				? serviceRetryKey(step.appId, stoppedService)
+				: getStepKey(step);
+			// Verified uptime of the run that just ended (not time between attempts).
+			const runMs = await ctx.getContainerRunDurationMs?.(step.containerId);
+			const stableRun = runMs !== undefined && runMs >= STABLE_UPTIME_MS;
+			if (stableRun) {
+				ctx.retryManager.clearState(restartKey);
+			}
+			assertRestartAllowed(ctx, restartKey, step.appId, step.serviceId);
+
 			try {
 				const service = ctx.getServiceFromCurrentState(step.appId, step.serviceId);
 				if (!service) {
@@ -187,6 +248,11 @@ export async function executeStep(
 				ctx.removeServiceFromCurrentState(step.appId, step.serviceId);
 
 				const newContainerId = await ctx.startContainer(service);
+				// Exactly one retry unit per attempt: the restart itself succeeded, so the only
+				// failure to account for is the unexpected exit of the previous (unstable) run.
+				if (!stableRun) {
+					ctx.retryManager.recordFailure(restartKey, 'Container exited before reaching stable uptime', true);
+				}
 				ctx.addServiceToCurrentState(step.appId, service, newContainerId);
 				ctx.markServiceAsRunning(step.appId, step.serviceId);
 				await ctx.attachLogsToContainer(newContainerId, service);
@@ -224,12 +290,7 @@ export async function executeStep(
 						serviceId: step.serviceId,
 					},
 				);
-				ctx.markServiceAsError(
-					step.appId,
-					step.serviceId,
-					'StartFailure',
-					error.message,
-				);
+				recordStartFailure(ctx, restartKey, step.appId, step.serviceId, error);
 				throw error;
 			}
 			break;
@@ -258,8 +319,12 @@ export async function executeStep(
 		}
 
 		case 'startContainer': {
+			pruneObsoleteServiceRetries(ctx.retryManager, step.appId, step.service);
+			const startKey = serviceRetryKey(step.appId, step.service);
+			assertRestartAllowed(ctx, startKey, step.appId, step.service.serviceId);
 			try {
 				const containerId = await ctx.startContainer(step.service);
+				ctx.retryManager.recordSuccess(startKey);
 				ctx.addServiceToCurrentState(step.appId, step.service, containerId);
 				ctx.markServiceAsRunning(step.appId, step.service.serviceId);
 				await ctx.attachLogsToContainer(containerId, step.service);
@@ -288,12 +353,7 @@ export async function executeStep(
 						serviceName: step.service.serviceName,
 					},
 				);
-				ctx.markServiceAsError(
-					step.appId,
-					step.service.serviceId,
-					'StartFailure',
-					error.message,
-				);
+				recordStartFailure(ctx, startKey, step.appId, step.service.serviceId, error);
 				throw error;
 			}
 			break;

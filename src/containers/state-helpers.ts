@@ -1,6 +1,8 @@
 import type { AgentLogger } from '../logging/agent-logger';
 import { LogComponents } from '../logging/types';
+import { createHash } from 'crypto';
 import type { RetryManager } from './retry-manager';
+import { resolveContainerSecurityPolicy, permissionFailureHint } from './container-security';
 import type { ContainerService, DeviceState } from './container-manager';
 
 interface StateHelpersContext {
@@ -15,6 +17,33 @@ export type ServiceErrorType =
 	| 'ErrImagePull'
 	| 'StartFailure'
 	| 'CrashLoopBackOff';
+
+/**
+ * Retry key for a service's start/restart budget. It includes a hash of the deployment
+ * config, so editing the config (e.g. adding a capability) yields a fresh budget while the
+ * state itself stays in the persisted RetryManager (survives agent restarts).
+ */
+export function serviceRetryKey(appId: number, service: ContainerService): string {
+	const hash = createHash('sha256')
+		.update(JSON.stringify([service.imageName, service.config]))
+		.digest('hex')
+		.slice(0, 12);
+	return `service:${appId}:${service.serviceId}:${hash}`;
+}
+
+/**
+ * Drop retry records of this service created for other config hashes (and the legacy
+ * un-hashed key). Other services and the current config's budget are untouched.
+ */
+export function pruneObsoleteServiceRetries(
+	retryManager: Pick<RetryManager, 'clearStatesWithPrefix' | 'clearState'>,
+	appId: number,
+	service: ContainerService,
+): void {
+	const current = serviceRetryKey(appId, service);
+	retryManager.clearStatesWithPrefix(`service:${appId}:${service.serviceId}:`, current);
+	retryManager.clearState(`service:${appId}:${service.serviceId}`);
+}
 
 export function markServiceAsError(
 	ctx: StateHelpersContext,
@@ -49,15 +78,24 @@ export function markServiceAsError(
 
 	const retryKey =
 		typeof serviceIdOrImage === 'number'
-			? `service:${appId}:${serviceIdOrImage}`
+			? serviceRetryKey(appId, service)
 			: `image:${serviceIdOrImage}`;
 
 	const retryState = ctx.retryManager.getState(retryKey);
 
+	let securityPolicy;
+	try {
+		securityPolicy = resolveContainerSecurityPolicy(service.config).summary;
+	} catch {
+		// invalid override: the error message already explains why
+	}
+	const hint = permissionFailureHint(message);
+
 	service.serviceStatus = 'error';
 	service.error = {
 		type: errorType,
-		message,
+		message: hint && !message.includes(hint) ? `${message} ${hint}` : message,
+		securityPolicy,
 		timestamp: new Date().toISOString(),
 		retryCount: retryState?.count || 0,
 		nextRetry: retryState?.nextRetry?.toISOString(),

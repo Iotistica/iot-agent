@@ -25,6 +25,7 @@ import crypto from 'crypto';
 import type Docker from 'dockerode';
 import { DockerManager } from './docker-manager';
 import { RetryManager } from './retry-manager';
+import type { ServiceSecurityConfig, SecurityPolicySummary } from './container-security';
 import { HealthCheckManager } from './health-check-manager';
 import { type ContainerHealthProbe as HealthProbe } from './types';
 import { cloneDeep, uniq } from '../lib/collection-utils';
@@ -122,6 +123,8 @@ export interface ContainerService {
 		pidMode?: string;            // BLOCKED if 'host'
 		ipcMode?: string;            // BLOCKED if 'host'
 		usernsMode?: string;         // BLOCKED if 'host'
+		// Validated per-app exceptions to the secure defaults (CapDrop ALL, no-new-privileges)
+		security?: ServiceSecurityConfig;
 		
 		// K8s-style resource limits
 		resources?: {
@@ -218,6 +221,7 @@ export interface ContainerService {
 		timestamp: string;
 		retryCount: number;
 		nextRetry?: string; // ISO timestamp
+		securityPolicy?: SecurityPolicySummary;
 	};
 }
 
@@ -936,6 +940,8 @@ export class ContainerManager extends EventEmitter {
 			unpauseContainer: (containerId) => this.unpauseContainer(containerId),
 			removeContainer: (containerId) => this.removeContainer(containerId),
 			startContainer: (service) => this.startContainer(service),
+			getContainerRunDurationMs: (containerId) =>
+				this.dockerManager.getContainerRunDurationMs(containerId),
 			attachLogsToContainer: (containerId, service) =>
 				this.attachLogsToContainer(containerId, service),
 			startHealthMonitoring: (containerId, service) => {
