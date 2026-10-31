@@ -14,7 +14,7 @@ jobs:
   deploy:
     name: Deploy Agent to Test Pi
     if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
-    runs-on: [self-hosted, pi]
+    runs-on: [self-hosted]
 
     steps:
       - name: Deploy via SSH
