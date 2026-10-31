@@ -24,6 +24,8 @@ import bcrypt from 'bcryptjs';
 import { UserModel } from '../db/models/admin-user.model.js';
 import { AdminSessionModel } from '../db/models/admin-session.model.js';
 import { requireRole, parseCookie, SESSION_COOKIE } from './middleware/roles.js';
+import { AppMarketplaceModel } from '../db/models/app-marketplace.model.js';
+import type { AppTemplate, AppTemplateService } from '../data/app-templates.js';
 
 export const router = express.Router();
 
@@ -249,14 +251,133 @@ router.get('/v1/apps/:appId', async (req: Request, res: Response, next: NextFunc
 	}
 });
 
+function validateAppTemplate(value: unknown): { template?: AppTemplate; error?: string } {
+	if (!value || typeof value !== 'object' || Array.isArray(value)) {
+		return { error: 'Marketplace entry must be an object' };
+	}
+
+	const entry = value as Record<string, unknown>;
+	const requiredStrings = ['id', 'name', 'category', 'description', 'color', 'letter', 'appName'];
+	for (const field of requiredStrings) {
+		if (typeof entry[field] !== 'string' || !entry[field].trim()) {
+			return { error: `${field} is required` };
+		}
+	}
+	if (!/^[a-z0-9][a-z0-9-]*$/.test(entry.id as string)) {
+		return { error: 'id must contain lowercase letters, numbers, and hyphens' };
+	}
+	if (!/^#[0-9a-f]{6}$/i.test(entry.color as string)) {
+		return { error: 'color must be a six-digit hex color' };
+	}
+	if ((entry.letter as string).length > 5) {
+		return { error: 'letter must be 5 characters or fewer' };
+	}
+	if (!Array.isArray(entry.services) || entry.services.length === 0) {
+		return { error: 'services must contain at least one service' };
+	}
+
+	const services: AppTemplateService[] = [];
+	for (const value of entry.services) {
+		if (!value || typeof value !== 'object' || Array.isArray(value)) {
+			return { error: 'Each service must be an object' };
+		}
+		const service = value as Record<string, unknown>;
+		if (typeof service.serviceName !== 'string' || !service.serviceName.trim() ||
+			typeof service.image !== 'string' || !service.image.trim()) {
+			return { error: 'Each service requires a serviceName and image' };
+		}
+		if (service.ports !== undefined &&
+			(!Array.isArray(service.ports) || service.ports.some(port => typeof port !== 'string'))) {
+			return { error: 'Service ports must be an array of strings' };
+		}
+		if (service.volumes !== undefined &&
+			(!Array.isArray(service.volumes) || service.volumes.some(volume => typeof volume !== 'string'))) {
+			return { error: 'Service volumes must be an array of strings' };
+		}
+		if (service.environment !== undefined &&
+			(!service.environment || typeof service.environment !== 'object' || Array.isArray(service.environment) ||
+				Object.values(service.environment).some(item => typeof item !== 'string'))) {
+			return { error: 'Service environment must contain string values' };
+		}
+		if (service.restart !== undefined && typeof service.restart !== 'string') {
+			return { error: 'Service restart must be a string' };
+		}
+		if (service.enableSocketDestination !== undefined && typeof service.enableSocketDestination !== 'boolean') {
+			return { error: 'Service enableSocketDestination must be a boolean' };
+		}
+		services.push(service as unknown as AppTemplateService);
+	}
+
+	return { template: { ...entry, services } as unknown as AppTemplate };
+}
+
+function getMarketplaceCategories(templates: AppTemplate[]): string[] {
+	return ['All', ...Array.from(new Set(templates.map(template => template.category)))];
+}
+
 /**
  * GET /v1/app-templates
- * Returns the built-in catalog of one-click deployable application templates.
+ * Returns the database-backed catalog of one-click deployable application templates.
  */
-import { APP_TEMPLATES, TEMPLATE_CATEGORIES } from '../data/app-templates.js';
+router.get('/v1/app-templates', (_req: Request, res: Response, next: NextFunction) => {
+	try {
+		const templates = AppMarketplaceModel.getAll();
+		return res.status(200).json({ templates, categories: getMarketplaceCategories(templates) });
+	} catch (error) {
+		next(error);
+	}
+});
 
-router.get('/v1/app-templates', (_req: Request, res: Response) => {
-	return res.status(200).json({ templates: APP_TEMPLATES, categories: TEMPLATE_CATEGORIES });
+router.get('/v1/app-templates/:id', (req: Request, res: Response, next: NextFunction) => {
+	try {
+		const template = AppMarketplaceModel.getById(req.params.id);
+		if (!template) return res.status(404).json({ error: 'Marketplace entry not found' });
+		return res.status(200).json(template);
+	} catch (error) {
+		next(error);
+	}
+});
+
+router.post('/v1/app-templates', requireRole('admin'), (req: Request, res: Response, next: NextFunction) => {
+	const { template, error } = validateAppTemplate(req.body);
+	if (error || !template) return res.status(400).json({ error });
+	try {
+		if (AppMarketplaceModel.getById(template.id)) {
+			return res.status(409).json({ error: 'A marketplace entry with this id already exists' });
+		}
+		return res.status(201).json(AppMarketplaceModel.create(template));
+	} catch (err) {
+		if (err instanceof Error && err.message.includes('UNIQUE constraint failed')) {
+			return res.status(409).json({ error: 'A marketplace entry with this id already exists' });
+		}
+		next(err);
+	}
+});
+
+router.put('/v1/app-templates/:id', requireRole('admin'), (req: Request, res: Response, next: NextFunction) => {
+	const { template, error } = validateAppTemplate(req.body);
+	if (error || !template) return res.status(400).json({ error });
+	if (template.id !== req.params.id) {
+		return res.status(400).json({ error: 'Marketplace entry id cannot be changed' });
+	}
+	try {
+		const updated = AppMarketplaceModel.update(req.params.id, template);
+		if (!updated) return res.status(404).json({ error: 'Marketplace entry not found' });
+		return res.status(200).json(updated);
+	} catch (err) {
+		next(err);
+	}
+});
+
+router.delete('/v1/app-templates/:id', requireRole('admin'), (req: Request, res: Response, next: NextFunction) => {
+	try {
+		if (!AppMarketplaceModel.delete(req.params.id)) {
+			return res.status(404).json({ error: 'Marketplace entry not found' });
+		}
+		return res.status(204).send();
+	} catch (error) {
+		next(error);
+	}
 });
 
 /**

@@ -57,6 +57,11 @@ const router = createRouter({
       meta: { title: 'Applications' },
     },
     {
+      path: '/marketplace',
+      component: () => import('@/views/MarketplaceView.vue'),
+      meta: { title: 'Marketplace' },
+    },
+    {
       path: '/anomaly',
       component: () => import('@/views/AnomalyView.vue'),
       meta: { title: 'Detection' },
