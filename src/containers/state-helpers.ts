@@ -1,5 +1,6 @@
 import type { AgentLogger } from '../logging/agent-logger';
 import { LogComponents } from '../logging/types';
+import { createHash } from 'crypto';
 import type { RetryManager } from './retry-manager';
 import { resolveContainerSecurityPolicy, permissionFailureHint } from './container-security';
 import type { ContainerService, DeviceState } from './container-manager';
@@ -16,6 +17,19 @@ export type ServiceErrorType =
 	| 'ErrImagePull'
 	| 'StartFailure'
 	| 'CrashLoopBackOff';
+
+/**
+ * Retry key for a service's start/restart budget. It includes a hash of the deployment
+ * config, so editing the config (e.g. adding a capability) yields a fresh budget while the
+ * state itself stays in the persisted RetryManager (survives agent restarts).
+ */
+export function serviceRetryKey(appId: number, service: ContainerService): string {
+	const hash = createHash('sha256')
+		.update(JSON.stringify([service.imageName, service.config]))
+		.digest('hex')
+		.slice(0, 12);
+	return `service:${appId}:${service.serviceId}:${hash}`;
+}
 
 export function markServiceAsError(
 	ctx: StateHelpersContext,
@@ -50,7 +64,7 @@ export function markServiceAsError(
 
 	const retryKey =
 		typeof serviceIdOrImage === 'number'
-			? `service:${appId}:${serviceIdOrImage}`
+			? serviceRetryKey(appId, service)
 			: `image:${serviceIdOrImage}`;
 
 	const retryState = ctx.retryManager.getState(retryKey);

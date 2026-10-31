@@ -3,6 +3,7 @@ import type { RetryManager } from './retry-manager';
 import type { HealthCheckManager } from './health-check-manager';
 import type { AgentLogger } from '../logging/agent-logger';
 import { LogComponents } from '../logging/types';
+import { serviceRetryKey } from './state-helpers';
 import { ensureSocketDestination, removeSocketDestination } from './socket-destination-lifecycle';
 
 interface StepExecutorContext {
@@ -42,6 +43,7 @@ interface StepExecutorContext {
 	unpauseContainer: (containerId: string) => Promise<void>;
 	removeContainer: (containerId: string) => Promise<void>;
 	startContainer: (service: ContainerService) => Promise<string>;
+	getContainerRunDurationMs?: (containerId: string) => Promise<number | undefined>;
 	attachLogsToContainer: (
 		containerId: string,
 		service: ContainerService,
@@ -85,23 +87,8 @@ export function getStepKey(step: AppStep): string {
 	}
 }
 
+/** A run at least this long (verified from Docker timestamps) earns a fresh retry budget. */
 const STABLE_UPTIME_MS = 5 * 60 * 1000;
-const lastRestartAt = new Map<string, number>();
-const lastConfigFingerprint = new Map<string, string>();
-
-/** A changed deployment config (e.g. new security exceptions) deserves a fresh retry budget. */
-function resetRetriesOnConfigChange(
-	ctx: StepExecutorContext,
-	stepKey: string,
-	service: ContainerService,
-): void {
-	const fingerprint = JSON.stringify([service.imageName, service.config]);
-	const previous = lastConfigFingerprint.get(stepKey);
-	if (previous !== undefined && previous !== fingerprint) {
-		ctx.retryManager.clearState(stepKey);
-	}
-	lastConfigFingerprint.set(stepKey, fingerprint);
-}
 
 /**
  * Bounded restart gate shared by create and restart paths. Throws while in backoff
@@ -235,15 +222,17 @@ export async function executeStep(
 				serviceId: step.serviceId,
 			});
 
-			const restartKey = getStepKey(step);
-			const now = Date.now();
-			if (now - (lastRestartAt.get(restartKey) ?? now) >= STABLE_UPTIME_MS) {
+			const stoppedService = ctx.getServiceFromCurrentState(step.appId, step.serviceId);
+			const restartKey = stoppedService
+				? serviceRetryKey(step.appId, stoppedService)
+				: getStepKey(step);
+			// Verified uptime of the run that just ended (not time between attempts).
+			const runMs = await ctx.getContainerRunDurationMs?.(step.containerId);
+			const stableRun = runMs !== undefined && runMs >= STABLE_UPTIME_MS;
+			if (stableRun) {
 				ctx.retryManager.clearState(restartKey);
 			}
 			assertRestartAllowed(ctx, restartKey, step.appId, step.serviceId);
-			lastRestartAt.set(restartKey, now);
-			// Count every restart of an exited container; a stable run resets the counter above.
-			ctx.retryManager.recordFailure(restartKey, 'Container exited; restarting', true);
 
 			try {
 				const service = ctx.getServiceFromCurrentState(step.appId, step.serviceId);
@@ -256,6 +245,11 @@ export async function executeStep(
 				ctx.removeServiceFromCurrentState(step.appId, step.serviceId);
 
 				const newContainerId = await ctx.startContainer(service);
+				// Exactly one retry unit per attempt: the restart itself succeeded, so the only
+				// failure to account for is the unexpected exit of the previous (unstable) run.
+				if (!stableRun) {
+					ctx.retryManager.recordFailure(restartKey, 'Container exited before reaching stable uptime', true);
+				}
 				ctx.addServiceToCurrentState(step.appId, service, newContainerId);
 				ctx.markServiceAsRunning(step.appId, step.serviceId);
 				await ctx.attachLogsToContainer(newContainerId, service);
@@ -322,11 +316,11 @@ export async function executeStep(
 		}
 
 		case 'startContainer': {
-			resetRetriesOnConfigChange(ctx, stepKey, step.service);
-			assertRestartAllowed(ctx, stepKey, step.appId, step.service.serviceId);
+			const startKey = serviceRetryKey(step.appId, step.service);
+			assertRestartAllowed(ctx, startKey, step.appId, step.service.serviceId);
 			try {
 				const containerId = await ctx.startContainer(step.service);
-				ctx.retryManager.recordSuccess(stepKey);
+				ctx.retryManager.recordSuccess(startKey);
 				ctx.addServiceToCurrentState(step.appId, step.service, containerId);
 				ctx.markServiceAsRunning(step.appId, step.service.serviceId);
 				await ctx.attachLogsToContainer(containerId, step.service);
@@ -355,7 +349,7 @@ export async function executeStep(
 						serviceName: step.service.serviceName,
 					},
 				);
-				recordStartFailure(ctx, stepKey, step.appId, step.service.serviceId, error);
+				recordStartFailure(ctx, startKey, step.appId, step.service.serviceId, error);
 				throw error;
 			}
 			break;

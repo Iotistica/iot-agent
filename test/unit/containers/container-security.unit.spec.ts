@@ -15,7 +15,7 @@ import {
 	ContainerSecurityPolicyError,
 } from '../../../src/containers/container-security';
 import { executeStep } from '../../../src/containers/step-executor';
-import { markServiceAsError } from '../../../src/containers/state-helpers';
+import { markServiceAsError, serviceRetryKey } from '../../../src/containers/state-helpers';
 import type { ContainerService } from '../../../src/containers/container-manager';
 
 function svc(config: any = {}): ContainerService {
@@ -144,9 +144,10 @@ describe('DockerManager lifecycle uses one resolved policy', () => {
 });
 
 describe('bounded restart retries', () => {
-	function makeCtx(startContainer: jest.Mock) {
+	function makeCtx(startContainer: jest.Mock, runMs: any = jest.fn().mockResolvedValue(1000)) {
 		const state = new Map<string, any>();
 		const retryManager: any = {
+			calls: [] as string[],
 			shouldRetry: jest.fn((k: string) => { const s = state.get(k); return !s || (!s.terminal && s.nextRetry.getTime() <= Date.now()); }),
 			recordFailure: jest.fn((k: string, msg: string, retryable?: boolean) => {
 				const s = state.get(k) || { count: 0 };
@@ -165,6 +166,11 @@ describe('bounded restart retries', () => {
 		const ctx: any = {
 			retryManager,
 			startContainer,
+			getContainerRunDurationMs: runMs,
+			getServiceFromCurrentState: () => appService,
+			removeServiceFromCurrentState: jest.fn(),
+			removeContainer: jest.fn().mockResolvedValue(undefined),
+			healthCheckManager: { stopMonitoring: jest.fn() },
 			markServiceAsError: (appId: number, id: any, type: any, msg: string) => markServiceAsError(sctx, appId, id, type, msg),
 			addServiceToCurrentState: jest.fn(), markServiceAsRunning: jest.fn(),
 			attachLogsToContainer: jest.fn(), startHealthMonitoring: jest.fn(),
@@ -205,5 +211,44 @@ describe('bounded restart retries', () => {
 		const fixed: any = { action: 'startContainer', appId: 10, service: svc({ environment: { V: '2' } }) };
 		await executeStep(fixed, ctx);
 		expect(start).toHaveBeenCalledTimes(2);
+	});
+
+	describe('startStoppedContainer accounting', () => {
+		const stopped = (): any => ({ action: 'startStoppedContainer', appId: 10, serviceId: 1, containerId: 'old' });
+
+		it('counts one retry unit when the restart succeeds after an unstable run', async () => {
+			const { ctx, retryManager } = makeCtx(jest.fn().mockResolvedValue('new'));
+			await executeStep(stopped(), ctx);
+			expect(retryManager.recordFailure).toHaveBeenCalledTimes(1);
+			expect(retryManager.recordFailure.mock.calls[0][1]).toMatch(/before reaching stable uptime/);
+		});
+
+		it('counts one retry unit when the restart operation itself fails', async () => {
+			const { ctx, retryManager } = makeCtx(jest.fn().mockRejectedValue(new Error('boom')));
+			await expect(executeStep(stopped(), ctx)).rejects.toThrow('boom');
+			expect(retryManager.recordFailure).toHaveBeenCalledTimes(1);
+			expect(retryManager.recordFailure.mock.calls[0][1]).toBe('boom');
+		});
+
+		it('resets the budget only after a verified stable run', async () => {
+			const stable = makeCtx(jest.fn().mockResolvedValue('new'), jest.fn().mockResolvedValue(10 * 60 * 1000));
+			await executeStep(stopped(), stable.ctx);
+			expect(stable.retryManager.clearState).toHaveBeenCalledWith(serviceRetryKey(10, stable.appService));
+			expect(stable.retryManager.recordFailure).not.toHaveBeenCalled();
+
+			const unknown = makeCtx(jest.fn().mockResolvedValue('new'), jest.fn().mockResolvedValue(undefined));
+			await executeStep(stopped(), unknown.ctx);
+			expect(unknown.retryManager.clearState).not.toHaveBeenCalled();
+		});
+
+		it('time passing between attempts never resets the budget', async () => {
+			const { ctx, retryManager } = makeCtx(jest.fn().mockResolvedValue('new'));
+			jest.useFakeTimers().setSystemTime(0);
+			await executeStep(stopped(), ctx);
+			jest.setSystemTime(60 * 60 * 1000);
+			await executeStep(stopped(), ctx);
+			jest.useRealTimers();
+			expect(retryManager.clearState).not.toHaveBeenCalled();
+		});
 	});
 });

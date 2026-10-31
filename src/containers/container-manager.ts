@@ -940,6 +940,8 @@ export class ContainerManager extends EventEmitter {
 			unpauseContainer: (containerId) => this.unpauseContainer(containerId),
 			removeContainer: (containerId) => this.removeContainer(containerId),
 			startContainer: (service) => this.startContainer(service),
+			getContainerRunDurationMs: (containerId) =>
+				this.dockerManager.getContainerRunDurationMs(containerId),
 			attachLogsToContainer: (containerId, service) =>
 				this.attachLogsToContainer(containerId, service),
 			startHealthMonitoring: (containerId, service) => {

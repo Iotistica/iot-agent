@@ -424,6 +424,23 @@ export class DockerManager extends EventEmitter {
 		};
 	}
 
+	/**
+	 * Verified run duration of the container's last run (StartedAt -> FinishedAt, or now if running).
+	 * Returns undefined when Docker cannot report it.
+	 */
+	async getContainerRunDurationMs(containerId: string): Promise<number | undefined> {
+		try {
+			const info = await this.docker.getContainer(containerId).inspect();
+			const started = Date.parse(info.State?.StartedAt || '');
+			if (!Number.isFinite(started) || started <= 0) return undefined;
+			const finished = info.State?.Running ? NaN : Date.parse(info.State?.FinishedAt || '');
+			const end = Number.isFinite(finished) && finished > 0 ? finished : Date.now();
+			return Math.max(0, end - started);
+		} catch {
+			return undefined;
+		}
+	}
+
 	private hasSecureHostConfig(service: ContainerService, hostConfig?: Docker.HostConfig): boolean {
 		return hostConfigMatchesPolicy(hostConfig, resolveContainerSecurityPolicy(service.config));
 	}
