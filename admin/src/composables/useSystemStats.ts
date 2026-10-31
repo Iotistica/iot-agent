@@ -6,12 +6,15 @@ const PERF_HISTORY = 60
 
 const sysStats = ref<AppSystemStats | null>(null)
 const cpuHistory = ref<number[]>([])
+const cpuSamples = ref<Array<{ timestamp: number; value: number }>>([])
+const lastUpdatedAt = ref<number | null>(null)
 const appMetrics = ref<ContainerMetricsApp[]>([])
 const appCpuHistories = ref<Record<number, number[]>>({})
 const statsLoading = ref(true)
 
 let pollTimer: ReturnType<typeof setInterval> | null = null
 let polling = false
+let pollRequest: Promise<void> | null = null
 
 function pushHistory(buf: number[], val: number) {
   buf.push(val)
@@ -37,28 +40,43 @@ function fmtMb(mb: number | null): string {
   return `${mb} MB`
 }
 
-async function pollOnce() {
-  const [stats, metrics] = await Promise.allSettled([
+function pollOnce(): Promise<void> {
+  if (pollRequest) return pollRequest
+
+  pollRequest = Promise.allSettled([
     containersApi.getSystemStats(),
     containersApi.getContainerMetrics(),
-  ])
+  ]).then(([stats, metrics]) => {
+    const sampledAt = Date.now()
 
-  if (stats.status === 'fulfilled') {
-    sysStats.value = stats.value
-    pushHistory(cpuHistory.value, stats.value.cpu_usage ?? 0)
-  }
-
-  if (metrics.status === 'fulfilled') {
-    appMetrics.value = metrics.value.apps
-    for (const app of metrics.value.apps) {
-      if (!appCpuHistories.value[app.app_id]) {
-        appCpuHistories.value[app.app_id] = []
+    if (stats.status === 'fulfilled') {
+      sysStats.value = stats.value
+      lastUpdatedAt.value = sampledAt
+      if (typeof stats.value.cpu_usage === 'number' && Number.isFinite(stats.value.cpu_usage)) {
+        pushHistory(cpuHistory.value, stats.value.cpu_usage)
+        cpuSamples.value = [
+          ...cpuSamples.value.slice(-(PERF_HISTORY - 1)),
+          { timestamp: sampledAt, value: stats.value.cpu_usage },
+        ]
       }
-      pushHistory(appCpuHistories.value[app.app_id], app.cpu_percent)
     }
-  }
 
-  statsLoading.value = false
+    if (metrics.status === 'fulfilled') {
+      appMetrics.value = metrics.value.apps
+      for (const app of metrics.value.apps) {
+        if (!appCpuHistories.value[app.app_id]) {
+          appCpuHistories.value[app.app_id] = []
+        }
+        pushHistory(appCpuHistories.value[app.app_id], app.cpu_percent)
+      }
+    }
+
+    statsLoading.value = false
+  }).finally(() => {
+    pollRequest = null
+  })
+
+  return pollRequest
 }
 
 function startPolling() {
@@ -90,6 +108,8 @@ export function useSystemStats() {
   return {
     sysStats,
     cpuHistory,
+    cpuSamples,
+    lastUpdatedAt,
     appMetrics,
     appCpuHistories,
     statsLoading,
