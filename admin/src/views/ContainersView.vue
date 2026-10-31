@@ -23,12 +23,14 @@ import {
 } from '@ant-design/icons-vue'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import { containersApi, templatesApi } from '@/api/containers'
-import type { ContainerApp, ContainerService, MarketplaceImage, AppSystemStats } from '@/api/containers'
+import type { ContainerApp, ContainerService, MarketplaceImage } from '@/api/containers'
 import MarketplaceCatalog from '@/components/MarketplaceCatalog.vue'
 import SparklineChart from '@/components/SparklineChart.vue'
 import { useDockerStatus } from '@/composables/useDockerStatus'
+import { useSystemStats } from '@/composables/useSystemStats'
 
 const { dockerAvailable } = useDockerStatus()
+const { sysStats, cpuHistory, appMetrics, storageSegments, startPolling, stopPolling, pollNow, cpuColor, storageColor, fmtMb } = useSystemStats()
 const route = useRoute()
 const router = useRouter()
 
@@ -54,8 +56,9 @@ function stopRefresh() {
 }
 
 onMounted(async () => {
-  await load()
+  await Promise.all([load(), pollNow()])
   startRefresh()
+  startPolling()
   loadMarketplaceImages()
   const templateId = route.query.template
   if (typeof templateId === 'string') {
@@ -67,7 +70,7 @@ onMounted(async () => {
     }
   }
 })
-onUnmounted(() => { stopRefresh(); if (logEs) { logEs.close(); logEs = null } })
+onUnmounted(() => { stopRefresh(); stopPolling(); if (logEs) { logEs.close(); logEs = null } })
 
 // ── Load ──────────────────────────────────────────────────────────────────────
 
@@ -91,75 +94,7 @@ async function load() {
   }
 }
 
-// ── System performance ───────────────────────────────────────────────────────
-
-const PERF_HISTORY = 60
-const sysStats = ref<AppSystemStats | null>(null)
-const cpuHistory = ref<number[]>([])
-
-function pushHistory(buf: number[], val: number) {
-  buf.push(val)
-  if (buf.length > PERF_HISTORY) buf.shift()
-}
-
-function cpuColor(v: number): string {
-  if (v >= 90) return '#ff4d4f'
-  if (v >= 70) return '#faad14'
-  return '#3cb77d'
-}
-
-function storageColor(v: number | null): string {
-  if (v == null) return '#8b949e'
-  if (v >= 90) return '#ff4d4f'
-  if (v >= 75) return '#faad14'
-  return '#1677ff'
-}
-
-function fmtMb(mb: number | null): string {
-  if (mb == null) return '—'
-  if (mb >= 1024) return `${(mb / 1024).toFixed(1)} GB`
-  return `${mb} MB`
-}
-
-const dockerStorageSegments = computed(() => {
-  const disk = sysStats.value?.docker_disk
-  if (!disk) return []
-
-  const reclaimable = sysStats.value?.docker_reclaimable
-  const items = [
-    { key: 'images', label: 'Images', size: disk.images, unused: reclaimable?.images ?? 0, color: '#1677ff', unusedColor: '#69b1ff' },
-    { key: 'volumes', label: 'Volumes', size: disk.volumes, unused: reclaimable?.volumes ?? 0, color: '#722ed1', unusedColor: '#b37feb' },
-    ...(disk.images_by_app ?? []).map(app => ({
-      key: `app-${app.app_id}`,
-      label: app.app_name,
-      size: app.size,
-      unused: 0,
-      color: '#1677ff',
-      unusedColor: '#1677ff',
-    })),
-  ]
-  const normalized = items.map(item => {
-    const size = Number.isFinite(item.size) ? Math.max(0, item.size) : 0
-    const unused = Number.isFinite(item.unused) ? Math.min(size, Math.max(0, item.unused)) : 0
-    return { ...item, size, unused, used: size - unused }
-  })
-  const maxSize = Math.max(0, ...normalized.map(item => item.size))
-  if (maxSize === 0) return []
-
-  return normalized.map(item => ({
-    ...item,
-    usedHeight: (item.used / maxSize) * 100,
-    unusedHeight: (item.unused / maxSize) * 100,
-  }))
-})
-
-async function pollSystemStats() {
-  try {
-    const data = await containersApi.getSystemStats()
-    sysStats.value = data
-    pushHistory(cpuHistory.value, data.cpu_usage ?? 0)
-  } catch { /* non-fatal */ }
-}
+// ── System performance (via composable — persists across navigations) ────────
 
 const purging = ref(false)
 function confirmPurge() {
@@ -173,7 +108,7 @@ function confirmPurge() {
       try {
         const r = await containersApi.purgeUnused()
         message.success(`Purged ${r.images_deleted} images and ${r.volumes_deleted} volumes (${fmtMb(r.space_reclaimed)} freed)`)
-        await pollSystemStats()
+        await pollNow()
       } catch (e) {
         message.error((e as any)?.message ?? 'Purge failed')
       } finally {
@@ -182,10 +117,6 @@ function confirmPurge() {
     },
   })
 }
-
-let perfTimer: ReturnType<typeof setInterval> | null = null
-onMounted(() => { pollSystemStats(); perfTimer = setInterval(pollSystemStats, 5000) })
-onUnmounted(() => { if (perfTimer) clearInterval(perfTimer) })
 
 // ── Status helpers ─────────────────────────────────────────────────────────────
 
@@ -1070,15 +1001,24 @@ async function deploy() {
             <span class="perf-title">CPU Utilization</span>
             <span class="perf-current" :style="{ color: cpuColor(sysStats.cpu_usage) }">{{ sysStats.cpu_usage }}%</span>
           </div>
-          <div class="perf-chart">
+          <div class="perf-chart perf-chart--bleed">
             <SparklineChart
               :data="cpuHistory"
               :color="cpuColor(sysStats.cpu_usage)"
               :fill-color="`${cpuColor(sysStats.cpu_usage)}22`"
-              :height="52"
+              :height="72"
               :max-value="100"
               full-width
             />
+          </div>
+          <div v-if="appMetrics.length" class="app-cpu-list">
+            <div v-for="app in appMetrics" :key="app.app_id" class="app-cpu-row">
+              <span class="app-cpu-name">{{ app.app_name }}</span>
+              <div class="app-cpu-bar-track">
+                <div class="app-cpu-bar-fill" :style="{ width: `${Math.min(app.cpu_percent, 100)}%`, backgroundColor: cpuColor(app.cpu_percent) }" />
+              </div>
+              <span class="app-cpu-value" :style="{ color: cpuColor(app.cpu_percent) }">{{ app.cpu_percent.toFixed(1) }}%</span>
+            </div>
           </div>
         </a-card>
       </a-col>
@@ -1091,34 +1031,19 @@ async function deploy() {
               <span class="perf-sub">{{ fmtMb(sysStats.storage_used) }} / {{ fmtMb(sysStats.storage_total) }}</span>
             </span>
           </div>
-          <div v-if="dockerStorageSegments.length" class="docker-storage">
-            <div class="docker-storage-chart" role="img" :aria-label="`Docker storage: ${fmtMb(sysStats.docker_disk?.images ?? null)} images, ${fmtMb(sysStats.docker_disk?.volumes ?? null)} volumes${(sysStats.docker_disk?.images_by_app ?? []).map(app => `, ${app.app_name}: ${fmtMb(app.size)}`).join('')}`">
-              <div
-                v-for="segment in dockerStorageSegments"
-                :key="segment.key"
-                class="docker-storage-column"
-                :title="`${segment.label}: ${fmtMb(segment.size)}${segment.key === 'images' || segment.key === 'volumes' ? ` (${fmtMb(segment.unused)} reclaimable)` : ' image usage'}`"
-              >
-                <span class="docker-storage-value">{{ fmtMb(segment.size) }}</span>
-                <div class="docker-storage-column-bar">
-                  <div class="docker-storage-segment" :style="{ height: `${segment.usedHeight}%`, backgroundColor: segment.color }" />
-                  <div class="docker-storage-segment" :style="{ height: `${segment.unusedHeight}%`, backgroundColor: segment.unusedColor }" />
-                </div>
-                <span class="docker-storage-label">{{ segment.label }}</span>
-              </div>
-            </div>
-            <div class="perf-breakdown storage-breakdown">
-              <span class="perf-breakdown-item">
+          <div v-if="sysStats.docker_disk" class="storage-overview">
+            <div class="storage-summary">
+              <span class="storage-badge">
                 <span class="perf-dot" style="background: #1677ff" />
-                Images: {{ fmtMb(sysStats.docker_disk?.images ?? null) }}
+                Images: {{ fmtMb(sysStats.docker_disk.images) }}
               </span>
-              <span class="perf-breakdown-item">
+              <span class="storage-badge">
                 <span class="perf-dot" style="background: #722ed1" />
-                Volumes: {{ fmtMb(sysStats.docker_disk?.volumes ?? null) }}
+                Volumes: {{ fmtMb(sysStats.docker_disk.volumes) }}
               </span>
-              <span v-if="sysStats.docker_reclaimable" class="perf-breakdown-item">
+              <span v-if="sysStats.docker_reclaimable" class="storage-badge storage-badge--reclaimable">
                 <span class="perf-dot storage-reclaimable-dot" />
-                Space to claim: {{ fmtMb(sysStats.docker_reclaimable.total) }}
+                Reclaimable: {{ fmtMb(sysStats.docker_reclaimable.total) }}
               </span>
               <a-button
                 v-if="sysStats.docker_reclaimable"
@@ -1129,6 +1054,18 @@ async function deploy() {
               >
                 Purge
               </a-button>
+            </div>
+            <div v-if="storageSegments.length" class="app-storage-list">
+              <div v-for="app in storageSegments" :key="app.app_id" class="app-storage-row">
+                <span class="app-storage-name">{{ app.app_name }}</span>
+                <div class="app-storage-bar-track">
+                  <div
+                    class="app-storage-bar-fill"
+                    :style="{ width: `${storageSegments.length > 0 ? (app.size / storageSegments[0].size) * 100 : 0}%` }"
+                  />
+                </div>
+                <span class="app-storage-value">{{ fmtMb(app.size) }}</span>
+              </div>
             </div>
           </div>
           <a-progress v-else :percent="sysStats.storage_percent ?? 0" :show-info="false" :stroke-color="storageColor(sysStats.storage_percent)" size="small" />
@@ -2159,20 +2096,29 @@ async function deploy() {
 .perf-current { font-size: 18px; font-weight: 600; }
 .perf-sub { font-size: 12px; font-weight: 400; color: var(--text-tertiary); margin-left: 6px; }
 .perf-chart { margin-bottom: 6px; }
-.perf-breakdown { display: flex; gap: 16px; font-size: 12px; color: var(--text-secondary); margin-top: 4px; }
-.perf-breakdown-item { display: flex; align-items: center; gap: 5px; }
+.perf-chart--bleed { margin: 0 -16px 4px; }
 .perf-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
-.docker-storage { margin-top: 12px; }
-.docker-storage-chart { display: flex; justify-content: flex-start; align-items: flex-end; gap: 18px; height: 110px; overflow-x: auto; }
-.docker-storage-column { display: flex; flex-direction: column; align-items: center; justify-content: flex-end; width: 70px; height: 100%; min-width: 70px; }
-.docker-storage-column:first-child { margin-left: auto; }
-.docker-storage-column:last-child { margin-right: auto; }
-.docker-storage-value { font-size: 11px; font-weight: 600; color: var(--text-secondary); margin-bottom: 5px; white-space: nowrap; }
-.docker-storage-column-bar { display: flex; flex-direction: column-reverse; width: 34px; height: 72px; flex-shrink: 0; overflow: hidden; border-radius: 5px 5px 0 0; background: var(--border-color); }
-.docker-storage-segment { display: block; width: 100%; flex-shrink: 0; transition: height 0.3s ease; }
-.docker-storage-label { font-size: 11px; line-height: 18px; color: var(--text-tertiary); margin-top: 3px; max-width: 90px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.storage-breakdown { align-items: center; flex-wrap: wrap; gap: 10px 16px; margin-top: 10px; }
 .storage-reclaimable-dot { background: linear-gradient(90deg, #69b1ff 50%, #b37feb 50%); }
+
+/* ── Per-app CPU breakdown ────────────────────────────────── */
+.app-cpu-list { display: flex; flex-direction: column; gap: 6px; margin-top: 4px; }
+.app-cpu-row { display: flex; align-items: center; gap: 8px; }
+.app-cpu-name { font-size: 12px; color: var(--text-secondary); min-width: 90px; max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.app-cpu-bar-track { flex: 1; height: 6px; border-radius: 3px; background: var(--border-color); overflow: hidden; }
+.app-cpu-bar-fill { height: 100%; border-radius: 3px; transition: width 0.4s ease, background-color 0.3s ease; }
+.app-cpu-value { font-size: 12px; font-weight: 600; min-width: 48px; text-align: right; }
+
+/* ── Storage overview ────────────────────────────────────── */
+.storage-overview { margin-top: 8px; }
+.storage-summary { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; font-size: 12px; color: var(--text-secondary); margin-bottom: 10px; }
+.storage-badge { display: flex; align-items: center; gap: 5px; }
+.storage-badge--reclaimable { color: var(--text-tertiary); }
+.app-storage-list { display: flex; flex-direction: column; gap: 6px; }
+.app-storage-row { display: flex; align-items: center; gap: 8px; }
+.app-storage-name { font-size: 12px; color: var(--text-secondary); min-width: 90px; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.app-storage-bar-track { flex: 1; height: 6px; border-radius: 3px; background: var(--border-color); overflow: hidden; }
+.app-storage-bar-fill { height: 100%; border-radius: 3px; background: #1677ff; transition: width 0.4s ease; }
+.app-storage-value { font-size: 12px; font-weight: 600; color: var(--text-secondary); min-width: 56px; text-align: right; }
 .metric-inner { display: flex; align-items: center; gap: 15px; min-height: 66px; }
 .metric-icon { width: 50px; height: 50px; flex-shrink: 0; border-radius: 14px; display: inline-flex; align-items: center; justify-content: center; font-size: 23px; }
 .icon-apps, .icon-services { background: var(--icon-bg-blue, rgba(22,119,255,0.1)); color: #1677ff; }

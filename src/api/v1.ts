@@ -194,6 +194,73 @@ router.get('/v1/apps/system-stats', async (_req: Request, res: Response, next: N
 
 
 /**
+ * GET /v1/apps/container-metrics
+ * Per-container CPU and memory usage, grouped by app
+ */
+router.get('/v1/apps/container-metrics', async (_req: Request, res: Response, next: NextFunction) => {
+	try {
+		const docker = actions.getDockerInstance();
+		if (!docker) {
+			return res.status(200).json({ apps: [] });
+		}
+
+		const apps = await actions.getAllApps().catch(() => []);
+		const result: Array<{
+			app_id: number;
+			app_name: string;
+			cpu_percent: number;
+			memory_usage: number;
+			memory_limit: number;
+			services: Array<{
+				service_name: string;
+				cpu_percent: number;
+				memory_usage: number;
+				memory_limit: number;
+			}>;
+		}> = [];
+
+		for (const app of apps) {
+			const services: typeof result[number]['services'] = [];
+			for (const svc of app.services) {
+				if (!svc.containerId) continue;
+				try {
+					const container = docker.getContainer(svc.containerId);
+					const stats = await container.stats({ stream: false });
+					const cpuDelta = stats.cpu_stats.cpu_usage.total_usage - stats.precpu_stats.cpu_usage.total_usage;
+					const systemDelta = stats.cpu_stats.system_cpu_usage - stats.precpu_stats.system_cpu_usage;
+					const cpuPercent = systemDelta > 0
+						? (cpuDelta / systemDelta) * (stats.cpu_stats.online_cpus || 1) * 100
+						: 0;
+					services.push({
+						service_name: svc.serviceName,
+						cpu_percent: Math.round(cpuPercent * 100) / 100,
+						memory_usage: stats.memory_stats.usage || 0,
+						memory_limit: stats.memory_stats.limit || 0,
+					});
+				} catch {
+					// container may have stopped between listing and stats call
+				}
+			}
+			if (services.length > 0) {
+				result.push({
+					app_id: app.appId,
+					app_name: app.appName,
+					cpu_percent: Math.round(services.reduce((s, v) => s + v.cpu_percent, 0) * 100) / 100,
+					memory_usage: services.reduce((s, v) => s + v.memory_usage, 0),
+					memory_limit: services.reduce((s, v) => s + v.memory_limit, 0),
+					services,
+				});
+			}
+		}
+
+		return res.status(200).json({ apps: result });
+	} catch (error) {
+		next(error);
+	}
+});
+
+
+/**
  * POST /v1/apps/purge-unused
  * Remove unused Docker images and volumes
  */

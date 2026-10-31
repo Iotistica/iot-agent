@@ -225,9 +225,31 @@ export const containersApi = {
     return client.get<AppSystemStats>('/v1/apps/system-stats').then(r => r.data)
   },
 
+  getContainerMetrics(): Promise<ContainerMetricsResponse> {
+    return client.get<ContainerMetricsResponse>('/v1/apps/container-metrics').then(r => r.data)
+  },
+
   purgeUnused(): Promise<{ images_deleted: number; volumes_deleted: number; space_reclaimed: number }> {
     return client.post('/v1/apps/purge-unused').then(r => r.data)
   },
+}
+
+export interface ContainerMetricsApp {
+  app_id: number
+  app_name: string
+  cpu_percent: number
+  memory_usage: number
+  memory_limit: number
+  services: Array<{
+    service_name: string
+    cpu_percent: number
+    memory_usage: number
+    memory_limit: number
+  }>
+}
+
+export interface ContainerMetricsResponse {
+  apps: ContainerMetricsApp[]
 }
 
 export interface AppSystemStats {
