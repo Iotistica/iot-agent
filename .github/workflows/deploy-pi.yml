@@ -8,7 +8,7 @@ on:
 
 env:
   PLINK: C:\Program Files\PuTTY\plink.exe
-  PLINK_ARGS: -batch -hostkey ed25519:0x77896901f86e55fe8c8dc71506060625f6c1751419b01ee1c3e026aea4417b6d
+  PLINK_ARGS: '-batch -hostkey "ssh-ed25519 256 SHA256:maHVl64ml0JUPrqRJYBOgp5cqAkvwmpDjBS28StNP/o"'
 
 jobs:
   deploy:
