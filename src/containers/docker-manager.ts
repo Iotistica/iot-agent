@@ -414,6 +414,7 @@ export class DockerManager extends EventEmitter {
 			PortBindings: portBindings,
 			Binds: binds.length ? binds : undefined,
 			NetworkMode: service.config.networkMode || 'bridge',
+			ExtraHosts: ['host.docker.internal:host-gateway'],
 			ReadonlyRootfs: service.config.readonlyRootfs || false,
 			RestartPolicy: {
 				Name: service.config.restart || 'unless-stopped',
