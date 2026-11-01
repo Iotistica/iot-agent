@@ -1930,8 +1930,14 @@ export class PublishManager extends EventEmitter {
 			throw new Error('No publish destinations configured');
 		}
 
-		const entries = await this.collectRouteEntries(sourceTopic, compressedPayloadCache, compressionInfoCache, endpointName, messages);
+		const routeStats = { resolvedDestinations: 0 };
+		const entries = await this.collectRouteEntries(sourceTopic, compressedPayloadCache, compressionInfoCache, endpointName, messages, routeStats);
 		if (entries.length === 0) {
+			// Bindings that resolved a destination but had nothing to send (source filters,
+			// dataset windowing, throttling) are not a failure.
+			if (routeStats.resolvedDestinations > 0) {
+				return;
+			}
 			throw new Error('No valid publish destinations configured (missing route_json.topic)');
 		}
 
@@ -1953,6 +1959,7 @@ export class PublishManager extends EventEmitter {
 		compressionInfoCache: Map<string, CompressionInfo>,
 		endpointName: string,
 		messages: ProtocolMessage[],
+		routeStats?: { resolvedDestinations: number },
 	): Promise<Array<[IPublishPlugin, PublishBatchItem[]]>> {
 
 		const batchesByPlugin = new Map<IPublishPlugin, PublishBatchItem[]>();
@@ -1962,6 +1969,7 @@ export class PublishManager extends EventEmitter {
 			if (destinationTopic === null) {
 				continue;
 			}
+			if (routeStats) routeStats.resolvedDestinations++;
 
 			const payloadFormat = this.resolvePayloadFormatForBinding(binding);
 			const route = binding.subscription.route_json as PublishSubscriptionRoute | null;
