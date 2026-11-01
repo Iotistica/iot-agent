@@ -306,7 +306,7 @@ describe('MqttDiscovery', () => {
       expect(groups[1].baseTopic).toBe('humidity');
     });
 
-    it('should handle a single deep topic as one device', () => {
+    it('should strip last segment for deep topics (penultimate-segment fallback)', () => {
       const plugin = new MqttDiscovery();
       const topics = [
         makeValidation('building/floor1/sensor'),
@@ -315,7 +315,24 @@ describe('MqttDiscovery', () => {
       const groups = (plugin as any).groupTopicsIntoDevices(topics);
 
       expect(groups).toHaveLength(1);
-      expect(groups[0].baseTopic).toBe('building/floor1/sensor');
+      expect(groups[0].baseTopic).toBe('building/floor1');
+      expect(groups[0].dataPointTopics.has('sensor')).toBe(true);
+    });
+
+    it('should group single-device sub-topics under one device', () => {
+      const plugin = new MqttDiscovery();
+      const topics = [
+        makeValidation('factory/sim-001/telemetry'),
+        makeValidation('factory/sim-001/status'),
+      ];
+
+      const groups = (plugin as any).groupTopicsIntoDevices(topics);
+
+      expect(groups).toHaveLength(1);
+      expect(groups[0].baseTopic).toBe('factory/sim-001');
+      expect(groups[0].dataPointTopics.size).toBe(2);
+      expect(groups[0].dataPointTopics.has('telemetry')).toBe(true);
+      expect(groups[0].dataPointTopics.has('status')).toBe(true);
     });
 
     it('should use topicPattern when provided', () => {

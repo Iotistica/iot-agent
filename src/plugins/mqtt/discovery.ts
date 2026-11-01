@@ -364,12 +364,36 @@ export class MqttDiscovery extends BaseDiscovery {
 		const deviceLevel = this.findDeviceLevel(root);
 
 		if (deviceLevel === null) {
-			// No grouping pattern found — each topic is its own device (backward compat)
-			return activeTopics.map(v => ({
-				deviceId: v.topic.replace(/\//g, '_'),
-				baseTopic: v.topic,
-				dataPointTopics: new Map([[v.topic, v]]),
-			}));
+			// No sibling-based grouping found. For multi-segment topics (3+),
+			// group by dropping the last segment (treat it as the data channel).
+			// This handles single-device scenarios and is consistent with the
+			// DB migration's penultimate-segment logic.
+			const groups = new Map<string, DeviceGroup>();
+			const ungrouped: DeviceGroup[] = [];
+
+			for (const v of activeTopics) {
+				const segments = v.topic.split('/');
+				if (segments.length >= 3) {
+					const baseTopic = segments.slice(0, -1).join('/');
+					const subTopic = segments[segments.length - 1];
+					if (!groups.has(baseTopic)) {
+						groups.set(baseTopic, {
+							deviceId: segments[segments.length - 2],
+							baseTopic,
+							dataPointTopics: new Map(),
+						});
+					}
+					groups.get(baseTopic)!.dataPointTopics.set(subTopic, v);
+				} else {
+					ungrouped.push({
+						deviceId: v.topic.replace(/\//g, '_'),
+						baseTopic: v.topic,
+						dataPointTopics: new Map([[v.topic, v]]),
+					});
+				}
+			}
+
+			return [...groups.values(), ...ungrouped];
 		}
 
 		// Collect device groups at the identified level
