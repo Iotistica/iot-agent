@@ -1221,7 +1221,21 @@ export class ConfigManager extends EventEmitter {
 
 			if (MqttUserModel.existsByUsername(username)) {
 				const storedPlaintext = MqttUserModel.getStoredPlaintext(username);
-				if (storedPlaintext && storedPlaintext !== password) {
+				if (!storedPlaintext) {
+					// Upgrade path: admin row exists from old code without stored plaintext.
+					// Regenerate the hash from the current env var password so everything
+					// is consistent, and store the plaintext for future deploys.
+					const hash = generateMosquittoHash(password);
+					MqttUserModel.update(username, { password_hash: hash, password_plaintext: password });
+					this.logger?.infoSync("MQTT admin credentials synchronized (plaintext stored for persistence)", {
+						component: LogComponents.configManager,
+						operation: "ensureBootstrapAdminStored",
+						username,
+					});
+				} else if (storedPlaintext !== password) {
+					// The stored password differs from the env var (container redeployed
+					// with hardcoded defaults while the user changed the password).
+					// The database is the source of truth — override the env var.
 					process.env.MQTT_PASSWORD = storedPlaintext;
 					await this.persistEnvPassword(storedPlaintext);
 					this.logger?.infoSync("Restored MQTT admin password from database (env var overridden)", {
