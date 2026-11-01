@@ -614,9 +614,14 @@ const logCopied = ref(false)
 async function copyContainerLogs() {
   if (logLines.value.length === 0) return
   const text = logLines.value.map(line => `${line.ts ? `${line.ts} ` : ''}${line.msg}`).join('\n')
-  await navigator.clipboard.writeText(text)
-  logCopied.value = true
-  setTimeout(() => { logCopied.value = false }, 2000)
+  try {
+    await navigator.clipboard.writeText(text)
+    logCopied.value = true
+    message.success('Logs copied')
+    setTimeout(() => { logCopied.value = false }, 2000)
+  } catch {
+    message.error('Could not copy to clipboard')
+  }
 }
 
 const logSearchMatches = computed(() => {

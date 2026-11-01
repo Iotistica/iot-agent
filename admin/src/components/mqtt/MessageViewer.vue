@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { message } from 'ant-design-vue'
 import { CopyOutlined, CheckOutlined } from '@ant-design/icons-vue'
 import { mqttApi, type TopicNode, type HistoryEntry, type CompressionSnapshot, type JSONSchema } from '@/api/mqtt'
 import { parsePointsPayload } from '@/utils/mqtt-points'
@@ -127,9 +128,14 @@ function fmtTimeMs(ts: number) {
 
 async function copy() {
   if (!displayMessage.value) return
-  await navigator.clipboard.writeText(displayMessage.value)
-  copied.value = true
-  setTimeout(() => { copied.value = false }, 2000)
+  try {
+    await navigator.clipboard.writeText(displayMessage.value)
+    copied.value = true
+    message.success('Message copied')
+    setTimeout(() => { copied.value = false }, 2000)
+  } catch {
+    message.error('Could not copy to clipboard')
+  }
 }
 
 function highlightJson(json: string): string {

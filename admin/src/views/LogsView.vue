@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { h, ref, computed, onMounted, onUnmounted } from 'vue'
+import { message } from 'ant-design-vue'
 import { ReloadOutlined, CopyOutlined, CheckOutlined } from '@ant-design/icons-vue'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import { logsApi } from '@/api/logs'
@@ -142,9 +143,14 @@ async function copyLogs() {
     const src = fmtSource(l.source.name)
     return `${ts}  ${lvl}  ${src}  ${l.message}`
   }).join('\n')
-  await navigator.clipboard.writeText(text)
-  copied.value = true
-  setTimeout(() => { copied.value = false }, 2000)
+  try {
+    await navigator.clipboard.writeText(text)
+    copied.value = true
+    message.success('Logs copied')
+    setTimeout(() => { copied.value = false }, 2000)
+  } catch {
+    message.error('Could not copy to clipboard')
+  }
 }
 
 onMounted(() => { load(); refreshTimer = setInterval(load, 5000) })
