@@ -915,6 +915,7 @@ export class SocketServer {
 			...(point.normalizationDeviceName && {
 				normalizationDeviceName: point.normalizationDeviceName,
 			}),
+			...(point.sourceEndpointName && { sourceEndpointName: point.sourceEndpointName }),
 		}));
 
 		// Return array directly for single reading, or wrapped for batch
