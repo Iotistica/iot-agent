@@ -3699,6 +3699,10 @@ router.get('/v1/pipeline/events', (req: Request, res: Response) => {
 	res.json({ events: activityMonitor.getRecentEvents(limit, protocol) });
 });
 
+router.get('/v1/pipeline/points', (_req: Request, res: Response) => {
+	res.json({ points: activityMonitor.getLatestPoints() });
+});
+
 // Cumulative (never-resets-until-restart) point counters per protocol. Callers
 // poll this repeatedly and diff two snapshots to derive a points/sec rate —
 // same client-side-history approach the Dashboard already uses for CPU/network
