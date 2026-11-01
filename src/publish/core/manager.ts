@@ -2349,8 +2349,9 @@ export class PublishManager extends EventEmitter {
 
 		const matchesSource = (record: ProtocolMessage, fallback?: string): boolean => {
 			const sourceName = this.readExternalNodeCandidate(record) ?? fallback ?? endpointName;
-			return (includedSources.size === 0 || includedSources.has(sourceName))
-				&& !excludedSources.has(sourceName);
+			return (includedSources.size === 0 || includedSources.has(sourceName) || includedSources.has(endpointName))
+				&& !excludedSources.has(sourceName)
+				&& !excludedSources.has(endpointName);
 		};
 
 		const filtered: ProtocolMessage[] = [];
