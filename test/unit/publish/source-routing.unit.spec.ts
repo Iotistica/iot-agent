@@ -40,6 +40,21 @@ describe('PublishManager source routing', () => {
 		expect(messages[0].readings).toHaveLength(2);
 	});
 
+	it('matches the selected endpoint when its readings identify a nested device', () => {
+		const manager = makeManager();
+		const messages = [{
+			readings: [
+				{ deviceName: 'boiler-room', metric: 'temperature', value: 21 },
+			],
+		}];
+
+		expect(manager.filterMessagesForSourceRoute(
+			messages,
+			{ includeDevices: ['opcua-1'] },
+			'opcua-1',
+		)).toEqual(messages);
+	});
+
 	it('excludes selected sources while retaining other readings', () => {
 		const manager = makeManager();
 		const messages = [
