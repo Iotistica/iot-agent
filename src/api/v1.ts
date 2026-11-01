@@ -327,7 +327,7 @@ function validateMarketplaceImage(value: unknown): { image?: MarketplaceImage; e
 	const entry = value as Record<string, unknown>;
 	const requiredStrings = ['id', 'name', 'category', 'description', 'color', 'letter', 'image'];
 	for (const field of requiredStrings) {
-		if (typeof entry[field] !== 'string' || !(entry[field] as string).trim()) {
+		if (typeof entry[field] !== 'string' || !entry[field].trim()) {
 			return { error: `${field} is required` };
 		}
 	}
