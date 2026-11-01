@@ -272,7 +272,6 @@ onMounted(load)
             v-for="template in filteredTemplates"
             :key="template.id"
             class="market-card"
-            @click="requestDeploy(template)"
           >
             <div class="market-card-top">
               <div class="market-avatar" :style="{ background: template.color }">{{ template.letter }}</div>
@@ -290,7 +289,7 @@ onMounted(load)
             <div class="market-actions">
               <div class="market-actions-left">
                 <template v-if="canManage">
-                  <a-button size="small" @click.stop="openEdit(template)">
+                  <a-button size="small" @click="openEdit(template)">
                     <template #icon><EditOutlined /></template>
                     Edit
                   </a-button>
@@ -300,7 +299,7 @@ onMounted(load)
                 type="primary"
                 size="small"
                 :disabled="!dockerAvailable"
-                @click.stop="requestDeploy(template)"
+                @click="requestDeploy(template)"
               >
                 <template #icon><RocketOutlined /></template>
                 Deploy
@@ -311,14 +310,13 @@ onMounted(load)
       </a-spin>
     </div>
 
-    <a-modal
+    <a-drawer
       v-model:open="formOpen"
       :title="editingId ? 'Edit Marketplace Image' : 'Add Marketplace Image'"
-      width="600px"
-      :footer="null"
+      placement="right"
+      :width="480"
     >
       <a-form layout="vertical">
-        <!-- Display section -->
         <a-form-item label="Name" required>
           <a-input v-model:value="form.name" placeholder="e.g. Redis" />
         </a-form-item>
@@ -332,6 +330,7 @@ onMounted(load)
         <a-form-item label="Category" required>
           <a-select v-model:value="form.category" placeholder="Select a category" style="width: 100%"
             :dropdown-render="undefined"
+            :get-popup-container="(trigger: HTMLElement) => trigger.parentElement!"
           >
             <a-select-option v-for="cat in dbCategories" :key="cat.name" :value="cat.name">
               <div style="display: flex; align-items: center; gap: 8px">
@@ -359,7 +358,6 @@ onMounted(load)
 
         <a-divider style="margin: 12px 0" />
 
-        <!-- Docker image section -->
         <a-form-item label="Docker image" required>
           <a-input v-model:value="form.image" placeholder="nginx:latest" style="font-family: monospace; font-size: 12px" />
         </a-form-item>
@@ -396,7 +394,9 @@ onMounted(load)
           <div style="font-size: 11px; color: var(--text-muted); margin-top: 3px">One per line</div>
         </a-form-item>
         <a-form-item label="Restart policy">
-          <a-select v-model:value="form.restart" style="width: 100%">
+          <a-select v-model:value="form.restart" style="width: 100%"
+            :get-popup-container="(trigger: HTMLElement) => trigger.parentElement!"
+          >
             <a-select-option value="unless-stopped">Unless stopped</a-select-option>
             <a-select-option value="always">Always</a-select-option>
             <a-select-option value="on-failure">On failure</a-select-option>
@@ -404,11 +404,12 @@ onMounted(load)
           </a-select>
         </a-form-item>
 
-        <!-- Advanced section -->
         <a-collapse :bordered="false" ghost style="margin-top: 8px">
           <a-collapse-panel key="advanced" header="Advanced">
             <a-form-item label="Network mode">
-              <a-select v-model:value="form.networkMode" style="width: 100%">
+              <a-select v-model:value="form.networkMode" style="width: 100%"
+                :get-popup-container="(trigger: HTMLElement) => trigger.parentElement!"
+              >
                 <a-select-option value="bridge">bridge (default)</a-select-option>
                 <a-select-option value="host">host</a-select-option>
                 <a-select-option value="none">none</a-select-option>
@@ -430,16 +431,18 @@ onMounted(load)
           </a-collapse-panel>
         </a-collapse>
       </a-form>
-      <div class="modal-footer">
-        <a-button v-if="editingId" danger @click="remove(templates.find(t => t.id === editingId)!)">
-          <template #icon><DeleteOutlined /></template>
-          Delete
-        </a-button>
-        <div style="flex: 1" />
-        <a-button @click="formOpen = false">Cancel</a-button>
-        <a-button type="primary" :loading="saving" @click="save">Save</a-button>
-      </div>
-    </a-modal>
+      <template #footer>
+        <div class="drawer-footer">
+          <a-button v-if="editingId" danger @click="remove(templates.find(t => t.id === editingId)!)">
+            <template #icon><DeleteOutlined /></template>
+            Delete
+          </a-button>
+          <div style="flex: 1" />
+          <a-button @click="formOpen = false">Cancel</a-button>
+          <a-button type="primary" :loading="saving" @click="save">Save</a-button>
+        </div>
+      </template>
+    </a-drawer>
 
     <!-- Add Category mini-modal -->
     <a-modal
@@ -516,14 +519,12 @@ onMounted(load)
   display: flex;
   flex-direction: column;
   gap: 10px;
-  cursor: pointer;
-  transition: box-shadow 0.18s, border-color 0.18s, transform 0.12s;
+  transition: box-shadow 0.18s, border-color 0.18s;
 }
 
 .market-card:hover {
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
-  border-color: #1677ff;
-  transform: translateY(-1px);
+  border-color: var(--border-color-hover, #424a56);
 }
 
 .market-card-top {
@@ -653,12 +654,9 @@ onMounted(load)
   border-radius: 4px;
 }
 
-.modal-footer {
+.drawer-footer {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 12px 0 0;
-  border-top: 1px solid var(--border-color);
-  margin-top: 16px;
 }
 </style>
