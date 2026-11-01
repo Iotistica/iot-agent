@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { message, Modal } from 'ant-design-vue'
-import { CheckCircleOutlined, StopOutlined, DeleteOutlined, CopyOutlined } from '@ant-design/icons-vue'
+import { CheckCircleOutlined, CheckOutlined, StopOutlined, DeleteOutlined, CopyOutlined } from '@ant-design/icons-vue'
 import type { TableColumnType } from 'ant-design-vue'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import { client } from '@/api/client'
 import { protocolColor, protocolLabel } from '@/utils/protocol'
+import { copyText } from '@/utils/clipboard'
 
 interface Device {
   uuid: string
@@ -92,13 +93,12 @@ function shortUuid(uuid: string): string {
 // The uuid shown here is the exact `deviceId` value MQTT device-write commands
 // expect (src/commands/types.ts) — copy-to-clipboard avoids users having to
 // select-and-copy out of the truncated/tooltip display by hand.
+const copiedUuid = ref('')
+
 async function copyUuid(uuid: string) {
-  try {
-    await navigator.clipboard.writeText(uuid)
-    message.success('Device UUID copied')
-  } catch {
-    message.error('Could not copy to clipboard')
-  }
+  await copyText(uuid)
+  copiedUuid.value = uuid
+  setTimeout(() => { copiedUuid.value = '' }, 2000)
 }
 
 function identifierLabel(d: Device): string {
@@ -231,7 +231,8 @@ onUnmounted(() => {
               <span class="mono-text uuid-chip">{{ shortUuid(record.uuid) }}</span>
             </a-tooltip>
             <a-button type="text" size="small" class="uuid-copy-btn" @click="copyUuid(record.uuid)">
-              <CopyOutlined />
+              <CheckOutlined v-if="copiedUuid === record.uuid" style="color: #52c41a" />
+              <CopyOutlined v-else />
             </a-button>
           </template>
 
