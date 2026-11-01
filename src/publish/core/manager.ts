@@ -1965,6 +1965,13 @@ export class PublishManager extends EventEmitter {
 
 			const payloadFormat = this.resolvePayloadFormatForBinding(binding);
 			const route = binding.subscription.route_json as PublishSubscriptionRoute | null;
+			const routedMessages = this.filterMessagesForSourceRoute(messages, route, endpointName);
+			if (routedMessages.length === 0 && (
+				(route?.includeDevices?.length ?? 0) > 0 ||
+				(route?.excludeDevices?.length ?? 0) > 0
+			)) {
+				continue;
+			}
 			const qualities = Array.isArray(route?.qualities) ? route.qualities : [];
 			// Only drop bad-quality readings when the subscription explicitly restricts to
 			// specific qualities and 'BAD' is not in that list.
@@ -1985,7 +1992,7 @@ export class PublishManager extends EventEmitter {
 				entry.destinationTopic = destinationTopic;
 
 				const allowedKeys = binding.datasetPointKeys;
-				const allRecords = this.collectTagRecords(messages);
+				const allRecords = this.collectTagRecords(routedMessages);
 				for (const record of allRecords) {
 					const pi = record.pointIdentity as PointIdentity | undefined;
 					const sourceName = this.readExternalNodeCandidate(record) ?? endpointName;
@@ -2053,7 +2060,7 @@ export class PublishManager extends EventEmitter {
 			}
 
 			// Non-dataset binding: standard point filtering and throttle path.
-			const bindingMessages = messages;
+			const bindingMessages = routedMessages;
 
 			// "Publish interval" throttle. `records` is computed eagerly whenever either the
 			// throttle needs it OR the activityMonitor loop below needs it — preserves the
@@ -2328,24 +2335,36 @@ export class PublishManager extends EventEmitter {
 			return false;
 		}
 
-		const route = subscription.route_json as PublishSubscriptionRoute | null;
-		if (!route) {
-			return true;
-		}
-
-		if (Array.isArray(route.includeDevices) && route.includeDevices.length > 0) {
-			if (!route.includeDevices.includes(this.endpointName)) {
-				return false;
-			}
-		}
-
-		if (Array.isArray(route.excludeDevices) && route.excludeDevices.length > 0) {
-			if (route.excludeDevices.includes(this.endpointName)) {
-				return false;
-			}
-		}
-
 		return true;
+	}
+
+	private filterMessagesForSourceRoute(
+		messages: ProtocolMessage[],
+		route: PublishSubscriptionRoute | null,
+		endpointName: string,
+	): ProtocolMessage[] {
+		const includedSources = new Set(route?.includeDevices ?? []);
+		const excludedSources = new Set(route?.excludeDevices ?? []);
+		if (includedSources.size === 0 && excludedSources.size === 0) return messages;
+
+		const matchesSource = (record: ProtocolMessage, fallback?: string): boolean => {
+			const sourceName = this.readExternalNodeCandidate(record) ?? fallback ?? endpointName;
+			return (includedSources.size === 0 || includedSources.has(sourceName))
+				&& !excludedSources.has(sourceName);
+		};
+
+		const filtered: ProtocolMessage[] = [];
+		for (const message of messages) {
+			if (Array.isArray(message.readings)) {
+				const sourceName = this.readExternalNodeCandidate(message) ?? endpointName;
+				const readings = message.readings.filter((reading) => matchesSource(reading, sourceName));
+				if (readings.length === 0) continue;
+				filtered.push(readings.length === message.readings.length ? message : { ...message, readings });
+			} else if (matchesSource(message)) {
+				filtered.push(message);
+			}
+		}
+		return filtered;
 	}
 
 	private normalizeTopics(topics: string[] | undefined): string[] {
