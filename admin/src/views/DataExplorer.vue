@@ -26,7 +26,7 @@ type PointRow = {
   timestamp: string
   destinationName: string
 }
-type DeviceRecord = { uuid: string; name: string; metadata?: Record<string, unknown> }
+type DeviceRecord = { uuid: string; name: string; protocol: string; metadata?: Record<string, unknown> }
 const subscriptions = ref<SubscriptionActivity[]>([])
 const events = ref<ActivityEvent[]>([])
 const devices = ref<DeviceRecord[]>([])
@@ -158,7 +158,10 @@ watch([points, favorites], () => {
 const sourceOptions = computed(() => [...new Set(points.value.map(p => p.endpointName))]
   .sort((a, b) => friendlySource(a).localeCompare(friendlySource(b)))
   .map(v => ({ value: v, label: friendlySource(v) })))
-const protocolOptions = computed(() => [...new Set(points.value.map(p => p.protocol))].sort()
+const protocolOptions = computed(() => [...new Set([
+  ...points.value.map(p => p.protocol),
+  ...devices.value.map(d => d.protocol),
+])].sort()
   .map(v => ({ value: v, label: protocolLabel(v) })))
 function columnSort(a: PointRow, b: PointRow): number {
   const field = tableSortField.value
