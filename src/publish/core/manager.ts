@@ -2357,8 +2357,10 @@ export class PublishManager extends EventEmitter {
 
 		const matchesSource = (record: ProtocolMessage, fallback?: string): boolean => {
 			const sourceName = this.readExternalNodeCandidate(record) ?? fallback ?? endpointName;
-			return (includedSources.size === 0 || includedSources.has(sourceName) || includedSources.has(endpointName))
+			const rawName = typeof record.sourceEndpointName === 'string' ? record.sourceEndpointName : sourceName;
+			return (includedSources.size === 0 || includedSources.has(sourceName) || includedSources.has(rawName) || includedSources.has(endpointName))
 				&& !excludedSources.has(sourceName)
+				&& !excludedSources.has(rawName)
 				&& !excludedSources.has(endpointName);
 		};
 
@@ -2366,7 +2368,8 @@ export class PublishManager extends EventEmitter {
 		for (const message of messages) {
 			if (Array.isArray(message.readings)) {
 				const sourceName = this.readExternalNodeCandidate(message) ?? endpointName;
-				const readings = message.readings.filter((reading) => matchesSource(reading, sourceName));
+				const rawFallback = typeof message.sourceEndpointName === 'string' ? message.sourceEndpointName : sourceName;
+				const readings = message.readings.filter((reading) => matchesSource(reading, rawFallback));
 				if (readings.length === 0) continue;
 				filtered.push(readings.length === message.readings.length ? message : { ...message, readings });
 			} else if (matchesSource(message)) {

@@ -231,6 +231,7 @@ export class AdapterManager extends EventEmitter {
 			return {
 				...point,
 				deviceName: resolved.deviceName,
+				sourceEndpointName: point.deviceName,
 				endpoint_uuid: resolved.endpoint_uuid,
 				device_uuid: resolved.device_uuid,
 			};

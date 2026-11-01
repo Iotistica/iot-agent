@@ -24,6 +24,7 @@ export interface DeviceDataPoint {
 	device_uuid?: string;
 	normalizationDeviceName?: string;
 	endpoint_uuid?: string; // UUID from the endpoints table (target state)
+	sourceEndpointName?: string; // Raw endpoint name before enrichWithEndpointUuid appends the UUID suffix — used by filterMessagesForSourceRoute to match subscription includeDevices/excludeDevices
 	metric: string; // Generic field name (Modbus register, OPC UA node, SNMP OID)
 	value: number | boolean | string | null; // null when quality is BAD
 	unit?: string;
