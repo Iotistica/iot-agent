@@ -1564,25 +1564,27 @@ export class PublishManager extends EventEmitter {
 			const compressionInfoCache = new Map<string, CompressionInfo>();
 			compressedPayloadCache.set(`${this.payloadFormat}::global::fq=false`, payload);
 			compressionInfoCache.set(`${this.payloadFormat}::global::fq=false`, info);
-			await this.routePublishBatch(topic, compressedPayloadCache, compressionInfoCache, endpointName, enriched);
+			const routed = await this.routePublishBatch(topic, compressedPayloadCache, compressionInfoCache, endpointName, enriched);
 			publishConfirmed = true;
 
-			// This point is only reached after routePublishBatch() has already delivered
-			// the batch to the destination plugin without throwing — always "Published",
-			// never "Buffered". mqttConnection here is the agent's own shared default
-			// connection (unrelated to the destination plugin's own client), so its
-			// publish mode describes a different link entirely and must not be used to
-			// relabel this destination's delivery outcome. Surface it as separate
-			// diagnostic context instead, only when actually degraded.
-			const cloudLinkMode = this.mqttConnection.getPublishMode?.();
 			const MessageBufferModel = await this.getMessageBufferModel();
 			MessageBufferModel.deleteByIds([claimed.id]);
-			this.stats.recordPublish(messageCount, batchBytes);
-			this.stats.logPublishSuccess(messageCount, batchBytes, info, endpointName, this.logger, {
-				protocol: this.protocol,
-				...destinationContext,
-				...(cloudLinkMode && cloudLinkMode !== 'direct' ? { cloudLinkMode } : {}),
-			});
+			if (routed) {
+				// This point is only reached after routePublishBatch() has already delivered
+				// the batch to the destination plugin without throwing — always "Published",
+				// never "Buffered". mqttConnection here is the agent's own shared default
+				// connection (unrelated to the destination plugin's own client), so its
+				// publish mode describes a different link entirely and must not be used to
+				// relabel this destination's delivery outcome. Surface it as separate
+				// diagnostic context instead, only when actually degraded.
+				const cloudLinkMode = this.mqttConnection.getPublishMode?.();
+				this.stats.recordPublish(messageCount, batchBytes);
+				this.stats.logPublishSuccess(messageCount, batchBytes, info, endpointName, this.logger, {
+					protocol: this.protocol,
+					...destinationContext,
+					...(cloudLinkMode && cloudLinkMode !== 'direct' ? { cloudLinkMode } : {}),
+				});
+			}
 			this.batcher.reset();
 		} catch (err) {
 			this.logger?.error('Publish batch failed', err, { source: endpointName, protocol: this.protocol, ...destinationContext });
@@ -1925,7 +1927,7 @@ export class PublishManager extends EventEmitter {
 		compressionInfoCache: Map<string, CompressionInfo>,
 		endpointName: string,
 		messages: ProtocolMessage[],
-	): Promise<void> {
+	): Promise<boolean> {
 		if (this.bindings.length === 0) {
 			throw new Error('No publish destinations configured');
 		}
@@ -1936,7 +1938,7 @@ export class PublishManager extends EventEmitter {
 			// Bindings that resolved a destination but had nothing to send (source filters,
 			// dataset windowing, throttling) are not a failure.
 			if (routeStats.resolvedDestinations > 0) {
-				return;
+				return false;
 			}
 			throw new Error('No valid publish destinations configured (missing route_json.topic)');
 		}
@@ -1944,13 +1946,14 @@ export class PublishManager extends EventEmitter {
 		const results = await Promise.allSettled(entries.map(([plugin, batch]) => plugin.publishBatch(batch)));
 		const failures = results.filter((result) => result.status === 'rejected');
 		if (failures.length === 0) {
-			return;
+			return true;
 		}
 
 		if (failures.length === results.length) {
 			const first = failures[0]?.reason;
 			throw first instanceof Error ? first : new Error(String(first));
 		}
+		return true;
 	}
 
 	private async collectRouteEntries(
