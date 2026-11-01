@@ -57,11 +57,6 @@ const newCatName = ref('')
 const newCatColor = ref('#1677ff')
 const newCatSaving = ref(false)
 
-function categoryColor(name: string): string {
-  const cat = dbCategories.value.find(c => c.name === name)
-  return cat?.color ?? 'default'
-}
-
 const filteredTemplates = computed(() => {
   const query = search.value.trim().toLowerCase()
   return templates.value.filter(template => {
@@ -283,7 +278,7 @@ onMounted(load)
               <div class="market-avatar" :style="{ background: template.color }">{{ template.letter }}</div>
               <div class="market-meta">
                 <div class="market-name">{{ template.name }}</div>
-                <a-tag :color="categoryColor(template.category)" class="market-category">
+                <a-tag class="market-category">
                   {{ template.category }}
                 </a-tag>
               </div>
