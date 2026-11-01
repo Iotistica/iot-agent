@@ -28,7 +28,7 @@ type PointRow = {
 }
 type DeviceRecord = { uuid: string; name: string; protocol: string; metadata?: Record<string, unknown> }
 const subscriptions = ref<SubscriptionActivity[]>([])
-const events = ref<ActivityEvent[]>([])
+const latestReadings = ref<ActivityEvent[]>([])
 const devices = ref<DeviceRecord[]>([])
 const observedPointCount = ref(0)
 const loading = ref(true)
@@ -111,7 +111,7 @@ function isStale(iso: string) {
 // Keep the most recent event per protocol/source/metric combination.
 const points = computed<PointRow[]>(() => {
   const byKey = new Map<string, PointRow>()
-  for (const e of events.value) {
+  for (const e of latestReadings.value) {
     const key = JSON.stringify([e.protocol, e.endpointName, e.metric])
     const row: PointRow = {
       key, protocol: e.protocol, endpointName: e.endpointName, metric: e.metric,
@@ -393,9 +393,9 @@ async function poll() {
   busy = true
   refreshing.value = true
   try {
-    const [subs, evts, overview] = await Promise.all([pipelineApi.getSubscriptions(), pipelineApi.getEvents(1000), pipelineApi.getOverview()])
+    const [subs, readings, overview] = await Promise.all([pipelineApi.getSubscriptions(), pipelineApi.getPoints(), pipelineApi.getOverview()])
     subscriptions.value = subs
-    events.value = evts
+    latestReadings.value = readings
     observedPointCount.value = overview.activePoints
     error.value = ''
     lastSync.value = new Date().toLocaleTimeString()
@@ -555,7 +555,7 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
           <template #emptyText>No matching recent readings. Check your source, subscription, and destination configuration.</template>
         </a-table>
       </a-card>
-      <p class="note">This view uses the latest 100 activity events plus subscription snapshots. It is not a complete point inventory or historical archive. “Stale” means no observed update for 60 seconds, not necessarily a device failure.</p>
+      <p class="note">This view uses the latest reading per point plus subscription snapshots. It is not a historical archive. “Stale” means no observed update for 60 seconds, not necessarily a device failure.</p>
     </div>
     <CreateViewDrawer
       v-model:open="viewDrawerOpen"

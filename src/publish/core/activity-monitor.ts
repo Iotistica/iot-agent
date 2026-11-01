@@ -3,9 +3,9 @@
  *
  * Same shape as BrokerMonitorService (src/mqtt/broker-monitor.ts): a
  * singleton fed by the publish path, polled via REST — no WebSocket, no
- * persistence. Deliberately aggregate-first (last value per subscription)
- * rather than a raw per-message firehose, since endpoints can poll as fast
- * as every second with many points each.
+ * persistence. Keeps the latest value per subscription and point, plus a
+ * bounded recent-event sample, since endpoints can poll as fast as every second
+ * with many points each.
  */
 
 export interface SubscriptionActivity {
@@ -102,6 +102,9 @@ function displayEndpointName(endpointName: string): string {
 
 class ActivityMonitor {
 	private bySubscription = new Map<string, SubscriptionActivity>();
+	// Separate from the bounded event history so each point remains visible while
+	// it is active, even when other points generate more recent events.
+	private latestByPoint = new Map<string, ActivityEvent>();
 	// Keyed by lowercased protocol — each protocol gets its own ring buffer so a
 	// high-volume one (e.g. many BACnet points polling every few seconds) can
 	// never evict a quieter protocol's history. `id` stays a single monotonic
@@ -217,6 +220,10 @@ class ActivityMonitor {
 		};
 
 		const protocolKey = params.protocol.toLowerCase();
+		this.latestByPoint.set(
+			JSON.stringify([protocolKey, params.endpointName, params.metric]),
+			event,
+		);
 		const bucket = this.eventsByProtocol.get(protocolKey) ?? [];
 		bucket.push(event);
 		if (bucket.length > MAX_EVENTS_PER_PROTOCOL) {
@@ -247,6 +254,19 @@ class ActivityMonitor {
 		}
 		return merged.slice(-limit).reverse()
 			.map((e) => ({ ...e, endpointName: displayEndpointName(e.endpointName) }));
+	}
+
+	getLatestPoints(): ActivityEvent[] {
+		const staleBefore = Date.now() - 60 * 60 * 1000;
+		const points: ActivityEvent[] = [];
+		for (const [key, event] of this.latestByPoint) {
+			if (Date.parse(event.timestamp) < staleBefore) {
+				this.latestByPoint.delete(key);
+				continue;
+			}
+			points.push({ ...event, endpointName: displayEndpointName(event.endpointName) });
+		}
+		return points.sort((a, b) => Date.parse(b.timestamp) - Date.parse(a.timestamp));
 	}
 
 	/** Cumulative points recorded per protocol since agent start — never resets or evicts. */
