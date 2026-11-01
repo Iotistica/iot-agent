@@ -795,67 +795,80 @@ export class AdapterManager extends EventEmitter {
 						maxPeriod: 1000,
 						jitterRatio: 0,
 					},
-					devices: dbDevices.map((d) => ({
-						uuid: d.uuid,
-						name: d.name,
-						enabled: d.enabled,
-						topic: d.connection.topic
-							? `${d.connection.topic}/#`
-							: encodeIfUuid(d.name),
-						qos: d.connection.qos || 1,
-						dataType: d.connection.dataType || "float32",
-						unit: d.connection.unit,
-						precision: Number.isFinite((d.connection as any).precision)
-							? Number((d.connection as any).precision)
-							: undefined,
-						metric: d.connection.metric,
-						deviceId: d.connection.deviceId,
-						timestampField: d.connection.timestampField,
-						metrics: Array.isArray((d.connection as any).metrics)
-							? (d.connection as any).metrics.map((metric: any) => ({
-								field: metric.field,
-								metric: metric.metric,
-								unit: metric.unit,
-								type: metric.type,
-								precision: Number.isFinite(metric.precision)
-									? Number(metric.precision)
+					devices: dbDevices.map((d) => {
+						const conn = d.connection as any;
+						// baseTopic is the new field; fall back to legacy topic
+						const base: string = conn.baseTopic || conn.topic || '';
+						const subTopic = base
+							? `${base}/#`
+							: encodeIfUuid(d.name);
+						return {
+							uuid: d.uuid,
+							name: d.name,
+							enabled: d.enabled,
+							baseTopic: base,
+							subscriptionTopic: subTopic,
+							qos: conn.qos || 1,
+							dataType: conn.dataType || "float32",
+							unit: conn.unit,
+							precision: Number.isFinite(conn.precision)
+								? Number(conn.precision)
+								: undefined,
+							metric: conn.metric,
+							deviceId: conn.deviceId,
+							timestampField: conn.timestampField,
+							metrics: Array.isArray(conn.metrics)
+								? conn.metrics.map((metric: any) => ({
+									field: metric.field,
+									metric: metric.metric,
+									unit: metric.unit,
+									type: metric.type,
+									precision: Number.isFinite(metric.precision)
+										? Number(metric.precision)
+										: undefined,
+								}))
+								: undefined,
+							autoMetrics: Boolean(conn.autoMetrics ?? true),
+							defaultUnits:
+								conn.defaultUnits &&
+								typeof conn.defaultUnits === "object"
+									? Object.entries(conn.defaultUnits).reduce<
+											Record<string, string>
+										>((acc, [key, value]) => {
+											if (
+												typeof key === "string" &&
+												key.trim() &&
+												typeof value === "string" &&
+												(value as string).trim()
+											)
+												acc[key] = value as string;
+											return acc;
+										}, {})
 									: undefined,
-							}))
-							: undefined,
-						autoMetrics: Boolean((d.connection as any).autoMetrics),
-						defaultUnits:
-							(d.connection as any).defaultUnits &&
-							typeof (d.connection as any).defaultUnits === "object"
-								? Object.entries((d.connection as any).defaultUnits).reduce<
-										Record<string, string>
-									>((acc, [key, value]) => {
+							defaultPrecisions:
+								conn.defaultPrecisions &&
+								typeof conn.defaultPrecisions === "object"
+									? Object.entries(
+										conn.defaultPrecisions,
+									).reduce<Record<string, number>>((acc, [key, value]) => {
 										if (
 											typeof key === "string" &&
-											key.trim() &&
-											typeof value === "string" &&
-											value.trim()
+												key.trim() &&
+												Number.isFinite(value)
 										)
-											acc[key] = value;
+											acc[key] = Number(value);
 										return acc;
 									}, {})
-								: undefined,
-						defaultPrecisions:
-							(d.connection as any).defaultPrecisions &&
-							typeof (d.connection as any).defaultPrecisions === "object"
-								? Object.entries(
-									(d.connection as any).defaultPrecisions,
-								).reduce<Record<string, number>>((acc, [key, value]) => {
-									if (
-										typeof key === "string" &&
-											key.trim() &&
-											Number.isFinite(value)
-									)
-										acc[key] = Number(value);
+									: undefined,
+							allowArrayMetrics: Boolean(conn.allowArrayMetrics),
+							subTopicDataTypes: Array.isArray(d.data_points)
+								? (d.data_points as any[]).reduce((acc: Record<string, string>, dp: any) => {
+									if (dp.subTopic && dp.dataType) acc[dp.subTopic] = dp.dataType;
 									return acc;
 								}, {})
 								: undefined,
-						allowArrayMetrics: Boolean((d.connection as any).allowArrayMetrics),
-					})),
+						};
+					}),
 					logging: { level: "info", enableConsole: false, enableFile: false },
 				};
 			}
@@ -933,14 +946,20 @@ export class AdapterManager extends EventEmitter {
 					maxPeriod: 1000,
 					jitterRatio: 0,
 				},
-				devices: endpoints.map((d) => ({
-					name: d.name,
-					enabled: d.enabled,
-					topic: d.connection.topic || "#",
-					qos: (d.connection.qos || 1) as 0 | 1 | 2,
-					dataType: d.connection.dataType || "json",
-					metric: d.connection.metric || d.name,
-				})),
+				devices: endpoints.map((d) => {
+					const conn = d.connection as any;
+					const base: string = conn.baseTopic || conn.topic || '';
+					return {
+						name: d.name,
+						enabled: d.enabled,
+						baseTopic: base,
+						subscriptionTopic: base ? `${base}/#` : '#',
+						qos: (conn.qos || 1) as 0 | 1 | 2,
+						dataType: conn.dataType || "json",
+						metric: conn.metric || d.name,
+						autoMetrics: Boolean(conn.autoMetrics ?? true),
+					};
+				}),
 			};
 
 			const uuidMap = this.buildUuidMap(endpoints);

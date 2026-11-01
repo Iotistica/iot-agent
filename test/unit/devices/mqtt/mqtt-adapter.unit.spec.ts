@@ -703,9 +703,10 @@ describe('MqttAdapter', () => {
       expect(dataSpy).toHaveBeenCalledTimes(1);
 
       const emittedPoints = dataSpy.mock.calls[0][0];
-      expect(emittedPoints).toHaveLength(2);
+      expect(emittedPoints).toHaveLength(3);
       expect(emittedPoints).toEqual(
         expect.arrayContaining([
+          expect.objectContaining({ metric: 'ts', value: 1711843200000 }),
           expect.objectContaining({ metric: 'temperature', value: 23.5, unit: 'C' }),
           expect.objectContaining({ metric: 'humidity', value: 65, unit: '%' }),
         ])

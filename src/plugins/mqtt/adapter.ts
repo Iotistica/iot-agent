@@ -3,7 +3,7 @@ import type * as mqtt from "mqtt";
 import * as mqttPattern from "mqtt-pattern";
 import { type DeviceDataPoint, type IDeviceStatus, type Logger } from "../types.js";
 import { type MqttAdapterConfig, type MqttDevice, type MqttMetricConfig } from "./types.js";
-import { parsePayload, coerceType } from "./payload.js";
+import { parsePayload, coerceType, isBinaryPayload } from "./payload.js";
 import { EndpointModel } from "../../db/models/endpoint.model.js";
 import { DeviceModel } from "../../db/models/device.model.js";
 import { MqttBrokerClient } from "./client.js";
@@ -164,12 +164,14 @@ export class MqttAdapter extends BaseProtocolAdapter {
 
 		for (const device of this.config.devices) {
 			if (device.enabled) {
-				this.subscriptions.set(device.topic, device);
+				const subTopic = this.resolveSubscriptionTopic(device);
+				this.subscriptions.set(subTopic, device);
 			}
 
-			// Cache displayName by topic for fast lookup in enqueueData
+			// Cache displayName by subscription topic for fast lookup in enqueueData
 			if (device.displayName?.trim()) {
-				this.displayNamesByTopic.set(device.topic, device.displayName.trim());
+				const subTopic = this.resolveSubscriptionTopic(device);
+				this.displayNamesByTopic.set(subTopic, device.displayName.trim());
 			}
 
 			const lwtDeviceId = device.deviceId?.trim();
@@ -230,6 +232,25 @@ export class MqttAdapter extends BaseProtocolAdapter {
 			: field;
 
 		return normalized.split(".").filter(Boolean);
+	}
+
+	private resolveSubscriptionTopic(device: MqttDevice): string {
+		if (device.subscriptionTopic) return device.subscriptionTopic;
+		const base = device.baseTopic || device.topic;
+		if (base) return `${base}/#`;
+		return device.name;
+	}
+
+	private resolveBaseTopic(device: MqttDevice): string {
+		return device.baseTopic || device.topic || device.name;
+	}
+
+	private extractSubTopic(fullTopic: string, device: MqttDevice): string {
+		const base = this.resolveBaseTopic(device);
+		if (fullTopic.startsWith(base + '/')) {
+			return fullTopic.substring(base.length + 1);
+		}
+		return fullTopic;
 	}
 
 	/**
@@ -320,43 +341,42 @@ export class MqttAdapter extends BaseProtocolAdapter {
 	async updateDevices(newDevices: MqttDevice[]): Promise<void> {
 		const oldTopics = new Set(this.subscriptions.keys());
 		const newEnabledDevices = newDevices.filter((d) => d.enabled);
-		const newTopics = new Set(newEnabledDevices.map((d) => d.topic));
+		const newTopics = new Set(newEnabledDevices.map((d) => this.resolveSubscriptionTopic(d)));
 
 		// --- Removed devices ---
 		const removedTopics = [...oldTopics].filter((t) => !newTopics.has(t));
-		for (const topic of removedTopics) {
-			const device = this.subscriptions.get(topic);
+		for (const subTopic of removedTopics) {
+			const device = this.subscriptions.get(subTopic);
 			if (!device) continue;
 
-			// Unsubscribe from broker (best-effort; client may not be connected)
 			if (this.client && this.connected) {
 				await new Promise<void>((resolve) => {
-					this.client!.unsubscribe(topic, () => resolve());
+					this.client!.unsubscribe(subTopic, () => resolve());
 				});
 			}
 
-			this.subscriptions.delete(topic);
+			this.subscriptions.delete(subTopic);
 			this.deviceStatuses.delete(device.name);
 			this.compiledMetrics.delete(device.name);
 			this.compiledTimestampFields.delete(device.name);
-			this.displayNamesByTopic.delete(topic);
+			this.displayNamesByTopic.delete(subTopic);
 
 			if (device.deviceId?.trim()) {
 				this.lwtDeviceIdToName.delete(device.deviceId.trim());
 			}
 
 			this.logger.info(
-				`MQTT hot-update: unsubscribed removed device '${device.name}' (${topic})`,
+				`MQTT hot-update: unsubscribed removed device '${device.name}' (${subTopic})`,
 			);
 		}
 
 		// --- Added devices ---
 		const addedDevices = newEnabledDevices.filter(
-			(d) => !oldTopics.has(d.topic),
+			(d) => !oldTopics.has(this.resolveSubscriptionTopic(d)),
 		);
 		for (const device of addedDevices) {
-			// Update lookup maps before subscribing so message handler can find the device
-			this.subscriptions.set(device.topic, device);
+			const subTopic = this.resolveSubscriptionTopic(device);
+			this.subscriptions.set(subTopic, device);
 
 			this.deviceStatuses.set(device.name, {
 				deviceName: device.name,
@@ -372,7 +392,7 @@ export class MqttAdapter extends BaseProtocolAdapter {
 			});
 
 			if (device.displayName?.trim()) {
-				this.displayNamesByTopic.set(device.topic, device.displayName.trim());
+				this.displayNamesByTopic.set(subTopic, device.displayName.trim());
 			}
 
 			if (device.deviceId?.trim()) {
@@ -402,19 +422,18 @@ export class MqttAdapter extends BaseProtocolAdapter {
 				);
 			}
 
-			// Subscribe on the live connection if available
 			if (this.client && this.connected) {
 				try {
 					await this.subscribeToDevice(device);
 				} catch (err) {
 					const msg = err instanceof Error ? err.message : String(err);
 					this.logger.error(
-						`MQTT hot-update: failed to subscribe '${device.name}' (${device.topic}): ${msg}`,
+						`MQTT hot-update: failed to subscribe '${device.name}' (${subTopic}): ${msg}`,
 					);
 				}
 			} else {
 				this.logger.debug(
-					`MQTT hot-update: queued subscription for '${device.name}' (${device.topic}) — will subscribe on next connect`,
+					`MQTT hot-update: queued subscription for '${device.name}' (${subTopic}) — will subscribe on next connect`,
 				);
 			}
 		}
@@ -487,7 +506,7 @@ export class MqttAdapter extends BaseProtocolAdapter {
 			} catch (err) {
 				const message = err instanceof Error ? err.message : String(err);
 				this.logger.error(
-					`Failed to subscribe to device topic ${device.topic}: ${message}`,
+					`Failed to subscribe to device topic ${this.resolveSubscriptionTopic(device)}: ${message}`,
 				);
 			}
 		}
@@ -536,22 +555,19 @@ export class MqttAdapter extends BaseProtocolAdapter {
 		}
 	}
 
-	/**
-	 * Subscribe to a device's topics
-	 */
 	private async subscribeToDevice(device: MqttDevice): Promise<void> {
 		if (!this.client || !this.connected) {
 			throw new Error("MQTT client not connected");
 		}
 
-		const topic = device.topic;
+		const subTopic = this.resolveSubscriptionTopic(device);
 		const qos = device.qos || this.config.qos;
 
 		if (qos === 0) {
 			this.logger.warn(
 				"MQTT subscription uses QoS 0; messages published during disconnects may be lost",
 				{
-					topic,
+					topic: subTopic,
 					deviceName: device.name,
 					clientId: this.client.options.clientId,
 				},
@@ -559,16 +575,16 @@ export class MqttAdapter extends BaseProtocolAdapter {
 		}
 
 		return new Promise((resolve, reject) => {
-			this.client!.subscribe(topic, { qos }, (err) => {
+			this.client!.subscribe(subTopic, { qos }, (err) => {
 				if (err) {
 					this.logger.error(
-						`Failed to subscribe to topic: ${topic} - ${err.message}`,
+						`Failed to subscribe to topic: ${subTopic} - ${err.message}`,
 					);
 					reject(err);
 					return;
 				}
 
-				this.subscriptions.set(topic, device);
+				this.subscriptions.set(subTopic, device);
 				resolve();
 			});
 		});
@@ -651,8 +667,10 @@ export class MqttAdapter extends BaseProtocolAdapter {
 			return;
 		}
 
-		// Attach resolvedDisplayName if a config override exists for this topic
-		const resolvedDisplayName = this.displayNamesByTopic.get(topic);
+		// Attach resolvedDisplayName — look up by the device's subscription topic
+		const device = this.findDeviceForTopic(topic);
+		const subKey = device ? this.resolveSubscriptionTopic(device) : topic;
+		const resolvedDisplayName = this.displayNamesByTopic.get(subKey);
 		const enriched = resolvedDisplayName
 			? points.map((p) => ({ ...p, resolvedDisplayName }))
 			: points;
@@ -1181,14 +1199,31 @@ export class MqttAdapter extends BaseProtocolAdapter {
 				}
 			}
 
-			// Default behavior without explicit metric mapping:
-			// emit every primitive field from JSON object payloads.
+			// Default behavior: emit every primitive field from JSON object payloads.
+			// No hardcoded metadata key exclusions — all primitives are emitted.
 			if (points.length === 0) {
-				const singleMetric = device.metric || topic;
+				const subTopic = this.extractSubTopic(topic, device);
+				const singleMetric = device.metric || subTopic;
 				let singleType = device.dataType;
 				let singleSource: unknown = parsed;
 
-				if (
+				if (isBinaryPayload(parsed)) {
+					points.push(
+						this.buildMetricPoint(
+							device,
+							singleMetric,
+							parsed._raw,
+							undefined,
+							undefined,
+							undefined,
+							'string',
+							resolvedDeviceId,
+							topic,
+							payloadTimestamp,
+							true,
+						),
+					);
+				} else if (
 					typeof parsed === "object" &&
 					parsed !== null &&
 					!Array.isArray(parsed)
@@ -1201,32 +1236,10 @@ export class MqttAdapter extends BaseProtocolAdapter {
 					) {
 						singleSource = parsedObj.value;
 					} else {
-						const metadataKeys = new Set([
-							"timestamp",
-							"ts",
-							"time",
-							"name",
-							"unit",
-							"deviceId",
-							"device_id",
-							"device_uuid",
-							"topic",
-							"units",
-						]);
-
 						const primitiveEntries = Object.entries(parsedObj).filter(
-							([key, value]) => {
-								if (metadataKeys.has(key)) {
-									return false;
-								}
-								if (key.endsWith("_unit")) {
-									return false;
-								}
-								return (
-									value === null ||
-									["string", "number", "boolean"].includes(typeof value)
-								);
-							},
+							([, value]) =>
+								value === null ||
+								["string", "number", "boolean"].includes(typeof value),
 						);
 
 						if (primitiveEntries.length > 0) {
@@ -1257,7 +1270,6 @@ export class MqttAdapter extends BaseProtocolAdapter {
 								},
 							);
 						} else {
-							// No scalar field to coerce; preserve payload as JSON text.
 							singleSource = JSON.stringify(parsedObj);
 							singleType = "json";
 						}

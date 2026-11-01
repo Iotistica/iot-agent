@@ -30,21 +30,30 @@ export interface MqttDevice {
   /** Optional human-readable label. When set, overrides the raw config name in payloads. */
   displayName?: string;
   enabled: boolean;
-  topic: string;  // MQTT topic to subscribe to
+  uuid?: string;
+  baseTopic: string;  // Device-level topic prefix (e.g., 'factory/sim-001')
+  subscriptionTopic: string;  // Computed: baseTopic/# — what the broker subscribes to
   qos?: 0 | 1 | 2;
-  dataType: string;  // Broad: 'number', 'boolean', 'string', 'json' (from discovery)
-                     // Specific: 'int32', 'float32', 'uint32' (manual configuration only)
-                     // ⚠️ Discovery MUST NOT auto-assign specific types - devices change formats
+  deviceId?: string;
+  timestampField?: string;
+  metrics?: MqttMetricConfig[];
+  autoMetrics?: boolean;
+  defaultUnits?: Record<string, string>;
+  defaultPrecisions?: Record<string, number>;
+  allowArrayMetrics?: boolean;
+  subTopicDataTypes?: Record<string, string>;
+
+  // Backward compat — legacy per-topic fields read by adapter when baseTopic is absent
+  /** @deprecated Use baseTopic instead */
+  topic?: string;
+  /** @deprecated Data type is now per sub-topic in data_points */
+  dataType?: string;
+  /** @deprecated Unit is now per data-point, not per-device */
   unit?: string;
+  /** @deprecated Precision is now per data-point, not per-device */
   precision?: number;
-  metric?: string;  // Metric name (defaults to topic if not specified)
-  deviceId?: string;  // Optional device identifier
-  timestampField?: string; // Optional payload field path for source timestamp (e.g., ts, meta.timestamp)
-  metrics?: MqttMetricConfig[]; // Optional multi-metric extraction from single topic payload
-  autoMetrics?: boolean; // Auto-expand top-level JSON fields into metrics
-  defaultUnits?: Record<string, string>; // Canonical units for auto-expanded or inferred metric names
-  defaultPrecisions?: Record<string, number>; // Per-metric rounding precision for auto-expanded or inferred metric names
-  allowArrayMetrics?: boolean; // Enable values[0] style field paths by normalizing to values.0
+  /** @deprecated Metric name is now per data-point, not per-device */
+  metric?: string;
 }
 
 export interface MqttAdapterConfig {

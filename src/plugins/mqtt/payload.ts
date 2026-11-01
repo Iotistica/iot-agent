@@ -2,32 +2,55 @@
  * MQTT Payload Parser Utilities
  *
  * Pure functions for parsing and type-coercing MQTT payloads.
- * Extracted from adapter for better testability and reusability.
  *
  * @module mqtt/payload-parser
  */
 
 /**
- * Parse MQTT payload based on dataType
+ * Parse MQTT payload buffer into a usable value.
  *
  * Strategy:
- * 1. Try JSON parse first
- * 2. If valid JSON, return parsed object/primitive
- * 3. Otherwise, return plain text
- *
- * @param payload - Raw MQTT message buffer
- * @returns Parsed raw value (object, array, primitive, or string)
+ * 1. Detect binary (non-UTF-8) payloads and return a marker object
+ * 2. Try JSON parse
+ * 3. Fall back to plain text string
  */
 export function parsePayload(payload: Buffer): unknown {
+	if (!isUtf8(payload)) {
+		return { _raw: payload.toString('base64'), _binary: true };
+	}
+
 	const str = payload.toString();
 
-	// Try JSON first
 	try {
 		return JSON.parse(str);
 	} catch {
-		// Not JSON, return as plain text
 		return str;
 	}
+}
+
+function isUtf8(buf: Buffer): boolean {
+	if (buf.length === 0) return true;
+
+	for (let i = 0; i < Math.min(buf.length, 256); i++) {
+		if (buf[i] === 0 && i < buf.length - 1) return false;
+	}
+
+	try {
+		const decoder = new TextDecoder('utf-8', { fatal: true });
+		decoder.decode(buf.subarray(0, Math.min(buf.length, 1024)));
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+export function isBinaryPayload(parsed: unknown): parsed is { _raw: string; _binary: true } {
+	return (
+		typeof parsed === 'object' &&
+		parsed !== null &&
+		(parsed as any)._binary === true &&
+		typeof (parsed as any)._raw === 'string'
+	);
 }
 
 /**
@@ -37,11 +60,6 @@ export function parsePayload(payload: Buffer): unknown {
  * - Broad types from discovery: 'number', 'boolean', 'string', 'json'
  * - Specific types from manual config: 'int32', 'float32', 'uint32'
  *
- * Production-safe: Detects NaN and throws error rather than silently returning invalid data
- *
- * @param value - Value to coerce (any type)
- * @param dataType - Target data type
- * @returns Coerced value
  * @throws Error if coercion results in NaN for numeric types
  */
 export function coerceType(
@@ -54,12 +72,11 @@ export function coerceType(
 			: String(value);
 
 	switch (dataType) {
-		case "number": // Broad category from discovery
+		case "number":
 		case "float":
 		case "float32":
 		case "double": {
 			const n = parseFloat(value);
-			// Production fix: Detect NaN and throw error
 			if (Number.isNaN(n)) {
 				throw new Error(
 					`Numeric coercion resulted in NaN for value: "${valueForError}"`,
@@ -72,7 +89,6 @@ export function coerceType(
 		case "int32":
 		case "integer": {
 			const n = parseInt(value, 10);
-			// Production fix: Detect NaN and throw error
 			if (Number.isNaN(n)) {
 				throw new Error(
 					`Numeric coercion resulted in NaN for value: "${valueForError}"`,
@@ -83,7 +99,6 @@ export function coerceType(
 		case "uint16":
 		case "uint32": {
 			const n = Math.abs(parseInt(value, 10));
-			// Production fix: Detect NaN and throw error
 			if (Number.isNaN(n)) {
 				throw new Error(
 					`Numeric coercion resulted in NaN for value: "${valueForError}"`,
@@ -93,8 +108,7 @@ export function coerceType(
 		}
 		case "boolean":
 			return value === "true" || value === "1" || value === 1 || value === true;
-		case "json": // Broad category from discovery
-			// For JSON dataType with object value, stringify it; otherwise convert to string
+		case "json":
 			return typeof value === "object" && value !== null
 				? JSON.stringify(value)
 				: String(value);

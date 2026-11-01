@@ -43,6 +43,7 @@ import { migration as addSchemaDriftRuleTemplates } from './migrations/202610170
 import { migration as addAppMarketplace } from './migrations/20261018000000_add_app_marketplace.js';
 import { migration as flattenMarketplace } from './migrations/20261031000000_flatten_marketplace.js';
 import { migration as addMqttUserPasswordPlaintext } from './migrations/20261031010000_add_mqtt_user_password_plaintext.js';
+import { migration as mqttTopicToDevice } from './migrations/20261101000000_mqtt_topic_to_device.js';
 import type { NativeSqliteMigration } from './migration-types.js';
 
 export const nativeMigrations: NativeSqliteMigration[] = [
@@ -91,4 +92,5 @@ export const nativeMigrations: NativeSqliteMigration[] = [
 	addAppMarketplace,
 	flattenMarketplace,
 	addMqttUserPasswordPlaintext,
+	mqttTopicToDevice,
 ];

@@ -257,178 +257,197 @@ describe('MqttDiscovery', () => {
     });
   });
 
-  describe('convertToDevices', () => {
-    it('should generate stable fingerprint', () => {
+  describe('groupTopicsIntoDevices', () => {
+    function makeValidation(topic: string, payload = '42'): any {
+      return {
+        topic,
+        messagesReceived: 5,
+        retainedMessagesReceived: 0,
+        firstPayload: payload,
+        firstSeen: new Date(),
+        lastSeen: new Date(),
+        hasLive: true,
+        hasRetained: false,
+      };
+    }
+
+    it('should group hierarchical topics sharing common sub-topic names into devices', () => {
       const plugin = new MqttDiscovery();
-      const validations = [
-        {
-          topic: 'device/sensor01/temperature',
-          messagesReceived: 5,
-          retainedMessagesReceived: 0,
-          firstPayload: '23.5',
-          firstSeen: new Date(),
-          lastSeen: new Date(),
-          hasLive: true,
-          hasRetained: false
-        }
+      const topics = [
+        makeValidation('factory/sim-001/telemetry'),
+        makeValidation('factory/sim-001/status'),
+        makeValidation('factory/sim-002/telemetry'),
+        makeValidation('factory/sim-002/status'),
       ];
 
-      const devices = (plugin as any).convertToDevices(validations);
-      
+      const groups = (plugin as any).groupTopicsIntoDevices(topics);
+
+      expect(groups).toHaveLength(2);
+      const baseTopics = groups.map((g: any) => g.baseTopic).sort();
+      expect(baseTopics).toEqual(['factory/sim-001', 'factory/sim-002']);
+
+      const sim001 = groups.find((g: any) => g.baseTopic === 'factory/sim-001');
+      expect(sim001.dataPointTopics.size).toBe(2);
+      expect(sim001.dataPointTopics.has('telemetry')).toBe(true);
+      expect(sim001.dataPointTopics.has('status')).toBe(true);
+    });
+
+    it('should keep flat topics as individual devices', () => {
+      const plugin = new MqttDiscovery();
+      const topics = [
+        makeValidation('temperature'),
+        makeValidation('humidity'),
+      ];
+
+      const groups = (plugin as any).groupTopicsIntoDevices(topics);
+
+      expect(groups).toHaveLength(2);
+      expect(groups[0].baseTopic).toBe('temperature');
+      expect(groups[1].baseTopic).toBe('humidity');
+    });
+
+    it('should handle a single deep topic as one device', () => {
+      const plugin = new MqttDiscovery();
+      const topics = [
+        makeValidation('building/floor1/sensor'),
+      ];
+
+      const groups = (plugin as any).groupTopicsIntoDevices(topics);
+
+      expect(groups).toHaveLength(1);
+      expect(groups[0].baseTopic).toBe('building/floor1/sensor');
+    });
+
+    it('should use topicPattern when provided', () => {
+      const plugin = new MqttDiscovery();
+      const topics = [
+        makeValidation('factory/sim-001/telemetry'),
+        makeValidation('factory/sim-001/status'),
+        makeValidation('factory/sim-002/telemetry'),
+      ];
+
+      const groups = (plugin as any).groupTopicsIntoDevices(topics, 'factory/{deviceId}/+');
+
+      expect(groups).toHaveLength(2);
+      const sim001 = groups.find((g: any) => g.baseTopic === 'factory/sim-001');
+      expect(sim001).toBeDefined();
+      expect(sim001.deviceId).toBe('sim-001');
+      expect(sim001.dataPointTopics.has('telemetry')).toBe(true);
+    });
+
+    it('should return empty array for no topics', () => {
+      const plugin = new MqttDiscovery();
+      const groups = (plugin as any).groupTopicsIntoDevices([]);
+      expect(groups).toEqual([]);
+    });
+  });
+
+  describe('convertGroupsToDevices', () => {
+    function makeGroup(baseTopic: string, subTopics: string[]): any {
+      const dataPointTopics = new Map();
+      for (const sub of subTopics) {
+        dataPointTopics.set(sub, {
+          topic: `${baseTopic}/${sub}`,
+          messagesReceived: 5,
+          retainedMessagesReceived: 0,
+          firstPayload: JSON.stringify({ value: 42 }),
+          firstSeen: new Date('2026-11-01T00:00:00Z'),
+          lastSeen: new Date('2026-11-01T00:01:00Z'),
+          hasLive: true,
+          hasRetained: false,
+        });
+      }
+      return {
+        deviceId: baseTopic.split('/').pop(),
+        baseTopic,
+        dataPointTopics,
+      };
+    }
+
+    it('should generate stable fingerprint from baseTopic', () => {
+      const plugin = new MqttDiscovery();
+      const groups = [makeGroup('factory/sim-001', ['telemetry'])];
+
+      const devices = (plugin as any).convertGroupsToDevices(groups);
+
       expect(devices).toHaveLength(1);
       expect(devices[0].fingerprint).toBeDefined();
       expect(devices[0].fingerprint).toHaveLength(32);
-      
-      // Fingerprint should be stable for same topic
-      const devices2 = (plugin as any).convertToDevices(validations);
+
+      const devices2 = (plugin as any).convertGroupsToDevices(groups);
       expect(devices2[0].fingerprint).toBe(devices[0].fingerprint);
     });
 
-    it('should truncate long topic names', () => {
+    it('should truncate long base topic names', () => {
       const plugin = new MqttDiscovery();
-      const longTopic = 'a/'.repeat(50) + 'temperature'; // Very long topic
-      const validations = [
-        {
-          topic: longTopic,
-          messagesReceived: 1,
-          retainedMessagesReceived: 0,
-          firstPayload: '42',
-          firstSeen: new Date(),
-          lastSeen: new Date(),
-          hasLive: true,
-          hasRetained: false
-        }
-      ];
+      const longBase = 'a/'.repeat(50) + 'device';
+      const groups = [makeGroup(longBase, ['value'])];
 
-      const devices = (plugin as any).convertToDevices(validations);
-      
-      // Name should start with 'mqtt_' and be truncated
+      const devices = (plugin as any).convertGroupsToDevices(groups);
+
       expect(devices[0].name).toMatch(/^mqtt_\.\.\./);
-      expect(devices[0].name.length).toBeLessThanOrEqual(63); // mqtt_ + ... + 57 chars
+      expect(devices[0].name.length).toBeLessThanOrEqual(63);
     });
 
-    it('should infer data type from first payload', () => {
+    it('should set connection.baseTopic and connection.autoMetrics', () => {
       const plugin = new MqttDiscovery();
-      const validations = [
-        {
-          topic: 'test/number',
-          messagesReceived: 1,
-          retainedMessagesReceived: 0,
-          firstPayload: '42.5',
-          firstSeen: new Date(),
-          lastSeen: new Date(),
-          hasLive: true,
-          hasRetained: false
-        },
-        {
-          topic: 'test/boolean',
-          messagesReceived: 1,
-          retainedMessagesReceived: 0,
-          firstPayload: 'true',
-          firstSeen: new Date(),
-          lastSeen: new Date(),
-          hasLive: true,
-          hasRetained: false
-        },
-        {
-          topic: 'test/string',
-          messagesReceived: 1,
-          retainedMessagesReceived: 0,
-          firstPayload: 'hello',
-          firstSeen: new Date(),
-          lastSeen: new Date(),
-          hasLive: true,
-          hasRetained: false
-        }
-      ];
+      const groups = [makeGroup('factory/sim-001', ['telemetry', 'status'])];
 
-      const devices = (plugin as any).convertToDevices(validations);
-      
-      expect(devices[0].connection.dataType).toBe('number');
-      expect(devices[1].connection.dataType).toBe('boolean');
-      expect(devices[2].connection.dataType).toBe('string');
+      const devices = (plugin as any).convertGroupsToDevices(groups);
+
+      expect(devices[0].connection.baseTopic).toBe('factory/sim-001');
+      expect(devices[0].connection.autoMetrics).toBe(true);
     });
 
-    it('should set confidence to high for validated topics', () => {
+    it('should populate dataPoints from sub-topics', () => {
       const plugin = new MqttDiscovery();
-      const validations = [
-        {
-          topic: 'test/topic',
-          messagesReceived: 10,
-          retainedMessagesReceived: 0,
-          firstPayload: '42',
-          firstSeen: new Date(),
-          lastSeen: new Date(),
-          hasLive: true,
-          hasRetained: false
-        }
-      ];
+      const groups = [makeGroup('factory/sim-001', ['telemetry', 'status'])];
 
-      const devices = (plugin as any).convertToDevices(validations);
-      
+      const devices = (plugin as any).convertGroupsToDevices(groups);
+
+      expect(devices[0].dataPoints).toHaveLength(2);
+      const subTopics = devices[0].dataPoints.map((dp: any) => dp.subTopic);
+      expect(subTopics).toContain('telemetry');
+      expect(subTopics).toContain('status');
+    });
+
+    it('should include sampleFields for JSON payloads', () => {
+      const plugin = new MqttDiscovery();
+      const group = makeGroup('device', ['temp']);
+      group.dataPointTopics.get('temp').firstPayload = JSON.stringify({
+        temperature: 23.5,
+        humidity: 65,
+        units: { temperature: 'C' },
+      });
+
+      const devices = (plugin as any).convertGroupsToDevices([group]);
+
+      const dp = devices[0].dataPoints[0];
+      expect(dp.sampleFields).toContain('temperature');
+      expect(dp.sampleFields).toContain('humidity');
+    });
+
+    it('should set protocol to mqtt, confidence to high, validated to false', () => {
+      const plugin = new MqttDiscovery();
+      const groups = [makeGroup('test/device', ['value'])];
+
+      const devices = (plugin as any).convertGroupsToDevices(groups);
+
+      expect(devices[0].protocol).toBe('mqtt');
       expect(devices[0].confidence).toBe('high');
-    });
-
-    it('should set validated to false', () => {
-      const plugin = new MqttDiscovery();
-      const validations = [
-        {
-          topic: 'test/topic',
-          messagesReceived: 1,
-          retainedMessagesReceived: 0,
-          firstPayload: '42',
-          firstSeen: new Date(),
-          lastSeen: new Date(),
-          hasLive: true,
-          hasRetained: false
-        }
-      ];
-
-      const devices = (plugin as any).convertToDevices(validations);
-      
       expect(devices[0].validated).toBe(false);
     });
 
-    it('should set protocol to mqtt', () => {
+    it('should include discoveredAt timestamp from earliest seen topic', () => {
       const plugin = new MqttDiscovery();
-      const validations = [
-        {
-          topic: 'test/topic',
-          messagesReceived: 1,
-          retainedMessagesReceived: 0,
-          firstPayload: '42',
-          firstSeen: new Date(),
-          lastSeen: new Date(),
-          hasLive: true,
-          hasRetained: false
-        }
-      ];
+      const group = makeGroup('test/device', ['value']);
+      const earlyDate = new Date('2026-10-01T00:00:00Z');
+      group.dataPointTopics.get('value').firstSeen = earlyDate;
 
-      const devices = (plugin as any).convertToDevices(validations);
-      
-      expect(devices[0].protocol).toBe('mqtt');
-    });
+      const devices = (plugin as any).convertGroupsToDevices([group]);
 
-    it('should include discoveredAt timestamp', () => {
-      const plugin = new MqttDiscovery();
-      const now = new Date();
-      const validations = [
-        {
-          topic: 'test/topic',
-          messagesReceived: 1,
-          retainedMessagesReceived: 0,
-          firstPayload: '42',
-          firstSeen: now,
-          lastSeen: now,
-          hasLive: true,
-          hasRetained: false
-        }
-      ];
-
-      const devices = (plugin as any).convertToDevices(validations);
-      
       expect(devices[0].discoveredAt).toBeDefined();
-      expect(new Date(devices[0].discoveredAt).getTime()).toBe(now.getTime());
+      expect(new Date(devices[0].discoveredAt).getTime()).toBe(earlyDate.getTime());
     });
   });
 
