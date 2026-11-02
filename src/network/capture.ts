@@ -94,6 +94,7 @@ export class CaptureEngine extends EventEmitter {
 	private pcapBuf = Buffer.alloc(0);
 	private pcapGlobalHeader: Buffer | null = null;
 	private linkLayerSize = 0; // bytes to skip for link-layer header
+	private pcapBigEndian = false;
 
 	constructor(logger: AgentLogger) {
 		super();
@@ -135,7 +136,7 @@ export class CaptureEngine extends EventEmitter {
 
 		await this.resolveLocalIps();
 
-		const args = ['-i', this.captureIface, '-U', '-w', '-', '--packet-buffered', '-s', '65535'];
+		const args = ['-i', this.captureIface, '-U', '-w', '-', '-s', '65535'];
 		if (this.captureFilter) args.push(...this.captureFilter.split(/\s+/));
 
 		this.proc = spawn('tcpdump', args);
@@ -268,62 +269,90 @@ export class CaptureEngine extends EventEmitter {
 		if (!this.pcapGlobalHeader) {
 			if (this.pcapBuf.length < 24) return;
 			this.pcapGlobalHeader = Buffer.from(this.pcapBuf.subarray(0, 24));
-			const linkType = this.pcapGlobalHeader.readUInt32LE(20);
-			// SLL (Linux cooked) = 113 → 16-byte header; Ethernet = 1 → 14-byte header
-			this.linkLayerSize = linkType === 113 ? 16 : linkType === 1 ? 14 : 0;
+			const magic = this.pcapGlobalHeader.readUInt32LE(0);
+			this.pcapBigEndian = magic === 0xd4c3b2a1;
+			const linkType = this.pcapBigEndian
+				? this.pcapGlobalHeader.readUInt32BE(20)
+				: this.pcapGlobalHeader.readUInt32LE(20);
+			// SLL (Linux cooked) = 113 → 16 bytes; SLL2 = 276 → 20 bytes; Ethernet = 1 → 14 bytes
+			if (linkType === 276) this.linkLayerSize = 20;
+			else if (linkType === 113) this.linkLayerSize = 16;
+			else if (linkType === 1) this.linkLayerSize = 14;
+			else this.linkLayerSize = 0;
+			this.logger.debugSync(`pcap magic: 0x${magic.toString(16)}, link type: ${linkType}, header size: ${this.linkLayerSize}`, {
+				component: LogComponents.capture,
+			});
 			this.pcapBuf = Buffer.from(this.pcapBuf.subarray(24));
 		}
 
 		// Process packet records
 		while (this.pcapBuf.length >= 16) {
-			const tsSec = this.pcapBuf.readUInt32LE(0);
-			const tsUsec = this.pcapBuf.readUInt32LE(4);
-			const capLen = this.pcapBuf.readUInt32LE(8);
-			const origLen = this.pcapBuf.readUInt32LE(12);
+			try {
+				const r = this.pcapBigEndian ? 'readUInt32BE' : 'readUInt32LE' as const;
+				const tsSec = this.pcapBuf[r](0);
+				const tsUsec = this.pcapBuf[r](4);
+				const capLen = this.pcapBuf[r](8);
+				const origLen = this.pcapBuf[r](12);
 
-			if (this.pcapBuf.length < 16 + capLen) break; // incomplete record
+				// Sanity check: reject absurd capture lengths
+				if (capLen > 0xffff) {
+					this.logger.warnSync(`pcap: invalid capLen ${capLen}, resetting buffer`, {
+						component: LogComponents.capture,
+					});
+					this.pcapBuf = Buffer.alloc(0);
+					break;
+				}
 
-			const recordBuf = Buffer.from(this.pcapBuf.subarray(0, 16 + capLen));
-			const payload = this.pcapBuf.subarray(16, 16 + capLen);
+				if (this.pcapBuf.length < 16 + capLen) break; // incomplete record
 
-			this.pcapBuf = Buffer.from(this.pcapBuf.subarray(16 + capLen));
+				const recordBuf = Buffer.from(this.pcapBuf.subarray(0, 16 + capLen));
+				const payload = this.pcapBuf.subarray(16, 16 + capLen);
 
-			const timestamp = tsSec * 1000 + Math.floor(tsUsec / 1000);
-			const parsed = this.parsePayload(payload);
+				this.pcapBuf = Buffer.from(this.pcapBuf.subarray(16 + capLen));
 
-			const direction = this.detectDirection(parsed.srcIp, parsed.dstIp);
-			const protocolName = this.resolveProtocolName(parsed.ipProtocol, parsed.srcPort, parsed.dstPort);
+				const timestamp = tsSec * 1000 + Math.floor(tsUsec / 1000);
+				const parsed = this.parsePayload(payload);
 
-			const packet: CapturedPacket = {
-				id: this.nextId++,
-				timestamp,
-				length: origLen,
-				capturedLength: capLen,
-				rawPcap: recordBuf,
-				srcIp: parsed.srcIp,
-				dstIp: parsed.dstIp,
-				srcPort: parsed.srcPort,
-				dstPort: parsed.dstPort,
-				ipProtocol: parsed.ipProtocol,
-				protocolName,
-				direction,
-				info: '',
-			};
-			packet.info = this.buildInfoString(packet);
+				const direction = this.detectDirection(parsed.srcIp, parsed.dstIp);
+				const protocolName = this.resolveProtocolName(parsed.ipProtocol, parsed.srcPort, parsed.dstPort);
 
-			this.counters.seen++;
-			this.counters.bytes += origLen;
-			if (direction === 'inbound') this.counters.inbound++;
-			else if (direction === 'outbound') this.counters.outbound++;
+				const packet: CapturedPacket = {
+					id: this.nextId++,
+					timestamp,
+					length: origLen,
+					capturedLength: capLen,
+					rawPcap: recordBuf,
+					srcIp: parsed.srcIp,
+					dstIp: parsed.dstIp,
+					srcPort: parsed.srcPort,
+					dstPort: parsed.dstPort,
+					ipProtocol: parsed.ipProtocol,
+					protocolName,
+					direction,
+					info: '',
+				};
+				packet.info = this.buildInfoString(packet);
 
-			if (this.packets.length >= this.maxPackets) {
-				this.packets.shift();
-				this.counters.dropped++;
+				this.counters.seen++;
+				this.counters.bytes += origLen;
+				if (direction === 'inbound') this.counters.inbound++;
+				else if (direction === 'outbound') this.counters.outbound++;
+
+				if (this.packets.length >= this.maxPackets) {
+					this.packets.shift();
+					this.counters.dropped++;
+				}
+				this.packets.push(packet);
+				this.counters.stored = this.packets.length;
+
+				this.emit('packet', packet);
+			} catch (err) {
+				this.logger.warnSync(`pcap parse error: ${err instanceof Error ? err.message : err}`, {
+					component: LogComponents.capture,
+				});
+				this.pcapBuf = Buffer.alloc(0);
+				break;
 			}
-			this.packets.push(packet);
-			this.counters.stored = this.packets.length;
-
-			this.emit('packet', packet);
 		}
 	}
 
