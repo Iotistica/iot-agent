@@ -95,6 +95,7 @@ export class CaptureEngine extends EventEmitter {
 	private pcapGlobalHeader: Buffer | null = null;
 	private linkLayerSize = 0; // bytes to skip for link-layer header
 	private pcapBigEndian = false;
+	private tcpdumpPath = 'tcpdump';
 
 	constructor(logger: AgentLogger) {
 		super();
@@ -107,8 +108,14 @@ export class CaptureEngine extends EventEmitter {
 
 	async checkAvailability(): Promise<boolean> {
 		try {
-			await exec('tcpdump --version');
+			// Resolve full path so spawn works even with limited systemd PATH
+			const { stdout: whichOut } = await exec('which tcpdump');
+			this.tcpdumpPath = whichOut.trim() || 'tcpdump';
+			await exec(`${this.tcpdumpPath} --version`);
 			this._available = true;
+			this.logger.infoSync(`tcpdump found at ${this.tcpdumpPath}`, {
+				component: LogComponents.capture,
+			});
 		} catch {
 			this._available = false;
 			this.logger.warnSync('tcpdump not available — packet capture disabled', {
@@ -139,13 +146,17 @@ export class CaptureEngine extends EventEmitter {
 		const args = ['-i', this.captureIface, '-U', '-w', '-', '-s', '65535'];
 		if (this.captureFilter) args.push(...this.captureFilter.split(/\s+/));
 
-		this.proc = spawn('tcpdump', args);
+		this.logger.infoSync(`Spawning: ${this.tcpdumpPath} ${args.join(' ')}`, {
+			component: LogComponents.capture,
+		});
+
+		this.proc = spawn(this.tcpdumpPath, args);
 
 		this.proc.stdout?.on('data', (chunk: Buffer) => this.onData(chunk));
 		this.proc.stderr?.on('data', (data: Buffer) => {
 			const msg = data.toString().trim();
-			if (msg && !msg.startsWith('tcpdump: listening')) {
-				this.logger.debugSync(`tcpdump: ${msg}`, { component: LogComponents.capture });
+			if (msg) {
+				this.logger.infoSync(`tcpdump: ${msg}`, { component: LogComponents.capture });
 			}
 		});
 		this.proc.on('error', (err) => {
@@ -157,17 +168,15 @@ export class CaptureEngine extends EventEmitter {
 			this.emit('status-change', this.getStatus());
 		});
 		this.proc.on('close', (code) => {
-			if (this.state === 'running') {
-				this.logger.debugSync(`tcpdump exited with code ${code}`, {
-					component: LogComponents.capture,
-				});
-			}
+			this.logger.infoSync(`tcpdump exited with code ${code}`, {
+				component: LogComponents.capture,
+			});
 			this.state = 'idle';
 			this.proc = null;
 			this.emit('status-change', this.getStatus());
 		});
 
-		this.logger.debugSync('Packet capture started', {
+		this.logger.infoSync('Packet capture started', {
 			component: LogComponents.capture,
 			sessionId: this.sessionId,
 			iface: this.captureIface,
