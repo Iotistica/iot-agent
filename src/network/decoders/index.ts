@@ -44,6 +44,7 @@ import { ModbusDecoder } from './modbus.js';
 import { HttpDecoder } from './http.js';
 import { DnsDecoder } from './dns.js';
 import { OpcuaDecoder } from './opcua.js';
+import { BacnetDecoder } from './bacnet.js';
 
 let registry: DecoderRegistry | null = null;
 
@@ -55,6 +56,7 @@ export function getDecoderRegistry(): DecoderRegistry {
 		registry.register(new HttpDecoder());
 		registry.register(new DnsDecoder());
 		registry.register(new OpcuaDecoder());
+		registry.register(new BacnetDecoder());
 	}
 	return registry;
 }
