@@ -9,8 +9,10 @@ import {
   DeleteOutlined,
   SafetyCertificateOutlined,
   ApiOutlined,
+  WifiOutlined,
 } from '@ant-design/icons-vue'
 import AppLayout from '@/components/layout/AppLayout.vue'
+import CaptureTab from '@/components/network/CaptureTab.vue'
 import {
   networkApi,
   type FirewallRule,
@@ -23,7 +25,7 @@ import {
 const route = useRoute()
 const router = useRouter()
 
-const VALID_TABS = ['firewall', 'ports'] as const
+const VALID_TABS = ['firewall', 'ports', 'capture'] as const
 const activeTab = ref(
   typeof route.query.tab === 'string' && (VALID_TABS as readonly string[]).includes(route.query.tab)
     ? route.query.tab
@@ -267,6 +269,11 @@ onMounted(() => {
             </template>
           </template>
         </a-table>
+      </a-tab-pane>
+
+      <a-tab-pane key="capture">
+        <template #tab><WifiOutlined /> Capture</template>
+        <CaptureTab />
       </a-tab-pane>
     </a-tabs>
 

@@ -31,6 +31,7 @@ import type { TailscaleConfig, TailscaleStatus } from '../network/vpn/tailscale-
 import type { DevicePublish } from '../publish/index.js';
 import type { DiscoveryRulesScheduler } from '../discovery/rules-scheduler.js';
 import type { AgentFirewall } from '../network/firewall.js';
+import type { CaptureEngine } from '../network/capture.js';
 import type { DockerOptions } from 'dockerode';
 import { isProInstalled } from '../pro/loader.js';
 
@@ -64,6 +65,7 @@ let devicePublish: DevicePublish | undefined;
 let discoveryRulesScheduler: DiscoveryRulesScheduler | undefined;
 let localLogBackend: LocalLogBackend | undefined;
 let firewall: AgentFirewall | undefined;
+let captureEngine: CaptureEngine | undefined;
 
 export function setFirewall(fw: AgentFirewall | undefined): void {
 	firewall = fw;
@@ -71,6 +73,14 @@ export function setFirewall(fw: AgentFirewall | undefined): void {
 
 export function getFirewall(): AgentFirewall | undefined {
 	return firewall;
+}
+
+export function setCaptureEngine(engine: CaptureEngine | undefined): void {
+	captureEngine = engine;
+}
+
+export function getCaptureEngine(): CaptureEngine | undefined {
+	return captureEngine;
 }
 
 export function setDevicePublish(dp: DevicePublish | undefined): void {

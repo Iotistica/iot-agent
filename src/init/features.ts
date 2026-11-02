@@ -21,7 +21,8 @@ import { AdapterInitializer } from './adapters.js';
 import { AgentUpdater } from '../updater.js';
 import { createCommandFeature, type CommandFeature } from '../commands/index.js';
 import { AgentFirewall } from '../network/firewall.js';
-import { setDevicePublish, setDiscoveryRulesScheduler, setFirewall } from '../api/actions.js';
+import { CaptureEngine } from '../network/capture.js';
+import { setDevicePublish, setDiscoveryRulesScheduler, setFirewall, setCaptureEngine } from '../api/actions.js';
 import { type CloudMqttClient } from '../mqtt/manager.js';
 import { MQTT_TOPIC_PATTERNS, agentTopic } from '../mqtt/topics.js';
 import { type StateManager } from '../core/state.js';
@@ -60,6 +61,7 @@ export interface InitializedFeatures {
   updater?: AgentUpdater;
   commandFeature?: CommandFeature;
   firewall?: AgentFirewall;
+  capture?: CaptureEngine;
   shellHandler?: any; // Shell handler for remote terminal access
   discoveryService?: any; // Discovery service (passed from Agent)
 }
@@ -132,7 +134,8 @@ export class FeatureInitializer {
 			this.initAgentUpdater(),
 			this.initCommandFeature(),
 			this.initShellHandler(),
-			this.initFirewall()
+			this.initFirewall(),
+			this.initCapture(),
 		]);
 	}
 
@@ -633,6 +636,20 @@ export class FeatureInitializer {
 		});
 	}
 
+	private async initCapture(): Promise<void> {
+		const { logger } = this.context;
+		const engine = new CaptureEngine(logger);
+		const available = await engine.checkAvailability();
+		if (!available) return;
+
+		this.features.capture = engine;
+		setCaptureEngine(engine);
+
+		logger.debugSync('Capture engine initialized', {
+			component: LogComponents.capture,
+		});
+	}
+
 	/**
    * Cleanup all initialized features
    */
@@ -706,9 +723,17 @@ export class FeatureInitializer {
 
 		// Stop Firewall
 		if (this.features.firewall) {
-			// Firewall has no explicit cleanup method
 			logger.debugSync('Firewall cleanup', {
 				component: LogComponents.agent,
+			});
+		}
+
+		// Stop Capture Engine
+		if (this.features.capture) {
+			this.features.capture.stop();
+			setCaptureEngine(undefined);
+			logger.debugSync('Capture engine stopped', {
+				component: LogComponents.capture,
 			});
 		}
 	}

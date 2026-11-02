@@ -58,10 +58,7 @@ export function attachShellHandler(server: Server, logger?: AgentLogger): void {
 
 	server.on('upgrade', (req, socket, head) => {
 		const url = req.url?.split('?')[0];
-		if (url !== '/v1/shell') {
-			socket.destroy();
-			return;
-		}
+		if (url !== '/v1/shell') return;
 
 		if (!authenticate(req)) {
 			socket.write('HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\n\r\n');
