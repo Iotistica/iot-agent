@@ -468,7 +468,7 @@ watch(running, (val) => {
       </a-descriptions>
 
       <template v-if="selectedPacket.decoded">
-        <h4 style="margin-top: 16px">Protocol Decode</h4>
+        <div class="section-divider">Protocol Decode</div>
         <a-descriptions :column="1" bordered size="small">
           <a-descriptions-item label="Operation">
             <a-tag :color="selectedPacket.decoded.status === 'error' ? 'red'
@@ -487,7 +487,7 @@ watch(running, (val) => {
         </a-descriptions>
       </template>
 
-      <h4 style="margin-top: 16px">Hex Dump</h4>
+      <div class="section-divider">Hex Dump</div>
       <pre class="hex-dump">{{ selectedPacket.hexDump }}</pre>
     </template>
   </a-drawer>
@@ -521,6 +521,20 @@ watch(running, (val) => {
   gap: 8px;
   margin-bottom: 12px;
   flex-wrap: wrap;
+}
+
+.section-divider {
+  margin-top: 20px;
+  margin-bottom: 12px;
+  padding: 6px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.65);
+  border-left: 3px solid #1668dc;
+  background: rgba(22, 104, 220, 0.08);
+  border-radius: 0 4px 4px 0;
 }
 
 .hex-dump {
