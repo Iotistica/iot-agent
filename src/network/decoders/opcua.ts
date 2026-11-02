@@ -148,7 +148,7 @@ export class OpcuaDecoder implements ProtocolDecoder {
 		let chunkType: string | undefined;
 		if (!isConnection) {
 			const allowed = ALLOWED_CHUNKS[msgType];
-			if (!allowed || !allowed.has(byte3)) {
+			if (!allowed?.has(byte3)) {
 				return this.malformed(msgType, `invalid chunk type '${byte3}' for ${msgType}`);
 			}
 			chunkType = byte3;
