@@ -192,11 +192,14 @@ export class CaptureEngine extends EventEmitter {
 		if (this.state !== 'running') return this.getStatus();
 		this.state = 'stopping';
 		if (this.proc) {
-			this.proc.kill('SIGTERM');
+			this.proc.stdout?.removeAllListeners('data');
+			this.proc.stderr?.removeAllListeners('data');
+			this.proc.kill('SIGKILL');
 			this.proc = null;
 		}
+		this.pcapBuf = Buffer.alloc(0);
 		this.state = 'idle';
-		this.logger.debugSync('Packet capture stopped', {
+		this.logger.infoSync('Packet capture stopped', {
 			component: LogComponents.capture,
 			sessionId: this.sessionId,
 		});
