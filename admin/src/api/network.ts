@@ -51,6 +51,13 @@ export interface FirewallRuleInput {
 
 // ── Capture types ──────────────────────────────────────────────────────────
 
+export interface DecodedInfo {
+  operation: string
+  summary: string
+  status: 'ok' | 'error' | 'warning'
+  details: Record<string, string | number | boolean>
+}
+
 export interface CapturePacket {
   id: number
   timestamp: number
@@ -65,6 +72,7 @@ export interface CapturePacket {
   direction: 'inbound' | 'outbound' | 'unknown'
   info: string
   size: number
+  decoded?: DecodedInfo
 }
 
 export interface CapturePacketDetail extends CapturePacket {

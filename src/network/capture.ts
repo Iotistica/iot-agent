@@ -13,6 +13,7 @@ export interface CapturedPacket {
 	length: number;
 	capturedLength: number;
 	rawPcap: Buffer;
+	appPayload: Buffer | null;
 	srcIp: string;
 	dstIp: string;
 	srcPort: number | null;
@@ -331,6 +332,7 @@ export class CaptureEngine extends EventEmitter {
 					length: origLen,
 					capturedLength: capLen,
 					rawPcap: recordBuf,
+					appPayload: parsed.appPayload,
 					srcIp: parsed.srcIp,
 					dstIp: parsed.dstIp,
 					srcPort: parsed.srcPort,
@@ -369,16 +371,17 @@ export class CaptureEngine extends EventEmitter {
 		srcIp: string; dstIp: string;
 		srcPort: number | null; dstPort: number | null;
 		ipProtocol: number;
+		appPayload: Buffer | null;
 	} {
 		const ipOffset = this.linkLayerSize;
 		if (payload.length < ipOffset + 20) {
-			return { srcIp: '?', dstIp: '?', srcPort: null, dstPort: null, ipProtocol: 0 };
+			return { srcIp: '?', dstIp: '?', srcPort: null, dstPort: null, ipProtocol: 0, appPayload: null };
 		}
 
 		const versionIhl = payload[ipOffset];
 		const version = (versionIhl >> 4) & 0x0f;
 		if (version !== 4) {
-			return { srcIp: '?', dstIp: '?', srcPort: null, dstPort: null, ipProtocol: 0 };
+			return { srcIp: '?', dstIp: '?', srcPort: null, dstPort: null, ipProtocol: 0, appPayload: null };
 		}
 
 		const ihl = (versionIhl & 0x0f) * 4;
@@ -396,7 +399,22 @@ export class CaptureEngine extends EventEmitter {
 			dstPort = payload.readUInt16BE(ipOffset + ihl + 2);
 		}
 
-		return { srcIp, dstIp, srcPort, dstPort, ipProtocol };
+		// Extract application-layer payload (after transport header)
+		let appPayload: Buffer | null = null;
+		if (ipProtocol === 6 && payload.length >= ipOffset + ihl + 20) {
+			const tcpDataOffset = ((payload[ipOffset + ihl + 12] >> 4) & 0x0f) * 4;
+			const appStart = ipOffset + ihl + tcpDataOffset;
+			if (appStart < payload.length) {
+				appPayload = Buffer.from(payload.subarray(appStart));
+			}
+		} else if (ipProtocol === 17 && payload.length >= ipOffset + ihl + 8) {
+			const appStart = ipOffset + ihl + 8;
+			if (appStart < payload.length) {
+				appPayload = Buffer.from(payload.subarray(appStart));
+			}
+		}
+
+		return { srcIp, dstIp, srcPort, dstPort, ipProtocol, appPayload };
 	}
 
 	private resolveProtocolName(ipProtocol: number, srcPort: number | null, dstPort: number | null): string {

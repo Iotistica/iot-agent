@@ -2,8 +2,9 @@ import express from 'express';
 import type { Request, Response } from 'express';
 import { exec } from '../lib/fs-utils.js';
 import { getFirewall, getDockerPortBindings, getCaptureEngine } from './actions.js';
-import type { CaptureFilter } from '../network/capture.js';
+import type { CaptureFilter, CapturedPacket } from '../network/capture.js';
 import { requireRole } from './middleware/roles.js';
+import { getDecoderRegistry, type PacketMeta } from '../network/decoders/index.js';
 
 export const networkRouter = express.Router();
 
@@ -192,9 +193,25 @@ networkRouter.get('/v1/network/ports', async (_req: Request, res: Response) => {
 
 // ── Capture ────────────────────────────────────────────────────────────────
 
-function serializePacket(p: { id: number; timestamp: number; length: number; capturedLength: number; srcIp: string; dstIp: string; srcPort: number | null; dstPort: number | null; ipProtocol: number; protocolName: string; direction: string; info: string; rawPcap: Buffer }) {
-	const { rawPcap, ...rest } = p;
-	return { ...rest, size: rawPcap.length };
+function decodePacket(p: CapturedPacket) {
+	if (!p.appPayload || p.appPayload.length === 0) return null;
+	const meta: PacketMeta = {
+		srcIp: p.srcIp, dstIp: p.dstIp,
+		srcPort: p.srcPort, dstPort: p.dstPort,
+		ipProtocol: p.ipProtocol, protocolName: p.protocolName,
+	};
+	return getDecoderRegistry().decode(p.protocolName, p.appPayload, meta);
+}
+
+export function serializePacket(p: CapturedPacket) {
+	const { rawPcap, appPayload, ...rest } = p;
+	const serialized: Record<string, unknown> = { ...rest, size: rawPcap.length };
+	const decoded = decodePacket(p);
+	if (decoded) {
+		serialized.info = decoded.summary;
+		serialized.decoded = decoded;
+	}
+	return serialized;
 }
 
 networkRouter.get('/v1/network/capture/status', (_req: Request, res: Response) => {
@@ -285,7 +302,7 @@ networkRouter.get('/v1/network/capture/packets/:id', (_req: Request, res: Respon
 		return res.status(404).json({ error: 'Packet not found' });
 	}
 
-	const { rawPcap, ...rest } = packet;
+	const { rawPcap, appPayload, ...rest } = packet;
 	const hexLines: string[] = [];
 	const previewBytes = rawPcap.subarray(16, 16 + Math.min(rawPcap.length - 16, 256));
 	for (let i = 0; i < previewBytes.length; i += 16) {
@@ -295,7 +312,13 @@ networkRouter.get('/v1/network/capture/packets/:id', (_req: Request, res: Respon
 		hexLines.push(`${i.toString(16).padStart(4, '0')}  ${hex.padEnd(48)}  ${ascii}`);
 	}
 
-	res.json({ ...rest, size: rawPcap.length, hexDump: hexLines.join('\n') });
+	const decoded = decodePacket(packet);
+	const result: Record<string, unknown> = { ...rest, size: rawPcap.length, hexDump: hexLines.join('\n') };
+	if (decoded) {
+		result.info = decoded.summary;
+		result.decoded = decoded;
+	}
+	res.json(result);
 });
 
 networkRouter.get('/v1/network/capture/export', (_req: Request, res: Response) => {

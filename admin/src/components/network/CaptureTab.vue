@@ -120,6 +120,12 @@ const columns: TableColumnType<CapturePacket>[] = [
   { title: 'Info', dataIndex: 'info', key: 'info', ellipsis: true },
 ]
 
+// ── Helpers ───────────────────────────────────────────────────────────────
+
+function formatDetailKey(key: string): string {
+  return key.replace(/([A-Z])/g, ' $1').replace(/^./, (s) => s.toUpperCase())
+}
+
 // ── Protocol tag colors ────────────────────────────────────────────────────
 
 const protocolColors: Record<string, string> = {
@@ -408,6 +414,13 @@ watch(running, (val) => {
               {{ (record as CapturePacket).protocolName }}
             </a-tag>
           </template>
+          <template v-else-if="column.key === 'info'">
+            <span :style="(record as CapturePacket).decoded?.status === 'error' ? 'color: #ff4d4f'
+                        : (record as CapturePacket).decoded?.status === 'warning' ? 'color: #faad14'
+                        : undefined">
+              {{ (record as CapturePacket).info }}
+            </span>
+          </template>
         </template>
       </a-table>
     </div>
@@ -447,6 +460,26 @@ watch(running, (val) => {
         <a-descriptions-item label="Captured">{{ selectedPacket.capturedLength }} bytes</a-descriptions-item>
         <a-descriptions-item label="Info">{{ selectedPacket.info }}</a-descriptions-item>
       </a-descriptions>
+
+      <template v-if="selectedPacket.decoded">
+        <h4 style="margin-top: 16px">Protocol Decode</h4>
+        <a-descriptions :column="1" bordered size="small">
+          <a-descriptions-item label="Operation">
+            <a-tag :color="selectedPacket.decoded.status === 'error' ? 'red'
+                          : selectedPacket.decoded.status === 'warning' ? 'orange'
+                          : 'blue'">
+              {{ selectedPacket.decoded.operation }}
+            </a-tag>
+          </a-descriptions-item>
+          <a-descriptions-item
+            v-for="(value, key) in selectedPacket.decoded.details"
+            :key="key"
+            :label="formatDetailKey(String(key))"
+          >
+            {{ value }}
+          </a-descriptions-item>
+        </a-descriptions>
+      </template>
 
       <h4 style="margin-top: 16px">Hex Dump</h4>
       <pre class="hex-dump">{{ selectedPacket.hexDump }}</pre>

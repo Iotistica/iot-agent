@@ -5,6 +5,7 @@ import { getCaptureEngine } from './actions.js';
 import type { AgentLogger } from '../logging/agent-logger.js';
 import { LogComponents } from '../logging/types.js';
 import type { CapturedPacket } from '../network/capture.js';
+import { serializePacket } from './network.js';
 
 const SESSION_COOKIE = 'admin_session';
 
@@ -22,11 +23,6 @@ function authenticate(req: IncomingMessage): boolean {
 	const token = parseCookie(req.headers.cookie, SESSION_COOKIE);
 	if (!token) return false;
 	return !!AdminSessionModel.find(token);
-}
-
-function serializePacket(p: CapturedPacket) {
-	const { rawPcap, ...rest } = p;
-	return { ...rest, size: rawPcap.length };
 }
 
 export function attachCaptureHandler(server: Server, logger?: AgentLogger): void {
