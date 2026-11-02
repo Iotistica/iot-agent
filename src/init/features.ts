@@ -21,7 +21,7 @@ import { AdapterInitializer } from './adapters.js';
 import { AgentUpdater } from '../updater.js';
 import { createCommandFeature, type CommandFeature } from '../commands/index.js';
 import { AgentFirewall } from '../network/firewall.js';
-import { setDevicePublish, setDiscoveryRulesScheduler } from '../api/actions.js';
+import { setDevicePublish, setDiscoveryRulesScheduler, setFirewall } from '../api/actions.js';
 import { type CloudMqttClient } from '../mqtt/manager.js';
 import { MQTT_TOPIC_PATTERNS, agentTopic } from '../mqtt/topics.js';
 import { type StateManager } from '../core/state.js';
@@ -625,6 +625,7 @@ export class FeatureInitializer {
 		);
 
 		await this.features.firewall.initialize();
+		setFirewall(this.features.firewall);
 
 		logger.debugSync('Firewall initialized', {
 			component: LogComponents.agent,

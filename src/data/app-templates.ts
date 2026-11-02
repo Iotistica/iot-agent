@@ -272,6 +272,23 @@ export const APP_TEMPLATES: MarketplaceImage[] = [
 		},
 		restart: 'unless-stopped',
 	},
+	{
+		id: 'opcua-sim',
+		name: 'OPC-UA Simulator',
+		category: 'Iotistica',
+		description: 'OPC-UA server with one device and 8 industrial sensor tags (temperature, pressure, flow, vibration, motor, tank level, humidity).',
+		color: '#0077B6',
+		letter: 'OA',
+		image: 'iotistic/sim-opcua:latest',
+		ports: ['4840:4840'],
+		environment: {
+			OPCUA_PORT: '4840',
+			DEVICE_ID: 'sim-001',
+			TICK_INTERVAL_S: '5',
+			LOG_LEVEL: 'INFO',
+		},
+		restart: 'unless-stopped',
+	},
 
 	// ── AI ──────────────────────────────────────────────────────────────────────
 	{

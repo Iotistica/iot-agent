@@ -13,6 +13,7 @@
 import type { AgentLogger } from '../logging/agent-logger';
 import { LogComponents } from '../logging/types';
 import { build, getDefaultRuleAdaptor, RuleAction, type Rule } from '../lib/iptables';
+import { FirewallRuleModel, type FirewallRule } from '../db/models/firewall-rule.model';
 
 export interface FirewallConfig {
   enabled: boolean;
@@ -24,6 +25,7 @@ export interface FirewallConfig {
 }
 
 const FIREWALL_CHAIN = 'IOTISTIC-FIREWALL';
+const USER_CHAIN = 'IOTISTIC-USER';
 
 // Default LAN ranges. Keep Docker separate so container access can be controlled independently.
 const DEFAULT_ALLOWED_LAN_NETWORKS = [
@@ -83,13 +85,12 @@ export class AgentFirewall {
 	}
 
 	/**
-   * Apply iptables firewall rules
+   * Apply iptables firewall rules (protection + user-defined)
    */
 	private async applyFirewallRules(): Promise<void> {
 		const adaptor = getDefaultRuleAdaptor();
 
-		// Determine if firewall should be active
-		const isActive = this.config.mode === 'on' || 
+		const isActive = this.config.mode === 'on' ||
                      (this.config.mode === 'auto' && await this.shouldEnableFirewall());
 
 		this.logger.debugSync('Applying firewall rules', {
@@ -98,64 +99,38 @@ export class AgentFirewall {
 			isActive,
 		});
 
-		// Get rule position for IOTISTIC-FIREWALL in INPUT chain
 		const { getRulePosition } = await import('../lib/iptables.js');
 		const v4Position = await getRulePosition('INPUT', FIREWALL_CHAIN, 4);
 		const v6Position = await getRulePosition('INPUT', FIREWALL_CHAIN, 6);
 
+		let userRules: FirewallRule[] = [];
+		try {
+			userRules = FirewallRuleModel.getAll();
+		} catch {
+			// DB may not be ready during early init
+		}
+
 		await build()
 			.forTable('filter', (filter) =>
 				filter
-				// Setup INPUT chain to jump to our custom chain
 					.forChain('INPUT', (chain) => {
-						// Delete existing rule if present
 						if (v4Position !== -1) {
-							chain.addRule({
-								action: RuleAction.Delete,
-								target: FIREWALL_CHAIN,
-								family: 4,
-							});
+							chain.addRule({ action: RuleAction.Delete, target: FIREWALL_CHAIN, family: 4 });
 						}
 						if (v6Position !== -1) {
-							chain.addRule({
-								action: RuleAction.Delete,
-								target: FIREWALL_CHAIN,
-								family: 6,
-							});
+							chain.addRule({ action: RuleAction.Delete, target: FIREWALL_CHAIN, family: 6 });
 						}
-
-						// Insert jump to our chain at the beginning
-						chain.addRule({
-							action: RuleAction.Insert,
-							id: v4Position > 0 ? v4Position : 1,
-							target: FIREWALL_CHAIN,
-							family: 4,
-						});
-						chain.addRule({
-							action: RuleAction.Insert,
-							id: v6Position > 0 ? v6Position : 1,
-							target: FIREWALL_CHAIN,
-							family: 6,
-						});
-
+						chain.addRule({ action: RuleAction.Insert, id: v4Position > 0 ? v4Position : 1, target: FIREWALL_CHAIN, family: 4 });
+						chain.addRule({ action: RuleAction.Insert, id: v6Position > 0 ? v6Position : 1, target: FIREWALL_CHAIN, family: 6 });
 						return chain;
 					})
-				// Define our custom firewall chain
 					.forChain(FIREWALL_CHAIN, (chain) =>
 						chain
-						// Flush existing rules in our chain
 							.addRule({ action: RuleAction.Flush })
-
-						// Base protection rules (always active)
 							.addRule(this.getBaseRules())
-
-						// Device API protection rules
+							.addRule(this.getUserIptablesRules(userRules))
 							.addRule(this.getDeviceApiRules())
-
-						// MQTT protection rules (if MQTT is configured)
 							.addRule(this.getMqttRules())
-
-						// Final rule: RETURN if firewall inactive, REJECT if active
 							.addRule(this.getFinalRule(isActive))
 					)
 			)
@@ -397,6 +372,82 @@ export class AgentFirewall {
 				}
 			);
 		}
+	}
+
+	/**
+   * Convert persisted user rules to iptables ACCEPT rules
+   */
+	private getUserIptablesRules(userRules: FirewallRule[]): Rule[] {
+		return userRules.map((r) => {
+			const matches: string[] = [];
+			if (r.port.includes('-')) {
+				matches.push('-m multiport', `--dports ${r.port}`);
+			} else {
+				matches.push(`--dport ${r.port}`);
+			}
+			if (r.interface_name) {
+				matches.push(`-i ${r.interface_name}`);
+			}
+			return {
+				comment: r.description || `User rule ${r.id}`,
+				action: RuleAction.Append,
+				proto: r.protocol,
+				matches,
+				target: 'ACCEPT',
+			} as Rule;
+		});
+	}
+
+	/**
+   * Get reserved ports that cannot be opened by user rules
+   */
+	getReservedPorts(): { port: number; service: string }[] {
+		const reserved: { port: number; service: string }[] = [
+			{ port: this.config.deviceApiPort, service: 'Device API' },
+		];
+		if (this.config.mqttPort) {
+			reserved.push({ port: this.config.mqttPort, service: 'MQTT Broker' });
+		}
+		return reserved;
+	}
+
+	/**
+   * CRUD for user-defined firewall rules
+   */
+	getUserRules(): FirewallRule[] {
+		return FirewallRuleModel.getAll();
+	}
+
+	async addUserRule(rule: { port: string; protocol: string; interface_name?: string | null; description?: string | null }): Promise<FirewallRule> {
+		const created = FirewallRuleModel.create(rule);
+		this.logger.debugSync('User firewall rule added', { component: LogComponents.firewall, ruleId: created.id, port: rule.port });
+		if (this.initialized) await this.applyFirewallRules();
+		return created;
+	}
+
+	async updateUserRule(id: number, fields: { port?: string; protocol?: string; interface_name?: string | null; description?: string | null }): Promise<FirewallRule | null> {
+		const updated = FirewallRuleModel.update(id, fields);
+		if (updated) {
+			this.logger.debugSync('User firewall rule updated', { component: LogComponents.firewall, ruleId: id });
+			if (this.initialized) await this.applyFirewallRules();
+		}
+		return updated;
+	}
+
+	async deleteUserRule(id: number): Promise<boolean> {
+		const deleted = FirewallRuleModel.delete(id);
+		if (deleted) {
+			this.logger.debugSync('User firewall rule deleted', { component: LogComponents.firewall, ruleId: id });
+			if (this.initialized) await this.applyFirewallRules();
+		}
+		return deleted;
+	}
+
+	/**
+   * Whether iptables is available (false in container mode without NET_ADMIN)
+   */
+	get available(): boolean {
+		return this.config.enabled;
 	}
 
 	/**

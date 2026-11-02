@@ -19,6 +19,7 @@ import {
   CodeOutlined,
   NodeIndexOutlined,
   ShopOutlined,
+  GlobalOutlined,
   MenuFoldOutlined,
   MenuUnfoldOutlined,
 } from '@ant-design/icons-vue'
@@ -131,6 +132,11 @@ function onMenuClick({ key }: { key: string }) {
         <a-menu-item key="/mqtt-broker">
           <template #icon><WifiOutlined /></template>
           MQTT
+        </a-menu-item>
+
+        <a-menu-item key="/network">
+          <template #icon><GlobalOutlined /></template>
+          Network
         </a-menu-item>
 
         <a-menu-item key="/terminal">

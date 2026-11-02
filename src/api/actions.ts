@@ -30,6 +30,7 @@ import { TailscaleManager } from '../network/vpn/tailscale-manager';
 import type { TailscaleConfig, TailscaleStatus } from '../network/vpn/tailscale-manager';
 import type { DevicePublish } from '../publish/index.js';
 import type { DiscoveryRulesScheduler } from '../discovery/rules-scheduler.js';
+import type { AgentFirewall } from '../network/firewall.js';
 import type { DockerOptions } from 'dockerode';
 import { isProInstalled } from '../pro/loader.js';
 
@@ -62,6 +63,15 @@ let tailscaleManager: TailscaleManager | null = null;
 let devicePublish: DevicePublish | undefined;
 let discoveryRulesScheduler: DiscoveryRulesScheduler | undefined;
 let localLogBackend: LocalLogBackend | undefined;
+let firewall: AgentFirewall | undefined;
+
+export function setFirewall(fw: AgentFirewall | undefined): void {
+	firewall = fw;
+}
+
+export function getFirewall(): AgentFirewall | undefined {
+	return firewall;
+}
 
 export function setDevicePublish(dp: DevicePublish | undefined): void {
 	devicePublish = dp;
@@ -826,6 +836,31 @@ export const getServiceInfo = async (appId: number, serviceName: string): Promis
  * Expose the Docker instance for streaming operations in routes
  */
 export const getDockerInstance = () => containerManager ? requireCM().getDocker() : undefined;
+
+export function getDockerPortBindings(): Array<{ port: number; protocol: string; address: string; appName: string; serviceName: string }> {
+	if (!containerManager) return [];
+	const targetState = requireCM().getTargetState();
+	const entries: Array<{ port: number; protocol: string; address: string; appName: string; serviceName: string }> = [];
+	for (const [, app] of Object.entries(targetState.apps ?? {})) {
+		for (const svc of (app as any).services ?? []) {
+			if (svc.state === 'stopped') continue;
+			const ports: string[] = svc.config?.ports ?? [];
+			for (const p of ports) {
+				const hp = extractHostPort(p);
+				if (hp) {
+					entries.push({
+						port: parseInt(hp, 10),
+						protocol: 'tcp',
+						address: '0.0.0.0',
+						appName: (app as any).appName,
+						serviceName: svc.serviceName,
+					});
+				}
+			}
+		}
+	}
+	return entries;
+}
 
 /**
  * List all apps merged from current + target state

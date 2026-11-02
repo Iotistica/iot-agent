@@ -67,6 +67,11 @@ const router = createRouter({
       meta: { title: 'Detection' },
     },
     {
+      path: '/network',
+      component: () => import('@/views/NetworkView.vue'),
+      meta: { title: 'Network' },
+    },
+    {
       path: '/terminal',
       component: () => import('@/views/TerminalView.vue'),
       meta: { title: 'Terminal' },
