@@ -72,8 +72,14 @@ const filteredPackets = computed(() => {
   return result
 })
 
+const KNOWN_PROTOCOLS = [
+  'BACnet/IP', 'DNS', 'HTTP', 'HTTPS', 'ICMP', 'MQTT', 'MQTT/TLS',
+  'Modbus/TCP', 'OPC-UA', 'SSH', 'TCP', 'UDP',
+]
+
 const uniqueProtocols = computed(() => {
-  const set = new Set(packets.value.map((p) => p.protocolName))
+  const set = new Set(KNOWN_PROTOCOLS)
+  for (const p of packets.value) set.add(p.protocolName)
   return Array.from(set).sort()
 })
 
