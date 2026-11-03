@@ -4,6 +4,10 @@ import { randomUUID } from 'crypto';
 import { exec } from '../lib/fs-utils.js';
 import type { AgentLogger } from '../logging/agent-logger.js';
 import { LogComponents } from '../logging/types.js';
+import { TcpAssembler, type FlowId, type TcpStreamHandler } from './tcp-assembler.js';
+import type { ProtocolFramer, FramedMessage } from './framers/index.js';
+import { OpcUaFramer } from './framers/opcua.js';
+import { getDecoderRegistry, type PacketMeta, type DecodedPacket } from './decoders/index.js';
 
 // ── Data model ─────────────────────────────────────────────────────────────
 
@@ -22,6 +26,9 @@ export interface CapturedPacket {
 	protocolName: string;
 	direction: 'inbound' | 'outbound' | 'unknown';
 	info: string;
+	tcpSeq: number | null;
+	tcpFlags: number | null;
+	reassembledDecoded?: DecodedPacket;
 }
 
 export interface CaptureStatus {
@@ -98,6 +105,12 @@ export class CaptureEngine extends EventEmitter {
 	private pcapBigEndian = false;
 	private tcpdumpPath = 'tcpdump';
 
+	// TCP stream reassembly
+	private tcpAssembler: TcpAssembler | null = null;
+	private framers = new Map<FlowId, ProtocolFramer>();
+	private flowProtocols = new Map<FlowId, string>();
+	private cleanupTimer: ReturnType<typeof setInterval> | null = null;
+
 	constructor(logger: AgentLogger) {
 		super();
 		this.logger = logger;
@@ -141,6 +154,8 @@ export class CaptureEngine extends EventEmitter {
 		this.nextId = 1;
 		this.pcapBuf = Buffer.alloc(0);
 		this.pcapGlobalHeader = null;
+
+		this.initReassembly();
 
 		await this.resolveLocalIps();
 
@@ -198,6 +213,7 @@ export class CaptureEngine extends EventEmitter {
 			this.proc = null;
 		}
 		this.pcapBuf = Buffer.alloc(0);
+		this.teardownReassembly();
 		this.state = 'idle';
 		this.logger.infoSync('Packet capture stopped', {
 			component: LogComponents.capture,
@@ -344,6 +360,8 @@ export class CaptureEngine extends EventEmitter {
 					protocolName,
 					direction,
 					info: '',
+					tcpSeq: parsed.tcpSeq,
+					tcpFlags: parsed.tcpFlags,
 				};
 				packet.info = this.buildInfoString(packet);
 
@@ -358,6 +376,10 @@ export class CaptureEngine extends EventEmitter {
 				}
 				this.packets.push(packet);
 				this.counters.stored = this.packets.length;
+
+				if (this.tcpAssembler && packet.ipProtocol === 6 && packet.tcpSeq !== null) {
+					this.tcpAssembler.feed(packet);
+				}
 
 				this.emit('packet', packet);
 			} catch (err) {
@@ -375,16 +397,18 @@ export class CaptureEngine extends EventEmitter {
 		srcPort: number | null; dstPort: number | null;
 		ipProtocol: number;
 		appPayload: Buffer | null;
+		tcpSeq: number | null;
+		tcpFlags: number | null;
 	} {
 		const ipOffset = this.linkLayerSize;
 		if (payload.length < ipOffset + 20) {
-			return { srcIp: '?', dstIp: '?', srcPort: null, dstPort: null, ipProtocol: 0, appPayload: null };
+			return { srcIp: '?', dstIp: '?', srcPort: null, dstPort: null, ipProtocol: 0, appPayload: null, tcpSeq: null, tcpFlags: null };
 		}
 
 		const versionIhl = payload[ipOffset];
 		const version = (versionIhl >> 4) & 0x0f;
 		if (version !== 4) {
-			return { srcIp: '?', dstIp: '?', srcPort: null, dstPort: null, ipProtocol: 0, appPayload: null };
+			return { srcIp: '?', dstIp: '?', srcPort: null, dstPort: null, ipProtocol: 0, appPayload: null, tcpSeq: null, tcpFlags: null };
 		}
 
 		const ihl = (versionIhl & 0x0f) * 4;
@@ -395,11 +419,19 @@ export class CaptureEngine extends EventEmitter {
 
 		let srcPort: number | null = null;
 		let dstPort: number | null = null;
+		let tcpSeq: number | null = null;
+		let tcpFlags: number | null = null;
 
 		// TCP (6) and UDP (17) have ports at the same offset
 		if ((ipProtocol === 6 || ipProtocol === 17) && payload.length >= ipOffset + ihl + 4) {
 			srcPort = payload.readUInt16BE(ipOffset + ihl);
 			dstPort = payload.readUInt16BE(ipOffset + ihl + 2);
+		}
+
+		// TCP: extract sequence number and flags for stream reassembly
+		if (ipProtocol === 6 && payload.length >= ipOffset + ihl + 14) {
+			tcpSeq = payload.readUInt32BE(ipOffset + ihl + 4);
+			tcpFlags = payload[ipOffset + ihl + 13];
 		}
 
 		// Extract application-layer payload (after transport header)
@@ -417,7 +449,7 @@ export class CaptureEngine extends EventEmitter {
 			}
 		}
 
-		return { srcIp, dstIp, srcPort, dstPort, ipProtocol, appPayload };
+		return { srcIp, dstIp, srcPort, dstPort, ipProtocol, appPayload, tcpSeq, tcpFlags };
 	}
 
 	private resolveProtocolName(ipProtocol: number, srcPort: number | null, dstPort: number | null): string {
@@ -449,6 +481,85 @@ export class CaptureEngine extends EventEmitter {
 			}
 		} catch {
 			// Fall back to loopback only
+		}
+	}
+
+	// ── TCP stream reassembly ─────────────────────────────────────────────
+
+	private initReassembly(): void {
+		this.framers.clear();
+		this.flowProtocols.clear();
+
+		const handler: TcpStreamHandler = {
+			onData: (flowId, data, packetId) => this.onStreamData(flowId, data, packetId),
+			onGap: (flowId) => {
+				const framer = this.framers.get(flowId);
+				if (framer) framer.reset();
+			},
+			onClose: (flowId) => {
+				this.framers.delete(flowId);
+				this.flowProtocols.delete(flowId);
+			},
+		};
+
+		this.tcpAssembler = new TcpAssembler(handler);
+		this.cleanupTimer = setInterval(() => {
+			this.tcpAssembler?.cleanup(Date.now());
+		}, 30_000);
+	}
+
+	private teardownReassembly(): void {
+		if (this.cleanupTimer) {
+			clearInterval(this.cleanupTimer);
+			this.cleanupTimer = null;
+		}
+		this.tcpAssembler?.reset();
+		this.tcpAssembler = null;
+		this.framers.clear();
+		this.flowProtocols.clear();
+	}
+
+	private createFramer(protocolName: string): ProtocolFramer | null {
+		if (protocolName === 'OPC-UA') return new OpcUaFramer();
+		return null;
+	}
+
+	private onStreamData(flowId: FlowId, data: Buffer, packetId: number): void {
+		let proto = this.flowProtocols.get(flowId);
+		if (!proto) {
+			const pkt = this.packets.find(p => p.id === packetId);
+			if (!pkt) return;
+			proto = pkt.protocolName;
+			this.flowProtocols.set(flowId, proto);
+		}
+
+		let framer = this.framers.get(flowId);
+		if (!framer) {
+			const created = this.createFramer(proto);
+			if (!created) return;
+			framer = created;
+			this.framers.set(flowId, framer);
+		}
+
+		const messages = framer.push(data, packetId);
+		for (const msg of messages) {
+			this.decodeReassembled(msg, proto);
+		}
+	}
+
+	private decodeReassembled(msg: FramedMessage, protocolName: string): void {
+		const pkt = this.packets.find(p => p.id === msg.completingPacketId);
+		if (!pkt) return;
+
+		const meta: PacketMeta = {
+			srcIp: pkt.srcIp, dstIp: pkt.dstIp,
+			srcPort: pkt.srcPort, dstPort: pkt.dstPort,
+			ipProtocol: pkt.ipProtocol, protocolName,
+		};
+
+		const decoded = getDecoderRegistry().decode(protocolName, msg.payload, meta);
+		if (decoded) {
+			pkt.reassembledDecoded = decoded;
 		}
 	}
 }
