@@ -1,6 +1,6 @@
 import type { AppStep, ContainerService } from './container-manager';
 import type { RetryManager } from './retry-manager';
-import type { HealthCheckManager } from './health-check-manager';
+import type { HealthCheckManager } from './health-check';
 import type { AgentLogger } from '../logging/agent-logger';
 import { LogComponents } from '../logging/types';
 import { serviceRetryKey, pruneObsoleteServiceRetries } from './state-helpers';

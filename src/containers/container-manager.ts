@@ -26,7 +26,7 @@ import type Docker from 'dockerode';
 import { DockerManager } from './docker-manager';
 import { RetryManager } from './retry-manager';
 import type { ServiceSecurityConfig, SecurityPolicySummary } from './container-security';
-import { HealthCheckManager } from './health-check-manager';
+import { HealthCheckManager } from './health-check';
 import { type ContainerHealthProbe as HealthProbe } from './types';
 import { cloneDeep, uniq } from '../lib/collection-utils';
 import { StateSnapshotModel } from '../db/models';
@@ -1342,4 +1342,3 @@ export class ContainerManager extends EventEmitter {
 // ============================================================================
 
 export default ContainerManager;
-
