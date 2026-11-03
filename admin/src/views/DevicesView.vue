@@ -40,8 +40,12 @@ function openDrawer(device: Device) {
   drawerOpen.value = true
 }
 
-function onDrawerSaved() {
-  load()
+async function onDrawerSaved() {
+  await load()
+  if (drawerDevice.value) {
+    const fresh = rows.value.find(d => d.uuid === drawerDevice.value!.uuid)
+    if (fresh) drawerDevice.value = fresh
+  }
 }
 
 const rowSelection = computed(() => ({

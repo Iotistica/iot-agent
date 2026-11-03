@@ -35,17 +35,19 @@ const newValue = ref('')
 
 const systemMetadataKeys = new Set(['objectName', 'slaveId', 'nodeCount'])
 
-watch(
-  () => props.open,
-  (open) => {
-    if (!open || !props.device) return
-    assetPath.value = props.device.assetPath || ''
-    const meta = props.device.metadata || {}
-    metadataEntries.value = Object.entries(meta)
-      .filter(([k]) => !systemMetadataKeys.has(k))
-      .map(([key, value]) => ({ key, value: String(value) }))
-  },
-)
+function syncFromDevice() {
+  if (!props.device) return
+  assetPath.value = props.device.assetPath || ''
+  const meta = props.device.metadata || {}
+  metadataEntries.value = Object.entries(meta)
+    .filter(([k]) => !systemMetadataKeys.has(k))
+    .map(([key, value]) => ({ key, value: String(value) }))
+  newKey.value = ''
+  newValue.value = ''
+}
+
+watch(() => props.open, (open) => { if (open) syncFromDevice() })
+watch(() => props.device, () => { if (props.open) syncFromDevice() })
 
 function addEntry() {
   const k = newKey.value.trim()
@@ -66,6 +68,11 @@ function removeEntry(index: number) {
 
 async function save() {
   if (!props.device) return
+
+  if (newKey.value.trim()) {
+    addEntry()
+  }
+
   saving.value = true
   try {
     const metadata: Record<string, any> = { ...(props.device.metadata || {}) }
@@ -81,6 +88,7 @@ async function save() {
       assetPath: assetPath.value.trim() || null,
     })
     message.success('Device updated')
+    emit('update:open', false)
     emit('saved')
   } catch (err: unknown) {
     const e = err as { message?: string }
