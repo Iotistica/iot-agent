@@ -1974,13 +1974,31 @@ router.get('/v1/devices', async (req: Request, res: Response, next: NextFunction
 
 /**
  * PATCH /v1/devices/:uuid
- * Enable/disable a device
+ * Update a device — enable/disable, set metadata, set assetPath
  */
 router.patch('/v1/devices/:uuid', requireRole('operator'), async (req: Request, res: Response, next: NextFunction) => {
 	try {
-		const { enabled } = req.body as { enabled?: boolean };
-		if (typeof enabled !== 'boolean') return res.status(400).json({ error: 'enabled (boolean) is required' });
-		const device = await actions.setDeviceEnabled(req.params.uuid, enabled);
+		const { enabled, metadata, assetPath } = req.body as {
+			enabled?: boolean;
+			metadata?: Record<string, any>;
+			assetPath?: string | null;
+		};
+
+		let device = null;
+
+		if (typeof enabled === 'boolean') {
+			device = await actions.setDeviceEnabled(req.params.uuid, enabled);
+		}
+
+		if (metadata !== undefined || assetPath !== undefined) {
+			device = await actions.updateDevice(req.params.uuid, { metadata, assetPath });
+		}
+
+		if (!device) {
+			device = await actions.getDevice(req.params.uuid);
+		}
+
+		if (!device) return res.status(404).json({ error: 'Device not found' });
 		return res.status(200).json({ device });
 	} catch (error) {
 		next(error);

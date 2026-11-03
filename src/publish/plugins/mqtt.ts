@@ -119,12 +119,13 @@ function parseSourceTopic(sourceTopic: string): { endpoint: string; originalTopi
 
 function applyTopicTemplate(
 	template: string,
-	params: { deviceId: string; endpoint: string; topic: string },
+	params: { deviceId: string; endpoint: string; topic: string; assetPath?: string },
 ): string {
 	return template
 		.replaceAll('{deviceId}', encodeURIComponent(params.deviceId))
 		.replaceAll('{endpoint}', encodeURIComponent(params.endpoint))
-		.replaceAll('{topic}', params.topic);
+		.replaceAll('{topic}', params.topic)
+		.replaceAll('{assetPath}', params.assetPath ?? '');
 }
 
 export class ExternalMqttClient extends BaseMqttClient {

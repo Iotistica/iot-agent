@@ -70,6 +70,12 @@ type PayloadFormat = 'custom' | 'tags' | 'ecp' | 'ml';
 
 type PublishPayload = Record<string, unknown>;
 
+export interface DeviceContext {
+	deviceUuid: string;
+	metadata?: Record<string, any>;
+	assetPath?: string | null;
+}
+
 interface ProtocolMessage extends Record<string, unknown> {
 	readings?: ProtocolMessage[];
 }
@@ -288,6 +294,7 @@ export class PublishManager extends EventEmitter {
     private anomalyService?: any,
 	private readonly payloadFormat: PayloadFormat = 'custom',
     private maintenanceEnergyService?: any,
+	private readonly deviceContext?: DeviceContext,
 	) {
 		super();
 
@@ -806,6 +813,15 @@ export class PublishManager extends EventEmitter {
 		return this.enricher.enrich(messages, endpointName) as ProtocolMessage[];
 	}
 
+	private buildContextBlock(): Record<string, unknown> | undefined {
+		const ctx = this.deviceContext;
+		if (!ctx) return undefined;
+		const block: Record<string, unknown> = { deviceUuid: ctx.deviceUuid };
+		if (ctx.assetPath) block.assetPath = ctx.assetPath;
+		if (ctx.metadata && Object.keys(ctx.metadata).length > 0) block.metadata = ctx.metadata;
+		return Object.keys(block).length > 1 ? block : undefined;
+	}
+
 	private buildPayload(endpointName: string, messages: ProtocolMessage[], payloadFormat: PayloadFormat, filterBadQuality = false, datasetConfig?: MlDatasetRecord): {
     data: PublishPayload;
     msgId: string;
@@ -813,15 +829,17 @@ export class PublishManager extends EventEmitter {
   } {
 		const msgId = this.mqttConnection.getMessageIdGenerator?.()?.generate()
 			?? `${this.deviceUuid}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+		const context = this.buildContextBlock();
 
 		if (payloadFormat === 'custom') {
 			const timestampIso = new Date().toISOString();
-			const data = {
+			const data: Record<string, unknown> = {
 				timestamp: timestampIso,
 				protocol: this.protocol,
 				messages,
 				msgId,
 			};
+			if (context) data.context = context;
 			const baselineSize = Buffer.byteLength(JSON.stringify(data), 'utf8');
 			return { data, msgId, baselineSize };
 		}
@@ -842,6 +860,7 @@ export class PublishManager extends EventEmitter {
 				schema: datasetConfig ? 'iotistica.ml.v2' : 'iotistica.ml.v1',
 				features,
 			};
+			if (context) data.context = context;
 
 			if (datasetConfig) {
 				data.dataset = {
@@ -875,12 +894,13 @@ export class PublishManager extends EventEmitter {
 			? [...new Map(allTags.map((t) => [t.name, t])).values()]
 			: allTags;
 
-		const data = {
+		const data: Record<string, unknown> = {
 			timestamp: timestampMs,
 			node: externalNodeName,
 			group: externalGroupName,
 			tags,
 		};
+		if (context) data.context = context;
 
 		const baselineSize = Buffer.byteLength(JSON.stringify(data), 'utf8');
 		return { data, msgId, baselineSize };

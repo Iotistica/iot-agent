@@ -8,7 +8,8 @@ import {
 	type MqttConnection,
 	type Logger,
 } from './core/types.js';
-import { PublishManager, type DatasetAccumulatorEntry } from './core/manager.js';
+import { PublishManager, type DatasetAccumulatorEntry, type DeviceContext } from './core/manager.js';
+import { getDatabase } from '../db/sqlite.js';
 import { CloudMqttClient } from '../mqtt/manager.js';
 import type { DictionaryManager } from '../mqtt/dictionary.js';
 import { EventEmitter } from 'events';
@@ -297,6 +298,25 @@ export class DevicePublish extends EventEmitter {
 		return false;
 	}
 
+	private loadDeviceContext(endpointName: string): DeviceContext | undefined {
+		try {
+			const db = getDatabase();
+			const endpointRow = db.prepare('SELECT id FROM endpoints WHERE name = ? LIMIT 1').get(endpointName) as { id: number } | undefined;
+			if (!endpointRow) return undefined;
+			const deviceRow = db.prepare('SELECT uuid, metadata, asset_path FROM devices WHERE endpoint_id = ? LIMIT 1').get(endpointRow.id) as {
+				uuid: string; metadata: string | null; asset_path: string | null;
+			} | undefined;
+			if (!deviceRow) return undefined;
+			return {
+				deviceUuid: deviceRow.uuid,
+				metadata: deviceRow.metadata ? JSON.parse(deviceRow.metadata) : undefined,
+				assetPath: deviceRow.asset_path,
+			};
+		} catch {
+			return undefined;
+		}
+	}
+
 	private createDeviceManager(config: DeviceConfig, index: number, total: number): PublishManager {
 		config.name = config.name || `device-${index + 1}`;
 		this.logger.debug('Creating source', { source: config.name, index: index + 1, total });
@@ -337,6 +357,8 @@ export class DevicePublish extends EventEmitter {
 			}
 		};
 
+		const deviceContext = this.loadDeviceContext(config.name!);
+
 		return new PublishManager(
 			config,
 			this.mqttConnection!,
@@ -353,6 +375,7 @@ export class DevicePublish extends EventEmitter {
 			this.anomalyService,
 			'custom',
 			this.maintenanceEnergyService,
+			deviceContext,
 		);
 	}
 

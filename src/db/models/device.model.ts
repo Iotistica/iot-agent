@@ -106,6 +106,7 @@ export interface Device {
    */
   identifier?: string | null;
   metadata?: Record<string, any>;
+  assetPath?: string | null;
   lastSeenAt?: Date | string | null;
   created_at?: Date | string;
   updated_at?: Date | string;
@@ -114,6 +115,7 @@ export interface Device {
 type DeviceRow = Omit<Device, 'enabled' | 'metadata'> & {
   enabled: number;
   metadata?: string | Record<string, any> | null;
+  asset_path?: string | null;
 };
 
 export class DeviceModel {
@@ -269,10 +271,11 @@ export class DeviceModel {
           enabled,
           identifier,
           metadata,
+          asset_path,
           lastSeenAt,
           created_at,
           updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
 				device.uuid,
 				device.endpoint_id,
@@ -281,6 +284,7 @@ export class DeviceModel {
 				device.enabled ? 1 : 0,
 				device.identifier ?? null,
 				device.metadata ? JSON.stringify(device.metadata) : null,
+				device.assetPath ?? null,
 				device.lastSeenAt instanceof Date ? device.lastSeenAt.toISOString() : (device.lastSeenAt ?? null),
 				now,
 				now,
@@ -422,13 +426,37 @@ export class DeviceModel {
 		return result.changes > 0;
 	}
 
+	static async updateDevice(uuid: string, fields: { metadata?: Record<string, any>; assetPath?: string | null }): Promise<Device | null> {
+		const db = this.getDb();
+		const now = new Date().toISOString();
+		const existing = db.prepare(`SELECT * FROM ${this.table} WHERE uuid = ? LIMIT 1`).get(uuid) as unknown as DeviceRow | undefined;
+		if (!existing) return null;
+
+		if (fields.metadata !== undefined) {
+			db.prepare(`UPDATE ${this.table} SET metadata = ?, updated_at = ? WHERE uuid = ?`)
+				.run(JSON.stringify(fields.metadata), now, uuid);
+		}
+		if (fields.assetPath !== undefined) {
+			db.prepare(`UPDATE ${this.table} SET asset_path = ?, updated_at = ? WHERE uuid = ?`)
+				.run(fields.assetPath, now, uuid);
+		}
+		if (fields.metadata === undefined && fields.assetPath === undefined) {
+			db.prepare(`UPDATE ${this.table} SET updated_at = ? WHERE uuid = ?`).run(now, uuid);
+		}
+
+		const updated = db.prepare(`SELECT * FROM ${this.table} WHERE uuid = ? LIMIT 1`).get(uuid) as unknown as DeviceRow;
+		return this.parse(updated);
+	}
+
 	private static parse(row: DeviceRow): Device {
+		const { asset_path, ...rest } = row;
 		return {
-			...row,
+			...rest,
 			enabled: Boolean(row.enabled),
 			metadata: row.metadata
 				? (typeof row.metadata === 'string' ? JSON.parse(row.metadata) : row.metadata)
 				: undefined,
+			assetPath: asset_path ?? null,
 		};
 	}
 }

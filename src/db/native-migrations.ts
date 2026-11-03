@@ -45,6 +45,7 @@ import { migration as flattenMarketplace } from './migrations/20261031000000_fla
 import { migration as addMqttUserPasswordPlaintext } from './migrations/20261031010000_add_mqtt_user_password_plaintext.js';
 import { migration as mqttTopicToDevice } from './migrations/20261101000000_mqtt_topic_to_device.js';
 import { migration as addFirewallRules } from './migrations/20261101020000_add_firewall_rules.js';
+import { migration as addAssetPathToDevices } from './migrations/20261102000000_add_asset_path_to_devices.js';
 import type { NativeSqliteMigration } from './migration-types.js';
 
 export const nativeMigrations: NativeSqliteMigration[] = [
@@ -95,4 +96,5 @@ export const nativeMigrations: NativeSqliteMigration[] = [
 	addMqttUserPasswordPlaintext,
 	mqttTopicToDevice,
 	addFirewallRules,
+	addAssetPathToDevices,
 ];

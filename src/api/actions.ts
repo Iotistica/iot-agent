@@ -1784,6 +1784,18 @@ export const deleteDevice = async (uuid: string) => {
 	if (!removed) throw Object.assign(new Error(`Device not found: ${uuid}`), { statusCode: 404 });
 };
 
+export const getDevice = async (uuid: string) => {
+	const { DeviceModel } = await import('../db/models/device.model.js');
+	return DeviceModel.getByUuid(uuid);
+};
+
+export const updateDevice = async (uuid: string, fields: { metadata?: Record<string, any>; assetPath?: string | null }) => {
+	const { DeviceModel } = await import('../db/models/device.model.js');
+	const device = await DeviceModel.updateDevice(uuid, fields);
+	if (!device) throw Object.assign(new Error(`Device not found: ${uuid}`), { statusCode: 404 });
+	return device;
+};
+
 /**
  * Publish control: list publishers
  */
