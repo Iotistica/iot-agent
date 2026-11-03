@@ -4,6 +4,7 @@ import { message, Modal } from 'ant-design-vue'
 import { CheckCircleOutlined, CheckOutlined, StopOutlined, DeleteOutlined, CopyOutlined } from '@ant-design/icons-vue'
 import type { TableColumnType } from 'ant-design-vue'
 import AppLayout from '@/components/layout/AppLayout.vue'
+import DeviceDrawer from '@/components/devices/DeviceDrawer.vue'
 import { client } from '@/api/client'
 import { protocolColor, protocolLabel } from '@/utils/protocol'
 import { copyText } from '@/utils/clipboard'
@@ -15,6 +16,7 @@ interface Device {
   enabled: boolean
   identifier: string | null
   metadata?: Record<string, any>
+  assetPath?: string | null
   lastSeenAt: string | null
   created_at: string
 }
@@ -29,6 +31,18 @@ const selectedUuids = ref<string[]>([])
 const deleting = ref(false)
 const bulkEnabling = ref(false)
 const bulkDisabling = ref(false)
+
+const drawerOpen = ref(false)
+const drawerDevice = ref<Device | null>(null)
+
+function openDrawer(device: Device) {
+  drawerDevice.value = device
+  drawerOpen.value = true
+}
+
+function onDrawerSaved() {
+  load()
+}
 
 const rowSelection = computed(() => ({
   selectedRowKeys: selectedUuids.value,
@@ -207,6 +221,7 @@ onUnmounted(() => {
         :loading="loading"
         :pagination="{ pageSize: 20, showSizeChanger: true, pageSizeOptions: ['10', '20', '50'] }"
         :row-selection="rowSelection"
+        :customRow="(record: Device) => ({ onClick: (e: MouseEvent) => { if (!(e.target as HTMLElement).closest('.ant-checkbox-wrapper')) openDrawer(record) }, style: 'cursor: pointer' })"
         row-key="uuid"
         size="small"
       >
@@ -230,7 +245,7 @@ onUnmounted(() => {
             <a-tooltip :title="record.uuid">
               <span class="mono-text uuid-chip">{{ shortUuid(record.uuid) }}</span>
             </a-tooltip>
-            <a-button type="text" size="small" class="uuid-copy-btn" @click="copyUuid(record.uuid)">
+            <a-button type="text" size="small" class="uuid-copy-btn" @click.stop="copyUuid(record.uuid)">
               <CheckOutlined v-if="copiedUuid === record.uuid" style="color: #52c41a" />
               <CopyOutlined v-else />
             </a-button>
@@ -261,6 +276,13 @@ onUnmounted(() => {
         </template>
       </a-table>
     </a-card>
+
+    <DeviceDrawer
+      :open="drawerOpen"
+      :device="drawerDevice"
+      @update:open="drawerOpen = $event"
+      @saved="onDrawerSaved"
+    />
   </AppLayout>
 </template>
 
