@@ -39,7 +39,7 @@ echo "|     | |/ _ \ | __| / __| __| |/ __/ _\` |                               
 echo "|     | | (_) || |_| \__ \ |_| | (_| (_| |                                    |"
 echo "|    |___\___/  \__|_|___/\__|_|\___\__,_|                                     |"
 echo "|                                                                              |"
-echo "|                    Agent Installer v${SCRIPT_VERSION} (${BUILD_ID})"
+echo "|                    Agent Installer v${SCRIPT_VERSION} (commit ${BUILD_ID%-*} - ${BUILD_ID##*-})"
 echo "|                                                                              |"
 echo "--------------------------------------------------------------------------------"
 echo ""
