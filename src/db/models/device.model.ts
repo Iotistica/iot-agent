@@ -238,13 +238,19 @@ export class DeviceModel {
 
 		const existing = hasIdentifier
 			? db
-				.prepare(`SELECT id FROM ${this.table} WHERE endpoint_id = ? AND identifier = ? LIMIT 1`)
-				.get(device.endpoint_id, device.identifier ?? null) as unknown as { id: number } | undefined
+				.prepare(`SELECT id, metadata FROM ${this.table} WHERE endpoint_id = ? AND identifier = ? LIMIT 1`)
+				.get(device.endpoint_id, device.identifier ?? null) as unknown as { id: number; metadata?: string | null } | undefined
 			: db
-				.prepare(`SELECT id FROM ${this.table} WHERE endpoint_id = ? AND identifier IS NULL LIMIT 1`)
-				.get(device.endpoint_id) as { id: number } | undefined;
+				.prepare(`SELECT id, metadata FROM ${this.table} WHERE endpoint_id = ? AND identifier IS NULL LIMIT 1`)
+				.get(device.endpoint_id) as { id: number; metadata?: string | null } | undefined;
 
 		if (existing) {
+			let mergedMeta: Record<string, any> | null = null;
+			if (device.metadata || existing.metadata) {
+				const prev = existing.metadata ? (typeof existing.metadata === 'string' ? JSON.parse(existing.metadata) : existing.metadata) as Record<string, any> : {};
+				mergedMeta = { ...prev, ...(device.metadata || {}) };
+			}
+
 			db.prepare(`
         UPDATE ${this.table}
         SET name = ?,
@@ -256,7 +262,7 @@ export class DeviceModel {
       `).run(
 				device.name,
 				device.enabled ? 1 : 0,
-				device.metadata ? JSON.stringify(device.metadata) : null,
+				mergedMeta ? JSON.stringify(mergedMeta) : null,
 				device.lastSeenAt instanceof Date ? device.lastSeenAt.toISOString() : (device.lastSeenAt ?? null),
 				now,
 				existing.id,

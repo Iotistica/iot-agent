@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch, computed } from 'vue'
+import { ref, watch } from 'vue'
 import { message } from 'ant-design-vue'
 import { PlusOutlined, DeleteOutlined } from '@ant-design/icons-vue'
 import { client } from '@/api/client'
@@ -46,13 +46,6 @@ watch(
       .map(([key, value]) => ({ key, value: String(value) }))
   },
 )
-
-const systemMetadata = computed(() => {
-  if (!props.device?.metadata) return []
-  return Object.entries(props.device.metadata)
-    .filter(([k]) => systemMetadataKeys.has(k))
-    .map(([key, value]) => ({ key, value: String(value) }))
-})
 
 function addEntry() {
   const k = newKey.value.trim()
@@ -136,14 +129,6 @@ function timeSince(ts: string | null): string {
         <a-descriptions-item v-if="device.identifier" label="Identifier">{{ device.identifier }}</a-descriptions-item>
         <a-descriptions-item label="Last Seen">{{ timeSince(device.lastSeenAt) }}</a-descriptions-item>
       </a-descriptions>
-
-      <!-- System metadata (read-only) -->
-      <template v-if="systemMetadata.length > 0">
-        <div class="section-label">System Metadata</div>
-        <a-descriptions :column="2" size="small" style="margin-bottom: 20px">
-          <a-descriptions-item v-for="m in systemMetadata" :key="m.key" :label="m.key">{{ m.value }}</a-descriptions-item>
-        </a-descriptions>
-      </template>
 
       <!-- Asset Path -->
       <a-divider orientation="left" class="section-divider">Enrichment</a-divider>
