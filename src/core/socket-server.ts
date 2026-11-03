@@ -89,6 +89,7 @@ export class SocketServer {
 	private readonly DRAIN_TIMEOUT_MS = 5000;
 	private readonly MAX_POINTS_PER_MESSAGE_LIMIT = 1000;
 	private readonly MAX_MIN_INTERVAL_MS = 60_000;
+	private readonly MAX_SUBSCRIPTION_BUFFER = 8192;
 
 	constructor(config: SocketOutput, logger: Logger) {
 		this.config = config;
@@ -141,7 +142,11 @@ export class SocketServer {
 
 					// Set restrictive permissions on Unix socket file (owner + group only)
 					// Prevents unauthorized local processes from connecting
-					if (!this.isWindowsNamedPipe) { /* chmod deferred */ }
+					if (!this.isWindowsNamedPipe) {
+						try {
+							fs.chmodSync(this.config.socketPath, 0o660);
+						} catch { /* some environments may not allow chmod on sockets */ }
+					}
 
 					this.started = true;
 					settled = true;
@@ -521,6 +526,13 @@ export class SocketServer {
 		let timeoutHandle: NodeJS.Timeout | null = null;
 
 		const handleSubscriptionMessage = (chunk: Buffer) => {
+			if (subscriptionBuffer.length + chunk.length > this.MAX_SUBSCRIPTION_BUFFER) {
+				this.logger.warn("Client subscription buffer exceeded limit — disconnecting");
+				if (timeoutHandle) clearTimeout(timeoutHandle);
+				socket.destroy();
+				this.removeClient(socket);
+				return;
+			}
 			subscriptionBuffer += chunk.toString("utf-8");
 
 			// Parse newline-delimited JSON subscription message
