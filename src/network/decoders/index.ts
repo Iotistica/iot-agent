@@ -28,6 +28,10 @@ export class DecoderRegistry {
 		}
 	}
 
+	has(protocolName: string): boolean {
+		return this.decoders.has(protocolName);
+	}
+
 	decode(protocolName: string, payload: Buffer, meta: PacketMeta): DecodedPacket | null {
 		const decoder = this.decoders.get(protocolName);
 		if (!decoder) return null;

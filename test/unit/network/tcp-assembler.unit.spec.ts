@@ -215,4 +215,61 @@ describe('TcpAssembler', () => {
 		asm.feed(makePacket({ id: 1, ipProtocol: 17, tcpSeq: 1000, tcpFlags: 0, appPayload: Buffer.from('udp') }));
 		expect(dataEvents).toHaveLength(0);
 	});
+
+	it('delivers new bytes from partial-overlap retransmit', () => {
+		const { handler, dataEvents } = createTracker();
+		const asm = new TcpAssembler(handler);
+
+		asm.feed(makePacket({ id: 1, tcpSeq: 1000, tcpFlags: TCP_ACK, appPayload: Buffer.from('AAAA') }));
+		expect(dataEvents).toHaveLength(1);
+
+		// Retransmit starts at 1002 (2 bytes overlap) but carries 4 bytes total → 2 new
+		asm.feed(makePacket({ id: 2, tcpSeq: 1002, tcpFlags: TCP_ACK, appPayload: Buffer.from('AABB') }));
+		expect(dataEvents).toHaveLength(2);
+		expect(dataEvents[1].data.toString()).toBe('BB');
+		expect(dataEvents[1].packetId).toBe(2);
+	});
+
+	it('ignores full retransmit with no new bytes', () => {
+		const { handler, dataEvents } = createTracker();
+		const asm = new TcpAssembler(handler);
+
+		asm.feed(makePacket({ id: 1, tcpSeq: 1000, tcpFlags: TCP_ACK, appPayload: Buffer.from('AAAA') }));
+		expect(dataEvents).toHaveLength(1);
+
+		// Full retransmit: starts at 1000, ends at 1004 — entirely within delivered range
+		asm.feed(makePacket({ id: 2, tcpSeq: 1000, tcpFlags: TCP_ACK, appPayload: Buffer.from('AAAA') }));
+		expect(dataEvents).toHaveLength(1);
+	});
+
+	it('delivers SYN payload (TCP Fast Open)', () => {
+		const { handler, dataEvents } = createTracker();
+		const asm = new TcpAssembler(handler);
+
+		asm.feed(makePacket({ id: 1, tcpSeq: 500, tcpFlags: TCP_SYN, appPayload: Buffer.from('TFO') }));
+		expect(dataEvents).toHaveLength(1);
+		expect(dataEvents[0].data.toString()).toBe('TFO');
+
+		// Next segment should follow SYN(1) + payload(3) = seq 504
+		asm.feed(makePacket({ id: 2, tcpSeq: 504, tcpFlags: TCP_ACK, appPayload: Buffer.from('next') }));
+		expect(dataEvents).toHaveLength(2);
+		expect(dataEvents[1].data.toString()).toBe('next');
+	});
+
+	it('handles sequence number wraparound', () => {
+		const { handler, dataEvents } = createTracker();
+		const asm = new TcpAssembler(handler);
+
+		// Start near the top of the 32-bit space
+		const nearMax = 0xFFFFFFF0;
+		const payload = Buffer.alloc(32); // crosses the wrap boundary
+		asm.feed(makePacket({ id: 1, tcpSeq: nearMax, tcpFlags: TCP_ACK, appPayload: payload }));
+		expect(dataEvents).toHaveLength(1);
+
+		// Next segment should be at (nearMax + 32) mod 2^32 = 0x10
+		const nextSeq = (nearMax + 32) >>> 0;
+		asm.feed(makePacket({ id: 2, tcpSeq: nextSeq, tcpFlags: TCP_ACK, appPayload: Buffer.from('after-wrap') }));
+		expect(dataEvents).toHaveLength(2);
+		expect(dataEvents[1].data.toString()).toBe('after-wrap');
+	});
 });

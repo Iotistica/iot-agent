@@ -59,12 +59,16 @@ export class TcpAssembler {
 
 		if (flags & TCP_SYN) {
 			this.evictIfNeeded();
+			const synNextSeq = (seq + 1) >>> 0;
 			this.flows.set(flowId, {
-				nextSeq: (seq + 1) >>> 0,
+				nextSeq: hasData ? (synNextSeq + payload.length) >>> 0 : synNextSeq,
 				lastSeen: packet.timestamp,
 				initialized: true,
 				protocolName: packet.protocolName,
 			});
+			if (hasData) {
+				this.handler.onData(flowId, payload, packet.id);
+			}
 			return;
 		}
 
@@ -109,12 +113,21 @@ export class TcpAssembler {
 			this.handler.onGap(flowId, flow.nextSeq, seq);
 			flow.nextSeq = (seq + payload.length) >>> 0;
 			this.handler.onData(flowId, payload, packet.id);
+		} else {
+			// seq < nextSeq — retransmit; check for partial overlap with new bytes
+			const end = (seq + payload.length) >>> 0;
+			if (this.seqAfter(end, flow.nextSeq)) {
+				const overlap = (flow.nextSeq - seq) >>> 0;
+				const newBytes = payload.subarray(overlap);
+				flow.nextSeq = end;
+				this.handler.onData(flowId, newBytes, packet.id);
+			}
 		}
-		// seq < nextSeq → retransmit/duplicate, ignore
 	}
 
 	private seqAfter(a: number, b: number): boolean {
-		return ((a - b) & 0x7FFFFFFF) > 0 && ((a - b) & 0x7FFFFFFF) < 0x40000000;
+		const diff = (a - b) >>> 0;
+		return diff !== 0 && diff < 0x80000000;
 	}
 
 	cleanup(now: number): void {

@@ -201,7 +201,17 @@ function decodePacket(p: CapturedPacket) {
 		srcPort: p.srcPort, dstPort: p.dstPort,
 		ipProtocol: p.ipProtocol, protocolName: p.protocolName,
 	};
-	return getDecoderRegistry().decode(p.protocolName, p.appPayload, meta);
+	const decoded = getDecoderRegistry().decode(p.protocolName, p.appPayload, meta);
+	if (decoded) return decoded;
+	if (p.ipProtocol === 6 && getDecoderRegistry().has(p.protocolName)) {
+		return {
+			operation: 'continuation',
+			summary: `${p.protocolName} continuation`,
+			status: 'ok' as const,
+			details: {},
+		};
+	}
+	return null;
 }
 
 export function serializePacket(p: CapturedPacket) {
