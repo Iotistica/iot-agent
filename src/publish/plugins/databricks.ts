@@ -30,7 +30,7 @@ function isTagsPayload(obj: unknown): obj is TagsPayload {
 	return typeof obj === 'object' && obj !== null && 'tags' in obj && Array.isArray((obj as TagsPayload).tags);
 }
 
-function loadConfig(raw: Record<string, unknown> | null | undefined, logger?: Logger): DatabricksConfig {
+function loadConfig(raw: Record<string, unknown> | null | undefined, _logger?: Logger): DatabricksConfig {
 	if (!raw) throw new Error('Databricks destination requires configuration');
 
 	const serverEndpoint = typeof raw.serverEndpoint === 'string' ? raw.serverEndpoint.trim() : '';
@@ -163,8 +163,8 @@ export class DatabricksPublishPlugin extends EventEmitter implements IPublishPlu
 
 					const hasError = tag.error !== undefined && tag.error !== null;
 					const numericValue = typeof tag.value === 'number' && isFinite(tag.value) ? tag.value
-						: typeof tag.value === 'boolean' ? (tag.value ? 1 : 0)
-						: null;
+							: typeof tag.value === 'boolean' ? (tag.value ? 1 : 0)
+							: null;
 					const stringValue = tag.value != null && typeof tag.value !== 'number' && typeof tag.value !== 'boolean'
 						? String(tag.value)
 						: null;
