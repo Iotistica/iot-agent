@@ -164,14 +164,6 @@ function close() {
         />
       </a-form-item>
 
-      <a-alert
-        v-if="testResult"
-        :type="testResult.ok ? 'success' : 'error'"
-        :message="testResult.ok ? testResult.message : testResult.error"
-        show-icon
-        style="margin-top: 4px"
-      />
-
       <template v-if="form.protocol === 'modbus'">
         <a-divider orientation="left" orientation-margin="0">Register Map</a-divider>
         <a-button block @click="registerMapOpen = true">
@@ -183,14 +175,23 @@ function close() {
         </div>
       </template>
 
-      <a-form-item label="Enabled" name="enabled">
-        <a-switch v-model:checked="form.enabled" />
-      </a-form-item>
     </a-form>
+
+    <a-alert
+      v-if="testResult"
+      :type="testResult.ok ? 'success' : 'error'"
+      :message="testResult.ok ? testResult.message : testResult.error"
+      show-icon
+      style="margin-top: 12px"
+    />
 
     <template #footer>
       <a-space style="width: 100%; justify-content: space-between">
-        <a-button :loading="testing" @click="testConnection">Test Connection</a-button>
+        <a-space>
+          <a-button :loading="testing" @click="testConnection">Test Connection</a-button>
+          <a-switch v-model:checked="form.enabled" />
+          <span style="font-size: 13px; color: var(--text-secondary)">Enabled</span>
+        </a-space>
         <a-space>
           <a-button @click="close">Cancel</a-button>
           <a-button type="primary" :loading="saving" @click="submit">
