@@ -118,7 +118,7 @@ function close() {
   <a-drawer
     :open="open"
     :title="editing ? `Edit — ${editing.name}` : 'New Source'"
-    :width="form.protocol === 'modbus' ? 820 : 480"
+    :width="560"
     @close="close"
   >
     <a-form
