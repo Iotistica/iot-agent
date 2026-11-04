@@ -8,6 +8,8 @@ import type { Request, Response, NextFunction } from 'express';
 import type { LogFilter } from '../logging/types.js';
 import { PassThrough } from 'stream';
 import * as actions from './actions';
+import { dispatchWrite } from '../commands/write-dispatcher.js';
+import { CommandError } from '../commands/errors.js';
 import { ModbusAdapter } from '../plugins/modbus/adapter.js';
 import { normalizeModbusRegisters } from '../plugins/modbus/types.js';
 import { getMemoryDiagnostics, getRestartPolicyStatus } from '../system/memory.js';
@@ -1676,6 +1678,49 @@ router.post('/v1/adapters/modbus/devices/:deviceName/write', requireRole('operat
 			value
 		});
 	} catch (error) {
+		next(error);
+	}
+});
+
+/**
+ * POST /v1/devices/:deviceUuid/write
+ * Unified write endpoint — works for Modbus, OPC UA, and BACnet.
+ * Body: { pointName: string, value: number | boolean | string }
+ */
+router.post('/v1/devices/:deviceUuid/write', requireRole('operator'), async (req: Request, res: Response, next: NextFunction) => {
+	try {
+		const { deviceUuid } = req.params;
+		const { pointName, value } = req.body ?? {};
+
+		if (!pointName || typeof pointName !== 'string') {
+			return res.status(400).json({ error: 'Missing or invalid pointName field' });
+		}
+
+		if (value === undefined || value === null) {
+			return res.status(400).json({ error: 'Missing value field' });
+		}
+
+		const adapterManager = actions.getAdapterManager();
+		if (!adapterManager) {
+			return res.status(503).json({ error: 'devices feature not initialized' });
+		}
+
+		await dispatchWrite(adapterManager, deviceUuid, pointName, value);
+
+		return res.status(200).json({
+			success: true,
+			deviceUuid,
+			pointName,
+			value,
+		});
+	} catch (error) {
+		if (error instanceof CommandError) {
+			const code = error.code;
+			if (code === 'NODE_NOT_ALLOWED') return res.status(403).json({ error: error.message });
+			if (code === 'DEVICE_NOT_CONNECTED') return res.status(404).json({ error: error.message });
+			if (code === 'WRITE_TIMEOUT') return res.status(504).json({ error: error.message });
+			return res.status(500).json({ error: error.message });
+		}
 		next(error);
 	}
 });

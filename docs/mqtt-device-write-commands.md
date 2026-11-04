@@ -4,8 +4,7 @@ Optional feature letting an external system (SCADA, cloud app) trigger a
 protocol write on the agent by publishing an MQTT command, instead of calling
 the local Device API directly. **Disabled by default.**
 
-Covers GitHub issues #4 (OPC-UA), #5 (Modbus), #6 (BACnet — not yet
-implemented, see [Protocol support](#protocol-support) below).
+Supported protocols: OPC-UA, Modbus, and BACnet (see [Protocol support](#protocol-support)).
 
 ## Security note
 
@@ -29,28 +28,60 @@ never subscribes to the command topic and never touches a protocol adapter
 for this feature — existing telemetry, discovery, and publishing behavior is
 completely unchanged.
 
-The feature also requires the device to be provisioned (command topics are
-tenant-scoped, same precondition as the Agent Updater's MQTT listener).
+Setup checklist:
+
+1. Set `COMMANDS_ENABLED=true` and restart the agent.
+2. In the admin UI, create (or edit) an MQTT publish destination and tick
+   `use_for_commands`. Only one destination can carry this flag. The command
+   consumer subscribes on that destination's broker, not the cloud connection.
+3. Mark each target point `writable: true` in the device configuration.
+4. Provisioning is **not** required. If no destination is flagged, the agent
+   logs a warning and the consumer does not start.
 
 ## MQTT topics
 
-Both are agent-scoped, following the same convention as every other agent
-MQTT topic (`i/{tenantId}/a/{agentId}/...`, base64-encoded):
+Both topics are scoped by the agent's own device UUID and live on the broker
+of the destination flagged `use_for_commands`:
 
 ```
-i/{tenantId}/a/{agentId}/cmd/write     # inbound commands (QoS 1, subscribe)
-i/{tenantId}/a/{agentId}/cmd/result    # outbound results (QoS 1, never retained)
+{agentUuid}/cmd/write     # inbound commands (QoS 1, subscribe)
+{agentUuid}/cmd/result    # outbound results (QoS 1, never retained)
 ```
+
+`{agentUuid}` is the agent's own device uuid, not the target device's. The
+target device is named inside the payload (`deviceUuid`).
 
 A retained message on the command topic is always rejected and dropped —
 there is no commandId to publish a result against, so nothing is published.
 
+## Sending a command (example)
+
+Subscribe to results, then publish a command:
+
+```bash
+mosquitto_sub -h <broker> -q 1 -t "<agentUuid>/cmd/result"
+
+mosquitto_pub -h <broker> -q 1 -t "<agentUuid>/cmd/write" -m '{
+  "version": 1,
+  "commandId": "cmd-001",
+  "type": "device.write",
+  "issuedAt": "2026-07-28T15:20:00.000Z",
+  "expiresAt": "2026-07-28T15:20:30.000Z",
+  "deviceUuid": "<target device uuid>",
+  "pointName": "SpeedSetpoint",
+  "value": 1500
+}'
+```
+
+`expiresAt` must fall within the `COMMANDS_MAX_AGE_SECONDS` window from
+`issuedAt`. Commands older than that are rejected.
+
 ## Command schema
 
 Deliberately protocol-agnostic — one schema, one topic, for every protocol.
-`deviceName` is resolved against whichever adapter currently owns that
-device, so the producer doesn't need to know if it's writing to an OPC-UA
-node or a Modbus register.
+`deviceUuid` is resolved against whichever adapter currently owns that device,
+so the producer doesn't need to know if it's writing to an OPC-UA node, a
+Modbus register, or a BACnet object.
 
 ```json
 {
@@ -59,15 +90,24 @@ node or a Modbus register.
   "type": "device.write",
   "issuedAt": "2026-07-28T15:20:00.000Z",
   "expiresAt": "2026-07-28T15:20:30.000Z",
-  "deviceName": "ahu-1",
+  "deviceUuid": "3f1c2a7e-9b4d-4e8a-8c2f-6a1d0e5b7c90",
   "pointName": "SpeedSetpoint",
   "value": 1500
 }
 ```
 
-`pointName` maps to the same point identifier already used by each adapter's
-existing write path — an OPC-UA data point's `name` (or `nodeId`), or a
-Modbus register's `name`.
+- `deviceUuid` is the devices table `uuid`. Copy it from the admin UI's Devices
+  grid (copy button). A raw configured endpoint name also works as a
+  best-effort fallback.
+- `value` may be a number, boolean, or string. `null` is not accepted.
+
+### Point name rules
+
+`pointName` must match what a user sees for that point:
+
+- **OPC-UA:** the data point's `name`, its raw `nodeId`, or its unmodified `browseName`.
+- **BACnet:** the sanitized `name`, or the device's raw `objectName` (e.g. `AHU-1.SF-Run`).
+- **Modbus:** the register's `name`.
 
 ## Result schema
 
@@ -80,7 +120,7 @@ Exactly one terminal result is published per command that had a recoverable
   "commandId": "01J2XYZ8T2NJ5V8D3M1G6G7P9Q",
   "type": "device.write.result",
   "status": "succeeded",
-  "deviceName": "ahu-1",
+  "deviceUuid": "3f1c2a7e-9b4d-4e8a-8c2f-6a1d0e5b7c90",
   "pointName": "SpeedSetpoint",
   "requestedValue": 1500,
   "receivedAt": "2026-07-28T15:20:01.100Z",
@@ -150,26 +190,27 @@ layer, but there's no way to request it via a command today.
 ## Architecture
 
 ```
-MQTT command topic
+MQTT command topic  ({agentUuid}/cmd/write, on the use_for_commands destination)
         │
         ▼
 MqttCommandConsumer          (src/commands/mqtt-consumer.ts)
         │ retain? -> drop
         ▼
 CommandService.handleMessage (src/commands/service.ts)
-        │ parse + schema validate (validator.ts)
+        │ parse + schema validate (types.ts)
         │ expiry check
         │ dedup check (deduplicator.ts)
         │ bounded FIFO queue, sequential execution
         ▼
 dispatchWrite()               (src/commands/write-dispatcher.ts)
-        │ resolve deviceName -> owning adapter
+        │ resolve deviceUuid -> owning adapter
         │ OPCUAAdapter.writeNode() / ModbusAdapter.writeRegister()
+        │ / BACnetAdapter.writeProperty()
         ▼
 CommandResultPublisher.publish (src/commands/result-publisher.ts)
         │
         ▼
-MQTT result topic
+MQTT result topic  ({agentUuid}/cmd/result)
 ```
 
 Commands are processed sequentially (one write in flight at a time, agent-wide,
@@ -186,3 +227,5 @@ sufficient for MQTT QoS 1 redelivery, but does not survive an agent restart.
   (`component: LogComponents.commands`) cover the same audit trail for now.
 - Per-device (rather than agent-wide) queues.
 - BACnet Null-writes (priority-array release) — see above.
+- MQTT adapter write support — the MQTT adapter has no write method, so
+  commands targeting it are rejected with `UNSUPPORTED_COMMAND_TYPE`.

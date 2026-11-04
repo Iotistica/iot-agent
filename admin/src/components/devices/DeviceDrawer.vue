@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
 import { message } from 'ant-design-vue'
-import { PlusOutlined, DeleteOutlined } from '@ant-design/icons-vue'
+import { PlusOutlined, DeleteOutlined, SendOutlined } from '@ant-design/icons-vue'
 import { client } from '@/api/client'
+import { deviceApi } from '@/api/device'
 import { protocolColor, protocolLabel } from '@/utils/protocol'
 
 interface Device {
@@ -34,6 +35,37 @@ const newKey = ref('')
 const newValue = ref('')
 
 const systemMetadataKeys = new Set(['objectName', 'slaveId', 'nodeCount'])
+
+const writeModalOpen = ref(false)
+const writePointName = ref('')
+const writeValue = ref('')
+const writeSending = ref(false)
+
+function parseWriteValue(raw: string): number | boolean | string {
+  if (raw === 'true') return true
+  if (raw === 'false') return false
+  const n = Number(raw)
+  if (raw !== '' && !isNaN(n)) return n
+  return raw
+}
+
+async function submitWrite() {
+  if (!props.device || !writePointName.value.trim()) return
+  writeSending.value = true
+  try {
+    const val = parseWriteValue(writeValue.value)
+    await deviceApi.writePoint(props.device.uuid, writePointName.value.trim(), val)
+    message.success(`Wrote ${writeValue.value} to ${writePointName.value}`)
+    writeModalOpen.value = false
+    writePointName.value = ''
+    writeValue.value = ''
+  } catch (err: unknown) {
+    const e = err as { response?: { data?: { error?: string } }; message?: string }
+    message.error(e?.response?.data?.error ?? e?.message ?? 'Write failed')
+  } finally {
+    writeSending.value = false
+  }
+}
 
 function syncFromDevice() {
   if (!props.device) return
@@ -166,6 +198,13 @@ function timeSince(ts: string | null): string {
           <template #icon><PlusOutlined /></template>
         </a-button>
       </div>
+
+      <!-- Write Value -->
+      <a-divider orientation="left" class="section-divider">Commands</a-divider>
+      <a-button @click="writeModalOpen = true">
+        <template #icon><SendOutlined /></template>
+        Write Value
+      </a-button>
     </template>
 
     <template #footer>
@@ -175,6 +214,26 @@ function timeSince(ts: string | null): string {
       </a-space>
     </template>
   </a-drawer>
+
+  <a-modal
+    v-model:open="writeModalOpen"
+    title="Write Value"
+    :confirm-loading="writeSending"
+    @ok="submitWrite"
+  >
+    <a-form layout="vertical">
+      <a-form-item label="Point Name" required>
+        <a-input v-model:value="writePointName" placeholder="e.g. SpeedSetpoint" />
+      </a-form-item>
+      <a-form-item label="Value" required>
+        <a-input v-model:value="writeValue" placeholder="e.g. 1500" />
+      </a-form-item>
+      <p style="font-size: 12px; color: var(--text-tertiary); margin: 0">
+        The point must be marked <code>writable</code> in the device configuration.
+        Numeric strings are sent as numbers; <code>true</code>/<code>false</code> as booleans.
+      </p>
+    </a-form>
+  </a-modal>
 </template>
 
 <style scoped>
