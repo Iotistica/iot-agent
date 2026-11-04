@@ -4,6 +4,7 @@ import { message } from 'ant-design-vue'
 import type { FormInstance } from 'ant-design-vue'
 import type { Endpoint, EndpointCreateData } from '@/types'
 import { sourcesApi, type SourceTestResult } from '@/api/sources'
+import { EditOutlined } from '@ant-design/icons-vue'
 import SourceConnectionFields from './SourceConnectionFields.vue'
 import ModbusRegisterMapEditor from './ModbusRegisterMapEditor.vue'
 
@@ -24,6 +25,7 @@ const formRef = ref<FormInstance>()
 const saving = ref(false)
 const testing = ref(false)
 const testResult = ref<SourceTestResult | null>(null)
+const registerMapOpen = ref(false)
 
 function connectionWithDefaults(protocol: string, connection: Record<string, unknown> = {}) {
   return protocol === 'modbus' && connection.type == null ? { ...connection, type: 'tcp' } : { ...connection }
@@ -153,23 +155,14 @@ function close() {
 
       <a-divider orientation="left" orientation-margin="0">Options</a-divider>
 
-      <a-row :gutter="16">
-        <a-col :span="14">
-          <a-form-item label="Poll Interval (ms)" name="poll_interval">
-            <a-input-number
-              v-model:value="form.poll_interval"
-              :min="100"
-              :step="1000"
-              style="width: 100%"
-            />
-          </a-form-item>
-        </a-col>
-        <a-col :span="10">
-          <a-form-item label="Enabled" name="enabled">
-            <a-switch v-model:checked="form.enabled" />
-          </a-form-item>
-        </a-col>
-      </a-row>
+      <a-form-item label="Poll Interval (ms)" name="poll_interval">
+        <a-input-number
+          v-model:value="form.poll_interval"
+          :min="100"
+          :step="1000"
+          style="width: 100%"
+        />
+      </a-form-item>
 
       <a-alert
         v-if="testResult"
@@ -181,12 +174,18 @@ function close() {
 
       <template v-if="form.protocol === 'modbus'">
         <a-divider orientation="left" orientation-margin="0">Register Map</a-divider>
-        <ModbusRegisterMapEditor
-          :model-value="form.data_points"
-          :connection="form.connection ?? {}"
-          @update:model-value="form.data_points = $event"
-        />
+        <a-button block @click="registerMapOpen = true">
+          Configure Register Map
+          <template #icon><EditOutlined /></template>
+        </a-button>
+        <div v-if="form.data_points?.length" style="margin-top: 8px; font-size: 12px; color: var(--text-tertiary)">
+          {{ form.data_points.length }} register(s) configured
+        </div>
       </template>
+
+      <a-form-item label="Enabled" name="enabled">
+        <a-switch v-model:checked="form.enabled" />
+      </a-form-item>
     </a-form>
 
     <template #footer>
@@ -201,4 +200,18 @@ function close() {
       </a-space>
     </template>
   </a-drawer>
+
+  <a-modal
+    v-model:open="registerMapOpen"
+    title="Register Map"
+    :width="900"
+    :footer="null"
+    centered
+  >
+    <ModbusRegisterMapEditor
+      :model-value="form.data_points"
+      :connection="form.connection ?? {}"
+      @update:model-value="form.data_points = $event"
+    />
+  </a-modal>
 </template>
