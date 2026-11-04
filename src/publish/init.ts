@@ -18,6 +18,7 @@ import { MqttPublishPlugin } from './plugins/mqtt.js';
 import { NoopPublishPlugin } from './plugins/noop.js';
 import { TimescaleDbPublishPlugin } from './plugins/timescaledb.js';
 import { SocketPublishPlugin } from './plugins/socket.js';
+import { DatabricksPublishPlugin } from './plugins/databricks.js';
 import { BasePublishPlugin } from './core/base-plugin.js';
 import type { IPublishPlugin, IPublishClient } from './core/types.js';
 import type { AnomalyEventPayload } from '../db/models/anomaly-event.model.js';
@@ -405,6 +406,7 @@ export class DevicePublish extends EventEmitter {
 				return this.proPlugins.influxdb.fromConfig(config, logger);
 			case 'timescaledb': return TimescaleDbPublishPlugin.fromConfig(config, logger, this.deviceUuid);
 			case 'socket': return SocketPublishPlugin.fromConfig(config, logger);
+			case 'databricks': return DatabricksPublishPlugin.fromConfig(config, logger, this.deviceUuid);
 			default: throw new Error(`Publish destination type not found: ${target}`);
 		}
 	}

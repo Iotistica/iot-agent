@@ -156,6 +156,52 @@ function auth(key: string): unknown {
     </a-form-item>
   </template>
 
+  <!-- Databricks ZeroBus Ingest -->
+  <template v-else-if="type === 'databricks'">
+    <a-alert
+      type="info"
+      show-icon
+      message="Streams into a Unity Catalog Delta table"
+      description="Pushes telemetry directly into a Databricks Lakehouse via the ZeroBus Ingest REST API. Each reading becomes a row in the target table."
+      style="margin-bottom: 8px"
+    />
+    <a-form-item label="Server Endpoint" :name="['config_json', 'serverEndpoint']" :rules="[{ required: true, message: 'Server endpoint is required' }]">
+      <a-input :value="(cfg.serverEndpoint as string) ?? ''" placeholder="https://1234567890.zerobus.us-west-2.cloud.databricks.com" @update:value="set('serverEndpoint', $event)" />
+    </a-form-item>
+    <a-form-item label="Workspace URL" :name="['config_json', 'workspaceUrl']" :rules="[{ required: true, message: 'Workspace URL is required' }]">
+      <a-input :value="(cfg.workspaceUrl as string) ?? ''" placeholder="https://dbc-a1b2c3d4-e5f6.cloud.databricks.com" @update:value="set('workspaceUrl', $event)" />
+    </a-form-item>
+    <a-form-item label="Workspace ID" :name="['config_json', 'workspaceId']" :rules="[{ required: true, message: 'Workspace ID is required' }]">
+      <a-input :value="(cfg.workspaceId as string) ?? ''" placeholder="1234567890123456" @update:value="set('workspaceId', $event)" />
+    </a-form-item>
+
+    <a-divider orientation="left" orientation-margin="0" style="font-size: 12px; color: var(--text-tertiary)">Authentication (Service Principal)</a-divider>
+
+    <a-form-item label="Client ID" :name="['config_json', 'clientId']" :rules="[{ required: true, message: 'Client ID is required' }]">
+      <a-input :value="(cfg.clientId as string) ?? ''" autocomplete="off" @update:value="set('clientId', $event)" />
+    </a-form-item>
+    <a-form-item label="Client Secret" :name="['config_json', 'clientSecret']" :rules="[{ required: true, message: 'Client secret is required' }]">
+      <a-input-password :value="(cfg.clientSecret as string) ?? ''" autocomplete="new-password" @update:value="set('clientSecret', $event)" />
+    </a-form-item>
+
+    <a-divider orientation="left" orientation-margin="0" style="font-size: 12px; color: var(--text-tertiary)">Target Table</a-divider>
+
+    <a-form-item label="Table Name" :name="['config_json', 'tableName']" :rules="[{ required: true, message: 'Table name is required' }]">
+      <a-input :value="(cfg.tableName as string) ?? ''" placeholder="catalog.schema.table" @update:value="set('tableName', $event)" />
+      <div style="color: var(--text-muted); font-size: 12px; margin-top: 4px">Fully qualified Unity Catalog table name</div>
+    </a-form-item>
+    <a-form-item label="Max records per request" :name="['config_json', 'maxRecordsPerRequest']">
+      <a-input-number
+        :value="(cfg.maxRecordsPerRequest as number) ?? 500"
+        :min="1"
+        :max="5000"
+        style="width: 100%"
+        @update:value="set('maxRecordsPerRequest', $event)"
+      />
+      <div style="color: var(--text-muted); font-size: 12px; margin-top: 4px">Records sent per HTTP POST (default: 500)</div>
+    </a-form-item>
+  </template>
+
   <!-- Azure IoT Hub -->
   <template v-else-if="type === 'azure'">
     <a-form-item label="Hub Hostname" :rules="[{ required: true, message: 'Required' }]">

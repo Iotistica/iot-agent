@@ -21,13 +21,13 @@ const emit = defineEmits<{
   saved: []
 }>()
 
-const ALL_DESTINATION_TYPES = ['iotistica', 'mqtt', 'influxdb', 'timescaledb', 'azure', 'aws', 'gcp', 'noop']
+const ALL_DESTINATION_TYPES = ['iotistica', 'mqtt', 'influxdb', 'timescaledb', 'databricks', 'azure', 'aws', 'gcp', 'noop']
 const PRO_DESTINATION_TYPES = new Set(['influxdb', 'azure', 'aws', 'gcp'])
 const DEMO_DESTINATION_TYPES = new Set(['noop'])
 const DESTINATION_TYPES = computed(() =>
   props.provisioned ? ALL_DESTINATION_TYPES : ALL_DESTINATION_TYPES.filter((t) => t !== 'iotistica'),
 )
-const TESTABLE_TYPES = ['influxdb', 'mqtt', 'timescaledb', 'socket']
+const TESTABLE_TYPES = ['influxdb', 'mqtt', 'timescaledb', 'socket', 'databricks']
 
 const CONFIG_TEMPLATES: Record<string, Record<string, unknown>> = {
   azure: {
@@ -52,6 +52,14 @@ const CONFIG_TEMPLATES: Record<string, Record<string, unknown>> = {
       key: '-----BEGIN RSA PRIVATE KEY-----\n...\n-----END RSA PRIVATE KEY-----',
       ca: '-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----',
     },
+  },
+  databricks: {
+    serverEndpoint: '',
+    workspaceUrl: '',
+    workspaceId: '',
+    clientId: '',
+    clientSecret: '',
+    tableName: '',
   },
   gcp: {
     provider: 'gcp',

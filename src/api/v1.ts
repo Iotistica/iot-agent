@@ -2152,6 +2152,16 @@ router.post('/v1/publish/destinations/test', requireRole('operator'), async (req
 			}
 		}
 
+		if (type === 'databricks') {
+			try {
+				const { DatabricksPublishPlugin } = await import('../publish/plugins/databricks.js');
+				const result = await DatabricksPublishPlugin.testConnection(cfg);
+				return res.status(200).json(result);
+			} catch (err: any) {
+				return res.status(200).json({ ok: false, error: err?.message ?? 'Connection test failed' });
+			}
+		}
+
 		return res.status(200).json({ ok: false, error: `Connection test not supported for type "${type}"` });
 	} catch (error) {
 		next(error);
