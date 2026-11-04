@@ -162,12 +162,11 @@ export class DatabricksPublishPlugin extends EventEmitter implements IPublishPlu
 					if (!tag.name) continue;
 
 					const hasError = tag.error !== undefined && tag.error !== null;
-					const numericValue = typeof tag.value === 'number' && isFinite(tag.value) ? tag.value
-						: typeof tag.value === 'boolean' ? (tag.value ? 1 : 0)
-						: null;
-					const stringValue = tag.value != null && typeof tag.value !== 'number' && typeof tag.value !== 'boolean'
-						? String(tag.value)
-						: null;
+					let numericValue: number | null = null;
+					if (typeof tag.value === 'number' && isFinite(tag.value)) numericValue = tag.value;
+					else if (typeof tag.value === 'boolean') numericValue = tag.value ? 1 : 0;
+					const stringValue = (tag.value != null && typeof tag.value !== 'number' && typeof tag.value !== 'boolean')
+						? String(tag.value) : null;
 
 					records.push({
 						timestamp: ts,
