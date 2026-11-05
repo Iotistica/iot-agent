@@ -962,11 +962,17 @@ EOF
         echo "PROVISIONING_KEY=${PROVISIONING_KEY}" >> /etc/iotistic/agent.env
     fi
 
-    for _lic_var in LICENSE_KEY LICENSE_AUTO_TRIAL LICENSE_API; do
-        if [ -n "${!_lic_var:-}" ]; then
-            echo "${_lic_var}=${!_lic_var}" >> /etc/iotistic/agent.env
-        fi
-    done
+    if [ -n "$LICENSE_KEY" ]; then
+        echo "LICENSE_KEY=${LICENSE_KEY}" >> /etc/iotistic/agent.env
+    fi
+
+    if [ -n "$LICENSE_AUTO_TRIAL" ]; then
+        echo "LICENSE_AUTO_TRIAL=${LICENSE_AUTO_TRIAL}" >> /etc/iotistic/agent.env
+    fi
+
+    if [ -n "$LICENSE_API" ]; then
+        echo "LICENSE_API=${LICENSE_API}" >> /etc/iotistic/agent.env
+    fi
 
     if [ -n "$INITIAL_ADMIN_PASSWORD" ]; then
         echo "INITIAL_ADMIN_PASSWORD=${INITIAL_ADMIN_PASSWORD}" >> /etc/iotistic/agent.env
