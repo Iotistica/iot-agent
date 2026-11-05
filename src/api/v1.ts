@@ -1710,7 +1710,7 @@ router.get('/v1/devices/:deviceUuid/writable-points', requireRole('operator'), a
 			})
 			.map((dp: any) => ({
 				name: dp.name || dp.objectName,
-				type: dp.objectType || dp.dataType || dp.type || null,
+				type: dp.writeDataType || dp.dataType || dp.objectType || dp.type || null,
 				unit: dp.unit || dp.units || null,
 			}));
 

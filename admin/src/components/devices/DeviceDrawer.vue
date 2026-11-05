@@ -255,8 +255,6 @@ function timeSince(ts: string | null): string {
         >
           <a-select-option v-for="p in writablePoints" :key="p.name" :value="p.name" :label="p.name">
             {{ p.name }}
-            <span v-if="p.type" style="color: var(--text-tertiary); margin-left: 6px; font-size: 12px">{{ p.type }}</span>
-            <span v-if="p.unit" style="color: var(--text-tertiary); margin-left: 4px; font-size: 12px">({{ p.unit }})</span>
           </a-select-option>
         </a-select>
         <div v-if="!loadingPoints && writablePoints.length === 0" style="font-size: 12px; color: var(--text-tertiary); margin-top: 4px">
