@@ -486,7 +486,7 @@ implements IProtocolClient<ReadValueIdOptions[], DataValue[]>
 			case 'String': return DataType.String;
 			default:
 				if (typeof value === 'boolean') return DataType.Boolean;
-				if (typeof value === 'number') return Number.isInteger(value) ? DataType.Int32 : DataType.Double;
+				if (typeof value === 'number') return DataType.Double;
 				return DataType.String;
 		}
 	}
