@@ -21,7 +21,7 @@ jest.mock('../../../src/db/models/index', () => {
 });
 
 import { PointNameMappingsModel } from '../../../src/db/models/index';
-import { getPointNameCatalog, resetPointNameCatalogForTests } from '../../../src/point-name/catalog';
+import { getPointNameCatalog, resetPointNameCatalogForTests } from '../../../src/points/catalog';
 
 const mockedModel = PointNameMappingsModel as unknown as {
 	__reset: () => void;

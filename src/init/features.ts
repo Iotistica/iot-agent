@@ -30,7 +30,7 @@ import { isStandaloneMode } from '../utils/env.js';
 import { composeInterceptors } from '../publish/core/interceptor-chain.js';
 import { createUnitNormalizationInterceptor } from '../units/index.js';
 import { createDataQualityInterceptor } from '../quality/index.js';
-import { createPointNameNormalizationInterceptor } from '../point-name/index.js';
+import { createPointNameNormalizationInterceptor } from '../points/index.js';
 
 export interface FeatureContext {
   logger: AgentLogger;
@@ -869,5 +869,4 @@ export async function initDiscoveryService(ctx: AgentInitContext): Promise<void>
 		setDiscoveryRulesScheduler(undefined);
 	}
 }
-
 

@@ -27,7 +27,7 @@ import { LogComponents } from '../../logging/types.js';
 import { cleanDriftFieldName, prettifyDriftDeviceId, cleanProtocolPipeName, stripFieldDevicePrefix } from '../../db/models/drift-labels.js';
 import { buildCompactIssueCodes } from '../../quality/index.js';
 import type { DataQuality } from '../../quality/index.js';
-import type { PointIdentity } from '../../point-name/index.js';
+import type { PointIdentity } from '../../points/index.js';
 
 const DESTINATION_HEALTH_INTERVAL_MS = 60_000;
 const RECONNECT_FORCE_AFTER_MS = 10 * 60_000;
@@ -96,7 +96,7 @@ interface TagPayload {
 	dqUnitConfidence?: number;
 	dqIssueCodes?: string[];
 	// Never named `pointId` — provisionalPointId is rename-sensitive, not durable
-	// identity (see src/point-name/types.ts's PointIdentity doc comment).
+	// identity (see src/points/types.ts's PointIdentity doc comment).
 	provisionalPointId?: string;
 	// Anomaly enrichment — same fields as MlFeaturePayload below, previously
 	// 'ml'-format-only. Included here too so a 'tags'/'ecp' subscription (the
@@ -1174,11 +1174,11 @@ export class PublishManager extends EventEmitter {
 
 	/** Compact point-identity projection for the Live View activity-monitor path (see the
 	 *  activityMonitor.record() call site below) — reads message.pointIdentity (see
-	 *  src/point-name/interceptor.ts) when present. Unlike tag/ml payloads (mapTagPayload()/
+	 *  src/points/interceptor.ts) when present. Unlike tag/ml payloads (mapTagPayload()/
 	 *  attachMlEnrichment()), Live View's own `metric`/`lastMetric` deliberately stays raw
 	 *  with normalizedName as a separate additive field, so both are kept here. Never carries
 	 *  rawName/sourceAddress/rulesVersion/provenance — those stay 'custom'-format-only. Field
-	 *  is provisionalPointId, never pointId — see src/point-name/types.ts's PointIdentity doc
+	 *  is provisionalPointId, never pointId — see src/points/types.ts's PointIdentity doc
 	 *  comment on why. */
 	private readPointIdentity(message: ProtocolMessage): { provisionalPointId?: string; normalizedName?: string } {
 		const pointIdentity = message.pointIdentity as PointIdentity | undefined;

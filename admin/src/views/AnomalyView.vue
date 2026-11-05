@@ -1107,7 +1107,7 @@ const metricAutocompleteOptions = computed(() => {
   // Group strictly by (name, deviceId) — the same identity the backend's
   // observed-metrics catalog uses (anomalyMetricResultKey in actions.ts).
   // AnomalyFeed now sources both the normalized name and the device identity
-  // from the single point-name catalog (src/point-name/), with no fabricated
+  // from the single point-name catalog (src/points/), with no fabricated
   // pseudo-ids — so this key is always correct and unique per real device.
   // No UUID-preference heuristic needed: two entries sharing this key really
   // are the same metric; two entries with the same name but different

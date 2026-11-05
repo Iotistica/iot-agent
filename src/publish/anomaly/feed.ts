@@ -1,7 +1,7 @@
 import type { Protocol } from "../../plugins/protocol.js";
 import { extractRawDeviceState } from "./device-state.js";
 import type { Logger } from "../core/types.js";
-import type { PointIdentity } from "../../point-name/types.js";
+import type { PointIdentity } from "../../points/types.js";
 
 /**
  * Walks each batch message, extracts every numeric field, and feeds them to the
@@ -130,7 +130,7 @@ export class AnomalyFeed {
 
 	/**
 	 * Reads the identity the point-name normalization interceptor already
-	 * attached to this reading (src/point-name/interceptor.ts, earlier in the
+	 * attached to this reading (src/points/interceptor.ts, earlier in the
 	 * same publish flush) — the single normalized source of both the metric
 	 * name and the per-device identity, the same one Live View's display
 	 * reads from. Returns undefined (never a fabricated identity) when either
@@ -362,7 +362,7 @@ export class AnomalyFeed {
 			}
 
 			// The interceptor tags every element of a readings[] array
-			// individually (src/point-name/interceptor.ts), so this reading
+			// individually (src/points/interceptor.ts), so this reading
 			// carries its own pointIdentity the same as a single reading object
 			// does — see readPointIdentity()'s doc comment for what "missing"
 			// means here.

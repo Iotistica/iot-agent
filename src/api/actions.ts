@@ -2254,7 +2254,7 @@ export const getAvailableAnomalyMetrics = async (): Promise<
 	// No fallback source for configured-but-never-observed data points: a
 	// point that has never actually flowed through the live pipeline has no
 	// real normalized name on record anywhere (normalization only runs on
-	// live readings, src/point-name/interceptor.ts) — showing it under its
+	// live readings, src/points/interceptor.ts) — showing it under its
 	// raw, un-normalized config name would be exactly the kind of invented
 	// placeholder identity this catalog must not produce. If a configured
 	// point has no entry here, that's the honest state: it hasn't reported

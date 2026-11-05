@@ -37,7 +37,7 @@ function mapRow(row: PointNameMappingRow | undefined): PointNameMappingRecord | 
 /**
  * Point Name Normalization's operational identity cache (not reference data
  * — contrast with UnitDefinitionsModel/UnitAliasesModel above, which reseed
- * every startup). src/point-name/catalog.ts is the sole caller: getAll() is
+ * every startup). src/points/catalog.ts is the sole caller: getAll() is
  * the one-time startup preload, upsertMany() is the batched, bounded flush
  * target for the deferred-write queue (plan §8) — never called per-row from
  * the live interceptor.

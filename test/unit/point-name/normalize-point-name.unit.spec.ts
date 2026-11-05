@@ -1,4 +1,4 @@
-import { normalizePointName, buildNormalizedPointName } from '../../../src/point-name/normalize-point-name';
+import { normalizePointName, buildNormalizedPointName } from '../../../src/points/normalize-point-name';
 
 describe('normalizePointName', () => {
 	it('produces the two worked examples from the plan exactly', () => {
