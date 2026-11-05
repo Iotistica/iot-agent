@@ -1,5 +1,5 @@
 // Covers catalog.resolve()'s actual device+point combining behavior
-// (buildNormalizedPointName(), src/point-name/normalize-point-name.ts) —
+// (buildNormalizedPointName(), src/points/normalize-point-name.ts) —
 // the current "v3" rules (CURRENT_POINT_NAME_RULES_VERSION in types.ts).
 //
 // This file previously asserted a "v2" design (stripDeviceNamePrefix(), a
@@ -26,8 +26,8 @@ jest.mock('../../../src/db/models/index', () => {
 });
 
 import { PointNameMappingsModel } from '../../../src/db/models/index';
-import { computeProvisionalPointId } from '../../../src/point-name/identity';
-import { getPointNameCatalog, resetPointNameCatalogForTests } from '../../../src/point-name/catalog';
+import { computeProvisionalPointId } from '../../../src/points/identity';
+import { getPointNameCatalog, resetPointNameCatalogForTests } from '../../../src/points/catalog';
 
 const mockedModel = PointNameMappingsModel as unknown as { __reset: () => void };
 

@@ -609,7 +609,7 @@ export class OPCUADiscovery extends BaseDiscovery {
 										// keep only the text before the first underscore (e.g.
 										// "Temperature_device1" -> "temperature"), silently discarding
 										// everything after it before the real point-name normalizer
-										// (src/point-name/normalize-point-name.ts) ever got a chance to
+										// (src/points/normalize-point-name.ts) ever got a chance to
 										// handle it properly. The untruncated raw name is what should
 										// reach that normalizer — browseName itself is preserved
 										// separately below for display regardless.
@@ -827,4 +827,3 @@ export class OPCUADiscovery extends BaseDiscovery {
 		}
 	}
 }
-

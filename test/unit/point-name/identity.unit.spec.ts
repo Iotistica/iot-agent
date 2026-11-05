@@ -6,7 +6,7 @@ jest.mock('../../../src/db/sqlite', () => ({
 }));
 
 import { getDatabase } from '../../../src/db/sqlite';
-import { computeProvisionalPointId, computeShortHash, naturalKey } from '../../../src/point-name/identity';
+import { computeProvisionalPointId, computeShortHash, naturalKey } from '../../../src/points/identity';
 
 describe('computeProvisionalPointId', () => {
 	it('is deterministic for an identical natural key', () => {

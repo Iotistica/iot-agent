@@ -12,8 +12,8 @@ jest.mock('../../../src/db/models/index', () => {
 });
 
 import { PointNameMappingsModel } from '../../../src/db/models/index';
-import { createPointNameNormalizationInterceptor } from '../../../src/point-name/interceptor';
-import { resetPointNameCatalogForTests } from '../../../src/point-name/catalog';
+import { createPointNameNormalizationInterceptor } from '../../../src/points/interceptor';
+import { resetPointNameCatalogForTests } from '../../../src/points/catalog';
 
 const mockedModel = PointNameMappingsModel as unknown as { __reset: () => void };
 

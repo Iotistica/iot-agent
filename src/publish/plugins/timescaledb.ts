@@ -2,7 +2,7 @@ import { EventEmitter } from 'events';
 import { Pool } from 'pg';
 import type { IPublishPlugin, PublishBatchItem, Logger } from '../core/types.js';
 import { toDeviceUuid } from '../../db/models/device.model.js';
-import type { PointIdentity } from '../../point-name/index.js';
+import type { PointIdentity } from '../../points/index.js';
 
 interface TimescaleDbConfig {
 	host: string;

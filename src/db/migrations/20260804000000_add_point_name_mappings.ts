@@ -6,7 +6,7 @@ import type { NativeSqliteMigration } from '../migration-types.js';
  * (unlike unit_catalog's reference-data/reseed-every-startup lifecycle) — rows
  * accumulate as points are first observed, or are pre-seeded for curated
  * overrides in a later phase (Phase 1 ships with no seed path, see
- * src/point-name/catalog.ts). `locked` governs reuse policy independent of
+ * src/points/catalog.ts). `locked` governs reuse policy independent of
  * `method`/`rules_version`; Phase 1 never regenerates a locked mapping.
  */
 function up(db: DatabaseSync): void {

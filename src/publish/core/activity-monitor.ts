@@ -23,7 +23,7 @@ export interface SubscriptionActivity {
 	pointCount: number;
 	totalBatches: number;
 	lastPublishTime: string;
-	/** From Point Name Normalization (src/point-name/) — see PublishManager.readPointIdentity(). Additive/optional: absent for readings the interceptor skipped or predating this feature. */
+	/** From Point Name Normalization (src/points/) — see PublishManager.readPointIdentity(). Additive/optional: absent for readings the interceptor skipped or predating this feature. */
 	normalizedName?: string;
 	provisionalPointId?: string;
 	rulesVersion?: string;
@@ -56,7 +56,7 @@ export interface ActivityEvent {
 	destinationId: number;
 	destinationName: string;
 	pointCount: number;
-	/** From Point Name Normalization (src/point-name/) — see PublishManager.readPointIdentity(). Additive/optional: absent for readings the interceptor skipped or predating this feature. */
+	/** From Point Name Normalization (src/points/) — see PublishManager.readPointIdentity(). Additive/optional: absent for readings the interceptor skipped or predating this feature. */
 	normalizedName?: string;
 	provisionalPointId?: string;
 	rulesVersion?: string;
