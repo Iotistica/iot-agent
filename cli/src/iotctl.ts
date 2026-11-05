@@ -10,6 +10,7 @@ import { servicesInfo, servicesList, servicesLogs, servicesRestart, servicesStar
 import { discover, endpointsClean } from './commands/discovery';
 import { adaptersList, adaptersShow, adaptersAdd, adaptersRemove, adaptersEnable, adaptersDisable, mqttAdd, modbusAdd, opcuaAdd, snmpAdd } from './commands/adapters';
 import { factoryReset, mqttListUsers, provisionStatus, provisionWithKey, deprovision } from './commands/provision';
+import { licenseStatus, licenseTrial, licenseActivate, licenseApplyToken } from './commands/license';
 import { showLogs, showVersion } from './commands/system';
 import { bufferStatus, memoryDiagnostics, restart, runDiagnostics, showStatusEnhanced, agentUpdate, agentPullTargetState, agentState } from './commands/agent';
 import {
@@ -32,6 +33,13 @@ function buildCommands(args: string[]): CommandMap {
         return provisionWithKey(key);
       },
       status: provisionStatus,
+    },
+    license: {
+      _default: licenseStatus,
+      status: licenseStatus,
+      trial: licenseTrial,
+      activate: licenseActivate,
+      'apply-token': licenseApplyToken,
     },
     deprovision: {
       _default: deprovision,

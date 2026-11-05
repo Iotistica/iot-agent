@@ -46,6 +46,7 @@ import { migration as addMqttUserPasswordPlaintext } from './migrations/20261031
 import { migration as mqttTopicToDevice } from './migrations/20261101000000_mqtt_topic_to_device.js';
 import { migration as addFirewallRules } from './migrations/20261101020000_add_firewall_rules.js';
 import { migration as addAssetPathToDevices } from './migrations/20261102000000_add_asset_path_to_devices.js';
+import { migration as addLicense } from './migrations/20261103000000_add_license.js';
 import type { NativeSqliteMigration } from './migration-types.js';
 
 export const nativeMigrations: NativeSqliteMigration[] = [
@@ -97,4 +98,5 @@ export const nativeMigrations: NativeSqliteMigration[] = [
 	mqttTopicToDevice,
 	addFirewallRules,
 	addAssetPathToDevices,
+	addLicense,
 ];

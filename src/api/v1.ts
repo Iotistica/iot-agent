@@ -27,6 +27,7 @@ import {
 import bcrypt from 'bcryptjs';
 import { UserModel } from '../db/models/admin-user.model.js';
 import { AdminSessionModel } from '../db/models/admin-session.model.js';
+import { getLicenseService } from '../licensing/runtime.js';
 import { requireRole, parseCookie, SESSION_COOKIE } from './middleware/roles.js';
 import { AppMarketplaceModel } from '../db/models/app-marketplace.model.js';
 import type { MarketplaceImage } from '../data/app-templates.js';
@@ -1381,6 +1382,51 @@ router.post('/v1/simulation/stop-all', requireRole('operator'), async (req: Requ
 			message: 'All simulations stopped',
 			status
 		});
+	} catch (error) {
+		next(error);
+	}
+});
+
+/**
+ * License endpoints. Activation is admin-only; status is readable.
+ */
+function licenseService() {
+	const svc = getLicenseService();
+	if (!svc) {
+		const err: any = new Error('Licensing is not initialized');
+		err.statusCode = 503;
+		throw err;
+	}
+	return svc;
+}
+
+router.get('/v1/license', async (_req: Request, res: Response, next: NextFunction) => {
+	try {
+		return res.status(200).json(licenseService().getStatus());
+	} catch (error) {
+		next(error);
+	}
+});
+
+router.post('/v1/license/trial', requireRole('admin'), async (_req: Request, res: Response, next: NextFunction) => {
+	try {
+		return res.status(200).json(await licenseService().activateTrial());
+	} catch (error) {
+		next(error);
+	}
+});
+
+router.post('/v1/license/activate', requireRole('admin'), async (req: Request, res: Response, next: NextFunction) => {
+	try {
+		return res.status(200).json(await licenseService().activatePaid(req.body?.licenseKey));
+	} catch (error) {
+		next(error);
+	}
+});
+
+router.post('/v1/license/token', requireRole('admin'), async (req: Request, res: Response, next: NextFunction) => {
+	try {
+		return res.status(200).json(licenseService().applyToken(req.body?.token));
 	} catch (error) {
 		next(error);
 	}

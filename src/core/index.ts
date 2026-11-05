@@ -353,6 +353,10 @@ export class AgentManager {
 		await this.saveAgentInfo();
 	}
 
+	getPopCrypto(): PopCryptoManager | undefined {
+		return this.popCrypto;
+	}
+
 	/**
 	* Get current agent info
 	*/

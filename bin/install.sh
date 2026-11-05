@@ -14,6 +14,9 @@ set -e
 #   IOTISTICA_DEVICE_PORT          - Device API port (default: 48484)
 #   IOTISTICA_API                  - Cloud API endpoint — set to enable cloud mode (e.g., https://api.iotistica.com)
 #   PROVISIONING_KEY               - Cloud provisioning key (only used when IOTISTICA_API is set)
+#   LICENSE_KEY                    - Paid license key to activate on first start (default: none)
+#   LICENSE_AUTO_TRIAL             - Set to false to skip the automatic trial request on first start (default: true)
+#   LICENSE_API                    - License server URL (default: https://api.iotistica.com)
 #   IOTISTICA_DOWNLOAD_BASE_URL    - Base URL for published agent tarballs (default: https://get.iotistica.com/agent/artifacts)
 #   IOTISTICA_INSTALL_SOURCE       - Install source: auto | repo | artifact (default: auto)
 #   IOTISTICA_INSTALL_DOCKER       - Set to yes/true/1 to allow automatic Docker installation
@@ -958,6 +961,12 @@ EOF
     if [ -n "$PROVISIONING_KEY" ]; then
         echo "PROVISIONING_KEY=${PROVISIONING_KEY}" >> /etc/iotistic/agent.env
     fi
+
+    for _lic_var in LICENSE_KEY LICENSE_AUTO_TRIAL LICENSE_API; do
+        if [ -n "${!_lic_var:-}" ]; then
+            echo "${_lic_var}=${!_lic_var}" >> /etc/iotistic/agent.env
+        fi
+    done
 
     if [ -n "$INITIAL_ADMIN_PASSWORD" ]; then
         echo "INITIAL_ADMIN_PASSWORD=${INITIAL_ADMIN_PASSWORD}" >> /etc/iotistic/agent.env

@@ -5,6 +5,7 @@ import { setTenantId, resetTenantIdCache } from '../mqtt/topics.js';
 import { getPackageVersion } from '../utils/api-utils.js';
 import { getMacAddress, getOsVersion } from '../system/metrics.js';
 import { CloudLogBackend } from '../logging/cloud-backend.js';
+import { initLicensing } from '../licensing/runtime.js';
 import { isStandaloneMode } from '../utils/env.js';
 
 function normalizeOptionalEnvValue(value?: string): string | undefined {
@@ -26,6 +27,7 @@ export async function initAgent(ctx: AgentInitContext): Promise<void> {
 	await initializeAgentManager(ctx);
 	await initializeVpnReconnection(ctx);
 	await initializeCloudLogging(ctx);
+	initLicensing(ctx);
 }
 
 export async function initializeCloudLogging(ctx: AgentInitContext): Promise<void> {
