@@ -16,7 +16,7 @@ set -e
 #   PROVISIONING_KEY               - Cloud provisioning key (only used when IOTISTICA_API is set)
 #   LICENSE_KEY                    - Paid license key to activate on first start (default: none)
 #   LICENSE_AUTO_TRIAL             - Set to false to skip the automatic trial request on first start (default: true)
-#   LICENSE_API                    - License server URL (default: https://api.iotistica.com)
+#   LICENSE_API                    - License server URL (default: none; licensing is inactive until set)
 #   IOTISTICA_DOWNLOAD_BASE_URL    - Base URL for published agent tarballs (default: https://get.iotistica.com/agent/artifacts)
 #   IOTISTICA_INSTALL_SOURCE       - Install source: auto | repo | artifact (default: auto)
 #   IOTISTICA_INSTALL_DOCKER       - Set to yes/true/1 to allow automatic Docker installation

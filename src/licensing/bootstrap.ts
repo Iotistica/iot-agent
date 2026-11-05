@@ -28,20 +28,46 @@ export function bootstrapLicense(
 
 	const attempt = async (): Promise<void> => {
 		if (stopped) return;
+		let action: 'trial' | 'paid' | undefined;
 		try {
 			const status = service.getStatus();
 			if (options.licenseKey && status.state !== 'paid') {
+				action = 'paid';
 				await service.activatePaid(options.licenseKey);
+				logger?.infoSync('License bootstrap activation completed', {
+					component: LogComponents.agentManager,
+					operation: 'license-bootstrap',
+					action,
+					state: service.getStatus().state,
+				});
 				return;
 			}
 			if (options.autoTrial && !service.hasStoredLicense()) {
+				action = 'trial';
 				await service.activateTrial();
+				logger?.infoSync('License bootstrap activation completed', {
+					component: LogComponents.agentManager,
+					operation: 'license-bootstrap',
+					action,
+					state: service.getStatus().state,
+				});
 				return;
 			}
+			logger?.infoSync('License bootstrap skipped', {
+				component: LogComponents.agentManager,
+				operation: 'license-bootstrap',
+				state: status.state,
+				reason: status.state === 'paid' && options.licenseKey
+					? 'already-paid'
+					: service.hasStoredLicense()
+						? 'license-already-stored'
+						: 'automatic-trial-disabled',
+			});
 		} catch (error) {
 			logger?.warnSync('License bootstrap failed; will retry', {
 				component: LogComponents.agentManager,
 				operation: 'license-bootstrap',
+				action,
 				error: error instanceof Error ? error.message : String(error),
 				retryMs,
 			});
