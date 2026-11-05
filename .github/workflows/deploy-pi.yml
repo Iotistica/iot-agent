@@ -33,7 +33,7 @@ jobs:
           && "%PLINK%" %PLINK_ARGS%
           -pw "${{ secrets.PI_SSH_PASS }}"
           ${{ secrets.PI_SSH_USER }}@${{ secrets.PI_SSH_HOST }}
-          "sleep 5 && echo Deployed version: $(grep -m1 version /opt/iotistic/agent/package.json | tr -d ' ,') && echo Deployed build: $(grep -m1 '^BUILD_ID=' /etc/iotistic/agent.env | cut -d= -f2)"
+          "sleep 5 && echo Deployed version: $(grep -m1 version /opt/iotistic/agent/package.json | tr -d ' ,') && echo Deployed build: $(sudo grep -m1 '^BUILD_ID=' /etc/iotistic/agent.env | cut -d= -f2)"
 
       - name: Show license status and logs
         shell: cmd
