@@ -16,6 +16,7 @@ import type { DeviceAPI } from '../api/index.js';
 import type { ContainerLogMonitor } from '../logging/container-monitor.js';
 import type { DictionaryManager } from '../mqtt/dictionary.js';
 import type { HttpClient } from '../lib/http-client.js';
+import type { LicenseService } from '../licensing/index.js';
 import type { IncidentCorrelator } from '../anomaly/incident-correlator.js';
 
 export interface AgentInitContext {
@@ -30,6 +31,7 @@ export interface AgentInitContext {
 	agentLogger?: AgentLogger;
 	sharedHttpClient?: HttpClient;
 	agentManager?: AgentManager;
+	licenseService?: LicenseService;
 	agentInfo?: AgentInfo;
 	containerManager?: ContainerManager;
 	logMonitor?: ContainerLogMonitor;
