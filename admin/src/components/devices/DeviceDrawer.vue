@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { message } from 'ant-design-vue'
 import { PlusOutlined, DeleteOutlined, SendOutlined } from '@ant-design/icons-vue'
 import { client } from '@/api/client'
-import { deviceApi } from '@/api/device'
+import { deviceApi, type WritablePoint } from '@/api/device'
 import { protocolColor, protocolLabel } from '@/utils/protocol'
 
 interface Device {
@@ -37,9 +37,29 @@ const newValue = ref('')
 const systemMetadataKeys = new Set(['objectName', 'slaveId', 'nodeCount'])
 
 const writeModalOpen = ref(false)
-const writePointName = ref('')
+const writePointName = ref<string | undefined>(undefined)
 const writeValue = ref('')
 const writeSending = ref(false)
+const writablePoints = ref<WritablePoint[]>([])
+const loadingPoints = ref(false)
+
+async function openWriteModal() {
+  writePointName.value = undefined
+  writeValue.value = ''
+  writablePoints.value = []
+  writeModalOpen.value = true
+  if (!props.device) return
+  loadingPoints.value = true
+  try {
+    writablePoints.value = await deviceApi.getWritablePoints(props.device.uuid)
+  } catch {
+    writablePoints.value = []
+  } finally {
+    loadingPoints.value = false
+  }
+}
+
+const selectedPoint = computed(() => writablePoints.value.find((p) => p.name === writePointName.value))
 
 function parseWriteValue(raw: string): number | boolean | string {
   if (raw === 'true') return true
@@ -50,15 +70,13 @@ function parseWriteValue(raw: string): number | boolean | string {
 }
 
 async function submitWrite() {
-  if (!props.device || !writePointName.value.trim()) return
+  if (!props.device || !writePointName.value) return
   writeSending.value = true
   try {
     const val = parseWriteValue(writeValue.value)
-    await deviceApi.writePoint(props.device.uuid, writePointName.value.trim(), val)
+    await deviceApi.writePoint(props.device.uuid, writePointName.value, val)
     message.success(`Wrote ${writeValue.value} to ${writePointName.value}`)
     writeModalOpen.value = false
-    writePointName.value = ''
-    writeValue.value = ''
   } catch (err: unknown) {
     const e = err as { response?: { data?: { error?: string } }; message?: string }
     message.error(e?.response?.data?.error ?? e?.message ?? 'Write failed')
@@ -201,7 +219,7 @@ function timeSince(ts: string | null): string {
 
       <!-- Write Value -->
       <a-divider orientation="left" class="section-divider">Commands</a-divider>
-      <a-button @click="writeModalOpen = true">
+      <a-button @click="openWriteModal">
         <template #icon><SendOutlined /></template>
         Write Value
       </a-button>
@@ -219,19 +237,41 @@ function timeSince(ts: string | null): string {
     v-model:open="writeModalOpen"
     title="Write Value"
     :confirm-loading="writeSending"
+    :ok-button-props="{ disabled: !writePointName || writeValue === '' }"
     @ok="submitWrite"
   >
     <a-form layout="vertical">
-      <a-form-item label="Point Name" required>
-        <a-input v-model:value="writePointName" placeholder="e.g. SpeedSetpoint" />
+      <a-form-item label="Point" required>
+        <a-select
+          v-model:value="writePointName"
+          placeholder="Select a writable point"
+          :loading="loadingPoints"
+          show-search
+          :filter-option="(input: string, option: any) => option.label?.toLowerCase().includes(input.toLowerCase())"
+        >
+          <a-select-option v-for="p in writablePoints" :key="p.name" :value="p.name" :label="p.name">
+            {{ p.name }}
+            <span v-if="p.type" style="color: var(--text-tertiary); margin-left: 6px; font-size: 12px">{{ p.type }}</span>
+            <span v-if="p.unit" style="color: var(--text-tertiary); margin-left: 4px; font-size: 12px">({{ p.unit }})</span>
+          </a-select-option>
+        </a-select>
+        <div v-if="!loadingPoints && writablePoints.length === 0" style="font-size: 12px; color: var(--text-tertiary); margin-top: 4px">
+          No writable points configured for this device.
+        </div>
       </a-form-item>
+      <a-row v-if="selectedPoint" :gutter="12" style="margin-bottom: 16px">
+        <a-col :span="12">
+          <div style="font-size: 12px; color: var(--text-tertiary); margin-bottom: 4px">Type</div>
+          <a-input :value="selectedPoint.type || '—'" disabled size="small" />
+        </a-col>
+        <a-col :span="12">
+          <div style="font-size: 12px; color: var(--text-tertiary); margin-bottom: 4px">Unit</div>
+          <a-input :value="selectedPoint.unit || '—'" disabled size="small" />
+        </a-col>
+      </a-row>
       <a-form-item label="Value" required>
         <a-input v-model:value="writeValue" placeholder="e.g. 1500" />
       </a-form-item>
-      <p style="font-size: 12px; color: var(--text-tertiary); margin: 0">
-        The point must be marked <code>writable</code> in the device configuration.
-        Numeric strings are sent as numbers; <code>true</code>/<code>false</code> as booleans.
-      </p>
     </a-form>
   </a-modal>
 </template>

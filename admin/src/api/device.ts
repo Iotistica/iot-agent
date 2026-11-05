@@ -10,6 +10,12 @@ export interface DeviceInfo {
   [key: string]: unknown
 }
 
+export interface WritablePoint {
+  name: string
+  type: string | null
+  unit: string | null
+}
+
 export interface WriteResult {
   success: boolean
   deviceUuid: string
@@ -20,6 +26,10 @@ export interface WriteResult {
 export const deviceApi = {
   getInfo(): Promise<DeviceInfo> {
     return client.get<DeviceInfo>('/v1/device').then((r) => r.data)
+  },
+
+  getWritablePoints(deviceUuid: string): Promise<WritablePoint[]> {
+    return client.get<{ points: WritablePoint[] }>(`/v1/devices/${deviceUuid}/writable-points`).then((r) => r.data.points)
   },
 
   writePoint(deviceUuid: string, pointName: string, value: number | boolean | string): Promise<WriteResult> {

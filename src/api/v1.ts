@@ -10,6 +10,8 @@ import { PassThrough } from 'stream';
 import * as actions from './actions';
 import { dispatchWrite } from '../commands/write-dispatcher.js';
 import { CommandError } from '../commands/errors.js';
+import { DeviceModel } from '../db/models/device.model.js';
+import { EndpointModel } from '../db/models/endpoint.model.js';
 import { ModbusAdapter } from '../plugins/modbus/adapter.js';
 import { normalizeModbusRegisters } from '../plugins/modbus/types.js';
 import { getMemoryDiagnostics, getRestartPolicyStatus } from '../system/memory.js';
@@ -1677,6 +1679,36 @@ router.post('/v1/adapters/modbus/devices/:deviceName/write', requireRole('operat
 			register,
 			value
 		});
+	} catch (error) {
+		next(error);
+	}
+});
+
+/**
+ * GET /v1/devices/:deviceUuid/writable-points
+ * Returns the list of writable points for a device.
+ */
+router.get('/v1/devices/:deviceUuid/writable-points', requireRole('operator'), async (req: Request, res: Response, next: NextFunction) => {
+	try {
+		const device = await DeviceModel.getByUuid(req.params.deviceUuid);
+		if (!device) {
+			return res.status(404).json({ error: 'Device not found' });
+		}
+
+		const endpoint = await EndpointModel.getById(device.endpoint_id);
+		if (!endpoint?.data_points) {
+			return res.status(200).json({ points: [] });
+		}
+
+		const points = (endpoint.data_points as any[])
+			.filter((dp: any) => dp.writable === true)
+			.map((dp: any) => ({
+				name: dp.name || dp.objectName,
+				type: dp.objectType || dp.dataType || dp.type || null,
+				unit: dp.unit || dp.units || null,
+			}));
+
+		return res.status(200).json({ points });
 	} catch (error) {
 		next(error);
 	}
