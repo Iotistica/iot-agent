@@ -261,16 +261,9 @@ function timeSince(ts: string | null): string {
           No writable points configured for this device.
         </div>
       </a-form-item>
-      <a-row v-if="selectedPoint" :gutter="12" style="margin-bottom: 16px">
-        <a-col :span="12">
-          <div style="font-size: 12px; color: var(--text-tertiary); margin-bottom: 4px">Type</div>
-          <a-input :value="selectedPoint.type || '—'" disabled size="small" />
-        </a-col>
-        <a-col :span="12">
-          <div style="font-size: 12px; color: var(--text-tertiary); margin-bottom: 4px">Unit</div>
-          <a-input :value="selectedPoint.unit || '—'" disabled size="small" />
-        </a-col>
-      </a-row>
+      <div v-if="selectedPoint?.unit" style="font-size: 12px; color: var(--text-tertiary); margin-bottom: 12px">
+        Unit: <strong>{{ selectedPoint.unit }}</strong>
+      </div>
       <a-form-item label="Value" required>
         <a-input v-model:value="writeValue" placeholder="e.g. 1500" />
       </a-form-item>
