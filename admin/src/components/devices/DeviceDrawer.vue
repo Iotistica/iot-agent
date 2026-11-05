@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
 import { message } from 'ant-design-vue'
-import { PlusOutlined, DeleteOutlined, SendOutlined } from '@ant-design/icons-vue'
+import { PlusOutlined, DeleteOutlined, SendOutlined, CopyOutlined, CheckOutlined } from '@ant-design/icons-vue'
 import { client } from '@/api/client'
 import { deviceApi, type WritablePoint } from '@/api/device'
+import { copyText } from '@/utils/clipboard'
 import { protocolColor, protocolLabel } from '@/utils/protocol'
 
 interface Device {
@@ -42,6 +43,14 @@ const writeValue = ref('')
 const writeSending = ref(false)
 const writablePoints = ref<WritablePoint[]>([])
 const loadingPoints = ref(false)
+const copiedUuid = ref(false)
+
+async function copyUuid() {
+  if (!props.device) return
+  await copyText(props.device.uuid)
+  copiedUuid.value = true
+  setTimeout(() => { copiedUuid.value = false }, 2000)
+}
 
 async function openWriteModal() {
   writePointName.value = undefined
@@ -95,6 +104,7 @@ function syncFromDevice() {
   newKey.value = ''
   newValue.value = ''
   writablePoints.value = []
+  copiedUuid.value = false
   deviceApi.getWritablePoints(props.device.uuid).then((pts) => { writablePoints.value = pts }).catch(() => { writablePoints.value = [] })
 }
 
@@ -185,6 +195,10 @@ function timeSince(ts: string | null): string {
         </a-descriptions-item>
         <a-descriptions-item label="UUID" :span="2">
           <span class="mono-text">{{ device.uuid }}</span>
+          <a-button type="text" size="small" class="uuid-copy-btn" @click="copyUuid">
+            <CheckOutlined v-if="copiedUuid" style="color: #52c41a" />
+            <CopyOutlined v-else />
+          </a-button>
         </a-descriptions-item>
         <a-descriptions-item v-if="device.identifier" label="Identifier">{{ device.identifier }}</a-descriptions-item>
         <a-descriptions-item label="Last Seen">{{ timeSince(device.lastSeenAt) }}</a-descriptions-item>
@@ -277,6 +291,16 @@ function timeSince(ts: string | null): string {
   font-size: 12px;
   color: var(--text-secondary);
   word-break: break-all;
+}
+
+.uuid-copy-btn {
+  margin-left: 4px;
+  padding: 0 4px;
+  color: var(--text-muted);
+}
+
+.uuid-copy-btn:hover {
+  color: #1677ff;
 }
 
 .section-label {

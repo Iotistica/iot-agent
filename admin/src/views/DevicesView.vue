@@ -1,13 +1,12 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { message, Modal } from 'ant-design-vue'
-import { CheckCircleOutlined, CheckOutlined, StopOutlined, DeleteOutlined, CopyOutlined } from '@ant-design/icons-vue'
+import { CheckCircleOutlined, StopOutlined, DeleteOutlined } from '@ant-design/icons-vue'
 import type { TableColumnType } from 'ant-design-vue'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import DeviceDrawer from '@/components/devices/DeviceDrawer.vue'
 import { client } from '@/api/client'
 import { protocolColor, protocolLabel } from '@/utils/protocol'
-import { copyText } from '@/utils/clipboard'
 
 interface Device {
   uuid: string
@@ -69,8 +68,7 @@ const columns: TableColumnType[] = [
   { title: 'Name',       key: 'name',       ellipsis: true, sorter: (a: Device, b: Device) => ((a.metadata?.objectName as string) || a.name).localeCompare((b.metadata?.objectName as string) || b.name) },
   { title: 'Protocol',   key: 'protocol',   width: 110, sorter: (a: Device, b: Device) => a.protocol.localeCompare(b.protocol) },
   { title: 'Identifier', key: 'identifier', width: 160, ellipsis: true },
-  { title: 'UUID',       key: 'uuid',       width: 160 },
-  { title: 'Last Seen',  key: 'lastSeen',   width: 130, sorter: (a: Device, b: Device) => (new Date(a.lastSeenAt || 0).getTime()) - (new Date(b.lastSeenAt || 0).getTime()) },
+{ title: 'Last Seen',  key: 'lastSeen',   width: 130, sorter: (a: Device, b: Device) => (new Date(a.lastSeenAt || 0).getTime()) - (new Date(b.lastSeenAt || 0).getTime()) },
   { title: 'Status',     key: 'status',     width: 110 },
 ]
 
@@ -102,21 +100,6 @@ function deviceStatus(d: Device): { label: string; color: string } {
   if (age < 300)  return { label: 'Active',   color: 'green' }
   if (age < 3600) return { label: 'Stale',    color: 'orange' }
   return { label: 'Inactive', color: 'red' }
-}
-
-function shortUuid(uuid: string): string {
-  return uuid ? uuid.slice(0, 8) : '—'
-}
-
-// The uuid shown here is the exact `deviceId` value MQTT device-write commands
-// expect (src/commands/types.ts) — copy-to-clipboard avoids users having to
-// select-and-copy out of the truncated/tooltip display by hand.
-const copiedUuid = ref('')
-
-async function copyUuid(uuid: string) {
-  await copyText(uuid)
-  copiedUuid.value = uuid
-  setTimeout(() => { copiedUuid.value = '' }, 2000)
 }
 
 function identifierLabel(d: Device): string {
@@ -245,17 +228,7 @@ onUnmounted(() => {
             <span>{{ identifierLabel(record) }}</span>
           </template>
 
-          <template v-else-if="column.key === 'uuid'">
-            <a-tooltip :title="record.uuid">
-              <span class="mono-text uuid-chip">{{ shortUuid(record.uuid) }}</span>
-            </a-tooltip>
-            <a-button type="text" size="small" class="uuid-copy-btn" @click.stop="copyUuid(record.uuid)">
-              <CheckOutlined v-if="copiedUuid === record.uuid" style="color: #52c41a" />
-              <CopyOutlined v-else />
-            </a-button>
-          </template>
-
-          <template v-else-if="column.key === 'lastSeen'">
+<template v-else-if="column.key === 'lastSeen'">
             <span :class="['lastseen', record.lastSeenAt ? 'has-time' : 'no-time']">
               {{ timeSince(record.lastSeenAt) }}
             </span>
@@ -304,30 +277,6 @@ onUnmounted(() => {
 
 .device-name {
   font-weight: 400;
-}
-
-.mono-text {
-  font-family: 'JetBrains Mono', 'Fira Code', monospace;
-  font-size: 12px;
-  color: var(--text-secondary);
-}
-
-.uuid-chip {
-  background: var(--bg-subtle);
-  padding: 1px 6px;
-  border-radius: 4px;
-  cursor: default;
-  letter-spacing: 0.03em;
-}
-
-.uuid-copy-btn {
-  margin-left: 4px;
-  padding: 0 4px;
-  color: var(--text-muted);
-}
-
-.uuid-copy-btn:hover {
-  color: #1677ff;
 }
 
 .lastseen {
