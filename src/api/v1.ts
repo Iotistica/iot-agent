@@ -1701,7 +1701,13 @@ router.get('/v1/devices/:deviceUuid/writable-points', requireRole('operator'), a
 		}
 
 		const points = (endpoint.data_points as any[])
-			.filter((dp: any) => dp.writable === true)
+			.filter((dp: any) => {
+				if (dp.writable !== true) return false;
+				if (device.identifier && dp.device_uuid) {
+					return dp.device_uuid === device.identifier;
+				}
+				return true;
+			})
 			.map((dp: any) => ({
 				name: dp.name || dp.objectName,
 				type: dp.objectType || dp.dataType || dp.type || null,

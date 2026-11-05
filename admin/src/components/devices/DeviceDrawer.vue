@@ -94,6 +94,8 @@ function syncFromDevice() {
     .map(([key, value]) => ({ key, value: String(value) }))
   newKey.value = ''
   newValue.value = ''
+  writablePoints.value = []
+  deviceApi.getWritablePoints(props.device.uuid).then((pts) => { writablePoints.value = pts }).catch(() => { writablePoints.value = [] })
 }
 
 watch(() => props.open, (open) => { if (open) syncFromDevice() })
@@ -218,11 +220,13 @@ function timeSince(ts: string | null): string {
       </div>
 
       <!-- Write Value -->
-      <a-divider orientation="left" class="section-divider">Commands</a-divider>
-      <a-button @click="openWriteModal">
-        <template #icon><SendOutlined /></template>
-        Write Value
-      </a-button>
+      <template v-if="writablePoints.length > 0">
+        <a-divider orientation="left" class="section-divider">Commands</a-divider>
+        <a-button @click="openWriteModal">
+          <template #icon><SendOutlined /></template>
+          Write Value
+        </a-button>
+      </template>
     </template>
 
     <template #footer>
