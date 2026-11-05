@@ -33,3 +33,11 @@ jobs:
           -pw "${{ secrets.PI_SSH_PASS }}"
           ${{ secrets.PI_SSH_USER }}@${{ secrets.PI_SSH_HOST }}
           "sleep 5 && cat /opt/iotistica-agent/package.json | grep version | head -1"
+
+      - name: Show license status and logs
+        shell: cmd
+        run: >
+          "%PLINK%" %PLINK_ARGS%
+          -pw "${{ secrets.PI_SSH_PASS }}"
+          ${{ secrets.PI_SSH_USER }}@${{ secrets.PI_SSH_HOST }}
+          "echo '--- License status ---'; sudo iotctl license; echo '--- License journal (last 10 minutes) ---'; sudo journalctl -u iotistica-agent --since '10 minutes ago' --no-pager | grep -i license || echo 'No licensing journal entries found'"
