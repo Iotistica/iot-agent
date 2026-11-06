@@ -8,6 +8,12 @@ jest.mock('../../../src/db/models/app-marketplace.model', () => ({
 	},
 }));
 
+jest.mock('../../../src/db/models/marketplace-categories.model', () => ({
+	MarketplaceCategoriesModel: {
+		getAll: jest.fn().mockReturnValue([{ name: 'Custom' }]),
+	},
+}));
+
 import { AppMarketplaceModel } from '../../../src/db/models/app-marketplace.model';
 import { router } from '../../../src/api/v1';
 
@@ -18,8 +24,7 @@ const template = {
 	description: 'A custom deployment',
 	color: '#123456',
 	letter: 'CI',
-	appName: 'custom-app',
-	services: [{ serviceName: 'custom-service', image: 'example/custom:1' }],
+	image: 'example/custom:1',
 };
 
 function routeHandler(path: string, method: 'get' | 'post' | 'put' | 'delete') {
@@ -53,7 +58,7 @@ describe('marketplace catalog API', () => {
 	it('rejects invalid entries before persisting them', () => {
 		const res = response();
 
-		routeHandler('/v1/app-templates', 'post')({ body: { ...template, services: [] } }, res, jest.fn());
+		routeHandler('/v1/app-templates', 'post')({ body: { ...template, image: '' } }, res, jest.fn());
 
 		expect(res.status).toHaveBeenCalledWith(400);
 		expect(AppMarketplaceModel.create).not.toHaveBeenCalled();

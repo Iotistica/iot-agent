@@ -1,5 +1,5 @@
 import { getDatabase } from '../sqlite.js';
-import type { MarketplaceImage } from '../../data/app-templates.js';
+import type { MarketplaceImage } from '../../data/marketplace-image.js';
 
 interface TemplateRow {
 	id: string;

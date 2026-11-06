@@ -19,13 +19,13 @@ export function columnExists(db: DatabaseSync, tableName: string, columnName: st
 	return columns.some((column) => column.name === columnName);
 }
 
-export function loadTemplateSql(): string {
+function loadSqlAsset(fileName: string): string {
 	const candidatePaths = [
-		path.join(__dirname, 'template.sqlite.sql'),
-		path.join(process.cwd(), 'dist', 'db', 'template.sqlite.sql'),
-		path.join(process.cwd(), 'src', 'db', 'template.sqlite.sql'),
-		'/app/dist/db/template.sqlite.sql',
-		'/app/src/db/template.sqlite.sql',
+		path.join(__dirname, fileName),
+		path.join(process.cwd(), 'dist', 'db', fileName),
+		path.join(process.cwd(), 'src', 'db', fileName),
+		path.join('/app/dist/db', fileName),
+		path.join('/app/src/db', fileName),
 	];
 
 	for (const candidate of candidatePaths) {
@@ -35,6 +35,14 @@ export function loadTemplateSql(): string {
 	}
 
 	throw new Error(
-		`template.sqlite.sql not found. Checked paths: ${candidatePaths.join(', ')}`
+		`${fileName} not found. Checked paths: ${candidatePaths.join(', ')}`
 	);
+}
+
+export function loadTemplateSql(): string {
+	return loadSqlAsset('template.sqlite.sql');
+}
+
+export function loadMarketplaceSeedSql(): string {
+	return loadSqlAsset('marketplace-seed.sql');
 }
