@@ -7,10 +7,11 @@ import { client } from '@/api/client'
 import { pipelineApi, type SubscriptionActivity, type ActivityEvent } from '@/api/pipeline'
 import { datasetsApi, type MlDataset } from '@/api/ml-datasets'
 import { protocolColor, protocolLabel } from '@/utils/protocol'
-import { BarChartOutlined, WifiOutlined, WarningOutlined, ClockCircleOutlined, SaveOutlined, CloseOutlined, DatabaseOutlined, CopyOutlined, EditOutlined, DeleteOutlined, DownloadOutlined, ReloadOutlined, PauseOutlined, PlayCircleOutlined } from '@ant-design/icons-vue'
+import { BarChartOutlined, LineChartOutlined, WifiOutlined, WarningOutlined, ClockCircleOutlined, SaveOutlined, CloseOutlined, DatabaseOutlined, CopyOutlined, EditOutlined, DeleteOutlined, DownloadOutlined, ReloadOutlined, PauseOutlined, PlayCircleOutlined } from '@ant-design/icons-vue'
 import CreateDatasetDrawer from '@/components/CreateDatasetDrawer.vue'
 import CreateViewDrawer from '@/components/CreateViewDrawer.vue'
 import PointDetailsDrawer from '@/components/data/PointDetailsDrawer.vue'
+import PointHistoryModal from '@/components/data/PointHistoryModal.vue'
 import { viewsApi, type SavedView as SavedViewType } from '@/api/views'
 import { dataExplorerPoints, matchesDataExplorerView, missingDataExplorerViewPointCount, normalizeDataExplorerPointKey, orderDataExplorerViewPoints, type DataExplorerPointRow } from '@/utils/data-explorer-point-key'
 
@@ -28,6 +29,8 @@ const sourceFilter = ref<string | undefined>(undefined)
 const qualityFilter = ref<string | undefined>(undefined)
 const selected = ref<PointRow | null>(null)
 const drawerOpen = ref(false)
+const historyPoint = ref<PointRow | null>(null)
+const historyOpen = ref(false)
 const paused = ref(false)
 const favorites = ref<string[]>([])
 function favKey(p: PointRow): string { return `${p.endpointName}::${p.metric}` }
@@ -317,7 +320,7 @@ const columns = computed<TableColumnType<PointRow>[]>(() => {
     { title: 'Quality', key: 'quality', width: 105 },
     { title: 'Updated', key: 'updated', width: 110, sorter: true, sortOrder: sortOrderFor('updated') },
     { title: 'Destination', dataIndex: 'destinationName', key: 'destinationName', width: 150, ellipsis: true },
-    { title: '', key: 'action', width: 60 },
+    { title: '', key: 'action', width: 95 },
   )
   return cols
 })
@@ -369,6 +372,7 @@ async function poll() {
   }
 }
 function openPointDrawer(row: PointRow) { selected.value = row; drawerOpen.value = true }
+function openHistory(row: PointRow) { historyPoint.value = row; historyOpen.value = true }
 function resetFilters() { search.value = ''; protocolFilter.value = undefined; sourceFilter.value = undefined; qualityFilter.value = undefined }
 watch(points, () => {
   if (selected.value) selected.value = points.value.find(p => p.key === selected.value?.key) || selected.value
@@ -513,7 +517,7 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
             <template v-else-if="column.key === 'unit'">{{ record.unit || '—' }}</template>
             <template v-else-if="column.key === 'quality'"><a-tag v-if="record.quality === 'BAD'" color="red">BAD</a-tag><a-tag v-else-if="isStale(record.timestamp)" color="orange">STALE</a-tag><a-tag v-else color="green">{{ record.quality || 'CURRENT' }}</a-tag></template>
             <template v-else-if="column.key === 'updated'"><span :class="isStale(record.timestamp) ? 'age stale' : 'age'"><i class="status-dot"></i>{{ age(record.timestamp) }}</span></template>
-            <template v-else-if="column.key === 'action'"><a-button type="text" size="small" @click.stop="toggleFavorite(favKey(record))"><span :class="favorites.includes(favKey(record)) ? 'star active' : 'star'">{{ favorites.includes(favKey(record)) ? '★' : '☆' }}</span></a-button></template>
+            <template v-else-if="column.key === 'action'"><a-button type="link" size="small" title="History" aria-label="History" style="color:#722ed1" @click.stop="openHistory(record)"><template #icon><LineChartOutlined /></template></a-button><a-button type="text" size="small" @click.stop="toggleFavorite(favKey(record))"><span :class="favorites.includes(favKey(record)) ? 'star active' : 'star'">{{ favorites.includes(favKey(record)) ? '★' : '☆' }}</span></a-button></template>
           </template>
           <template #emptyText>No matching recent readings. Check your source, subscription, and destination configuration.</template>
         </a-table>
@@ -533,6 +537,7 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
       :now="now"
       @update:open="drawerOpen = $event"
     />
+    <PointHistoryModal v-model:open="historyOpen" :point="historyPoint" />
     <CreateDatasetDrawer
       v-model:open="datasetDrawerOpen"
       :point-rows="candidateDatasetPoints"
