@@ -4,6 +4,7 @@ import { SearchOutlined, RightOutlined } from '@ant-design/icons-vue'
 import { pointCatalogApi, type PointCatalogEntry } from '@/api/point-catalog'
 import { client } from '@/api/client'
 import { protocolColor, protocolLabel } from '@/utils/protocol'
+import { getDevicePoints } from '@/utils/device-points'
 
 const props = defineProps<{
   open: boolean
@@ -16,6 +17,7 @@ const emit = defineEmits<{
 }>()
 
 const loading = ref(false)
+const loadError = ref('')
 const deviceNames = ref(new Map<string, string>())
 const catalogPoints = ref<PointCatalogEntry[]>([])
 const checkedKeys = ref(new Set<string>())
@@ -24,34 +26,39 @@ const protocolFilter = ref<string | undefined>(undefined)
 const expandedProtocols = ref(new Set<string>())
 const expandedSources = ref(new Set<string>())
 
-watch(() => props.open, async (isOpen) => {
+watch(() => props.open, async (isOpen, _wasOpen, onCleanup) => {
   if (!isOpen) return
+  let active = true
+  onCleanup(() => { active = false })
   checkedKeys.value = new Set(props.selectedKeys)
   searchText.value = ''
   protocolFilter.value = undefined
   expandedProtocols.value = new Set<string>()
   expandedSources.value = new Set<string>()
-  if (!catalogPoints.value.length) {
-    loading.value = true
-    try {
-      catalogPoints.value = await pointCatalogApi.getAll()
-    } catch { /* non-critical */ }
-    loading.value = false
-  }
+  loading.value = true
+  loadError.value = ''
+  deviceNames.value = new Map()
   try {
-    const { data } = await client.get<{ devices: { uuid: string; name: string; metadata?: Record<string, unknown> }[] }>('/v1/devices')
+    const [points, { data }] = await Promise.all([
+      catalogPoints.value.length ? Promise.resolve(catalogPoints.value) : pointCatalogApi.getAll(),
+      client.get<{ devices: { uuid: string; name: string; metadata?: Record<string, unknown> }[] }>('/v1/devices'),
+    ])
+    if (!active) return
     const map = new Map<string, string>()
-    for (const d of data.devices || []) {
-      map.set(d.uuid, (d.metadata?.objectName as string | undefined) || d.name)
+    for (const d of data.devices) {
+      const objectName = d.metadata?.objectName
+      map.set(d.uuid, typeof objectName === 'string' && objectName ? objectName : d.name)
     }
+    catalogPoints.value = points
     deviceNames.value = map
-  } catch { /* friendly names are optional */ }
+  } catch {
+    if (active) loadError.value = 'Unable to load device sources and points. Close and reopen the picker to retry.'
+  } finally {
+    if (active) loading.value = false
+  }
 })
 
-// Show the actual device, not the pipe/adapter endpoint that carried the readings.
-function sourceName(p: PointCatalogEntry) {
-  return (p.deviceKey && deviceNames.value.get(p.deviceKey)) || p.endpointName
-}
+const devicePoints = computed(() => getDevicePoints(catalogPoints.value, deviceNames.value))
 
 interface SourceGroup {
   key: string
@@ -72,17 +79,17 @@ interface ProtocolGroup {
 
 const protocolOptions = computed(() => {
   const set = new Set<string>()
-  for (const p of catalogPoints.value) {
-    if (p.sourceSystem) set.add(p.sourceSystem)
+  for (const { point } of devicePoints.value) {
+    if (point.sourceSystem) set.add(point.sourceSystem)
   }
   return [...set].sort().map(v => ({ label: protocolLabel(v), value: v }))
 })
 
 const filteredPoints = computed(() => {
   const q = searchText.value.toLowerCase()
-  return catalogPoints.value.filter(p => {
+  return devicePoints.value.filter(({ point: p, deviceName }) => {
     if (protocolFilter.value && p.sourceSystem !== protocolFilter.value) return false
-    if (q && !sourceName(p).toLowerCase().includes(q)
+    if (q && !deviceName.toLowerCase().includes(q)
           && !p.normalizedName.toLowerCase().includes(q)
           && !p.rawName.toLowerCase().includes(q)) return false
     return true
@@ -103,17 +110,16 @@ function sourceKey(protocol: string, endpointName: string) {
 
 const groupedByProtocol = computed<ProtocolGroup[]>(() => {
   const map = new Map<string, Map<string, PointCatalogEntry[]>>()
-  for (const p of filteredPoints.value) {
+  for (const { point: p, deviceName } of filteredPoints.value) {
     const protocol = p.sourceSystem ?? ''
     let sources = map.get(protocol)
     if (!sources) {
       sources = new Map()
       map.set(protocol, sources)
     }
-    const name = sourceName(p)
-    const points = sources.get(name)
+    const points = sources.get(deviceName)
     if (points) points.push(p)
-    else sources.set(name, [p])
+    else sources.set(deviceName, [p])
   }
   return [...map.entries()]
     .sort((a, b) => a[0].localeCompare(b[0]))
@@ -195,6 +201,7 @@ function onConfirm() {
     </div>
 
     <a-spin :spinning="loading">
+      <a-alert v-if="loadError" :message="loadError" type="error" show-icon />
       <div class="picker-list">
         <template v-if="groupedByProtocol.length">
           <div v-for="group in groupedByProtocol" :key="group.key" class="protocol-group">
@@ -238,13 +245,13 @@ function onConfirm() {
             </div>
           </div>
         </template>
-        <a-empty v-else-if="!loading" description="No points match the current filters" />
+        <a-empty v-else-if="!loading && !loadError" description="No points match the current filters" />
       </div>
     </a-spin>
 
     <div class="picker-footer">
       <a-button @click="emit('update:open', false)">Cancel</a-button>
-      <a-button type="primary" :disabled="checkedKeys.size === 0" @click="onConfirm">
+      <a-button type="primary" :disabled="loading || !!loadError || checkedKeys.size === 0" @click="onConfirm">
         Confirm ({{ checkedKeys.size }})
       </a-button>
     </div>
