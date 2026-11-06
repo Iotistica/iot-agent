@@ -2,7 +2,7 @@ import { strict as assert } from 'node:assert'
 import { test } from 'node:test'
 import {
   dataExplorerPointKey, dataExplorerPoints, matchesDataExplorerView,
-  missingDataExplorerViewPointCount, normalizeDataExplorerPointKey,
+  missingDataExplorerViewPointCount, normalizeDataExplorerPointKey, orderDataExplorerViewPoints,
 } from '../src/utils/data-explorer-point-key.ts'
 import type { ActivityEvent, SubscriptionActivity } from '../src/api/pipeline.ts'
 
@@ -79,4 +79,28 @@ test('uses display endpoint and metric when identity metadata is unavailable', (
   assert.equal(matchesDataExplorerView(points[0], keys), true)
   assert.equal(missingDataExplorerViewPointCount(points, keys), 0)
   assert.equal(normalizeDataExplorerPointKey('invalid'), 'invalid')
+})
+
+test('orders saved-view points by their stored keys, including legacy keys', () => {
+  const points = [
+    { key: 'point-b' },
+    { key: 'point-a' },
+    { key: 'point-c' },
+    { key: 'current-key', legacyKey: 'legacy-key' },
+  ]
+
+  assert.deepEqual(
+    orderDataExplorerViewPoints(points, ['point-a', 'legacy-key', 'point-b']),
+    [points[1], points[3], points[0], points[2]],
+  )
+})
+
+test('normalizes saved-view keys and retains response order for unlisted points', () => {
+  const point = { key: '["opcua","ahu","temperature"]' }
+  const unlisted = { key: 'unlisted' }
+
+  assert.deepEqual(
+    orderDataExplorerViewPoints([unlisted, point], ['["opcua","ahu","temperature","old-id"]']),
+    [point, unlisted],
+  )
 })
