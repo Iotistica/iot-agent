@@ -10,6 +10,7 @@ import { protocolColor, protocolLabel } from '@/utils/protocol'
 import { BarChartOutlined, WifiOutlined, WarningOutlined, ClockCircleOutlined, SaveOutlined, CloseOutlined, DatabaseOutlined, CopyOutlined, EditOutlined, DeleteOutlined, DownloadOutlined, ReloadOutlined } from '@ant-design/icons-vue'
 import CreateDatasetDrawer from '@/components/CreateDatasetDrawer.vue'
 import CreateViewDrawer from '@/components/CreateViewDrawer.vue'
+import PointDetailsDrawer from '@/components/data/PointDetailsDrawer.vue'
 import { viewsApi, type SavedView as SavedViewType } from '@/api/views'
 
 type PointRow = {
@@ -357,7 +358,7 @@ const columns = computed<TableColumnType<PointRow>[]>(() => {
     { title: 'Quality', key: 'quality', width: 105 },
     { title: 'Updated', key: 'updated', width: 110, sorter: true, sortOrder: sortOrderFor('updated') },
     { title: 'Destination', dataIndex: 'destinationName', key: 'destinationName', width: 150, ellipsis: true },
-    { title: '', key: 'action', width: 120 },
+    { title: '', key: 'action', width: 60 },
   )
   return cols
 })
@@ -408,7 +409,7 @@ async function poll() {
     refreshing.value = false
   }
 }
-function inspect(row: PointRow) { selected.value = row; drawerOpen.value = true }
+function openPointDrawer(row: PointRow) { selected.value = row; drawerOpen.value = true }
 function resetFilters() { search.value = ''; protocolFilter.value = undefined; sourceFilter.value = undefined; qualityFilter.value = undefined }
 watch(points, () => {
   if (selected.value) selected.value = points.value.find(p => p.key === selected.value?.key) || selected.value
@@ -541,7 +542,7 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
         </template>
 
         <!-- Points table -->
-        <a-table v-else :columns="columns" :data-source="filteredPoints" :loading="loading" row-key="key" :row-selection="rowSelection" size="small" :pagination="{ pageSize, showSizeChanger: true, pageSizeOptions: ['10', '20', '50'], onShowSizeChange: (_: number, size: number) => { pageSize = size } }" :scroll="{ x: 1390 }" table-layout="fixed" @change="onTableChange">
+        <a-table v-else :columns="columns" :data-source="filteredPoints" :loading="loading" row-key="key" :row-selection="rowSelection" :customRow="(record: PointRow) => ({ onClick: (e: MouseEvent) => { if (!(e.target as HTMLElement).closest('.ant-checkbox-wrapper')) openPointDrawer(record) }, style: 'cursor: pointer' })" size="small" :pagination="{ pageSize, showSizeChanger: true, pageSizeOptions: ['10', '20', '50'], onShowSizeChange: (_: number, size: number) => { pageSize = size } }" :scroll="{ x: 1390 }" table-layout="fixed" @change="onTableChange">
           <template #bodyCell="{ column, record }">
             <template v-if="column.key === 'protocol'"><a-tag :color="protocolColor(record.protocol)">{{ protocolLabel(record.protocol) }}</a-tag></template>
             <template v-else-if="column.key === 'source'">{{ friendlySource(record.endpointName) }}</template>
@@ -550,7 +551,7 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
             <template v-else-if="column.key === 'unit'">{{ record.unit || '—' }}</template>
             <template v-else-if="column.key === 'quality'"><a-tag v-if="record.quality === 'BAD'" color="red">BAD</a-tag><a-tag v-else-if="isStale(record.timestamp)" color="orange">STALE</a-tag><a-tag v-else color="green">{{ record.quality || 'CURRENT' }}</a-tag></template>
             <template v-else-if="column.key === 'updated'"><span :class="isStale(record.timestamp) ? 'age stale' : 'age'"><i class="status-dot"></i>{{ age(record.timestamp) }}</span></template>
-            <template v-else-if="column.key === 'action'"><a-button type="text" size="small" @click="toggleFavorite(favKey(record))"><span :class="favorites.includes(favKey(record)) ? 'star active' : 'star'">{{ favorites.includes(favKey(record)) ? '★' : '☆' }}</span></a-button><a-button type="link" size="small" @click="inspect(record)">Inspect</a-button></template>
+            <template v-else-if="column.key === 'action'"><a-button type="text" size="small" @click.stop="toggleFavorite(favKey(record))"><span :class="favorites.includes(favKey(record)) ? 'star active' : 'star'">{{ favorites.includes(favKey(record)) ? '★' : '☆' }}</span></a-button></template>
           </template>
           <template #emptyText>No matching recent readings. Check your source, subscription, and destination configuration.</template>
         </a-table>
@@ -563,22 +564,13 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
       :editing-view="editingView"
       @saved="onViewSaved"
     />
-    <a-drawer v-model:open="drawerOpen" title="Point details" :width="440">
-      <template v-if="selected">
-        <a-descriptions :column="1" bordered size="small">
-          <a-descriptions-item label="Point">{{ pointName(selected) }}</a-descriptions-item>
-          <a-descriptions-item label="Original name">{{ originalName(selected) }}</a-descriptions-item>
-          <a-descriptions-item label="Source">{{ friendlySource(selected.endpointName) }}</a-descriptions-item>
-          <a-descriptions-item label="Protocol">{{ protocolLabel(selected.protocol) }}</a-descriptions-item>
-          <a-descriptions-item label="Latest value">{{ valueText(selected.value) }}</a-descriptions-item>
-          <a-descriptions-item label="Unit">{{ selected.unit || '—' }}</a-descriptions-item>
-          <a-descriptions-item label="Quality">{{ selected.quality || 'Not provided' }}</a-descriptions-item>
-          <a-descriptions-item label="Last observed">{{ selected.timestamp }} ({{ age(selected.timestamp) }})</a-descriptions-item>
-          <a-descriptions-item label="Destination">{{ selected.destinationName }}</a-descriptions-item>
-          <a-descriptions-item label="Metric key">{{ selected.metric }}</a-descriptions-item>
-        </a-descriptions>
-      </template>
-    </a-drawer>
+    <PointDetailsDrawer
+      :open="drawerOpen"
+      :point="selected"
+      :source-name="selected ? friendlySource(selected.endpointName) : ''"
+      :now="now"
+      @update:open="drawerOpen = $event"
+    />
     <CreateDatasetDrawer
       v-model:open="datasetDrawerOpen"
       :point-rows="candidateDatasetPoints"
