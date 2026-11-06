@@ -263,7 +263,7 @@ async function save() {
 <template>
   <a-drawer
     :open="open"
-    :title="isEdit ? 'Edit Dataset' : 'Create Dataset'"
+    :title="isEdit ? 'Edit Dataset' : 'Add Dataset'"
     :width="560"
     @close="emit('update:open', false)"
   >
