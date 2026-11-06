@@ -43,8 +43,8 @@ const columns: TableColumnType<Destination>[] = [
   { title: 'Name', dataIndex: 'name', key: 'name', ellipsis: true, sorter: (a, b) => a.name.localeCompare(b.name) },
   { title: 'Type', dataIndex: 'type', key: 'type', width: 110, sorter: (a, b) => a.type.localeCompare(b.type) },
   { title: 'Status', key: 'status', width: 130, sorter: (a, b) => Number(a.connected ?? -1) - Number(b.connected ?? -1) },
-  { title: 'Enabled', dataIndex: 'enabled', key: 'enabled', width: 90, sorter: (a, b) => Number(a.enabled) - Number(b.enabled) },
   { title: 'Last Error', dataIndex: 'last_error', key: 'last_error', ellipsis: true },
+  { title: 'Enabled', dataIndex: 'enabled', key: 'enabled', width: 90, sorter: (a, b) => Number(a.enabled) - Number(b.enabled) },
   { title: 'Actions', key: 'actions', width: 110, fixed: 'right' },
 ]
 
