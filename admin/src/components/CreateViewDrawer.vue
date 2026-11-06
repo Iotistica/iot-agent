@@ -148,7 +148,7 @@ async function save() {
 <template>
   <a-drawer
     :open="open"
-    :title="isEdit ? 'Edit View' : 'Create View'"
+    :title="isEdit ? 'Edit View' : 'Add View'"
     :width="480"
     @close="emit('update:open', false)"
   >
