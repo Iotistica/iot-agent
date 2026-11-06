@@ -19,14 +19,16 @@ const catalogPoints = ref<PointCatalogEntry[]>([])
 const checkedKeys = ref(new Set<string>())
 const searchText = ref('')
 const protocolFilter = ref<string | undefined>(undefined)
-const expandedDevices = ref(new Set<string>())
+const expandedProtocols = ref(new Set<string>())
+const expandedSources = ref(new Set<string>())
 
 watch(() => props.open, async (isOpen) => {
   if (!isOpen) return
   checkedKeys.value = new Set(props.selectedKeys)
   searchText.value = ''
   protocolFilter.value = undefined
-  expandedDevices.value = new Set<string>()
+  expandedProtocols.value = new Set<string>()
+  expandedSources.value = new Set<string>()
   if (!catalogPoints.value.length) {
     loading.value = true
     try {
@@ -36,9 +38,18 @@ watch(() => props.open, async (isOpen) => {
   }
 })
 
-interface DeviceGroup {
+interface SourceGroup {
+  key: string
   endpointName: string
+  points: PointCatalogEntry[]
+  allChecked: boolean
+  someChecked: boolean
+}
+
+interface ProtocolGroup {
+  key: string
   protocol: string
+  sources: SourceGroup[]
   points: PointCatalogEntry[]
   allChecked: boolean
   someChecked: boolean
@@ -63,31 +74,58 @@ const filteredPoints = computed(() => {
   })
 })
 
-const groupedByDevice = computed<DeviceGroup[]>(() => {
-  const map = new Map<string, PointCatalogEntry[]>()
+function selectionState(points: PointCatalogEntry[]) {
+  const checkedCount = points.filter(p => checkedKeys.value.has(p.pointKey)).length
+  return {
+    allChecked: checkedCount === points.length,
+    someChecked: checkedCount > 0,
+  }
+}
+
+function sourceKey(protocol: string, endpointName: string) {
+  return JSON.stringify([protocol, endpointName])
+}
+
+const groupedByProtocol = computed<ProtocolGroup[]>(() => {
+  const map = new Map<string, Map<string, PointCatalogEntry[]>>()
   for (const p of filteredPoints.value) {
-    const list = map.get(p.endpointName)
-    if (list) list.push(p)
-    else map.set(p.endpointName, [p])
+    const protocol = p.sourceSystem ?? ''
+    let sources = map.get(protocol)
+    if (!sources) {
+      sources = new Map()
+      map.set(protocol, sources)
+    }
+    const points = sources.get(p.endpointName)
+    if (points) points.push(p)
+    else sources.set(p.endpointName, [p])
   }
   return [...map.entries()]
     .sort((a, b) => a[0].localeCompare(b[0]))
-    .map(([endpointName, points]) => {
-      const checked = points.filter(p => checkedKeys.value.has(p.pointKey))
+    .map(([protocol, sourceMap]) => {
+      const sources = [...sourceMap.entries()]
+        .sort((a, b) => a[0].localeCompare(b[0]))
+        .map(([endpointName, points]): SourceGroup => ({
+          key: sourceKey(protocol, endpointName),
+          endpointName,
+          points,
+          ...selectionState(points),
+        }))
+      const points = sources.flatMap(source => source.points)
       return {
-        endpointName,
-        protocol: points[0].sourceSystem ?? '',
+        key: protocol,
+        protocol,
+        sources,
         points,
-        allChecked: checked.length === points.length,
-        someChecked: checked.length > 0,
+        ...selectionState(points),
       }
     })
 })
 
-function toggleExpand(name: string) {
-  const s = expandedDevices.value
-  if (s.has(name)) s.delete(name)
-  else s.add(name)
+function toggleExpand(keys: Set<string>, key: string) {
+  const next = new Set(keys)
+  if (next.has(key)) next.delete(key)
+  else next.add(key)
+  return next
 }
 
 function togglePoint(key: string) {
@@ -97,12 +135,12 @@ function togglePoint(key: string) {
   checkedKeys.value = new Set(s)
 }
 
-function toggleGroup(group: DeviceGroup) {
+function toggleGroup(points: PointCatalogEntry[], allChecked: boolean) {
   const s = checkedKeys.value
-  if (group.allChecked) {
-    for (const p of group.points) s.delete(p.pointKey)
+  if (allChecked) {
+    for (const p of points) s.delete(p.pointKey)
   } else {
-    for (const p of group.points) s.add(p.pointKey)
+    for (const p of points) s.add(p.pointKey)
   }
   checkedKeys.value = new Set(s)
 }
@@ -142,28 +180,44 @@ function onConfirm() {
 
     <a-spin :spinning="loading">
       <div class="picker-list">
-        <template v-if="groupedByDevice.length">
-          <div v-for="group in groupedByDevice" :key="group.endpointName" class="device-group">
-            <div class="device-header" @click="toggleExpand(group.endpointName)">
+        <template v-if="groupedByProtocol.length">
+          <div v-for="group in groupedByProtocol" :key="group.key" class="protocol-group">
+            <div class="protocol-header" @click="expandedProtocols = toggleExpand(expandedProtocols, group.key)">
               <a-checkbox
                 :checked="group.allChecked"
                 :indeterminate="group.someChecked && !group.allChecked"
                 @click.stop
-                @change="toggleGroup(group)"
+                @change="toggleGroup(group.points, group.allChecked)"
               />
-              <RightOutlined :class="['expand-icon', { expanded: expandedDevices.has(group.endpointName) }]" />
-              <a-tag :color="protocolColor(group.protocol)" class="proto-tag">{{ protocolLabel(group.protocol) }}</a-tag>
+              <RightOutlined :class="['expand-icon', { expanded: expandedProtocols.has(group.key) }]" />
+              <a-tag :color="protocolColor(group.protocol)" class="proto-tag">{{ group.protocol ? protocolLabel(group.protocol) : 'Unknown protocol' }}</a-tag>
               <span class="point-count">({{ group.points.length }})</span>
             </div>
 
-            <div v-if="expandedDevices.has(group.endpointName)" class="point-items">
-              <div v-for="pt in group.points" :key="pt.pointKey" class="point-item">
-                <a-checkbox
-                  :checked="checkedKeys.has(pt.pointKey)"
-                  @change="togglePoint(pt.pointKey)"
-                />
-                <span class="pt-name">{{ pt.normalizedName }}</span>
-                <span v-if="pt.rawName !== pt.normalizedName" class="pt-raw">{{ pt.rawName }}</span>
+            <div v-if="expandedProtocols.has(group.key)" class="source-items">
+              <div v-for="source in group.sources" :key="source.key" class="source-group">
+                <div class="source-header" @click="expandedSources = toggleExpand(expandedSources, source.key)">
+                  <a-checkbox
+                    :checked="source.allChecked"
+                    :indeterminate="source.someChecked && !source.allChecked"
+                    @click.stop
+                    @change="toggleGroup(source.points, source.allChecked)"
+                  />
+                  <RightOutlined :class="['expand-icon', { expanded: expandedSources.has(source.key) }]" />
+                  <span class="source-name">{{ source.endpointName }}</span>
+                  <span class="point-count">({{ source.points.length }})</span>
+                </div>
+
+                <div v-if="expandedSources.has(source.key)" class="point-items">
+                  <div v-for="pt in source.points" :key="pt.pointKey" class="point-item">
+                    <a-checkbox
+                      :checked="checkedKeys.has(pt.pointKey)"
+                      @change="togglePoint(pt.pointKey)"
+                    />
+                    <span class="pt-name">{{ pt.normalizedName }}</span>
+                    <span v-if="pt.rawName !== pt.normalizedName" class="pt-raw">{{ pt.rawName }}</span>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
@@ -186,12 +240,16 @@ function onConfirm() {
 .selection-count { font-size: 12px; color: var(--text-tertiary); white-space: nowrap; }
 
 .picker-list { max-height: 55vh; overflow-y: auto; border: 1px solid var(--border-color); border-radius: 6px; }
-.device-group { border-bottom: 1px solid var(--border-color); }
-.device-group:last-child { border-bottom: none; }
+.protocol-group { border-bottom: 1px solid var(--border-color); }
+.protocol-group:last-child { border-bottom: none; }
 
-.device-header { display: flex; align-items: center; gap: 8px; padding: 8px 12px; cursor: pointer; background: var(--bg-subtle); }
-.device-header:hover { background: var(--bg-selected-light); }
-.device-name { font-size: 13px; font-weight: 500; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.protocol-header, .source-header { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+.protocol-header { padding: 8px 12px; background: var(--bg-subtle); }
+.protocol-header:hover, .source-header:hover { background: var(--bg-selected-light); }
+.source-items { padding-left: 24px; }
+.source-group { border-top: 1px solid var(--border-color); }
+.source-header { padding: 7px 12px; }
+.source-name { font-size: 13px; font-weight: 500; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .point-count { font-size: 11px; color: var(--text-tertiary); flex-shrink: 0; }
 .proto-tag { margin: 0; font-size: 10px; min-width: 50px; text-align: center; flex-shrink: 0; }
 
