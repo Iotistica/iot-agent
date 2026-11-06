@@ -1,7 +1,7 @@
 import { PointNameMappingsModel } from '../db/models/index.js';
 import type { PointNameMappingRecord } from '../db/models/index.js';
 import { computeProvisionalPointId, computeShortHash, naturalKey } from './identity.js';
-import { buildNormalizedPointName} from './normalize-point-name.js';
+import { buildNormalizedPointName} from './normalize-name.js';
 import { CURRENT_POINT_NAME_RULES_VERSION } from './types.js';
 import type { Logger, PointIdentity } from './types.js';
 import { normalizeSourceSystem } from '../units/source-system.js';
