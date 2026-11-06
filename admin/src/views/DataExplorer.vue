@@ -14,6 +14,7 @@ import PointDetailsDrawer from '@/components/data/PointDetailsDrawer.vue'
 import PointHistoryModal from '@/components/data/PointHistoryModal.vue'
 import { viewsApi, type SavedView as SavedViewType } from '@/api/views'
 import { dataExplorerPoints, matchesDataExplorerView, missingDataExplorerViewPointCount, normalizeDataExplorerPointKey, orderDataExplorerViewPoints, type DataExplorerPointRow } from '@/utils/data-explorer-point-key'
+import { restoreDataExplorerTabs } from '@/utils/data-explorer-tabs'
 
 type PointRow = DataExplorerPointRow
 type DeviceRecord = { uuid: string; name: string; protocol: string; metadata?: Record<string, unknown> }
@@ -60,6 +61,7 @@ const now = ref(Date.now())
 const POLL_MS = 5000
 let timer: ReturnType<typeof setInterval> | undefined
 let busy = false
+let viewsLoaded = false
 
 const deviceNames = computed(() => {
   const map = new Map<string, string>()
@@ -183,20 +185,31 @@ async function loadViews() {
   try {
     savedViews.value = await viewsApi.list()
     viewError.value = ''
+    viewsLoaded = true
   } catch { viewError.value = 'Saved views API is unavailable.' }
   finally { viewsLoading.value = false }
 }
 function onViewSaved() {
   loadViews()
 }
-function activateTab(id: string) { activeTab.value = id }
+function persistViewTabs() {
+  try {
+    localStorage.setItem('iot-explorer-tabs', JSON.stringify({ activeTab: activeTab.value, openViewIds: openViewIds.value }))
+  } catch {}
+}
+function activateTab(id: string) {
+  activeTab.value = id
+  persistViewTabs()
+}
 function openSavedView(id: string) {
   if (!openViewIds.value.includes(id)) openViewIds.value.push(id)
   activeTab.value = id
+  persistViewTabs()
 }
 function closeSavedView(id: string) {
   openViewIds.value = openViewIds.value.filter(v => v !== id)
   if (activeTab.value === id) activeTab.value = 'all'
+  persistViewTabs()
 }
 async function deleteSavedView(id: string) {
   try {
@@ -378,6 +391,8 @@ watch(points, () => {
   if (selected.value) selected.value = points.value.find(p => p.key === selected.value?.key) || selected.value
 })
 onMounted(async () => {
+  let savedTabs: string | null = null
+  try { savedTabs = localStorage.getItem('iot-explorer-tabs') } catch {}
   try {
     const saved = JSON.parse(localStorage.getItem('iot-explorer-favorites') || '[]')
     if (Array.isArray(saved)) {
@@ -394,6 +409,12 @@ onMounted(async () => {
   loadDevices()
   loadDatasets()
   await loadViews()
+  if (viewsLoaded) {
+    const restored = restoreDataExplorerTabs(savedTabs, savedViews.value.map(view => view.id))
+    activeTab.value = restored.activeTab
+    openViewIds.value = restored.openViewIds
+    persistViewTabs()
+  }
   await poll()
   for (const p of points.value) {
     const fk = favKey(p)
@@ -471,7 +492,7 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
               <template v-else-if="column.key === 'points'">{{ new Set(view.pointKeys.map(normalizeDataExplorerPointKey)).size }}</template>
               <template v-else-if="column.key === 'actions'">
                 <a-space>
-                  <a-tooltip title="Open"><a-button size="small" @click="openSavedView(view.id); activeTab = view.id"><template #icon><BarChartOutlined /></template></a-button></a-tooltip>
+                  <a-tooltip title="Open"><a-button size="small" @click="openSavedView(view.id)"><template #icon><BarChartOutlined /></template></a-button></a-tooltip>
                   <a-tooltip title="Export CSV"><a-button size="small" @click="exportViewCsv(view)"><template #icon><DownloadOutlined /></template></a-button></a-tooltip>
                   <a-tooltip title="Edit"><a-button size="small" @click="openEditView(view)"><template #icon><EditOutlined /></template></a-button></a-tooltip>
                   <a-popconfirm title="Delete this saved view permanently?" ok-text="Delete" @confirm="deleteSavedView(view.id)"><a-button size="small" danger><template #icon><DeleteOutlined /></template></a-button></a-popconfirm>
