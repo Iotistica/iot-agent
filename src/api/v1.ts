@@ -30,7 +30,7 @@ import { AdminSessionModel } from '../db/models/admin-session.model.js';
 import { getLicenseService } from '../licensing/runtime.js';
 import { requireRole, parseCookie, SESSION_COOKIE } from './middleware/roles.js';
 import { AppMarketplaceModel } from '../db/models/app-marketplace.model.js';
-import type { MarketplaceImage } from '../data/app-templates.js';
+import type { MarketplaceImage } from '../data/marketplace-image.js';
 import { MarketplaceCategoriesModel } from '../db/models/marketplace-categories.model.js';
 
 export const router = express.Router();

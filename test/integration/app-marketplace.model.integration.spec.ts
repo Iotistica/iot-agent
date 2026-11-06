@@ -2,8 +2,8 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import type { DatabaseSync } from 'node:sqlite';
-import { APP_TEMPLATES } from '../../src/data/app-templates';
-import type { AppTemplate } from '../../src/data/app-templates';
+import type { MarketplaceImage } from '../../src/data/marketplace-image';
+import { migration as seedAppMarketplace } from '../../src/db/migrations/20261106000000_seed_app_marketplace';
 
 describe('AppMarketplaceModel (integration)', () => {
 	let dbPath: string;
@@ -31,28 +31,60 @@ describe('AppMarketplaceModel (integration)', () => {
 		}
 	});
 
-	it('seeds the existing catalog without changing its schema or values', () => {
-		expect(AppMarketplaceModel.getAll()).toEqual(APP_TEMPLATES);
+	it('seeds the built-in catalog from SQLite', () => {
+		const templates = AppMarketplaceModel.getAll();
+
+		expect(templates.map(template => template.id)).toEqual([
+			'node-red',
+			'home-assistant',
+			'n8n',
+			'grafana',
+			'prometheus',
+			'telegraf',
+			'influxdb',
+			'timescaledb',
+			'mosquitto',
+			'emqx',
+			'portainer',
+			'zigbee2mqtt',
+			'frigate',
+			'postgres',
+			'redis',
+			'socket-listener',
+			'socket-listener-python',
+			'mqtt-sim',
+			'opcua-sim',
+			'ollama',
+		]);
+		expect(AppMarketplaceModel.getById('node-red')).toEqual({
+			id: 'node-red',
+			name: 'Node-RED',
+			category: 'Automation',
+			description: 'Low-code programming for event-driven IoT applications and automations.',
+			color: '#8F0000',
+			letter: 'NR',
+			image: 'nodered/node-red:latest',
+			ports: ['1880:1880'],
+			volumes: ['node-red-data:/data'],
+			environment: { TZ: 'UTC' },
+			restart: 'unless-stopped',
+		});
 	});
 
 	it('persists custom templates and supports get, update, and delete', () => {
-		const template: AppTemplate = {
+		const template: MarketplaceImage = {
 			id: 'custom-image',
 			name: 'Custom Image',
 			category: 'Custom',
 			description: 'A custom deployment',
 			color: '#123456',
 			letter: 'CI',
-			appName: 'custom-app',
-			services: [{
-				serviceName: 'custom-service',
-				image: 'example/custom:1',
-				ports: ['8080:80'],
-				volumes: ['custom-data:/data'],
-				environment: { MODE: 'production' },
-				restart: 'unless-stopped',
-				enableSocketDestination: true,
-			}],
+			image: 'example/custom:1',
+			ports: ['8080:80'],
+			volumes: ['custom-data:/data'],
+			environment: { MODE: 'production' },
+			restart: 'unless-stopped',
+			enableSocketDestination: true,
 		};
 
 		expect(AppMarketplaceModel.create(template)).toEqual(template);
@@ -68,21 +100,22 @@ describe('AppMarketplaceModel (integration)', () => {
 		expect(AppMarketplaceModel.getById(template.id)).toBeNull();
 	});
 
-	it('does not re-seed over changed entries or create duplicates on later startup', () => {
-		const existing = APP_TEMPLATES[0];
+	it('does not overwrite customized or user-created templates when seed migration is reapplied', () => {
+		const existing = AppMarketplaceModel.getById('node-red')!;
 		const updated = { ...existing, description: 'Locally customized' };
 		AppMarketplaceModel.update(existing.id, updated);
 		AppMarketplaceModel.create({
-			...APP_TEMPLATES[0],
+			...existing,
 			id: 'user-created',
 			name: 'User Created',
-			appName: 'user-created',
 		});
+		AppMarketplaceModel.delete('ollama');
 
-		runMigrations(db);
+		seedAppMarketplace.up(db);
 
 		expect(AppMarketplaceModel.getById(existing.id)).toEqual(updated);
 		expect(AppMarketplaceModel.getById('user-created')?.name).toBe('User Created');
+		expect(AppMarketplaceModel.getById('ollama')).toBeNull();
 		expect(AppMarketplaceModel.getAll().filter(template => template.id === existing.id)).toHaveLength(1);
 	});
 });
