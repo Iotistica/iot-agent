@@ -123,6 +123,9 @@
                   <a-button size="small" type="text" @click="openEditObject(record)">
                     <template #icon><EditOutlined /></template>
                   </a-button>
+                  <a-button size="small" type="link" title="History" style="color:#722ed1" @click.stop="openHistory(record)">
+                    <template #icon><LineChartOutlined /></template>
+                  </a-button>
                   <a-popconfirm
                     title="Delete this object?"
                     ok-text="Delete"
@@ -324,13 +327,60 @@
         <a-select-option :value="false">Inactive (OFF)</a-select-option>
       </a-select>
     </a-modal>
+
+    <!-- Object history modal -->
+    <a-modal
+      v-model:open="historyOpen"
+      :title="`History — ${historyTarget?.name ?? ''}`"
+      :footer="null"
+      width="720px"
+      destroy-on-close
+    >
+      <div v-if="historyLoading" style="text-align:center;padding:40px 0">
+        <a-spin />
+      </div>
+      <a-alert v-else-if="historyError" type="error" :message="historyError" />
+      <div v-else-if="historyData.length < 2" style="text-align:center;padding:40px 0;color:var(--text-placeholder);font-size:13px">
+        Not enough data yet
+      </div>
+      <template v-else-if="historyChart">
+        <div style="border:1px solid #333;border-radius:4px;background:#1a1a1a;overflow:hidden">
+          <svg viewBox="0 0 600 192" style="width:100%;display:block">
+            <template v-for="tick in historyChart.yTicks" :key="tick.y">
+              <line x1="52" :y1="tick.y" x2="588" :y2="tick.y" stroke="#333" stroke-width="1" />
+              <text x="46" :y="tick.y" text-anchor="end" dominant-baseline="middle" font-size="11" fill="#888" font-family="monospace">
+                {{ tick.label }}
+              </text>
+            </template>
+            <line x1="52" y1="162" x2="588" y2="162" stroke="#444" stroke-width="1" />
+            <template v-for="tick in historyChart.xTicks" :key="tick.x">
+              <line :x1="tick.x" y1="162" :x2="tick.x" y2="167" stroke="#888" stroke-width="1" />
+              <text :x="tick.x" y="179" text-anchor="middle" font-size="11" fill="#888">{{ tick.label }}</text>
+            </template>
+            <polyline :points="`52,162 ${historyChart.points} 588,162`" fill="rgba(24,144,255,0.08)" stroke="none" />
+            <polyline :points="historyChart.points" fill="none" stroke="#1890ff" stroke-width="1.5" stroke-linejoin="round" />
+          </svg>
+        </div>
+        <div style="display:flex;margin-top:14px;border:1px solid #333;border-radius:4px;overflow:hidden">
+          <div
+            v-for="(value, label) in historyChart.stats"
+            :key="label"
+            style="flex:1;text-align:center;padding:10px 0;border-right:1px solid #333"
+            :style="label === 'Current' ? 'border-right:none' : ''"
+          >
+            <div style="font-size:11px;color:#aaa;margin-bottom:2px">{{ label }}</div>
+            <div style="font-size:14px;font-weight:600;font-family:monospace;color:#1890ff">{{ value.toFixed(2) }}</div>
+          </div>
+        </div>
+      </template>
+    </a-modal>
   </AppLayout>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import {
-  PlusOutlined, EditOutlined, DeleteOutlined,
+  PlusOutlined, EditOutlined, DeleteOutlined, LineChartOutlined,
   ApiOutlined, ApartmentOutlined,
 } from '@ant-design/icons-vue'
 import { message } from 'ant-design-vue'
@@ -365,6 +415,88 @@ const objectsLoading = ref(false)
 const meta = ref<any>(null)
 const liveState = ref<any>({})
 const saving = ref(false)
+const historyOpen = ref(false)
+const historyLoading = ref(false)
+const historyError = ref('')
+const historyTarget = ref<any>(null)
+const historyData = ref<{ ts: number; value: number }[]>([])
+let historyRequestId = 0
+
+const historyChart = computed(() => {
+  const data = historyData.value
+  if (data.length < 2) return null
+
+  const values = data.map(point => point.value)
+  let minValue = Math.min(...values)
+  let maxValue = Math.max(...values)
+  if (minValue === maxValue) {
+    minValue -= 1
+    maxValue += 1
+  }
+  const minTime = data[0].ts
+  const timeRange = data[data.length - 1].ts - minTime || 1
+  const points = data.map(point => {
+    const x = 52 + ((point.ts - minTime) / timeRange) * 536
+    const y = 16 + (1 - (point.value - minValue) / (maxValue - minValue)) * 132
+    return `${x.toFixed(1)},${y.toFixed(1)}`
+  }).join(' ')
+  const yTicks = [
+    { y: 16, value: maxValue },
+    { y: 82, value: (minValue + maxValue) / 2 },
+    { y: 148, value: minValue },
+  ].map(tick => ({ y: tick.y, label: tick.value.toFixed(2) }))
+  const now = Date.now() / 1000
+  const xTicks = Array.from({ length: 5 }, (_, i) => {
+    const fraction = i / 4
+    const age = now - (minTime + fraction * timeRange)
+    const label = age < 10
+      ? 'now'
+      : age < 120
+        ? `-${Math.round(age)}s`
+        : age < 3600
+          ? `-${Math.round(age / 60)}m`
+          : `-${Math.round(age / 3600)}h`
+    return { x: 52 + fraction * 536, label }
+  })
+  const average = values.reduce((sum, value) => sum + value, 0) / values.length
+
+  return {
+    points,
+    yTicks,
+    xTicks,
+    stats: {
+      Min: Math.min(...values),
+      Max: Math.max(...values),
+      Avg: average,
+      Current: values[values.length - 1],
+    },
+  }
+})
+
+async function openHistory(obj: any) {
+  const deviceId = selectedDeviceId.value
+  if (deviceId === null) return
+
+  const requestId = ++historyRequestId
+  historyTarget.value = obj
+  historyData.value = []
+  historyError.value = ''
+  historyLoading.value = true
+  historyOpen.value = true
+  try {
+    const response: unknown = await simFetch(`/devices/${deviceId}/objects/${obj.id}/history`)
+    if (requestId !== historyRequestId) return
+    historyData.value = Array.isArray(response)
+      ? response
+        .filter((point: any) => Number.isFinite(point?.ts) && Number.isFinite(point?.value))
+        .sort((a: any, b: any) => a.ts - b.ts)
+      : []
+  } catch (e: any) {
+    if (requestId === historyRequestId) historyError.value = e.message || 'Failed to load history'
+  } finally {
+    if (requestId === historyRequestId) historyLoading.value = false
+  }
+}
 
 // WebSocket
 let ws: WebSocket | null = null
