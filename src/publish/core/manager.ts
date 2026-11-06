@@ -1180,12 +1180,13 @@ export class PublishManager extends EventEmitter {
 	 *  rawName/sourceAddress/rulesVersion/provenance — those stay 'custom'-format-only. Field
 	 *  is provisionalPointId, never pointId — see src/points/types.ts's PointIdentity doc
 	 *  comment on why. */
-	private readPointIdentity(message: ProtocolMessage): { provisionalPointId?: string; normalizedName?: string } {
+	private readPointIdentity(message: ProtocolMessage): { provisionalPointId?: string; normalizedName?: string; pointIdentityEndpointName?: string } {
 		const pointIdentity = message.pointIdentity as PointIdentity | undefined;
 		if (!pointIdentity) return {};
 		return {
 			...(pointIdentity.provisionalPointId && { provisionalPointId: pointIdentity.provisionalPointId }),
 			...(pointIdentity.normalizedName && { normalizedName: pointIdentity.normalizedName }),
+			...(pointIdentity.endpointName && { pointIdentityEndpointName: pointIdentity.endpointName }),
 		};
 	}
 

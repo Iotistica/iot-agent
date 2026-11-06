@@ -20,3 +20,16 @@ test('falls back to the metric when no normalized name is available', () => {
     JSON.stringify(['opcua', 'AHU-7', 'CC-Valve']),
   )
 })
+
+test('uses the point-identity endpoint instead of the display source when available', () => {
+  assert.equal(
+    dataExplorerPointKey({
+      protocol: 'opcua',
+      endpointName: 'AHU-7',
+      pointIdentityEndpointName: 'opcua-pipe',
+      metric: 'CC-Valve',
+      normalizedName: 'ahu_7_cc_valve',
+    }),
+    JSON.stringify(['opcua', 'opcua-pipe', 'ahu_7_cc_valve']),
+  )
+})

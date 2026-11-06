@@ -23,4 +23,23 @@ describe('ActivityMonitor latest point snapshots', () => {
 		expect(points).toHaveLength(1001);
 		expect(points.find(point => point.metric === 'point-0')?.value).toBe(1001);
 	});
+
+	it('preserves point-identity endpoint names in latest readings and subscription snapshots', () => {
+		const protocol = `identity-endpoint-test-${Date.now()}`;
+		activityMonitor.record({
+			subscriptionId: 1,
+			destinationId: 1,
+			destinationName: 'test',
+			destinationType: 'test',
+			protocol,
+			endpointName: 'AHU-7',
+			pointIdentityEndpointName: 'opcua-pipe',
+			metric: 'ahu_7_cc_valve',
+			value: 1,
+			pointCount: 1,
+		});
+
+		expect(activityMonitor.getLatestPoints().find(point => point.protocol === protocol)?.pointIdentityEndpointName).toBe('opcua-pipe');
+		expect(activityMonitor.getSubscriptions().find(subscription => subscription.protocol === protocol)?.pointIdentityEndpointName).toBe('opcua-pipe');
+	});
 });
