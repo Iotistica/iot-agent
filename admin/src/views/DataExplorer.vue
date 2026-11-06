@@ -12,6 +12,7 @@ import CreateDatasetDrawer from '@/components/CreateDatasetDrawer.vue'
 import CreateViewDrawer from '@/components/CreateViewDrawer.vue'
 import PointDetailsDrawer from '@/components/data/PointDetailsDrawer.vue'
 import { viewsApi, type SavedView as SavedViewType } from '@/api/views'
+import { dataExplorerPointKey } from '@/utils/data-explorer-point-key'
 
 type PointRow = {
   key: string
@@ -113,7 +114,7 @@ function isStale(iso: string) {
 const points = computed<PointRow[]>(() => {
   const byKey = new Map<string, PointRow>()
   for (const e of latestReadings.value) {
-    const key = JSON.stringify([e.protocol, e.endpointName, e.metric])
+    const key = dataExplorerPointKey(e)
     const row: PointRow = {
       key, protocol: e.protocol, endpointName: e.endpointName, metric: e.metric,
       normalizedName: e.normalizedName, rawPointName: e.rawPointName,
@@ -126,7 +127,12 @@ const points = computed<PointRow[]>(() => {
   // Subscription snapshots can contain a latest reading not present in the last 100 events.
   for (const s of subscriptions.value) {
     if (!s.lastMetric || !s.lastPublishTime) continue
-    const key = JSON.stringify([s.protocol, s.endpointName, s.lastMetric])
+    const key = dataExplorerPointKey({
+      protocol: s.protocol,
+      endpointName: s.endpointName,
+      metric: s.lastMetric,
+      normalizedName: s.normalizedName,
+    })
     const row: PointRow = {
       key, protocol: s.protocol, endpointName: s.endpointName, metric: s.lastMetric,
       normalizedName: s.normalizedName, rawPointName: s.rawPointName,
