@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 export type LicenseTier = 'trial' | 'paid';
 
 export type LicenseState =
@@ -46,19 +45,18 @@ export interface LicenseServerResponse {
 	/** Signed token: base64url(payload JSON) + '.' + base64url(Ed25519 signature) */
 	token: string;
 }
-=======
-export interface LicensePayload {
-  version: 1;
-  licenseId: string;
-  agentUuid: string;
-  type: 'trial' | 'paid';
-  issuedAt: string;
-  expiresAt: string;
-  features: string[];
+
+export interface SignedLicensePayload {
+	version: 1;
+	licenseId: string;
+	agentUuid: string;
+	type: 'trial' | 'paid';
+	issuedAt: string;
+	expiresAt: string;
+	features: string[];
 }
 
 export interface SignedLicense {
-  payload: LicensePayload;
-  signature: string; // base64 Ed25519 signature
+	payload: SignedLicensePayload;
+	signature: string;
 }
->>>>>>> chore:misc
