@@ -181,22 +181,26 @@ function columnSort(a: PointRow, b: PointRow): number {
   if (field === 'updated') return desc * (Date.parse(a.timestamp) - Date.parse(b.timestamp))
   return 0
 }
-const filteredPoints = computed(() => {
+const pointsMatchingFilters = computed(() => {
   const liveKeys = new Set(points.value.map(favKey))
   const source = [...points.value]
   for (const [fk, p] of favPointCache.value) {
     if (!liveKeys.has(fk)) source.push(p)
   }
   const q = search.value.trim().toLowerCase()
-  const filtered = source.filter(p => {
-    return (viewMode.value !== 'favorites' || favorites.value.includes(favKey(p)))
-        && (!activeSavedView.value || activeViewIds.value.has(p.key))
-      && (!q || [friendlySource(p.endpointName), p.metric, p.normalizedName, p.rawPointName, p.rawObjectName, p.destinationName]
-        .some(v => (v || '').toLowerCase().includes(q)))
+  return source.filter(p => {
+    return (!q || [friendlySource(p.endpointName), p.metric, p.normalizedName, p.rawPointName, p.rawObjectName, p.destinationName]
+      .some(v => (v || '').toLowerCase().includes(q)))
       && (!protocolFilter.value || p.protocol === protocolFilter.value)
       && (!sourceFilter.value || p.endpointName === sourceFilter.value)
       && (!qualityFilter.value || (qualityFilter.value === 'STALE' ? isStale(p.timestamp) : qualityFilter.value === 'BAD' ? p.quality === 'BAD' : p.quality !== 'BAD' && !isStale(p.timestamp)))
   })
+})
+const livePointCount = computed(() => pointsMatchingFilters.value.length)
+const filteredPoints = computed(() => {
+  const filtered = pointsMatchingFilters.value.filter(p =>
+    (viewMode.value !== 'favorites' || favorites.value.includes(favKey(p)))
+    && (!activeSavedView.value || activeViewIds.value.has(p.key)))
   if (viewMode.value === 'favorites') {
     return filtered.sort((a, b) => friendlySource(a.endpointName).localeCompare(friendlySource(b.endpointName)) || pointName(a).localeCompare(pointName(b)))
   }
@@ -475,7 +479,7 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
         </div>
         <div class="views-bar">
           <div class="views-list">
-            <button type="button" :class="['view-tab', { active: activeTab === 'all' }]" @click="activateTab('all')">Live ({{ filteredPoints.length }})</button>
+            <button type="button" :class="['view-tab', { active: activeTab === 'all' }]" @click="activateTab('all')">Live ({{ livePointCount }})</button>
             <button type="button" :class="['view-tab', { active: activeTab === 'favorites' }]" @click="activateTab('favorites')"> Favorites ({{ favoriteCount }})</button>
             <div v-for="view in savedViews.filter(v => openViewIds.includes(v.id))" :key="view.id" :class="['saved-view-tab', { active: activeTab === view.id }]">
               <button type="button" @click="activateTab(view.id)">{{ view.name }} ({{ new Set(view.pointKeys.map(normalizePointKey)).size }})</button>
