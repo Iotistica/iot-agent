@@ -478,8 +478,8 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
               {{ paused ? 'Resume' : 'Pause' }}
             </a-button>
             <a-button @click="poll"><ReloadOutlined :spin="refreshing" /> Refresh</a-button>
-            <a-button class="save-view-button" @click="openCreateView(false)"><SaveOutlined /> Save as View</a-button>
-            <a-button type="primary" :disabled="!filteredPoints.length" @click="openCreateDataset()"><DatabaseOutlined /> Create Dataset</a-button>
+            <a-button class="save-view-button" @click="openCreateView(false)"><SaveOutlined /> Add View</a-button>
+            <a-button type="primary" :disabled="!filteredPoints.length" @click="openCreateDataset()"><DatabaseOutlined /> Add Dataset</a-button>
           </div>
         </div>
         <div class="views-bar">
