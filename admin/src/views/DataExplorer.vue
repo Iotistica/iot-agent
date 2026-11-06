@@ -12,7 +12,7 @@ import CreateDatasetDrawer from '@/components/CreateDatasetDrawer.vue'
 import CreateViewDrawer from '@/components/CreateViewDrawer.vue'
 import PointDetailsDrawer from '@/components/data/PointDetailsDrawer.vue'
 import { viewsApi, type SavedView as SavedViewType } from '@/api/views'
-import { dataExplorerPoints, matchesDataExplorerView, missingDataExplorerViewPointCount, normalizeDataExplorerPointKey, type DataExplorerPointRow } from '@/utils/data-explorer-point-key'
+import { dataExplorerPoints, matchesDataExplorerView, missingDataExplorerViewPointCount, normalizeDataExplorerPointKey, orderDataExplorerViewPoints, type DataExplorerPointRow } from '@/utils/data-explorer-point-key'
 
 type PointRow = DataExplorerPointRow
 type DeviceRecord = { uuid: string; name: string; protocol: string; metadata?: Record<string, unknown> }
@@ -157,6 +157,9 @@ const filteredPoints = computed(() => {
     && (!activeSavedView.value || matchesDataExplorerView(p, activeViewIds.value)))
   if (viewMode.value === 'favorites') {
     return filtered.sort((a, b) => friendlySource(a.endpointName).localeCompare(friendlySource(b.endpointName)) || pointName(a).localeCompare(pointName(b)))
+  }
+  if (activeSavedView.value && !tableSortField.value) {
+    return orderDataExplorerViewPoints(filtered, activeSavedView.value.pointKeys)
   }
   return filtered.sort(columnSort)
 })

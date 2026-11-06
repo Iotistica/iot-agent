@@ -62,6 +62,27 @@ export function normalizeDataExplorerPointKey(key: string): string {
   return key
 }
 
+export function orderDataExplorerViewPoints<T extends { key: string; legacyKey?: string }>(
+  points: T[],
+  orderedKeys: readonly string[],
+): T[] {
+  const keyOrder = new Map<string, number>()
+  orderedKeys.forEach((key, index) => {
+    const normalizedKey = normalizeDataExplorerPointKey(key)
+    if (!keyOrder.has(normalizedKey)) keyOrder.set(normalizedKey, index)
+  })
+  const rank = (point: T) =>
+    keyOrder.get(normalizeDataExplorerPointKey(point.key))
+      ?? (point.legacyKey ? keyOrder.get(normalizeDataExplorerPointKey(point.legacyKey)) : undefined)
+  return [...points].sort((a, b) => {
+    const aRank = rank(a)
+    const bRank = rank(b)
+    if (aRank === undefined) return bRank === undefined ? 0 : 1
+    if (bRank === undefined) return -1
+    return aRank - bRank
+  })
+}
+
 export function matchesDataExplorerView(point: DataExplorerPointRow, keys: ReadonlySet<string>): boolean {
   return keys.has(point.key) || (!!point.legacyKey && keys.has(point.legacyKey))
 }
