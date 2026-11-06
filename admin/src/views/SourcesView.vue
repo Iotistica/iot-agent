@@ -83,8 +83,8 @@ const columns: TableColumnType<Endpoint>[] = [
   { title: 'Status', key: 'status', width: 130 },
   { title: 'Last Seen', key: 'last_seen', width: 100 },
   { title: 'Connection', key: 'connection', ellipsis: true },
-  { title: 'Enabled', key: 'enabled', width: 90, sorter: (a: Endpoint, b: Endpoint) => Number(a.enabled) - Number(b.enabled) },
   { title: 'Poll', key: 'poll_interval', width: 80 },
+    { title: 'Enabled', key: 'enabled', width: 90, sorter: (a: Endpoint, b: Endpoint) => Number(a.enabled) - Number(b.enabled) },
   { title: 'Actions', key: 'actions', width: 100, fixed: 'right' },
 ]
 
