@@ -2,6 +2,7 @@
 import { ref, computed, watch } from 'vue'
 import { SearchOutlined, RightOutlined } from '@ant-design/icons-vue'
 import { pointCatalogApi, type PointCatalogEntry } from '@/api/point-catalog'
+import { client } from '@/api/client'
 import { protocolColor, protocolLabel } from '@/utils/protocol'
 
 const props = defineProps<{
@@ -15,6 +16,7 @@ const emit = defineEmits<{
 }>()
 
 const loading = ref(false)
+const deviceNames = ref(new Map<string, string>())
 const catalogPoints = ref<PointCatalogEntry[]>([])
 const checkedKeys = ref(new Set<string>())
 const searchText = ref('')
@@ -36,7 +38,20 @@ watch(() => props.open, async (isOpen) => {
     } catch { /* non-critical */ }
     loading.value = false
   }
+  try {
+    const { data } = await client.get<{ devices: { uuid: string; name: string; metadata?: Record<string, unknown> }[] }>('/v1/devices')
+    const map = new Map<string, string>()
+    for (const d of data.devices || []) {
+      map.set(d.uuid, (d.metadata?.objectName as string | undefined) || d.name)
+    }
+    deviceNames.value = map
+  } catch { /* friendly names are optional */ }
 })
+
+// Show the actual device, not the pipe/adapter endpoint that carried the readings.
+function sourceName(p: PointCatalogEntry) {
+  return (p.deviceKey && deviceNames.value.get(p.deviceKey)) || p.endpointName
+}
 
 interface SourceGroup {
   key: string
@@ -67,7 +82,7 @@ const filteredPoints = computed(() => {
   const q = searchText.value.toLowerCase()
   return catalogPoints.value.filter(p => {
     if (protocolFilter.value && p.sourceSystem !== protocolFilter.value) return false
-    if (q && !p.endpointName.toLowerCase().includes(q)
+    if (q && !sourceName(p).toLowerCase().includes(q)
           && !p.normalizedName.toLowerCase().includes(q)
           && !p.rawName.toLowerCase().includes(q)) return false
     return true
@@ -95,9 +110,10 @@ const groupedByProtocol = computed<ProtocolGroup[]>(() => {
       sources = new Map()
       map.set(protocol, sources)
     }
-    const points = sources.get(p.endpointName)
+    const name = sourceName(p)
+    const points = sources.get(name)
     if (points) points.push(p)
-    else sources.set(p.endpointName, [p])
+    else sources.set(name, [p])
   }
   return [...map.entries()]
     .sort((a, b) => a[0].localeCompare(b[0]))

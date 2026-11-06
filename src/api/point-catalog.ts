@@ -8,6 +8,7 @@ export const pointCatalogRouter = express.Router();
 interface PointCatalogEntry {
 	sourceSystem: string | null;
 	endpointName: string;
+	deviceKey: string;
 	rawName: string;
 	normalizedName: string;
 	pointKey: string;
@@ -22,6 +23,7 @@ pointCatalogRouter.get(
 			const points: PointCatalogEntry[] = records.map(r => ({
 				sourceSystem: r.source_system ?? null,
 				endpointName: r.endpoint_name,
+				deviceKey: r.device_key,
 				rawName: r.raw_name,
 				normalizedName: r.normalized_name,
 				pointKey: JSON.stringify([r.source_system ?? '', r.endpoint_name, r.normalized_name]),

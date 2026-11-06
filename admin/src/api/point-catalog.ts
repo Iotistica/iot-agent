@@ -3,6 +3,7 @@ import { client } from './client'
 export interface PointCatalogEntry {
   sourceSystem: string | null
   endpointName: string
+  deviceKey?: string
   rawName: string
   normalizedName: string
   pointKey: string
