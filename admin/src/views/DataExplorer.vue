@@ -7,7 +7,7 @@ import { client } from '@/api/client'
 import { pipelineApi, type SubscriptionActivity, type ActivityEvent } from '@/api/pipeline'
 import { datasetsApi, type MlDataset } from '@/api/ml-datasets'
 import { protocolColor, protocolLabel } from '@/utils/protocol'
-import { BarChartOutlined, WifiOutlined, WarningOutlined, ClockCircleOutlined, SaveOutlined, CloseOutlined, DatabaseOutlined, CopyOutlined, EditOutlined, DeleteOutlined, DownloadOutlined, ReloadOutlined } from '@ant-design/icons-vue'
+import { BarChartOutlined, WifiOutlined, WarningOutlined, ClockCircleOutlined, SaveOutlined, CloseOutlined, DatabaseOutlined, CopyOutlined, EditOutlined, DeleteOutlined, DownloadOutlined, ReloadOutlined, PauseOutlined, PlayCircleOutlined } from '@ant-design/icons-vue'
 import CreateDatasetDrawer from '@/components/CreateDatasetDrawer.vue'
 import CreateViewDrawer from '@/components/CreateViewDrawer.vue'
 import PointDetailsDrawer from '@/components/data/PointDetailsDrawer.vue'
@@ -472,6 +472,11 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
           </a-select>
           <a-button @click="resetFilters">Clear</a-button>
           <div class="filters-actions">
+            <a-button @click="paused = !paused">
+              <PauseOutlined v-if="!paused" />
+              <PlayCircleOutlined v-else />
+              {{ paused ? 'Start' : 'Pause' }}
+            </a-button>
             <a-button @click="poll"><ReloadOutlined :spin="refreshing" /> Refresh</a-button>
             <a-button class="save-view-button" @click="openCreateView(false)"><SaveOutlined /> Save as View</a-button>
             <a-button type="primary" :disabled="!filteredPoints.length" @click="openCreateDataset()"><DatabaseOutlined /> Create Dataset</a-button>
