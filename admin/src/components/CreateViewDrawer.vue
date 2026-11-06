@@ -52,7 +52,7 @@ watch(() => props.open, (open) => {
   } else {
     name.value = ''
     description.value = ''
-    selectedKeys.value = props.pointRows.map(p => p.key)
+    selectedKeys.value = []
   }
 })
 
@@ -178,7 +178,7 @@ async function save() {
 
         <div v-if="!selectedKeys.length" class="empty-state">
           <p>No points selected.</p>
-          <p>Select rows in the table first, or use the button above to pick from the catalog.</p>
+          <p>Use the button above to pick points from the catalog.</p>
         </div>
 
         <div v-else class="points-list">
