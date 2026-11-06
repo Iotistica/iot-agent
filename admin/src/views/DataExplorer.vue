@@ -475,7 +475,7 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
             <a-button @click="paused = !paused">
               <PauseOutlined v-if="!paused" />
               <PlayCircleOutlined v-else />
-              {{ paused ? 'Start' : 'Pause' }}
+              {{ paused ? 'Resume' : 'Pause' }}
             </a-button>
             <a-button @click="poll"><ReloadOutlined :spin="refreshing" /> Refresh</a-button>
             <a-button class="save-view-button" @click="openCreateView(false)"><SaveOutlined /> Save as View</a-button>
