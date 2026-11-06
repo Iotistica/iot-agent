@@ -153,7 +153,6 @@ function onConfirm() {
               />
               <RightOutlined :class="['expand-icon', { expanded: expandedDevices.has(group.endpointName) }]" />
               <a-tag :color="protocolColor(group.protocol)" class="proto-tag">{{ protocolLabel(group.protocol) }}</a-tag>
-              <span class="device-name">{{ group.endpointName }}</span>
               <span class="point-count">({{ group.points.length }})</span>
             </div>
 
