@@ -19,6 +19,7 @@ export interface SubscriptionActivity {
   // interceptor skipped or predating this feature. provisionalPointId/rulesVersion
   // are carried for future developer tooling; DataFlowView.vue's standard UI only renders normalizedName.
   normalizedName?: string
+  pointIdentityEndpointName?: string
   provisionalPointId?: string
   rulesVersion?: string
   // True protocol-reported name, when the adapter captured one separately from the
@@ -41,6 +42,7 @@ export interface ActivityEvent {
   destinationName: string
   pointCount: number
   normalizedName?: string
+  pointIdentityEndpointName?: string
   provisionalPointId?: string
   rulesVersion?: string
   rawObjectName?: string

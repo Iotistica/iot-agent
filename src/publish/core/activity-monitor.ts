@@ -25,6 +25,7 @@ export interface SubscriptionActivity {
 	lastPublishTime: string;
 	/** From Point Name Normalization (src/points/) — see PublishManager.readPointIdentity(). Additive/optional: absent for readings the interceptor skipped or predating this feature. */
 	normalizedName?: string;
+	pointIdentityEndpointName?: string;
 	provisionalPointId?: string;
 	rulesVersion?: string;
 	/** True protocol-reported name, when the adapter captured one separately from the sanitized metric identifier (currently BACnet only — see plugins/types.ts's DeviceDataPoint.rawObjectName). Display-only. */
@@ -58,6 +59,7 @@ export interface ActivityEvent {
 	pointCount: number;
 	/** From Point Name Normalization (src/points/) — see PublishManager.readPointIdentity(). Additive/optional: absent for readings the interceptor skipped or predating this feature. */
 	normalizedName?: string;
+	pointIdentityEndpointName?: string;
 	provisionalPointId?: string;
 	rulesVersion?: string;
 	/** True protocol-reported name, when the adapter captured one separately from the sanitized metric identifier (currently BACnet only — see plugins/types.ts's DeviceDataPoint.rawObjectName). Display-only. */
@@ -84,6 +86,7 @@ interface RecordParams {
 	quality?: string;
 	pointCount: number;
 	normalizedName?: string;
+	pointIdentityEndpointName?: string;
 	provisionalPointId?: string;
 	rulesVersion?: string;
 	rawObjectName?: string;
@@ -178,6 +181,7 @@ class ActivityMonitor {
 			totalBatches: (existing?.totalBatches ?? 0) + 1,
 			lastPublishTime: now,
 			normalizedName: params.normalizedName,
+			pointIdentityEndpointName: params.pointIdentityEndpointName,
 			provisionalPointId: params.provisionalPointId,
 			rulesVersion: params.rulesVersion,
 			rawObjectName: params.rawObjectName,
@@ -213,6 +217,7 @@ class ActivityMonitor {
 			destinationName: params.destinationName,
 			pointCount: params.pointCount,
 			normalizedName: params.normalizedName,
+			pointIdentityEndpointName: params.pointIdentityEndpointName,
 			provisionalPointId: params.provisionalPointId,
 			rulesVersion: params.rulesVersion,
 			rawObjectName: params.rawObjectName,

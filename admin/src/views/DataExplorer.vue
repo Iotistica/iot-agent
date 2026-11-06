@@ -18,6 +18,8 @@ type PointRow = {
   key: string
   protocol: string
   endpointName: string
+  pointIdentityEndpointName?: string
+  legacyKey?: string
   metric: string
   normalizedName?: string
   rawPointName?: string
@@ -115,8 +117,10 @@ const points = computed<PointRow[]>(() => {
   const byKey = new Map<string, PointRow>()
   for (const e of latestReadings.value) {
     const key = dataExplorerPointKey(e)
+    const legacyKey = dataExplorerPointKey({ ...e, pointIdentityEndpointName: undefined })
     const row: PointRow = {
-      key, protocol: e.protocol, endpointName: e.endpointName, metric: e.metric,
+      key, legacyKey, protocol: e.protocol, endpointName: e.endpointName, metric: e.metric,
+      pointIdentityEndpointName: e.pointIdentityEndpointName,
       normalizedName: e.normalizedName, rawPointName: e.rawPointName,
       rawObjectName: e.rawObjectName, value: e.value, quality: e.quality,
       unit: e.unit, timestamp: e.timestamp, destinationName: e.destinationName,
@@ -127,14 +131,18 @@ const points = computed<PointRow[]>(() => {
   // Subscription snapshots can contain a latest reading not present in the last 100 events.
   for (const s of subscriptions.value) {
     if (!s.lastMetric || !s.lastPublishTime) continue
-    const key = dataExplorerPointKey({
+    const pointIdentity = {
       protocol: s.protocol,
       endpointName: s.endpointName,
+      pointIdentityEndpointName: s.pointIdentityEndpointName,
       metric: s.lastMetric,
       normalizedName: s.normalizedName,
-    })
+    }
+    const key = dataExplorerPointKey(pointIdentity)
+    const legacyKey = dataExplorerPointKey({ ...pointIdentity, pointIdentityEndpointName: undefined })
     const row: PointRow = {
-      key, protocol: s.protocol, endpointName: s.endpointName, metric: s.lastMetric,
+      key, legacyKey, protocol: s.protocol, endpointName: s.endpointName, metric: s.lastMetric,
+      pointIdentityEndpointName: s.pointIdentityEndpointName,
       normalizedName: s.normalizedName, rawPointName: s.rawPointName,
       rawObjectName: s.rawObjectName, value: s.lastValue, quality: s.lastQuality,
       unit: s.lastUnit, timestamp: s.lastPublishTime, destinationName: s.destinationName,
@@ -206,7 +214,7 @@ const livePointCount = computed(() => pointsMatchingFilters.value.length)
 const filteredPoints = computed(() => {
   const filtered = pointsMatchingFilters.value.filter(p =>
     (viewMode.value !== 'favorites' || favorites.value.includes(favKey(p)))
-    && (!activeSavedView.value || activeViewIds.value.has(p.key)))
+    && (!activeSavedView.value || activeViewIds.value.has(p.key) || (!!p.legacyKey && activeViewIds.value.has(p.legacyKey))))
   if (viewMode.value === 'favorites') {
     return filtered.sort((a, b) => friendlySource(a.endpointName).localeCompare(friendlySource(b.endpointName)) || pointName(a).localeCompare(pointName(b)))
   }
@@ -215,7 +223,8 @@ const filteredPoints = computed(() => {
 const favoriteCount = computed(() => favorites.value.length)
 const normalizedViewKeys = computed(() => activeSavedView.value
   ? [...new Set(activeSavedView.value.pointKeys.map(normalizePointKey))] : [])
-const missingViewCount = computed(() => normalizedViewKeys.value.filter(key => !points.value.some(p => p.key === key)).length)
+const pointMatchesKey = (point: PointRow, key: string) => point.key === key || point.legacyKey === key
+const missingViewCount = computed(() => normalizedViewKeys.value.filter(key => !points.value.some(p => pointMatchesKey(p, key))).length)
 const candidateViewPoints = computed(() =>
   points.value.filter(p => selectedPointKeys.value.includes(p.key)))
 function openCreateView(_selectedOnly = false) {
@@ -351,7 +360,7 @@ function downloadCsv(rows: PointRow[], filename: string) {
 }
 function exportViewCsv(view: SavedView) {
   const viewKeys = new Set(view.pointKeys.map(normalizePointKey))
-  const viewPoints = points.value.filter(p => viewKeys.has(p.key))
+  const viewPoints = points.value.filter(p => viewKeys.has(p.key) || (!!p.legacyKey && viewKeys.has(p.legacyKey)))
   downloadCsv(viewPoints, `${view.name.replace(/[^a-zA-Z0-9_-]/g, '_')}.csv`)
 }
 const badCount = computed(() => points.value.filter(p => p.quality === 'BAD').length)
