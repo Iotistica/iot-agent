@@ -12,21 +12,9 @@ import CreateDatasetDrawer from '@/components/CreateDatasetDrawer.vue'
 import CreateViewDrawer from '@/components/CreateViewDrawer.vue'
 import PointDetailsDrawer from '@/components/data/PointDetailsDrawer.vue'
 import { viewsApi, type SavedView as SavedViewType } from '@/api/views'
+import { dataExplorerPoints, matchesDataExplorerView, missingDataExplorerViewPointCount, normalizeDataExplorerPointKey, type DataExplorerPointRow } from '@/utils/data-explorer-point-key'
 
-type PointRow = {
-  key: string
-  protocol: string
-  endpointName: string
-  metric: string
-  normalizedName?: string
-  rawPointName?: string
-  rawObjectName?: string
-  value: unknown
-  quality?: string
-  unit?: string
-  timestamp: string
-  destinationName: string
-}
+type PointRow = DataExplorerPointRow
 type DeviceRecord = { uuid: string; name: string; protocol: string; metadata?: Record<string, unknown> }
 const subscriptions = ref<SubscriptionActivity[]>([])
 const latestReadings = ref<ActivityEvent[]>([])
@@ -43,13 +31,6 @@ const drawerOpen = ref(false)
 const paused = ref(false)
 const favorites = ref<string[]>([])
 function favKey(p: PointRow): string { return `${p.endpointName}::${p.metric}` }
-function normalizePointKey(key: string): string {
-  try {
-    const parts = JSON.parse(key)
-    if (Array.isArray(parts) && parts.length === 4) return JSON.stringify(parts.slice(0, 3))
-    return key
-  } catch { return key }
-}
 const favPointCache = ref(new Map<string, PointRow>())
 type SavedView = SavedViewType
 const savedViews = ref<SavedView[]>([])
@@ -62,7 +43,7 @@ const viewDrawerOpen = ref(false)
 const editingView = ref<SavedView | null>(null)
 const viewMode = computed(() => activeTab.value === 'favorites' ? 'favorites' : 'all')
 const activeSavedView = computed(() => savedViews.value.find(v => v.id === activeTab.value))
-const activeViewIds = computed(() => new Set((activeSavedView.value?.pointKeys || []).map(normalizePointKey)))
+const activeViewIds = computed(() => new Set((activeSavedView.value?.pointKeys || []).map(normalizeDataExplorerPointKey)))
 const rowSelection = computed(() => ({
   selectedRowKeys: selectedPointKeys.value,
   onChange: (keys: (string | number)[]) => { selectedPointKeys.value = keys.map(String) },
@@ -109,35 +90,8 @@ function isStale(iso: string) {
   return Number.isFinite(t) && now.value - t > 60000
 }
 // Events are a bounded recent sample, not a historical database or a full point inventory.
-// Keep the most recent event per protocol/source/metric combination.
-const points = computed<PointRow[]>(() => {
-  const byKey = new Map<string, PointRow>()
-  for (const e of latestReadings.value) {
-    const key = JSON.stringify([e.protocol, e.endpointName, e.metric])
-    const row: PointRow = {
-      key, protocol: e.protocol, endpointName: e.endpointName, metric: e.metric,
-      normalizedName: e.normalizedName, rawPointName: e.rawPointName,
-      rawObjectName: e.rawObjectName, value: e.value, quality: e.quality,
-      unit: e.unit, timestamp: e.timestamp, destinationName: e.destinationName,
-    }
-    const previous = byKey.get(key)
-    if (!previous || Date.parse(row.timestamp) > Date.parse(previous.timestamp)) byKey.set(key, row)
-  }
-  // Subscription snapshots can contain a latest reading not present in the last 100 events.
-  for (const s of subscriptions.value) {
-    if (!s.lastMetric || !s.lastPublishTime) continue
-    const key = JSON.stringify([s.protocol, s.endpointName, s.lastMetric])
-    const row: PointRow = {
-      key, protocol: s.protocol, endpointName: s.endpointName, metric: s.lastMetric,
-      normalizedName: s.normalizedName, rawPointName: s.rawPointName,
-      rawObjectName: s.rawObjectName, value: s.lastValue, quality: s.lastQuality,
-      unit: s.lastUnit, timestamp: s.lastPublishTime, destinationName: s.destinationName,
-    }
-    const previous = byKey.get(key)
-    if (!previous || Date.parse(row.timestamp) > Date.parse(previous.timestamp)) byKey.set(key, row)
-  }
-  return [...byKey.values()].sort((a, b) => Date.parse(b.timestamp) - Date.parse(a.timestamp))
-})
+// Subscription snapshots can also contain readings absent from the recent sample.
+const points = computed<PointRow[]>(() => dataExplorerPoints(latestReadings.value, subscriptions.value))
 function persistFavorites() {
   try {
     localStorage.setItem('iot-explorer-favorites', JSON.stringify(favorites.value))
@@ -200,16 +154,14 @@ const livePointCount = computed(() => pointsMatchingFilters.value.length)
 const filteredPoints = computed(() => {
   const filtered = pointsMatchingFilters.value.filter(p =>
     (viewMode.value !== 'favorites' || favorites.value.includes(favKey(p)))
-    && (!activeSavedView.value || activeViewIds.value.has(p.key)))
+    && (!activeSavedView.value || matchesDataExplorerView(p, activeViewIds.value)))
   if (viewMode.value === 'favorites') {
     return filtered.sort((a, b) => friendlySource(a.endpointName).localeCompare(friendlySource(b.endpointName)) || pointName(a).localeCompare(pointName(b)))
   }
   return filtered.sort(columnSort)
 })
 const favoriteCount = computed(() => favorites.value.length)
-const normalizedViewKeys = computed(() => activeSavedView.value
-  ? [...new Set(activeSavedView.value.pointKeys.map(normalizePointKey))] : [])
-const missingViewCount = computed(() => normalizedViewKeys.value.filter(key => !points.value.some(p => p.key === key)).length)
+const missingViewCount = computed(() => missingDataExplorerViewPointCount(points.value, activeViewIds.value))
 const candidateViewPoints = computed(() =>
   points.value.filter(p => selectedPointKeys.value.includes(p.key)))
 function openCreateView(_selectedOnly = false) {
@@ -344,8 +296,8 @@ function downloadCsv(rows: PointRow[], filename: string) {
   setTimeout(() => URL.revokeObjectURL(url), 1000)
 }
 function exportViewCsv(view: SavedView) {
-  const viewKeys = new Set(view.pointKeys.map(normalizePointKey))
-  const viewPoints = points.value.filter(p => viewKeys.has(p.key))
+  const viewKeys = new Set(view.pointKeys.map(normalizeDataExplorerPointKey))
+  const viewPoints = points.value.filter(p => matchesDataExplorerView(p, viewKeys))
   downloadCsv(viewPoints, `${view.name.replace(/[^a-zA-Z0-9_-]/g, '_')}.csv`)
 }
 const badCount = computed(() => points.value.filter(p => p.quality === 'BAD').length)
@@ -487,7 +439,7 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
             <button type="button" :class="['view-tab', { active: activeTab === 'all' }]" @click="activateTab('all')">Live ({{ livePointCount }})</button>
             <button type="button" :class="['view-tab', { active: activeTab === 'favorites' }]" @click="activateTab('favorites')"> Favorites ({{ favoriteCount }})</button>
             <div v-for="view in savedViews.filter(v => openViewIds.includes(v.id))" :key="view.id" :class="['saved-view-tab', { active: activeTab === view.id }]">
-              <button type="button" @click="activateTab(view.id)">{{ view.name }} ({{ new Set(view.pointKeys.map(normalizePointKey)).size }})</button>
+              <button type="button" @click="activateTab(view.id)">{{ view.name }} ({{ new Set(view.pointKeys.map(normalizeDataExplorerPointKey)).size }})</button>
               <button type="button" class="close-view" :aria-label="`Close ${view.name} tab`" @click="closeSavedView(view.id)"><CloseOutlined /></button>
             </div>
             <button type="button" :class="['view-tab', { active: activeTab === 'views' }]" @click="activateTab('views')">Views ({{ savedViews.length }})</button>
@@ -509,7 +461,7 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
                 <div class="point-primary" style="font-weight: 400">{{ view.name }}</div>
                 <div v-if="view.description" class="point-secondary">{{ view.description }}</div>
               </template>
-              <template v-else-if="column.key === 'points'">{{ new Set(view.pointKeys.map(normalizePointKey)).size }}</template>
+              <template v-else-if="column.key === 'points'">{{ new Set(view.pointKeys.map(normalizeDataExplorerPointKey)).size }}</template>
               <template v-else-if="column.key === 'actions'">
                 <a-space>
                   <a-tooltip title="Open"><a-button size="small" @click="openSavedView(view.id); activeTab = view.id"><template #icon><BarChartOutlined /></template></a-button></a-tooltip>
