@@ -189,8 +189,7 @@ function close() {
       <a-space style="width: 100%; justify-content: space-between">
         <a-space>
           <a-button :loading="testing" @click="testConnection">Test Connection</a-button>
-          <a-switch v-model:checked="form.enabled" />
-          <span style="font-size: 13px; color: var(--text-secondary)">Enabled</span>
+          
         </a-space>
         <a-space>
           <a-button @click="close">Cancel</a-button>

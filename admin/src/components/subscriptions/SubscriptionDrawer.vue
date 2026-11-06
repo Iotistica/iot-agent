@@ -617,10 +617,6 @@ function close() {
         </a-select>
       </a-form-item>
 
-      <!-- Enabled -->
-      <a-form-item label="Enabled" name="enabled">
-        <a-switch v-model:checked="form.enabled" />
-      </a-form-item>
 
       <!-- Advanced routing -->
       <a-collapse

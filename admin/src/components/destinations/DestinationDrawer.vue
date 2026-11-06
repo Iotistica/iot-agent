@@ -224,9 +224,6 @@ function close() {
         @update:model-value="form.config_json = $event"
       />
 
-      <a-form-item label="Enabled" name="enabled">
-        <a-switch v-model:checked="form.enabled" />
-      </a-form-item>
 
       <a-form-item v-if="form.type === 'mqtt'" name="use_for_commands">
         <template #label>
