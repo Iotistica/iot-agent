@@ -489,7 +489,7 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
         <a-alert v-if="activeSavedView && missingViewCount" type="info" show-icon :message="`${missingViewCount} saved point(s) are not in the recent sample. They remain saved in this view.`" style="margin-bottom: 10px" />
         <div class="table-meta">
           <div>
-            <a-button v-if="selectedPointKeys.length" size="small" @click="openCreateView(true)"><SaveOutlined /> Save selected ({{ selectedPointKeys.length }})</a-button>
+            <a-button v-if="selectedPointKeys.length" size="small" @click="openCreateView(true)"><SaveOutlined /> Save as view ({{ selectedPointKeys.length }})</a-button>
           </div>
           <span class="toolbar-info">Showing {{ activeTab === 'datasets' ? datasets.length + ' datasets' : activeTab === 'views' ? savedViews.length + ' views' : filteredPoints.length + ' points' }}<template v-if="lastSync"> · Last sync {{ lastSync }}</template></span>
         </div>
