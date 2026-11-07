@@ -21,10 +21,11 @@ import {
   CopyOutlined,
   CheckOutlined,
   SearchOutlined,
+  CloudUploadOutlined,
 } from '@ant-design/icons-vue'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import { containersApi, templatesApi } from '@/api/containers'
-import type { ContainerApp, ContainerService, MarketplaceImage } from '@/api/containers'
+import type { ContainerApp, ContainerService, MarketplaceImage, ImageUpdateStatus } from '@/api/containers'
 import MarketplaceCatalog from '@/components/MarketplaceCatalog.vue'
 import { useDockerStatus } from '@/composables/useDockerStatus'
 import { useSystemStats } from '@/composables/useSystemStats'
@@ -45,6 +46,52 @@ const searchQuery = ref('')
 const collapsedApps = ref(new Set<number>())
 let refreshRequested = false
 
+// ── Image updates ────────────────────────────────────────────────────────────
+
+const imageUpdates = ref<ImageUpdateStatus[]>([])
+const imageUpdateChecking = ref(false)
+const imageUpdateInFlight = ref<string | null>(null)
+
+function imageUpdateKey(appId: number, serviceName: string) {
+  return `${appId}:${serviceName}`
+}
+
+function getImageUpdate(appId: number, serviceName: string): ImageUpdateStatus | undefined {
+  return imageUpdates.value.find(u => u.appId === appId && u.serviceName === serviceName && u.updateAvailable === true)
+}
+
+async function checkImageUpdates() {
+  if (imageUpdateChecking.value) return
+  imageUpdateChecking.value = true
+  try {
+    imageUpdates.value = await containersApi.checkImageUpdates()
+  } catch { /* silent — non-critical */ }
+  finally { imageUpdateChecking.value = false }
+}
+
+async function approveImageUpdate(app: ContainerApp, svc: ContainerService) {
+  const update = getImageUpdate(app.appId, svc.serviceName)
+  const digest = update?.remoteDigest
+  Modal.confirm({
+    title: `Update ${svc.serviceName}?`,
+    content: `Pull the latest image for ${svc.imageName} and recreate the container. The service will restart.`,
+    okText: 'Update',
+    async onOk() {
+      const key = imageUpdateKey(app.appId, svc.serviceName)
+      imageUpdateInFlight.value = key
+      try {
+        await containersApi.approveImageUpdate(app.appId, svc.serviceName, digest)
+        message.success(`${svc.serviceName} updated to latest image`)
+        await Promise.all([load(), checkImageUpdates()])
+      } catch (e: unknown) {
+        message.error((e as any)?.response?.data?.error ?? (e as any)?.message ?? 'Image update failed')
+      } finally {
+        imageUpdateInFlight.value = null
+      }
+    },
+  })
+}
+
 // ── Auto-refresh ──────────────────────────────────────────────────────────────
 
 let refreshTimer: ReturnType<typeof setInterval> | null = null
@@ -61,6 +108,7 @@ onMounted(async () => {
   startRefresh()
   startPolling()
   loadMarketplaceImages()
+  checkImageUpdates()
   const templateId = route.query.template
   if (typeof templateId === 'string') {
     await router.replace({ path: '/applications', query: { ...route.query, template: undefined } })
@@ -314,6 +362,7 @@ function toggleApp(appId: number) {
 function handleServiceMenu(key: string, app: ContainerApp, svc: ContainerService) {
   if (key === 'details') openServiceDetails(app, svc)
   if (key === 'edit') openEditService(app, svc)
+  if (key === 'update-image') approveImageUpdate(app, svc)
   if (key === 'restart') void doAction(app, svc, 'restart')
   if (key === 'delete') confirmRemoveService(app, svc)
 }
@@ -1274,6 +1323,7 @@ async function deploy() {
       <a-button @click="searchQuery = ''">Clear</a-button>
       <div class="filters-actions">
         <a-button :loading="loading" @click="load"><template #icon><ReloadOutlined /></template>Refresh</a-button>
+        <a-button :loading="imageUpdateChecking" :disabled="!dockerAvailable" @click="checkImageUpdates"><template #icon><CloudUploadOutlined /></template>Check Updates</a-button>
         <a-button :disabled="!dockerAvailable" @click="openMarketplace"><template #icon><ShopOutlined /></template>Marketplace</a-button>
         <a-button type="primary" :disabled="!dockerAvailable" @click="openDeploy"><template #icon><PlusOutlined /></template>Add Application</a-button>
       </div>
@@ -1352,6 +1402,11 @@ async function deploy() {
                 {{ svc.serviceName }}
               </button>
               <span class="service-image" :title="svc.imageName">{{ svc.imageName }}</span>
+              <a-tooltip v-if="getImageUpdate(app.appId, svc.serviceName)" title="Image update available">
+                <a-tag color="blue" class="update-tag" @click.stop="approveImageUpdate(fullApp(app), svc)">
+                  <CloudUploadOutlined /> Update
+                </a-tag>
+              </a-tooltip>
               <a-tooltip v-if="svc.error" :title="svc.error.message" placement="topLeft">
                 <span class="svc-error-hint">{{ svc.error.type }}</span>
               </a-tooltip>
@@ -1396,6 +1451,7 @@ async function deploy() {
                   <a-menu @click="handleServiceMenuClick($event, fullApp(app), svc)">
                     <a-menu-item key="details"><EyeOutlined /> View details</a-menu-item>
                     <a-menu-item key="edit" :disabled="isServiceBusy(app.appId, svc.serviceName)"><EditOutlined /> Edit configuration</a-menu-item>
+                    <a-menu-item v-if="getImageUpdate(app.appId, svc.serviceName)" key="update-image" :disabled="imageUpdateInFlight === imageUpdateKey(app.appId, svc.serviceName)"><CloudUploadOutlined /> Update image</a-menu-item>
                     <a-menu-divider />
                     <a-menu-item key="delete" danger :disabled="isServiceBusy(app.appId, svc.serviceName)"><DeleteOutlined /> Delete service</a-menu-item>
                   </a-menu>
@@ -2103,7 +2159,12 @@ async function deploy() {
 
         <a-divider orientation="left">Container</a-divider>
         <a-descriptions :column="1" size="small" bordered>
-          <a-descriptions-item label="Image">{{ currentServiceDetailsService.imageName }}</a-descriptions-item>
+          <a-descriptions-item label="Image">
+            {{ currentServiceDetailsService.imageName }}
+            <a-tag v-if="currentServiceDetailsApp && getImageUpdate(currentServiceDetailsApp.appId, currentServiceDetailsService.serviceName)" color="blue" class="update-tag" @click="approveImageUpdate(currentServiceDetailsApp!, currentServiceDetailsService!)">
+              <CloudUploadOutlined /> Update available
+            </a-tag>
+          </a-descriptions-item>
           <a-descriptions-item label="Container ID">{{ currentServiceDetailsService.containerId || '—' }}</a-descriptions-item>
           <a-descriptions-item label="State">{{ currentServiceDetailsService.status?.state ?? currentServiceDetailsService.serviceStatus ?? currentServiceDetailsService.state ?? 'Unknown' }}</a-descriptions-item>
           <a-descriptions-item v-if="currentServiceDetailsService.status?.health" label="Health">
@@ -2445,6 +2506,12 @@ async function deploy() {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+.update-tag {
+  cursor: pointer;
+  font-size: 11px;
+  margin-left: 4px;
+  vertical-align: middle;
 }
 .service-ports { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; min-width: 0; }
 .port-tag {

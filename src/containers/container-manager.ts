@@ -1220,8 +1220,8 @@ export class ContainerManager extends EventEmitter {
 	public async checkImageUpdates(): Promise<Array<ImageUpdateStatus & { appId: number; serviceName: string }>> {
 		if (!this.useRealDocker) return [];
 		const current = await this.getCurrentState();
-		const results: Array<ImageUpdateStatus & { appId: number; serviceName: string }> = [];
 		const cache = new Map<string, Promise<ImageUpdateStatus>>();
+		const pending: Array<{ appId: number; serviceName: string; key: string }> = [];
 		for (const app of Object.values(current.apps ?? {}) as any[]) {
 			for (const svc of app.services ?? []) {
 				if (!svc.containerId) continue;
@@ -1231,11 +1231,14 @@ export class ContainerManager extends EventEmitter {
 				} catch { /* container vanished; leave undefined */ }
 				const key = `${svc.imageName}|${imageId}`;
 				if (!cache.has(key)) cache.set(key, this.dockerManager.checkImageUpdate(svc.imageName, imageId));
-				const status = await cache.get(key)!;
-				results.push({ ...status, appId: app.appId, serviceName: svc.serviceName });
+				pending.push({ appId: app.appId, serviceName: svc.serviceName, key });
 			}
 		}
-		return results;
+		const settled = await Promise.all([...cache.entries()].map(async ([key, p]) => [key, await p.catch(() => null)] as const));
+		const resolved = new Map(settled);
+		return pending
+			.filter((p) => resolved.get(p.key) != null)
+			.map((p) => ({ ...resolved.get(p.key)!, appId: p.appId, serviceName: p.serviceName }));
 	}
 
 	/**

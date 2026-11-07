@@ -845,9 +845,21 @@ export const getServiceInfo = async (appId: number, serviceName: string): Promis
 /**
  * Expose the Docker instance for streaming operations in routes
  */
-export const checkImageUpdates = () => requireCM().checkImageUpdates();
-export const approveImageUpdate = (appId: number, serviceName: string, expectedDigest?: string) =>
-	requireCM().approveImageUpdate(appId, serviceName, expectedDigest);
+let _imageUpdateCache: { data: any; expiresAt: number } | null = null;
+const IMAGE_UPDATE_CACHE_TTL_MS = 5 * 60 * 1000;
+
+export const checkImageUpdates = async () => {
+	if (_imageUpdateCache && Date.now() < _imageUpdateCache.expiresAt) return _imageUpdateCache.data;
+	const data = await requireCM().checkImageUpdates();
+	_imageUpdateCache = { data, expiresAt: Date.now() + IMAGE_UPDATE_CACHE_TTL_MS };
+	return data;
+};
+export const invalidateImageUpdateCache = () => { _imageUpdateCache = null; };
+export const approveImageUpdate = async (appId: number, serviceName: string, expectedDigest?: string) => {
+	const result = await requireCM().approveImageUpdate(appId, serviceName, expectedDigest);
+	_imageUpdateCache = null;
+	return result;
+};
 
 export const getDockerInstance = () => containerManager ? requireCM().getDocker() : undefined;
 

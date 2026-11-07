@@ -232,6 +232,17 @@ export const containersApi = {
   purgeUnused(): Promise<{ images_deleted: number; volumes_deleted: number; space_reclaimed: number }> {
     return client.post('/v1/apps/purge-unused').then(r => r.data)
   },
+
+  checkImageUpdates(): Promise<ImageUpdateStatus[]> {
+    return client.get<{ updates: ImageUpdateStatus[] }>('/v1/apps/image-updates').then(r => r.data.updates)
+  },
+
+  approveImageUpdate(appId: number, serviceName: string, expectedDigest?: string): Promise<ImageUpdateResult> {
+    return client.post<ImageUpdateResult>(
+      `/v1/apps/${appId}/services/${encodeURIComponent(serviceName)}/update-image`,
+      expectedDigest ? { expected_digest: expectedDigest } : {},
+    ).then(r => r.data)
+  },
 }
 
 export interface ContainerMetricsApp {
@@ -250,6 +261,24 @@ export interface ContainerMetricsApp {
 
 export interface ContainerMetricsResponse {
   apps: ContainerMetricsApp[]
+}
+
+export interface ImageUpdateStatus {
+  imageRef: string
+  appId: number
+  serviceName: string
+  deployedDigest?: string
+  remoteDigest?: string
+  updateAvailable: boolean | null
+  reason?: string
+  checkedAt: string
+}
+
+export interface ImageUpdateResult {
+  containerId: string
+  previousImageId?: string
+  newImageId: string
+  digest?: string
 }
 
 export interface AppSystemStats {

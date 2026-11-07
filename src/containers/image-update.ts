@@ -52,7 +52,7 @@ export async function getRemoteDigest(
 	const result: any = await new Promise((resolve, reject) => {
 		modem.dial(
 			{
-				path: `/distribution/${imageRef}/json`,
+				path: `/distribution/${encodeURIComponent(imageRef)}/json`,
 				method: 'GET',
 				authconfig: authConfig,
 				statusCodes: { 200: true, 401: 'unauthorized', 403: 'forbidden', 404: 'not found', 500: 'server error' },

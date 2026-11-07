@@ -1,4 +1,4 @@
-import { checkImageUpdate, imageRepository, localDigestFor } from '../../../src/containers/image-update';
+import { checkImageUpdate, getRemoteDigest, imageRepository, localDigestFor } from '../../../src/containers/image-update';
 
 function fakeDocker(opts: { repoDigests?: string[]; id?: string; remote?: string | Error; missing?: boolean }) {
 	return {
@@ -47,5 +47,21 @@ describe('image update detection', () => {
 		expect(failed.reason).toContain('registry-check-failed');
 		expect((await checkImageUpdate(fakeDocker({}), 'a@sha256:abc')).reason).toBe('pinned-by-digest');
 		expect((await checkImageUpdate(fakeDocker({ missing: true }), 'a:latest')).updateAvailable).toBeNull();
+	});
+
+	it('URL-encodes image refs with slashes for the distribution API', async () => {
+		let dialPath = '';
+		const docker = {
+			modem: {
+				dial: (o: any, cb: any) => { dialPath = o.path; cb(null, { Descriptor: { digest: 'sha256:abc' } }); },
+			},
+		} as any;
+		await getRemoteDigest(docker, 'ghcr.io/org/app:latest');
+		expect(dialPath).toBe(`/distribution/${encodeURIComponent('ghcr.io/org/app:latest')}/json`);
+	});
+
+	it('normalises multi-segment private registry repos', () => {
+		expect(imageRepository('ghcr.io/org/app:v2')).toBe('ghcr.io/org/app');
+		expect(imageRepository('localhost:5000/deep/nested/img:1')).toBe('localhost:5000/deep/nested/img');
 	});
 });
