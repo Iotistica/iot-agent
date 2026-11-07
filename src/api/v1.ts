@@ -312,9 +312,10 @@ router.post(
 router.get(
 	'/v1/apps/image-updates',
 	requireRole('operator'),
-	async (_req: Request, res: Response, next: NextFunction) => {
+	async (req: Request, res: Response, next: NextFunction) => {
 		try {
-			res.status(200).json({ updates: await actions.checkImageUpdates() });
+			const force = req.query.force === 'true' || req.query.force === '1';
+			res.status(200).json({ updates: await actions.checkImageUpdates(force) });
 		} catch (error) {
 			next(error);
 		}

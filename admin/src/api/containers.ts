@@ -233,8 +233,8 @@ export const containersApi = {
     return client.post('/v1/apps/purge-unused').then(r => r.data)
   },
 
-  checkImageUpdates(): Promise<ImageUpdateStatus[]> {
-    return client.get<{ updates: ImageUpdateStatus[] }>('/v1/apps/image-updates').then(r => r.data.updates)
+  checkImageUpdates(force?: boolean): Promise<ImageUpdateStatus[]> {
+    return client.get<{ updates: ImageUpdateStatus[] }>('/v1/apps/image-updates', force ? { params: { force: 'true' } } : undefined).then(r => r.data.updates)
   },
 
   approveImageUpdate(appId: number, serviceName: string, expectedDigest?: string): Promise<ImageUpdateResult> {

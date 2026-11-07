@@ -848,8 +848,8 @@ export const getServiceInfo = async (appId: number, serviceName: string): Promis
 let _imageUpdateCache: { data: any; expiresAt: number } | null = null;
 const IMAGE_UPDATE_CACHE_TTL_MS = 5 * 60 * 1000;
 
-export const checkImageUpdates = async () => {
-	if (_imageUpdateCache && Date.now() < _imageUpdateCache.expiresAt) return _imageUpdateCache.data;
+export const checkImageUpdates = async (force?: boolean) => {
+	if (!force && _imageUpdateCache && Date.now() < _imageUpdateCache.expiresAt) return _imageUpdateCache.data;
 	const data = await requireCM().checkImageUpdates();
 	_imageUpdateCache = { data, expiresAt: Date.now() + IMAGE_UPDATE_CACHE_TTL_MS };
 	return data;

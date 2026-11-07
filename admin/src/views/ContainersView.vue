@@ -60,11 +60,11 @@ function getImageUpdate(appId: number, serviceName: string): ImageUpdateStatus |
   return imageUpdates.value.find(u => u.appId === appId && u.serviceName === serviceName && u.updateAvailable === true)
 }
 
-async function checkImageUpdates() {
+async function checkImageUpdates(force = false) {
   if (imageUpdateChecking.value) return
   imageUpdateChecking.value = true
   try {
-    imageUpdates.value = await containersApi.checkImageUpdates()
+    imageUpdates.value = await containersApi.checkImageUpdates(force)
   } catch { /* silent — non-critical */ }
   finally { imageUpdateChecking.value = false }
 }
@@ -1323,7 +1323,7 @@ async function deploy() {
       <a-button @click="searchQuery = ''">Clear</a-button>
       <div class="filters-actions">
         <a-button :loading="loading" @click="load"><template #icon><ReloadOutlined /></template>Refresh</a-button>
-        <a-button :loading="imageUpdateChecking" :disabled="!dockerAvailable" @click="checkImageUpdates"><template #icon><CloudUploadOutlined /></template>Check Updates</a-button>
+        <a-button :loading="imageUpdateChecking" :disabled="!dockerAvailable" @click="checkImageUpdates(true)"><template #icon><CloudUploadOutlined /></template>Check Updates</a-button>
         <a-button :disabled="!dockerAvailable" @click="openMarketplace"><template #icon><ShopOutlined /></template>Marketplace</a-button>
         <a-button type="primary" :disabled="!dockerAvailable" @click="openDeploy"><template #icon><PlusOutlined /></template>Add Application</a-button>
       </div>
