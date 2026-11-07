@@ -1,11 +1,11 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, h } from 'vue'
 import { useRoute } from 'vue-router'
-import { message } from 'ant-design-vue'
+import { message, Modal } from 'ant-design-vue'
 import type { TableColumnType } from 'ant-design-vue'
 import {
   SaveOutlined, ReloadOutlined, LinkOutlined, CheckCircleOutlined, EditOutlined,
-  QuestionCircleOutlined,
+  QuestionCircleOutlined, CloudDownloadOutlined, ExclamationCircleOutlined,
 } from '@ant-design/icons-vue'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import { useAuth } from '@/composables/useAuth'
@@ -19,6 +19,8 @@ import { anomalyApi, type DriftOptions, type DriftAlertType } from '@/api/anomal
 import { destinationsApi } from '@/api/destinations'
 import { licenseApi } from '@/api/license'
 import type { LicenseStatus } from '@/api/license'
+import { updateApi } from '@/api/update'
+import type { UpdateCheckResult } from '@/api/update'
 
 const route = useRoute()
 const { hasRole } = useAuth()
@@ -508,6 +510,44 @@ function formatExpiryDate(ts?: number | null): string {
   return new Date(ts).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' })
 }
 
+// ── Agent Update ────────────────────────────────────────────────────────────
+
+const updateInfo = ref<UpdateCheckResult | null>(null)
+const updateChecking = ref(false)
+const updateTriggering = ref(false)
+
+async function checkForUpdate(force = false) {
+  updateChecking.value = true
+  try {
+    updateInfo.value = await updateApi.check(force)
+  } catch (e: unknown) {
+    message.error((e as any)?.response?.data?.message ?? (e as any)?.message ?? 'Update check failed')
+  } finally { updateChecking.value = false }
+}
+
+function confirmUpdate() {
+  if (!updateInfo.value?.latestVersion) return
+  const version = updateInfo.value.latestVersion
+  Modal.confirm({
+    title: 'Update Agent',
+    icon: h(ExclamationCircleOutlined),
+    content: `Update to v${version}? The agent will restart during the update.`,
+    okText: 'Update Now',
+    okType: 'primary',
+    onOk: () => triggerUpdate(version),
+  })
+}
+
+async function triggerUpdate(version: string) {
+  updateTriggering.value = true
+  try {
+    await updateApi.trigger(version)
+    message.success('Update started — the agent will restart shortly')
+  } catch (e: unknown) {
+    message.error((e as any)?.response?.data?.message ?? (e as any)?.message ?? 'Failed to trigger update')
+  } finally { updateTriggering.value = false }
+}
+
 async function saveAllAlertConfig() {
   alertConfigSaving.value = true
   try {
@@ -686,6 +726,50 @@ async function saveAllAlertConfig() {
               </a-row>
               </a-form>
             </template>
+          </a-card>
+
+          <a-card v-if="hasRole('admin')" size="small" class="settings-card" style="margin-top: 16px">
+            <template #title>Agent Update</template>
+            <template #extra>
+              <a-button size="small" :loading="updateChecking" @click="checkForUpdate(true)">
+                <template #icon><ReloadOutlined /></template>
+                Check for Updates
+              </a-button>
+            </template>
+
+            <a-descriptions v-if="updateInfo" :column="1" size="small" bordered>
+              <a-descriptions-item label="Current version">
+                <a-tag color="blue">v{{ updateInfo.currentVersion }}</a-tag>
+              </a-descriptions-item>
+              <a-descriptions-item label="Latest version">
+                <template v-if="updateInfo.latestVersion">
+                  <a-tag :color="updateInfo.updateAvailable ? 'orange' : 'green'">v{{ updateInfo.latestVersion }}</a-tag>
+                </template>
+                <span v-else style="color: var(--text-tertiary)">Unknown</span>
+              </a-descriptions-item>
+              <a-descriptions-item label="Status">
+                <a-badge v-if="updateInfo.updateAvailable" status="warning" text="Update available" />
+                <a-badge v-else-if="updateInfo.error" status="error" :text="updateInfo.error" />
+                <a-badge v-else status="success" text="Up to date" />
+              </a-descriptions-item>
+              <a-descriptions-item v-if="updateInfo.releaseDate" label="Release date">
+                {{ updateInfo.releaseDate }}
+              </a-descriptions-item>
+              <a-descriptions-item v-if="updateInfo.notes" label="Release notes">
+                {{ updateInfo.notes }}
+              </a-descriptions-item>
+            </a-descriptions>
+
+            <div v-if="updateInfo?.updateAvailable" style="margin-top: 16px">
+              <a-button type="primary" :loading="updateTriggering" @click="confirmUpdate">
+                <template #icon><CloudDownloadOutlined /></template>
+                Update to v{{ updateInfo.latestVersion }}
+              </a-button>
+            </div>
+
+            <div v-if="!updateInfo && !updateChecking" style="color: var(--text-tertiary); text-align: center; padding: 24px">
+              Click "Check for Updates" to see if a newer version is available.
+            </div>
           </a-card>
         </a-tab-pane>
 

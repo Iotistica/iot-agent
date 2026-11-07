@@ -2457,6 +2457,21 @@ router.delete('/v1/publish/subscriptions/:id', requireRole('operator'), async (r
 });
 
 /**
+ * GET /v1/update/check
+ * Check for available agent updates by fetching the remote manifest.
+ * Query: ?force=true to bypass 5-minute cache.
+ */
+router.get('/v1/update/check', requireRole('admin'), async (_req: Request, res: Response, next: NextFunction) => {
+	try {
+		const force = _req.query.force === 'true';
+		const result = await actions.checkForUpdate(force);
+		return res.json(result);
+	} catch (error) {
+		next(error);
+	}
+});
+
+/**
  * POST /v1/update
  * Trigger an OTA agent self-update.
  * Body: { version: string, force?: boolean }

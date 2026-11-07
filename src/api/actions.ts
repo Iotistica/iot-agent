@@ -573,6 +573,66 @@ export async function triggerUpdate(targetVersion: string, force = false): Promi
 	await agentUpdater.reconcileVersion({ targetVersion, force });
 }
 
+const DEFAULT_MANIFEST_URL = 'https://iotistic.blob.core.windows.net/scripts/agent/latest-version.json';
+const UPDATE_CHECK_CACHE_MS = 5 * 60 * 1000;
+let updateCheckCache: { data: UpdateCheckResult; fetchedAt: number } | undefined;
+
+export interface UpdateCheckResult {
+	currentVersion: string;
+	latestVersion: string | null;
+	updateAvailable: boolean;
+	releaseDate?: string;
+	notes?: string;
+	error?: string;
+}
+
+function compareVersionParts(a: string, b: string): number {
+	const ap = a.split('.').map(Number);
+	const bp = b.split('.').map(Number);
+	for (let i = 0; i < Math.max(ap.length, bp.length); i++) {
+		if ((ap[i] || 0) < (bp[i] || 0)) return -1;
+		if ((ap[i] || 0) > (bp[i] || 0)) return 1;
+	}
+	return 0;
+}
+
+export async function checkForUpdate(force = false): Promise<UpdateCheckResult> {
+	const currentVersion = agentUpdater?.getCurrentVersion() ?? '0.0.0';
+
+	if (!force && updateCheckCache && (Date.now() - updateCheckCache.fetchedAt) < UPDATE_CHECK_CACHE_MS) {
+		return { ...updateCheckCache.data, currentVersion };
+	}
+
+	const manifestUrl = process.env.UPDATE_MANIFEST_URL?.trim() || DEFAULT_MANIFEST_URL;
+	try {
+		const controller = new AbortController();
+		const timeout = setTimeout(() => controller.abort(), 10_000);
+		const res = await fetch(manifestUrl, { signal: controller.signal });
+		clearTimeout(timeout);
+
+		if (!res.ok) {
+			const result: UpdateCheckResult = { currentVersion, latestVersion: null, updateAvailable: false, error: `Manifest fetch failed: ${res.status}` };
+			return result;
+		}
+
+		const manifest = await res.json() as { version?: string; releaseDate?: string; notes?: string };
+		const latestVersion = manifest.version ?? null;
+		const updateAvailable = !!latestVersion && /^\d+\.\d+\.\d+/.test(latestVersion) && compareVersionParts(latestVersion, currentVersion) > 0;
+
+		const result: UpdateCheckResult = {
+			currentVersion,
+			latestVersion,
+			updateAvailable,
+			releaseDate: manifest.releaseDate,
+			notes: manifest.notes,
+		};
+		updateCheckCache = { data: result, fetchedAt: Date.now() };
+		return result;
+	} catch (err: any) {
+		return { currentVersion, latestVersion: null, updateAvailable: false, error: err?.name === 'AbortError' ? 'Manifest fetch timed out' : (err?.message ?? 'Unknown error') };
+	}
+}
+
 /**
  * Run an array of healthchecks, outputting whether all passed or not
  * Used by: GET /v1/healthy
