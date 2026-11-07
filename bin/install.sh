@@ -428,7 +428,8 @@ EOFACL
         echo "Note: setfacl not available; iotistic user will use group membership for auth file access"
     fi
 
-    cat > /usr/local/bin/iotistica-mqtt-reload.sh << 'EOFRELOAD'
+    MQTT_RELOAD_HELPER_TMP="$(mktemp /usr/local/bin/.iotistica-mqtt-reload.sh.XXXXXX)"
+    cat > "$MQTT_RELOAD_HELPER_TMP" << 'EOFRELOAD'
 #!/bin/bash
 set -e
 
@@ -443,7 +444,8 @@ fi
 
 systemctl reload mosquitto
 EOFRELOAD
-    chmod +x /usr/local/bin/iotistica-mqtt-reload.sh
+    chmod +x "$MQTT_RELOAD_HELPER_TMP"
+    mv -f "$MQTT_RELOAD_HELPER_TMP" /usr/local/bin/iotistica-mqtt-reload.sh
 
     # Keep sudoers rule as a best-effort fallback for non-hardened environments.
     # The primary reload mechanism is the systemd path unit below, which does not

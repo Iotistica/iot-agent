@@ -207,7 +207,8 @@ if command -v setfacl > /dev/null 2>&1; then
     setfacl -m u:iotistic:rw /etc/mosquitto/acl || true
 fi
 
-cat > /usr/local/bin/iotistica-mqtt-reload.sh << 'EOFRELOAD'
+MQTT_RELOAD_HELPER_TMP="$(mktemp /usr/local/bin/.iotistica-mqtt-reload.sh.XXXXXX)"
+cat > "$MQTT_RELOAD_HELPER_TMP" << 'EOFRELOAD'
 #!/bin/sh
 set -e
 chown root:mosquitto /etc/mosquitto/passwd /etc/mosquitto/acl
@@ -218,7 +219,8 @@ if command -v setfacl > /dev/null 2>&1; then
 fi
 systemctl reload mosquitto
 EOFRELOAD
-chmod +x /usr/local/bin/iotistica-mqtt-reload.sh
+chmod +x "$MQTT_RELOAD_HELPER_TMP"
+mv -f "$MQTT_RELOAD_HELPER_TMP" /usr/local/bin/iotistica-mqtt-reload.sh
 
 cat > /etc/sudoers.d/iotistica-mqtt-reload << 'EOFSUDO'
 iotistic ALL=(root) NOPASSWD: /usr/local/bin/iotistica-mqtt-reload.sh
