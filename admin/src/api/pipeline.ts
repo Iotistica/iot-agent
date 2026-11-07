@@ -66,6 +66,9 @@ export const pipelineApi = {
   getPoints(): Promise<ActivityEvent[]> {
     return client.get<{ points: ActivityEvent[] }>('/v1/pipeline/points').then(r => r.data.points)
   },
+  getPointHistory(key: string): Promise<Array<{ ts: number; value: unknown }>> {
+    return client.get<{ samples: Array<{ ts: number; value: unknown }> }>('/v1/pipeline/points/history', { params: { key } }).then(r => r.data.samples)
+  },
   getThroughput(): Promise<Record<string, number>> {
     return client.get<{ counters: Record<string, number> }>('/v1/pipeline/throughput').then(r => r.data.counters)
   },

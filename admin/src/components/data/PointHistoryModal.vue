@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onUnmounted, ref, watch } from 'vue'
 import { pipelineApi } from '@/api/pipeline'
-import { pointHistory, type HistorySample } from '@/utils/point-history'
+import { pointHistory, toHistorySamples, type HistorySample } from '@/utils/point-history'
 import type { DataExplorerPointRow } from '@/utils/data-explorer-point-key'
 
 const props = defineProps<{ open: boolean; point: DataExplorerPointRow | null }>()
@@ -17,9 +17,13 @@ async function load() {
   if (!props.open || !point) return
   const id = ++requestId
   try {
-    const events = await pipelineApi.getEvents(2000, point.protocol)
+    const [buffered, events] = await Promise.all([
+      pipelineApi.getPointHistory(point.key),
+      pipelineApi.getEvents(2000, point.protocol),
+    ])
     if (id !== requestId) return
-    samples.value = pointHistory(events, point)
+    const fromBuffer = toHistorySamples(buffered)
+    samples.value = fromBuffer.length ? fromBuffer : pointHistory(events, point)
     error.value = ''
   } catch {
     if (id === requestId) error.value = 'Unable to load point history.'
@@ -72,7 +76,7 @@ const chart = computed(() => {
 
 <template>
   <a-modal :open="open" :title="`History — ${point?.normalizedName || point?.rawPointName || point?.rawObjectName || point?.metric || ''}`" :footer="null" width="720px" destroy-on-close @cancel="emit('update:open', false)">
-    <p class="history-note">Recent published readings held in memory; history is limited and resets when the agent restarts. Boolean values are shown as 0 or 1.</p>
+    <p class="history-note">Recent published readings (up to the last hour) held in memory; history resets when the agent restarts. Boolean values are shown as 0 or 1.</p>
     <div v-if="loading" class="history-empty"><a-spin /></div>
     <a-alert v-else-if="error" type="error" :message="error" />
     <div v-else-if="!chart" class="history-empty">No numeric or boolean history available yet.</div>
