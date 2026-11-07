@@ -416,25 +416,6 @@ jobs:
             --content-type application/json \
             --content-cache-control "no-cache"
 
-      - name: Upload update manifest
-        run: |
-          set -euo pipefail
-          VERSION="${{ needs.version.outputs.version }}"
-          ACCT=${{ secrets.AZURE_STORAGE_ACCOUNT }}
-          cat > /tmp/latest-version.json << EOF
-          {
-            "version": "${VERSION}",
-            "releaseDate": "$(date -u +%Y-%m-%d)",
-            "notes": ""
-          }
-          EOF
-          az storage blob upload --account-name "$ACCT" --container-name scripts \
-            --name "agent/latest-version.json" \
-            --file "/tmp/latest-version.json" \
-            --overwrite true --auth-mode key --only-show-errors --output none \
-            --content-type application/json \
-            --content-cache-control "no-cache"
-
       - name: Create GitHub Release
         run: |
           set -euo pipefail
