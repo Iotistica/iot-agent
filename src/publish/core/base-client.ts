@@ -238,9 +238,19 @@ export abstract class BaseMqttClient extends EventEmitter implements MqttConnect
 		for (let attempt = 0; attempt < this.maxPublishRetries; attempt++) {
 			try {
 				await new Promise<void>((resolve, reject) => {
-					this.client!.publish(targetTopic, payload, { qos }, (err) =>
-						err ? reject(err) : resolve(),
-					);
+					let settled = false;
+					const timer = setTimeout(() => {
+						if (!settled) {
+							settled = true;
+							reject(new Error(`${this.providerName}: publish timed out after 30s`));
+						}
+					}, 30_000);
+					this.client!.publish(targetTopic, payload, { qos }, (err) => {
+						if (settled) return;
+						settled = true;
+						clearTimeout(timer);
+						err ? reject(err) : resolve();
+					});
 				});
 				return;
 			} catch (error) {

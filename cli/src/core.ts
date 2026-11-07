@@ -148,6 +148,12 @@ async function login(): Promise<string> {
 async function getAdminSessionCookie(): Promise<string | undefined> {
   if (adminSessionCookie) return adminSessionCookie;
 
+  const sessionToken = process.env.IOTCTL_SESSION;
+  if (sessionToken) {
+    adminSessionCookie = `admin_session=${sessionToken}`;
+    return adminSessionCookie;
+  }
+
   const request = adminSessionRequest ??= login();
   try {
     adminSessionCookie = await request;

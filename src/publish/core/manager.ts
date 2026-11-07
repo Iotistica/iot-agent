@@ -210,6 +210,7 @@ export class PublishManager extends EventEmitter {
 	private bufferTimer: NodeJS.Timeout | null = null;
 	private needStop = false;
 	private publishing = false;
+	private publishingStartedAt = 0;
 	private connectionHandlersAttached = false;
 	private liveDataInterceptor?: (messages: ProtocolMessage[], endpointName: string) => Promise<ProtocolMessage[]> | ProtocolMessage[];
 	private bindings: HostBinding[] = [];
@@ -720,7 +721,14 @@ export class PublishManager extends EventEmitter {
 	private async publishBatch(): Promise<void> {
 		if (this.needStop) return;
 		if (this.batcher.messageCount === 0) return;
-		if (this.publishing) return;
+		if (this.publishing) {
+			if (this.publishingStartedAt > 0 && Date.now() - this.publishingStartedAt > 60_000) {
+				this.logger?.warn(`Publish cycle stuck for >${Math.round((Date.now() - this.publishingStartedAt) / 1000)}s, force-resetting`);
+				this.publishing = false;
+			} else {
+				return;
+			}
+		}
 
 		if (this.bindings.length === 0) {
 			this.batcher.reset();
@@ -728,6 +736,7 @@ export class PublishManager extends EventEmitter {
 		}
 
 		this.publishing = true;
+		this.publishingStartedAt = Date.now();
 		try {
 
 			const name = this.config.name || 'unknown';
@@ -793,6 +802,7 @@ export class PublishManager extends EventEmitter {
 			await this.publishOnline(topic, data, msgId, baselineSize, messageCount, batchBytes, enriched, name);
 		} finally {
 			this.publishing = false;
+			this.publishingStartedAt = 0;
 		}
 	}
 

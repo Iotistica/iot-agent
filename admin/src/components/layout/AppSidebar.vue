@@ -27,6 +27,8 @@ import IotisticaLogo from '@/components/IotisticaLogo.vue'
 import { useSidebar } from '@/composables/useSidebar'
 import { useAuth } from '@/composables/useAuth'
 import { useProStatus } from '@/composables/useProStatus'
+import { useImageUpdates } from '@/composables/useImageUpdates'
+import { useDockerStatus } from '@/composables/useDockerStatus'
 
 const route = useRoute()
 const router = useRouter()
@@ -34,6 +36,8 @@ const router = useRouter()
 const { collapsed, toggle } = useSidebar()
 const { hasRole } = useAuth()
 const { proInstalled } = useProStatus()
+const { updateCount } = useImageUpdates()
+const { dockerAvailable } = useDockerStatus()
 
 const selectedKey = computed(() => route.path)
 
@@ -117,6 +121,7 @@ function onMenuClick({ key }: { key: string }) {
         <a-menu-item key="/applications">
           <template #icon><ContainerOutlined /></template>
           Applications
+          <a-badge v-if="dockerAvailable && updateCount > 0" :count="updateCount" :number-style="{ backgroundColor: '#1677ff', fontSize: '10px', minWidth: '16px', height: '16px', lineHeight: '16px', boxShadow: 'none' }" class="sidebar-update-badge" />
         </a-menu-item>
 
         <a-menu-item key="/marketplace">
@@ -268,6 +273,10 @@ function onMenuClick({ key }: { key: string }) {
 
 :deep(.ant-menu-dark .ant-menu-item:not(.ant-menu-item-selected):hover) {
   background: #111111 !important;
+}
+
+.sidebar-update-badge {
+  margin-left: 6px;
 }
 
 .pro-badge {
