@@ -1402,7 +1402,7 @@ export class DockerManager extends EventEmitter {
 				throw new Error('Container health check failed during update');
 			}
 
-			// 6. Stop old container (if exists)
+			// 6. Stop old container and free its name (if exists)
 			if (oldContainerId) {
 				this.logger?.infoSync('Stopping old container', {
 					component: LogComponents.dockerManager,
@@ -1418,6 +1418,26 @@ export class DockerManager extends EventEmitter {
 						operation: 'updateContainer',
 						error: error.message
 					});
+				}
+
+				// Rename old container to free finalName before the new container takes it
+				const retiredName = `${finalName}_old_${Date.now()}`;
+				try {
+					await this.renameContainer(oldContainerId, retiredName);
+				} catch (error: any) {
+					this.logger?.warnSync('Failed to rename old container, trying force removal', {
+						component: LogComponents.dockerManager,
+						operation: 'updateContainer',
+						error: error.message
+					});
+					try {
+						const c = this.docker.getContainer(oldContainerId);
+						await c.remove({ force: true });
+					} catch (removeErr: any) {
+						if (removeErr.statusCode !== 404) {
+							throw new Error(`Cannot free container name ${finalName}: ${removeErr.message}`);
+						}
+					}
 				}
 			}
 
@@ -1574,11 +1594,28 @@ export class DockerManager extends EventEmitter {
 				try {
 					await this.removeContainer(oldContainerId, true);
 				} catch (error: any) {
-					this.logger?.warnSync('Failed to remove old container', {
+					this.logger?.warnSync('Failed to remove old container, retrying with force', {
 						component: LogComponents.dockerManager,
 						operation: 'updateContainerStopStart',
 						error: error.message,
 					});
+				}
+
+				const stillExists = await this.findContainerByName(finalName).catch(() => null);
+				if (stillExists) {
+					this.logger?.warnSync('Old container still exists after removal attempt, force-removing', {
+						component: LogComponents.dockerManager,
+						operation: 'updateContainerStopStart',
+						oldContainerId: oldContainerId.substring(0, 12),
+					});
+					try {
+						const c = this.docker.getContainer(oldContainerId);
+						await c.remove({ force: true });
+					} catch (forceErr: any) {
+						if (forceErr.statusCode !== 404) {
+							throw new Error(`Cannot remove old container ${oldContainerId.substring(0, 12)} before recreating: ${forceErr.message}`);
+						}
+					}
 				}
 			}
 
