@@ -201,27 +201,26 @@ export class AgentUpdater {
 	private deviceUuid: string;
 	private currentVersion: string;
 	private logger: AgentLogger;
-	private updateTopic: string;
-	private statusTopic: string;
+	private updateTopic: string = '';
+	private statusTopic: string = '';
 	private scheduledUpdateTimeout?: NodeJS.Timeout;
 
 	constructor(config: UpdaterConfig) {
 		this.deviceUuid = config.deviceUuid;
 		this.logger = config.logger;
-    
+
 		// Detect actual binary version (critical after self-updates)
 		// Using injected config would be stale after agent restart with new binary
 		this.currentVersion = detectBinaryVersion(this.logger);
-    
+
 		this.logger.debugSync("Agent updater initialized with detected version", {
 			component: LogComponents.agentUpdater,
 			version: this.currentVersion,
 			note: "Version detected from binary, not injected config (prevents staleness after self-update)"
 		});
-    
-		// Follow standard IoT topic pattern: iot/{tenantId}/device/{uuid}/agent/{action}
-		this.updateTopic = agentTopic(this.deviceUuid, 'agent', 'update');
-		this.statusTopic = agentTopic(this.deviceUuid, 'agent', 'status');
+
+		// MQTT topics are deferred to initialize() — getTenantId() throws when
+		// the device is not provisioned, and standalone agents don't need them.
 	}
 
 	/**
@@ -380,12 +379,23 @@ export class AgentUpdater {
 	async initialize(): Promise<void> {
 		// Check for successful update from previous run (update script writes this)
 		await this.checkUpdateStatus();
-    
+
 		// Check for pending updates from previous agent run (survives restarts)
 		await this.loadPendingUpdate();
 
+		// Resolve MQTT topics now — safe to skip if tenant ID isn't set (standalone)
+		try {
+			this.updateTopic = agentTopic(this.deviceUuid, 'agent', 'update');
+			this.statusTopic = agentTopic(this.deviceUuid, 'agent', 'status');
+		} catch {
+			this.logger.debugSync("MQTT topics not available — standalone mode", {
+				component: LogComponents.agentUpdater,
+			});
+			return;
+		}
+
 		const mqttManager = CloudMqttClient.getInstance();
-    
+
 		if (!mqttManager.isConnected()) {
 			this.logger.debugSync("MQTT not connected - skipping update listener", {
 				component: LogComponents.agentUpdater,
