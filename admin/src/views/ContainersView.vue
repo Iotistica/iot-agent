@@ -178,33 +178,18 @@ const lastUpdatedLabel = computed(() => lastUpdatedAt.value
   : '')
 
 const storageChart = computed(() => {
-  const stats = sysStats.value
-  const used = stats?.storage_used
-  const total = stats?.storage_total
-  if (typeof used !== 'number' || typeof total !== 'number'
-    || !Number.isFinite(used) || !Number.isFinite(total)
-    || total <= 0 || used < 0 || used > total) return null
+  const disk = sysStats.value?.docker_disk
+  if (!disk || !Number.isFinite(disk.images) || !Number.isFinite(disk.volumes)) return null
 
-  const disk = stats?.docker_disk
-  const breakdown = disk
-    && Number.isFinite(disk.images) && disk.images >= 0
-    && Number.isFinite(disk.volumes) && disk.volumes >= 0
-    && disk.images + disk.volumes <= used
-    ? disk
-    : null
-  const categories = breakdown
-    ? [
-      { name: 'Images', value: breakdown.images, color: '#1677ff' },
-      { name: 'Volumes', value: breakdown.volumes, color: '#722ed1' },
-      { name: 'Other used', value: used - breakdown.images - breakdown.volumes, color: '#9254de' },
-      { name: 'Free space', value: total - used, color: '#454b55' },
-    ]
-    : [
-      { name: 'Used', value: used, color: '#1677ff' },
-      { name: 'Free space', value: total - used, color: '#454b55' },
-    ]
+  const used = disk.images + disk.volumes
+  if (used <= 0) return null
 
-  return { used, total, percent: (used / total) * 100, categories }
+  const categories = [
+    { name: 'Images', value: disk.images, color: '#1677ff' },
+    { name: 'Volumes', value: disk.volumes, color: '#722ed1' },
+  ].filter(c => c.value > 0)
+
+  return { used, total: used, percent: 100, categories }
 })
 const storageDonutStyle = computed(() => {
   const chart = storageChart.value
@@ -1186,7 +1171,7 @@ async function deploy() {
       <a-card size="small" class="resource-card">
         <div class="resource-header">
           <div>
-            <h3>CPU Utilization</h3>
+            <h3>Container CPU</h3>
             <span class="resource-subtitle">Current</span>
           </div>
           <span v-if="lastUpdatedLabel" class="resource-updated">Updated {{ lastUpdatedLabel }}</span>
@@ -1204,7 +1189,7 @@ async function deploy() {
               viewBox="0 0 300 90"
               preserveAspectRatio="none"
               role="img"
-              aria-label="CPU utilization history, percentage scale from zero to one hundred"
+              aria-label="Container CPU usage history"
             >
               <line v-for="y in [5, 45, 85]" :key="y" x1="0" :y1="y" x2="300" :y2="y" class="cpu-grid-line" />
               <path :d="cpuChartArea" class="cpu-chart-area" />
@@ -1235,7 +1220,7 @@ async function deploy() {
         <div class="resource-header">
           <div>
             <h3>Storage Usage</h3>
-            <span class="resource-subtitle">Used / total capacity</span>
+            <span class="resource-subtitle">Docker images &amp; volumes</span>
           </div>
           <div v-if="sysStats?.docker_reclaimable" class="storage-actions">
             <span>Reclaimable {{ fmtMb(sysStats.docker_reclaimable.total) }}</span>
@@ -1243,10 +1228,10 @@ async function deploy() {
           </div>
         </div>
         <div v-if="storageChart" class="storage-layout">
-          <div class="storage-donut" :style="storageDonutStyle" role="img" :aria-label="`${storageChart.percent.toFixed(1)} percent storage used`">
+          <div class="storage-donut" :style="storageDonutStyle" role="img" :aria-label="`Docker storage: ${fmtMb(storageChart.used)}`">
             <div class="storage-donut-center">
-              <strong>{{ storageChart.percent.toFixed(0) }}%</strong>
-              <span>Used</span>
+              <strong>{{ fmtMb(storageChart.used) }}</strong>
+              <span>Docker</span>
             </div>
           </div>
           <div class="storage-legend">
@@ -1259,7 +1244,7 @@ async function deploy() {
               <span class="storage-legend-name"><i :style="{ backgroundColor: category.color }" />{{ category.name }}</span>
               <span>{{ fmtMb(category.value) }} ({{ (category.value / storageChart.total * 100).toFixed(0) }}%)</span>
             </div>
-            <div class="storage-capacity">{{ fmtMb(storageChart.used) }} / {{ fmtMb(storageChart.total) }}</div>
+            <div class="storage-capacity">Total: {{ fmtMb(storageChart.used) }}</div>
           </div>
         </div>
         <div v-else class="resource-empty">

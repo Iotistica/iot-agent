@@ -33,6 +33,11 @@ const { isDark, toggle: toggleTheme } = useTheme()
 
 const agentVersion = ref<string | null>(null)
 const buildId = ref<string | null>(null)
+const commitSha = computed(() => {
+  if (!buildId.value) return null
+  const dash = buildId.value.indexOf('-')
+  return dash > 0 ? buildId.value.slice(0, dash) : buildId.value
+})
 
 const username = computed(() => {
   return currentUser.value?.username || 'User'
@@ -125,7 +130,7 @@ onMounted(async () => {
             v-if="agentVersion"
             class="version-badge"
           >
-            v{{ agentVersion }}<template v-if="buildId"> ({{ buildId }})</template>
+            v{{ agentVersion }}<template v-if="commitSha"> · {{ commitSha }}</template>
           </a-tag>
 
           <span

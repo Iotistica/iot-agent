@@ -52,17 +52,19 @@ function pollOnce(): Promise<void> {
     if (stats.status === 'fulfilled') {
       sysStats.value = stats.value
       lastUpdatedAt.value = sampledAt
-      if (typeof stats.value.cpu_usage === 'number' && Number.isFinite(stats.value.cpu_usage)) {
-        pushHistory(cpuHistory.value, stats.value.cpu_usage)
-        cpuSamples.value = [
-          ...cpuSamples.value.slice(-(PERF_HISTORY - 1)),
-          { timestamp: sampledAt, value: stats.value.cpu_usage },
-        ]
-      }
     }
 
     if (metrics.status === 'fulfilled') {
       appMetrics.value = metrics.value.apps
+      // Aggregate container CPU for the chart (only containers, not host)
+      const totalContainerCpu = metrics.value.apps.reduce(
+        (sum: number, app: ContainerMetricsApp) => sum + app.cpu_percent, 0,
+      )
+      pushHistory(cpuHistory.value, totalContainerCpu)
+      cpuSamples.value = [
+        ...cpuSamples.value.slice(-(PERF_HISTORY - 1)),
+        { timestamp: sampledAt, value: totalContainerCpu },
+      ]
       for (const app of metrics.value.apps) {
         if (!appCpuHistories.value[app.app_id]) {
           appCpuHistories.value[app.app_id] = []
