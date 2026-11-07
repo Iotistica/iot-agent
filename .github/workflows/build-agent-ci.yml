@@ -383,9 +383,97 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  e2e:
+    name: E2E Tests
+    needs: build
+    runs-on: [ubuntu-24.04]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+
+      - name: Cache agent node_modules
+        id: agent-cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: node_modules
+          key: ${{ runner.os }}-node-modules-x86_64-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-node-modules-x86_64-
+
+      - name: Install Agent dependencies
+        if: steps.agent-cache.outputs.cache-hit != 'true'
+        run: npm ci --prefer-offline --no-audit --legacy-peer-deps
+
+      - name: Build Agent
+        run: npm run build
+
+      - name: Build Admin UI
+        working-directory: ./admin
+        run: npm ci --legacy-peer-deps && npm run build
+
+      - name: Install Playwright browsers
+        working-directory: ./admin
+        run: npx playwright install --with-deps chromium
+
+      - name: Start agent and capture admin password
+        run: |
+          STANDALONE=true node dist/app.js > agent.log 2>&1 &
+          AGENT_PID=$!
+          echo "AGENT_PID=$AGENT_PID" >> $GITHUB_ENV
+
+          # Wait for the agent to become healthy
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:48484/ping > /dev/null 2>&1; then
+              echo "Agent is ready"
+              break
+            fi
+            if [ "$i" -eq 30 ]; then
+              echo "Agent failed to start within 60s"
+              cat agent.log
+              exit 1
+            fi
+            sleep 2
+          done
+
+          # Extract the generated admin password from the migration banner
+          PASSWORD=$(grep 'Password:' agent.log | head -1 | awk '{print $NF}')
+          if [ -z "$PASSWORD" ]; then
+            echo "Could not extract admin password from agent logs"
+            cat agent.log
+            exit 1
+          fi
+          echo "$PASSWORD" > /tmp/e2e-admin-password.txt
+
+      - name: Run Playwright tests
+        working-directory: ./admin
+        env:
+          E2E_ADMIN_PASSWORD_FILE: /tmp/e2e-admin-password.txt
+        run: npx playwright test
+
+      - name: Stop agent
+        if: always()
+        run: |
+          if [ -n "$AGENT_PID" ]; then
+            kill "$AGENT_PID" 2>/dev/null || true
+          fi
+
+      - name: Upload Playwright report
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: ${{ !cancelled() }}
+        with:
+          name: playwright-report
+          path: admin/playwright-report/
+          retention-days: 7
+
   upload-azure:
     name: Upload to Azure
-    needs: [build, package-agent, package-cli]
+    needs: [build, package-agent, package-cli, e2e]
     if: github.ref == 'refs/heads/main'
     runs-on: [ubuntu-24.04]
 

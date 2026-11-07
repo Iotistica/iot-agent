@@ -89,7 +89,7 @@ onMounted(async () => {
             aria-hidden="true"
           />
 
-          <h2 v-if="title" class="page-title">
+          <h2 v-if="title" class="page-title" data-testid="page-title">
             {{ title }}
           </h2>
         </div>

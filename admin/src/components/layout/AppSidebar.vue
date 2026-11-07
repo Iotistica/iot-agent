@@ -60,6 +60,7 @@ function onMenuClick({ key }: { key: string }) {
     collapsible
     :trigger="null"
     theme="dark"
+    data-testid="sidebar"
     style="height: 100vh; background: #0a0a0a; display: flex; flex-direction: column; flex-shrink: 0;"
   >
     <div class="logo" :class="{ 'logo--collapsed': collapsed }">

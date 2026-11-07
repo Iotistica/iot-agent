@@ -17,11 +17,13 @@ import type { AgentSettings, AnomalyConfig, Destination } from '@/types'
 import { dashboardApi, type CanonicalUnit, type CustomUnitAlias } from '@/api/dashboard'
 import { anomalyApi, type DriftOptions, type DriftAlertType } from '@/api/anomaly'
 import { destinationsApi } from '@/api/destinations'
+import { licenseApi } from '@/api/license'
+import type { LicenseStatus } from '@/api/license'
 
 const route = useRoute()
 const { hasRole } = useAuth()
 
-const VALID_TABS = ['agent', 'features', 'logging', 'intervals', 'docker', 'units', 'alerts']
+const VALID_TABS = ['agent', 'features', 'logging', 'intervals', 'docker', 'units', 'alerts', 'license']
 const activeTab = ref(
   typeof route.query.tab === 'string' && VALID_TABS.includes(route.query.tab) ? route.query.tab : 'agent'
 )
@@ -36,7 +38,7 @@ const settings = ref<AgentSettings>({})
 // Deep clone for "discard changes" reset
 let lastSaved: AgentSettings = {}
 
-onMounted(() => { load(); loadDockerConfig(); loadCustomAliases(); loadAlertConfig(); loadAlertDrift() })
+onMounted(() => { load(); loadDockerConfig(); loadCustomAliases(); loadAlertConfig(); loadAlertDrift(); loadLicense() })
 
 async function load() {
   loading.value = true
@@ -440,6 +442,71 @@ const alertFrequencyOptions = computed(() => {
   if (ALERT_FREQUENCY_OPTIONS.some((o) => o.value === current)) return ALERT_FREQUENCY_OPTIONS
   return [...ALERT_FREQUENCY_OPTIONS, { value: current, label: `Custom (${fmtCustomCooldown(current)})` }]
 })
+
+// ── License ──────────────────────────────────────────────────────────────────
+
+const licenseStatus = ref<LicenseStatus | null>(null)
+const licenseLoading = ref(false)
+const licenseActivating = ref(false)
+const licenseKey = ref('')
+
+async function loadLicense() {
+  licenseLoading.value = true
+  try {
+    licenseStatus.value = await licenseApi.getStatus()
+  } catch { /* non-fatal */ }
+  finally { licenseLoading.value = false }
+}
+
+async function activateTrial() {
+  licenseActivating.value = true
+  try {
+    licenseStatus.value = await licenseApi.activateTrial()
+    message.success('Trial license activated')
+  } catch (e: unknown) {
+    message.error((e as any)?.response?.data?.message ?? (e as any)?.message ?? 'Trial activation failed')
+  } finally { licenseActivating.value = false }
+}
+
+async function activatePaid() {
+  const key = licenseKey.value.trim()
+  if (!key) { message.error('Please enter a license key'); return }
+  licenseActivating.value = true
+  try {
+    licenseStatus.value = await licenseApi.activatePaid(key)
+    licenseKey.value = ''
+    message.success('License activated')
+  } catch (e: unknown) {
+    message.error((e as any)?.response?.data?.message ?? (e as any)?.message ?? 'License activation failed')
+  } finally { licenseActivating.value = false }
+}
+
+const licenseStateLabel = computed(() => {
+  const map: Record<string, string> = {
+    unlicensed: 'Unlicensed',
+    trial: 'Trial',
+    trial_expired: 'Trial Expired',
+    paid: 'Licensed',
+    paid_expired: 'License Expired',
+  }
+  return map[licenseStatus.value?.state ?? ''] ?? licenseStatus.value?.state ?? '—'
+})
+
+const licenseStateBadge = computed(() => {
+  const map: Record<string, string> = {
+    unlicensed: 'default',
+    trial: 'processing',
+    trial_expired: 'error',
+    paid: 'success',
+    paid_expired: 'warning',
+  }
+  return map[licenseStatus.value?.state ?? ''] ?? 'default'
+})
+
+function formatExpiryDate(ts?: number | null): string {
+  if (ts === undefined || ts === null) return 'Never (perpetual)'
+  return new Date(ts).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' })
+}
 
 async function saveAllAlertConfig() {
   alertConfigSaving.value = true
@@ -1301,6 +1368,81 @@ async function saveAllAlertConfig() {
             <div v-else-if="!alertConfigLoading" style="color: var(--text-tertiary); padding: 48px 0; text-align: center">
               Configuration not available.
             </div>
+          </a-spin>
+        </a-tab-pane>
+
+        <!-- ══ LICENSE ═══════════════════════════════════════════════════════ -->
+        <a-tab-pane key="license" tab="License">
+          <a-spin :spinning="licenseLoading">
+            <a-card size="small" class="settings-card">
+              <template #title>License Status</template>
+              <template #extra>
+                <a-button size="small" @click="loadLicense">
+                  <template #icon><ReloadOutlined /></template>
+                  Refresh
+                </a-button>
+              </template>
+
+              <a-descriptions v-if="licenseStatus" :column="1" size="small" bordered>
+                <a-descriptions-item label="Status">
+                  <a-badge :status="licenseStateBadge as any" />
+                  {{ licenseStateLabel }}
+                </a-descriptions-item>
+                <a-descriptions-item v-if="licenseStatus.licenseId" label="License ID">
+                  <code>{{ licenseStatus.licenseId }}</code>
+                </a-descriptions-item>
+                <a-descriptions-item v-if="licenseStatus.tier" label="Tier">
+                  {{ licenseStatus.tier === 'paid' ? 'Paid' : 'Trial' }}
+                </a-descriptions-item>
+                <a-descriptions-item v-if="licenseStatus.tier" label="Expires">
+                  {{ formatExpiryDate(licenseStatus.expiresAt) }}
+                </a-descriptions-item>
+                <a-descriptions-item v-if="licenseStatus.daysRemaining !== undefined" label="Days remaining">
+                  <span :style="{ color: (licenseStatus.daysRemaining ?? 0) <= 7 ? '#ff4d4f' : undefined, fontWeight: (licenseStatus.daysRemaining ?? 0) <= 7 ? 600 : undefined }">
+                    {{ licenseStatus.daysRemaining }}
+                  </span>
+                </a-descriptions-item>
+                <a-descriptions-item v-if="licenseStatus.invalidReason" label="Issue">
+                  <span style="color: #ff4d4f">{{ licenseStatus.invalidReason }}</span>
+                </a-descriptions-item>
+              </a-descriptions>
+
+              <div v-if="!licenseStatus" style="color: var(--text-tertiary); text-align: center; padding: 24px">
+                Unable to load license status.
+              </div>
+            </a-card>
+
+            <a-card v-if="licenseStatus && hasRole('admin')" size="small" class="settings-card" style="margin-top: 16px">
+              <template #title>Activation</template>
+
+              <!-- Trial activation -->
+              <div v-if="licenseStatus.state === 'unlicensed'" class="license-action">
+                <p style="color: var(--text-secondary); margin-bottom: 12px">
+                  Start a free trial to evaluate all features. No license key required.
+                </p>
+                <a-button type="primary" :loading="licenseActivating" @click="activateTrial">
+                  Start free trial
+                </a-button>
+              </div>
+
+              <!-- Paid activation / upgrade -->
+              <div class="license-action" :style="licenseStatus.state === 'unlicensed' ? 'margin-top: 24px; padding-top: 24px; border-top: 1px solid var(--border-secondary)' : ''">
+                <p style="color: var(--text-secondary); margin-bottom: 12px">
+                  {{ licenseStatus.state === 'unlicensed' ? 'Or enter' : 'Enter' }} a license key to activate{{ licenseStatus.tier === 'trial' ? ' or upgrade from trial' : '' }}.
+                </p>
+                <div style="display: flex; gap: 8px; max-width: 480px">
+                  <a-input
+                    v-model:value="licenseKey"
+                    placeholder="Enter license key"
+                    :disabled="licenseActivating"
+                    @press-enter="activatePaid"
+                  />
+                  <a-button type="primary" :loading="licenseActivating" :disabled="!licenseKey.trim()" @click="activatePaid">
+                    Activate
+                  </a-button>
+                </div>
+              </div>
+            </a-card>
           </a-spin>
         </a-tab-pane>
 

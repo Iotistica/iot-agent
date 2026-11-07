@@ -56,10 +56,11 @@ async function submit() {
         type="error"
         :message="errorMsg"
         show-icon
+        data-testid="login-error"
         style="margin-bottom: 20px"
       />
 
-      <a-form layout="vertical" @finish="submit">
+      <a-form layout="vertical" data-testid="login-form" @finish="submit">
         <a-form-item label="Username">
           <a-input
             v-model:value="username"
@@ -89,6 +90,7 @@ async function submit() {
           size="large"
           :loading="loading"
           block
+          data-testid="login-submit"
           @click="submit"
         >
           Sign in
