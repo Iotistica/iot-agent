@@ -423,7 +423,8 @@ jobs:
 
       - name: Start agent and capture admin password
         run: |
-          STANDALONE=true node dist/app.js > agent.log 2>&1 &
+          mkdir -p ./e2e-data
+          STANDALONE=true DATA_DIR=./e2e-data node dist/app.js > agent.log 2>&1 &
           AGENT_PID=$!
           echo "AGENT_PID=$AGENT_PID" >> $GITHUB_ENV
 
