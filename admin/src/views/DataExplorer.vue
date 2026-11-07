@@ -7,13 +7,14 @@ import { client } from '@/api/client'
 import { pipelineApi, type SubscriptionActivity, type ActivityEvent } from '@/api/pipeline'
 import { datasetsApi, type MlDataset } from '@/api/ml-datasets'
 import { protocolColor, protocolLabel } from '@/utils/protocol'
-import { BarChartOutlined, LineChartOutlined, WifiOutlined, WarningOutlined, ClockCircleOutlined, SaveOutlined, CloseOutlined, DatabaseOutlined, CopyOutlined, EditOutlined, DeleteOutlined, DownloadOutlined, ReloadOutlined, PauseOutlined, PlayCircleOutlined } from '@ant-design/icons-vue'
+import { BarChartOutlined, LineChartOutlined, WifiOutlined, WarningOutlined, ClockCircleOutlined, SaveOutlined, CloseOutlined, DatabaseOutlined, CopyOutlined, EditOutlined, DeleteOutlined, DownloadOutlined, ReloadOutlined, PauseOutlined, PlayCircleOutlined, PushpinOutlined, PushpinFilled } from '@ant-design/icons-vue'
 import CreateDatasetDrawer from '@/components/CreateDatasetDrawer.vue'
 import CreateViewDrawer from '@/components/CreateViewDrawer.vue'
 import PointDetailsDrawer from '@/components/data/PointDetailsDrawer.vue'
 import PointHistoryModal from '@/components/data/PointHistoryModal.vue'
 import { viewsApi, type SavedView as SavedViewType } from '@/api/views'
 import { dataExplorerPoints, matchesDataExplorerView, missingDataExplorerViewPointCount, normalizeDataExplorerPointKey, orderDataExplorerViewPoints, type DataExplorerPointRow } from '@/utils/data-explorer-point-key'
+import { mergePinnedDataExplorerPoints } from '@/utils/data-explorer-pins'
 import { restoreDataExplorerTabs } from '@/utils/data-explorer-tabs'
 
 type PointRow = DataExplorerPointRow
@@ -34,6 +35,8 @@ const historyPoint = ref<PointRow | null>(null)
 const historyOpen = ref(false)
 const paused = ref(false)
 const favorites = ref<string[]>([])
+const pinnedKeys = ref<string[]>([])
+const pinnedPointCache = ref(new Map<string, PointRow>())
 function favKey(p: PointRow): string { return `${p.endpointName}::${p.metric}` }
 const favPointCache = ref(new Map<string, PointRow>())
 type SavedView = SavedViewType
@@ -105,6 +108,14 @@ function persistFavorites() {
     localStorage.setItem('iot-explorer-fav-cache', JSON.stringify(cache))
   } catch {}
 }
+function persistPinned() {
+  try {
+    localStorage.setItem('iot-explorer-pinned', JSON.stringify(pinnedKeys.value))
+    const cache: Record<string, PointRow> = {}
+    for (const [key, point] of pinnedPointCache.value) cache[key] = point
+    localStorage.setItem('iot-explorer-pin-cache', JSON.stringify(cache))
+  } catch {}
+}
 watch([points, favorites], () => {
   for (const p of points.value) {
     const fk = favKey(p)
@@ -114,6 +125,16 @@ watch([points, favorites], () => {
     if (!favorites.value.includes(fk)) favPointCache.value.delete(fk)
   }
   persistFavorites()
+})
+watch([points, pinnedKeys], () => {
+  const pinned = new Set(pinnedKeys.value)
+  for (const point of points.value) {
+    if (pinned.has(point.key)) pinnedPointCache.value.set(point.key, point)
+  }
+  for (const key of pinnedPointCache.value.keys()) {
+    if (!pinned.has(key)) pinnedPointCache.value.delete(key)
+  }
+  persistPinned()
 })
 const sourceOptions = computed(() => [...new Set(points.value.map(p => p.endpointName))]
   .sort((a, b) => friendlySource(a).localeCompare(friendlySource(b)))
@@ -142,10 +163,11 @@ function columnSort(a: PointRow, b: PointRow): number {
 }
 const pointsMatchingFilters = computed(() => {
   const liveKeys = new Set(points.value.map(favKey))
-  const source = [...points.value]
+  let source = [...points.value]
   for (const [fk, p] of favPointCache.value) {
     if (!liveKeys.has(fk)) source.push(p)
   }
+  source = mergePinnedDataExplorerPoints(source, pinnedKeys.value, pinnedPointCache.value)
   const q = search.value.trim().toLowerCase()
   return source.filter(p => {
     return (!q || [friendlySource(p.endpointName), p.metric, p.normalizedName, p.rawPointName, p.rawObjectName, p.destinationName]
@@ -229,6 +251,17 @@ function toggleFavorite(key: string) {
     if (point) favPointCache.value.set(key, point)
   }
   persistFavorites()
+}
+
+function togglePin(point: PointRow) {
+  if (pinnedKeys.value.includes(point.key)) {
+    pinnedKeys.value = pinnedKeys.value.filter(key => key !== point.key)
+    pinnedPointCache.value.delete(point.key)
+  } else {
+    pinnedKeys.value = [...pinnedKeys.value, point.key]
+    pinnedPointCache.value.set(point.key, point)
+  }
+  persistPinned()
 }
 
 // ── ML Datasets ──────────────────────────────────────────────────────────────
@@ -333,7 +366,7 @@ const columns = computed<TableColumnType<PointRow>[]>(() => {
     { title: 'Quality', key: 'quality', width: 105 },
     { title: 'Updated', key: 'updated', width: 110, sorter: true, sortOrder: sortOrderFor('updated') },
     { title: 'Destination', dataIndex: 'destinationName', key: 'destinationName', width: 150, ellipsis: true },
-    { title: '', key: 'action', width: 95 },
+    { title: '', key: 'action', width: 125 },
   )
   return cols
 })
@@ -400,6 +433,18 @@ onMounted(async () => {
       if (favorites.value.length !== saved.length) persistFavorites()
     }
   } catch { /* ignore invalid preferences */ }
+  try {
+    const saved = JSON.parse(localStorage.getItem('iot-explorer-pinned') || '[]')
+    if (Array.isArray(saved)) pinnedKeys.value = saved.filter((v): v is string => typeof v === 'string')
+  } catch { /* ignore invalid preferences */ }
+  try {
+    const savedCache = JSON.parse(localStorage.getItem('iot-explorer-pin-cache') || '{}')
+    for (const [key, point] of Object.entries(savedCache)) {
+      if (pinnedKeys.value.includes(key) && point && typeof point === 'object' && (point as PointRow).key === key) {
+        pinnedPointCache.value.set(key, point as PointRow)
+      }
+    }
+  } catch { /* ignore invalid cache */ }
   try {
     const savedCache = JSON.parse(localStorage.getItem('iot-explorer-fav-cache') || '{}')
     for (const [k, v] of Object.entries(savedCache)) {
@@ -538,7 +583,7 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
             <template v-else-if="column.key === 'unit'">{{ record.unit || '—' }}</template>
             <template v-else-if="column.key === 'quality'"><a-tag v-if="record.quality === 'BAD'" color="red">BAD</a-tag><a-tag v-else-if="isStale(record.timestamp)" color="orange">STALE</a-tag><a-tag v-else color="green">{{ record.quality || 'CURRENT' }}</a-tag></template>
             <template v-else-if="column.key === 'updated'"><span :class="isStale(record.timestamp) ? 'age stale' : 'age'"><i class="status-dot"></i>{{ age(record.timestamp) }}</span></template>
-            <template v-else-if="column.key === 'action'"><a-button type="link" size="small" title="History" aria-label="History" style="color:#722ed1" @click.stop="openHistory(record)"><template #icon><LineChartOutlined /></template></a-button><a-button type="text" size="small" @click.stop="toggleFavorite(favKey(record))"><span :class="favorites.includes(favKey(record)) ? 'star active' : 'star'">{{ favorites.includes(favKey(record)) ? '★' : '☆' }}</span></a-button></template>
+            <template v-else-if="column.key === 'action'"><a-button type="link" size="small" title="History" aria-label="History" style="color:#722ed1" @click.stop="openHistory(record)"><template #icon><LineChartOutlined /></template></a-button><a-button type="text" size="small" :title="favorites.includes(favKey(record)) ? 'Remove from Favorites' : 'Add to Favorites'" :aria-label="favorites.includes(favKey(record)) ? 'Remove from Favorites' : 'Add to Favorites'" @click.stop="toggleFavorite(favKey(record))"><span :class="favorites.includes(favKey(record)) ? 'star active' : 'star'">{{ favorites.includes(favKey(record)) ? '★' : '☆' }}</span></a-button><a-button type="text" size="small" :title="pinnedKeys.includes(record.key) ? 'Unpin — remove this point from the Live grid when it is no longer updating' : 'Pin — keep this point in the Live grid across refreshes'" :aria-label="pinnedKeys.includes(record.key) ? 'Unpin point' : 'Pin point'" :class="{ 'pin-active': pinnedKeys.includes(record.key) }" @click.stop="togglePin(record)"><template #icon><PushpinFilled v-if="pinnedKeys.includes(record.key)" /><PushpinOutlined v-else /></template></a-button></template>
           </template>
           <template #emptyText>No matching recent readings. Check your source, subscription, and destination configuration.</template>
         </a-table>
@@ -595,6 +640,7 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
 .browser-count { background: var(--bg-subtle); border-radius: 20px; padding: 5px 12px; }
 .star { font-size: 21px; color: var(--text-muted); }
 .star.active { color: #e2a42c; }
+.pin-active { color: #1677ff; }
 .age { display: inline-flex; align-items: center; gap: 7px; white-space: nowrap; }
 .status-dot { width: 7px; height: 7px; border-radius: 50%; background: #3cb77d; display: inline-block; }
 .age.stale .status-dot { background: #ed9a38; }
