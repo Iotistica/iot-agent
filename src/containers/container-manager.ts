@@ -20,6 +20,7 @@
  *   → Execute steps
  */
 
+import type { ImageUpdateStatus } from './image-update';
 import { EventEmitter } from 'events';
 import crypto from 'crypto';
 import type Docker from 'dockerode';
@@ -1211,6 +1212,44 @@ export class ContainerManager extends EventEmitter {
 	public setDockerOptions(options: Docker.DockerOptions): void {
 		this.dockerManager = new DockerManager(options, this.logger);
 		this.healthCheckManager = new HealthCheckManager(this.dockerManager.getDockerInstance());
+	}
+
+	/**
+	* Check registry for newer images of running services (detection only, no pulls).
+	*/
+	public async checkImageUpdates(): Promise<Array<ImageUpdateStatus & { appId: number; serviceName: string }>> {
+		if (!this.useRealDocker) return [];
+		const current = await this.getCurrentState();
+		const results: Array<ImageUpdateStatus & { appId: number; serviceName: string }> = [];
+		const cache = new Map<string, Promise<ImageUpdateStatus>>();
+		for (const app of Object.values(current.apps ?? {}) as any[]) {
+			for (const svc of app.services ?? []) {
+				if (!svc.containerId) continue;
+				let imageId: string | undefined;
+				try {
+					imageId = (await this.dockerManager.getDockerInstance().getContainer(svc.containerId).inspect()).Image;
+				} catch { /* container vanished; leave undefined */ }
+				const key = `${svc.imageName}|${imageId}`;
+				if (!cache.has(key)) cache.set(key, this.dockerManager.checkImageUpdate(svc.imageName, imageId));
+				const status = await cache.get(key)!;
+				results.push({ ...status, appId: app.appId, serviceName: svc.serviceName });
+			}
+		}
+		return results;
+	}
+
+	/**
+	* User-approved image update for one service. Keeps the desired image reference
+	* (e.g. "nginx:latest") and the full target service config.
+	*/
+	public async approveImageUpdate(appId: number, serviceName: string, expectedDigest?: string) {
+		const target = (this.targetState.apps as any)?.[appId]?.services?.find((s: any) => s.serviceName === serviceName);
+		if (!target) throw new Error(`Service ${serviceName} not found in app ${appId}`);
+		const app = (this.targetState.apps as any)[appId];
+		return this.dockerManager.updateServiceImage(
+			{ ...target, appId, appName: target.appName ?? app.appName },
+			{ expectedDigest },
+		);
 	}
 
 	public getDocker(): Docker | undefined {
