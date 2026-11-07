@@ -1397,9 +1397,7 @@ async function deploy() {
                 {{ svc.serviceName }}
               </button>
               <span class="service-image" :title="svc.imageName">{{ svc.imageName }}</span>
-              <a-tooltip v-if="getImageUpdate(app.appId, svc.serviceName)" title="Image update available — click to view details">
-                <a-badge status="processing" class="update-dot" @click.stop="openServiceDetails(fullApp(app), svc)" />
-              </a-tooltip>
+              <span v-if="getImageUpdate(app.appId, svc.serviceName)" class="update-tag" @click.stop="openServiceDetails(fullApp(app), svc)">Update</span>
               <a-tooltip v-if="svc.error" :title="svc.error.message" placement="topLeft">
                 <span class="svc-error-hint">{{ svc.error.type }}</span>
               </a-tooltip>
@@ -2522,9 +2520,20 @@ async function deploy() {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.update-dot {
-  margin-left: 6px;
+.update-tag {
+  display: inline-block;
+  font-size: 11px;
+  background: rgba(82, 196, 26, 0.1);
+  color: #52c41a;
+  border: 1px solid rgba(82, 196, 26, 0.35);
+  border-radius: 3px;
+  padding: 1px 5px;
+  white-space: nowrap;
   cursor: pointer;
+  margin-left: 4px;
+}
+.update-tag:hover {
+  border-color: #52c41a;
 }
 .update-section {
   padding: 0 2px;
