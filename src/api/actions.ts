@@ -845,6 +845,10 @@ export const getServiceInfo = async (appId: number, serviceName: string): Promis
 /**
  * Expose the Docker instance for streaming operations in routes
  */
+export const checkImageUpdates = () => requireCM().checkImageUpdates();
+export const approveImageUpdate = (appId: number, serviceName: string, expectedDigest?: string) =>
+	requireCM().approveImageUpdate(appId, serviceName, expectedDigest);
+
 export const getDockerInstance = () => containerManager ? requireCM().getDocker() : undefined;
 
 export function getDockerPortBindings(): Array<{ port: number; protocol: string; address: string; appName: string; serviceName: string }> {

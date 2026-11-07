@@ -11,6 +11,7 @@ import { type ContainerService } from './container-manager';
 import { type AgentLogger } from '../logging/agent-logger';
 import { LogComponents } from '../logging/types';
 import { EventEmitter } from 'events';
+import { checkImageUpdate, getRemoteDigest, localDigestFor, type ImageUpdateStatus } from './image-update';
 import { resolveContainerSecurityPolicy, hostConfigMatchesPolicy } from './container-security';
 import { realpathSync, existsSync, statSync } from 'fs';
 import { isAbsolute, relative, resolve, sep } from 'path';
@@ -1243,10 +1244,12 @@ export class DockerManager extends EventEmitter {
 	*/
 	async updateContainer(
 		service: ContainerService,
-		healthCheckTimeoutMs: number = 30000
+		healthCheckTimeoutMs: number = 30000,
+		options: { forcePull?: boolean; stopBeforeStart?: boolean } = {}
 	): Promise<string> {
-		if (service.config.enableSocketDestination) {
-			return this.updateContainerStopStart(service);
+		// Blue-green needs both containers to coexist; sockets / fixed host ports would conflict.
+		if (service.config.enableSocketDestination || options.stopBeforeStart) {
+			return this.updateContainerStopStart(service, options);
 		}
 
 		const finalName = `${this.sanitizeNamePart(service.appName)}_${this.sanitizeNamePart(service.serviceName)}_${service.serviceId}`;
@@ -1279,8 +1282,8 @@ export class DockerManager extends EventEmitter {
 				});
 			}
 
-			// 2. Ensure image exists (pull if needed)
-			const hasImage = await this.hasImage(service.imageName);
+			// 2. Ensure image exists (pull if needed, or always when an update was approved)
+			const hasImage = options.forcePull ? false : await this.hasImage(service.imageName);
 			if (!hasImage) {
 				this.logger?.infoSync('Pulling new image for update', {
 					component: LogComponents.dockerManager,
@@ -1459,12 +1462,82 @@ export class DockerManager extends EventEmitter {
 		}
 	}
 
+
+	private imageUpdatesInFlight = new Set<string>();
+
+	/**
+	 * Check whether the registry has a newer image than the one a container runs.
+	 * Detection only: never pulls layers or touches containers.
+	 */
+	async checkImageUpdate(imageRef: string, deployedImageId?: string, authConfig?: DockerAuthConfig): Promise<ImageUpdateStatus> {
+		return checkImageUpdate(this.docker, imageRef, deployedImageId, authConfig);
+	}
+
+	/**
+	 * User-approved image update. Pulls first (old container keeps running during the download),
+	 * verifies the pulled digest against what the user approved, recreates the container with the
+	 * same config, and rolls back to the previous image ID (not the mutable tag) on failure.
+	 */
+	async updateServiceImage(
+		service: ContainerService,
+		opts: { expectedDigest?: string; authConfig?: DockerAuthConfig } = {}
+	): Promise<{ containerId: string; previousImageId?: string; newImageId: string; digest?: string }> {
+		const key = `${service.appId}:${service.serviceId}`;
+		if (this.imageUpdatesInFlight.has(key)) {
+			throw new Error('An image update is already in progress for this service');
+		}
+		this.imageUpdatesInFlight.add(key);
+		try {
+			const finalName = `${this.sanitizeNamePart(service.appName)}_${this.sanitizeNamePart(service.serviceName)}_${service.serviceId}`;
+			const oldContainer = await this.findContainerByName(finalName);
+			const previousImageId: string | undefined = oldContainer ? (await oldContainer.inspect()).Image : undefined;
+
+			if (opts.expectedDigest) {
+				const remote = await getRemoteDigest(this.docker, service.imageName, opts.authConfig);
+				if (remote !== opts.expectedDigest) {
+					throw new Error(`Registry digest changed since the update was offered (expected ${opts.expectedDigest}, found ${remote}); re-check before approving`);
+				}
+			}
+
+			await this.pullImageWithRetry(service.imageName, opts.authConfig);
+			this.clearImageCache();
+			const pulled = await this.docker.getImage(service.imageName).inspect();
+			const digest = localDigestFor(service.imageName, pulled.RepoDigests);
+			if (opts.expectedDigest && digest && digest !== opts.expectedDigest) {
+				throw new Error(`Pulled digest ${digest} does not match approved digest ${opts.expectedDigest}`);
+			}
+
+			const stopBeforeStart = (service.config.ports ?? []).some((p) => String(p).includes(':'));
+			try {
+				const containerId = await this.updateContainer(service, 30000, { stopBeforeStart });
+				return { containerId, previousImageId, newImageId: pulled.Id, digest };
+			} catch (error) {
+				const survivor = await this.findContainerByName(finalName).catch(() => null);
+				const survivorImage = survivor ? (await survivor.inspect().catch(() => null))?.Image : undefined;
+				// Blue-green failures leave the old container untouched; only roll back if it is gone/changed.
+				if (previousImageId && survivorImage !== previousImageId) {
+					this.logger?.warnSync('Image update failed, rolling back to previous image', {
+						component: LogComponents.dockerManager,
+						operation: 'updateServiceImage',
+						serviceName: service.serviceName,
+						previousImageId: previousImageId.substring(0, 19),
+					});
+					const rollbackService = { ...service, imageName: previousImageId, config: { ...service.config, image: previousImageId } };
+					await this.updateContainer(rollbackService, 30000, { stopBeforeStart: true });
+				}
+				throw error;
+			}
+		} finally {
+			this.imageUpdatesInFlight.delete(key);
+		}
+	}
+
 	/**
 	 * Update a socket-enabled container using stop-before-start strategy.
 	 * Avoids concurrent socket ownership — only one container can bind the socket at a time.
 	 * Does NOT remove the socket directory on failure (belongs to the service, not a single container).
 	 */
-	private async updateContainerStopStart(service: ContainerService): Promise<string> {
+	private async updateContainerStopStart(service: ContainerService, options: { forcePull?: boolean } = {}): Promise<string> {
 		const finalName = `${this.sanitizeNamePart(service.appName)}_${this.sanitizeNamePart(service.serviceName)}_${service.serviceId}`;
 
 		this.logger?.infoSync('Starting stop-before-start container update (socket-enabled)', {
@@ -1510,7 +1583,7 @@ export class DockerManager extends EventEmitter {
 			}
 
 			// 2. Ensure image exists
-			if (!(await this.hasImage(service.imageName))) {
+			if (options.forcePull || !(await this.hasImage(service.imageName))) {
 				await this.pullImageWithRetry(service.imageName);
 			}
 

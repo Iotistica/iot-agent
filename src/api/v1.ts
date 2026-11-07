@@ -306,6 +306,42 @@ router.post(
 
 
 /**
+ * GET /v1/apps/image-updates
+ * Check registries for newer images (detection only; nothing is pulled or deployed)
+ */
+router.get(
+	'/v1/apps/image-updates',
+	requireRole('operator'),
+	async (_req: Request, res: Response, next: NextFunction) => {
+		try {
+			res.status(200).json({ updates: await actions.checkImageUpdates() });
+		} catch (error) {
+			next(error);
+		}
+	},
+);
+
+/**
+ * POST /v1/apps/:appId/services/:serviceName/update-image
+ * Approve an image update. Body: { expected_digest?: string } (digest the user was shown)
+ */
+router.post(
+	'/v1/apps/:appId/services/:serviceName/update-image',
+	requireRole('operator'),
+	async (req: Request, res: Response, next: NextFunction) => {
+		try {
+			const appId = parseInt(req.params.appId);
+			if (Number.isNaN(appId)) return res.status(400).json({ error: 'Invalid appId' });
+			const expected = typeof req.body?.expected_digest === 'string' ? req.body.expected_digest : undefined;
+			const result = await actions.approveImageUpdate(appId, req.params.serviceName, expected);
+			return res.status(200).json(result);
+		} catch (error) {
+			next(error);
+		}
+	},
+);
+
+/**
  * GET /v1/apps/:appId
  * Get application information
  */
