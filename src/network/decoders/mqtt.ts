@@ -107,7 +107,7 @@ export class MqttDecoder implements ProtocolDecoder {
 		}
 		const status = details.returnCode === 0 ? 'ok' : 'error';
 		const text = details.returnText ?? 'unknown';
-		return { operation: 'CONNACK', summary: `CONNACK ${text}`, status: status as 'ok' | 'error', details };
+		return { operation: 'CONNACK', summary: `CONNACK ${text}`, status, details };
 	}
 
 	private decodePublish(buf: Buffer, offset: number, flags: number, remainingLen: number): DecodedPacket {

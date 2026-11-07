@@ -1783,7 +1783,7 @@ router.get('/v1/devices/:deviceUuid/writable-points', requireRole('operator'), a
 			return res.status(200).json({ points: [] });
 		}
 
-		const points = (endpoint.data_points as any[])
+		const points = (endpoint.data_points as unknown as any[])
 			.filter((dp: any) => {
 				if (dp.writable !== true) return false;
 				if (device.identifier && dp.device_uuid) {

@@ -840,9 +840,9 @@ export class AdapterManager extends EventEmitter {
 												typeof key === "string" &&
 												key.trim() &&
 												typeof value === "string" &&
-												(value as string).trim()
+												value.trim()
 											)
-												acc[key] = value as string;
+												acc[key] = value;
 											return acc;
 										}, {})
 									: undefined,
@@ -863,7 +863,7 @@ export class AdapterManager extends EventEmitter {
 									: undefined,
 							allowArrayMetrics: Boolean(conn.allowArrayMetrics),
 							subTopicDataTypes: Array.isArray(d.data_points)
-								? (d.data_points as any[]).reduce((acc: Record<string, string>, dp: any) => {
+								? (d.data_points as unknown as any[]).reduce((acc: Record<string, string>, dp: any) => {
 									if (dp.subTopic && dp.dataType) acc[dp.subTopic] = dp.dataType;
 									return acc;
 								}, {})
@@ -948,7 +948,7 @@ export class AdapterManager extends EventEmitter {
 					jitterRatio: 0,
 				},
 				devices: endpoints.map((d) => {
-					const conn = d.connection as any;
+					const conn = d.connection as Record<string, any>;
 					const base: string = conn.baseTopic || conn.topic || '';
 					return {
 						name: d.name,

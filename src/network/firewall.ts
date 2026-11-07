@@ -25,7 +25,7 @@ export interface FirewallConfig {
 }
 
 const FIREWALL_CHAIN = 'IOTISTIC-FIREWALL';
-const USER_CHAIN = 'IOTISTIC-USER';
+const _USER_CHAIN = 'IOTISTIC-USER';
 
 // Default LAN ranges. Keep Docker separate so container access can be controlled independently.
 const DEFAULT_ALLOWED_LAN_NETWORKS = [

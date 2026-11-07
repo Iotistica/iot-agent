@@ -487,7 +487,7 @@ export class OpcuaDecoder implements ProtocolDecoder {
 		}
 
 		const statusStr = typeof details.abortStatusName === 'string'
-			? details.abortStatusName as string
+			? details.abortStatusName
 			: 'unknown';
 		const channelPart = secureChannelId !== null ? ` channel=${secureChannelId}` : '';
 		return {

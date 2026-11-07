@@ -215,7 +215,7 @@ function decodePacket(p: CapturedPacket) {
 }
 
 export function serializePacket(p: CapturedPacket) {
-	const { rawPcap, appPayload, reassembledDecoded: _, ...rest } = p;
+	const { rawPcap, appPayload: _appPayload, reassembledDecoded: _, ...rest } = p;
 	const serialized: Record<string, unknown> = { ...rest, size: rawPcap.length };
 	const decoded = decodePacket(p);
 	if (decoded) {
@@ -313,7 +313,7 @@ networkRouter.get('/v1/network/capture/packets/:id', (_req: Request, res: Respon
 		return res.status(404).json({ error: 'Packet not found' });
 	}
 
-	const { rawPcap, appPayload, reassembledDecoded: _, ...rest } = packet;
+	const { rawPcap, appPayload: _appPayload, reassembledDecoded: _, ...rest } = packet;
 	const hexLines: string[] = [];
 	const previewBytes = rawPcap.subarray(16, 16 + Math.min(rawPcap.length - 16, 256));
 	for (let i = 0; i < previewBytes.length; i += 16) {

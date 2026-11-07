@@ -249,7 +249,7 @@ export abstract class BaseMqttClient extends EventEmitter implements MqttConnect
 						if (settled) return;
 						settled = true;
 						clearTimeout(timer);
-						err ? reject(err) : resolve();
+						if (err) { reject(err); } else { resolve(); }
 					});
 				});
 				return;

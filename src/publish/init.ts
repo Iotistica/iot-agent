@@ -358,7 +358,7 @@ export class DevicePublish extends EventEmitter {
 			}
 		};
 
-		const deviceContext = this.loadDeviceContext(config.name!);
+		const deviceContext = this.loadDeviceContext(config.name);
 
 		return new PublishManager(
 			config,
