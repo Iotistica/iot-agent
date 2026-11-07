@@ -3860,6 +3860,12 @@ router.get('/v1/pipeline/points', (_req: Request, res: Response) => {
 	res.json({ points: activityMonitor.getLatestPoints() });
 });
 
+router.get('/v1/pipeline/points/history', (req: Request, res: Response) => {
+	const key = typeof req.query.key === 'string' ? req.query.key : '';
+	if (!key) return res.status(400).json({ error: 'key is required' });
+	res.json({ samples: activityMonitor.getPointHistory(key) });
+});
+
 // Cumulative (never-resets-until-restart) point counters per protocol. Callers
 // poll this repeatedly and diff two snapshots to derive a points/sec rate —
 // same client-side-history approach the Dashboard already uses for CPU/network

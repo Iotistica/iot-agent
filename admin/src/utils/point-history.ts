@@ -14,3 +14,12 @@ export function pointHistory(events: ActivityEvent[], point: DataExplorerPointRo
     return Number.isFinite(ts) && Number.isFinite(value) ? [{ ts, value, id: event.id }] : []
   }).sort((a, b) => a.ts - b.ts || a.id - b.id).map(({ ts, value }) => ({ ts, value }))
 }
+
+export function toHistorySamples(raw: Array<{ ts: number; value: unknown }>): HistorySample[] {
+  return raw.flatMap(({ ts, value: raw }) => {
+    const value = typeof raw === 'boolean' ? Number(raw)
+      : typeof raw === 'number' ? raw
+        : typeof raw === 'string' && raw.trim() ? Number(raw) : NaN
+    return Number.isFinite(ts) && Number.isFinite(value) ? [{ ts, value }] : []
+  }).sort((a, b) => a.ts - b.ts)
+}

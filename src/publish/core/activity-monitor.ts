@@ -73,6 +73,19 @@ export interface ActivityEvent {
 // high-volume protocol evict a quieter one's entire history within seconds.
 const MAX_EVENTS_PER_PROTOCOL = 2000;
 
+// Per-point value history (bounded ring per point, trailing window) backing the
+// Data Explorer history chart. Separate from the per-protocol event feed so a
+// busy protocol can't crowd a point's samples out.
+const MAX_HISTORY_SAMPLES_PER_POINT = 720;
+const HISTORY_WINDOW_MS = 60 * 60 * 1000;
+const MAX_HISTORY_POINTS = 5000;
+
+export interface PointHistorySample { ts: number; value: unknown }
+
+export function pointHistoryKey(p: { protocol: string; endpointName: string; pointIdentityEndpointName?: string; metric: string; normalizedName?: string }): string {
+	return JSON.stringify([p.protocol, p.pointIdentityEndpointName || p.endpointName, p.normalizedName || p.metric]);
+}
+
 interface RecordParams {
 	subscriptionId: number | null;
 	destinationId: number;
@@ -115,6 +128,7 @@ class ActivityMonitor {
 	// into one correctly-ordered feed.
 	private eventsByProtocol = new Map<string, ActivityEvent[]>();
 	private nextEventId = 1;
+	private historyByPoint = new Map<string, PointHistorySample[]>();
 	// Monotonic, never-evicted point counter per protocol (unlike eventsByProtocol,
 	// which is capped and rolls off old entries) — lets a poller compute a
 	// points/sec rate by diffing two snapshots, the same way the dashboard derives
@@ -229,6 +243,7 @@ class ActivityMonitor {
 			JSON.stringify([protocolKey, params.endpointName, params.metric]),
 			event,
 		);
+		this._recordHistory(event, nowMs);
 		const bucket = this.eventsByProtocol.get(protocolKey) ?? [];
 		bucket.push(event);
 		if (bucket.length > MAX_EVENTS_PER_PROTOCOL) {
@@ -259,6 +274,35 @@ class ActivityMonitor {
 		}
 		return merged.slice(-limit).reverse()
 			.map((e) => ({ ...e, endpointName: displayEndpointName(e.endpointName) }));
+	}
+
+	private _recordHistory(event: ActivityEvent, nowMs: number): void {
+		const key = pointHistoryKey({ ...event, endpointName: displayEndpointName(event.endpointName) });
+		const samples = this.historyByPoint.get(key);
+		if (!samples) {
+			if (this.historyByPoint.size >= MAX_HISTORY_POINTS) {
+				const oldest = this.historyByPoint.keys().next().value;
+				if (oldest !== undefined) this.historyByPoint.delete(oldest);
+			}
+			this.historyByPoint.set(key, [{ ts: nowMs, value: event.value }]);
+			return;
+		}
+		// record() fires once per destination binding for the same reading — collapse those.
+		const last = samples[samples.length - 1];
+		if (last && nowMs - last.ts < 1000 && last.value === event.value) return;
+		samples.push({ ts: nowMs, value: event.value });
+		const cutoff = nowMs - HISTORY_WINDOW_MS;
+		let drop = Math.max(0, samples.length - MAX_HISTORY_SAMPLES_PER_POINT);
+		while (drop < samples.length && samples[drop].ts < cutoff) drop++;
+		if (drop > 0) samples.splice(0, drop);
+		// Refresh insertion order so active points are evicted last.
+		this.historyByPoint.delete(key);
+		this.historyByPoint.set(key, samples);
+	}
+
+	getPointHistory(key: string): PointHistorySample[] {
+		const cutoff = Date.now() - HISTORY_WINDOW_MS;
+		return (this.historyByPoint.get(key) ?? []).filter((s) => s.ts >= cutoff);
 	}
 
 	getLatestPoints(): ActivityEvent[] {
