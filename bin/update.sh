@@ -11,6 +11,7 @@ echo "========================================"
 TARGET_VERSION="${1:-latest}"
 FORCE="${2:-false}"
 LOCK_FILE="${3:-/var/lib/iotistic/agent/update.lock}"
+SERVICE_NAME="iotistica-agent"
 STATUS_FILE="/var/lib/iotistic/agent/update-status.json"
 
 # Cleanup function to remove lock file and write status on exit
@@ -185,7 +186,7 @@ echo "Γ£ô Downloaded version: $EXTRACTED_VERSION"
 # Stop agent service
 echo ""
 echo "≡ƒ¢æ Stopping agent service..."
-sudo systemctl stop iotistic-agent
+sudo systemctl stop $SERVICE_NAME
 
 # Replace installation files
 echo ""
@@ -206,7 +207,7 @@ sudo cp -r iotistic-agent-update/* /opt/iotistic/agent/ || {
         sudo tar -xzf "$BACKUP_DIR/agent-backup-${CURRENT_VERSION}-${TIMESTAMP}.tar.gz" -C /opt/iotistic
     fi
     
-    sudo systemctl start iotistic-agent
+    sudo systemctl start $SERVICE_NAME
     exit 1
 }
 
@@ -215,14 +216,14 @@ echo "Γ£ô Files installed"
 # Start agent service
 echo ""
 echo "Γû╢∩╕Å  Starting agent service..."
-sudo systemctl start iotistic-agent
+sudo systemctl start $SERVICE_NAME
 
 # Wait for service to stabilize
 echo "ΓÅ│ Waiting for service to start (15 seconds)..."
 sleep 15
 
 # Verify service is running with new version
-if sudo systemctl is-active --quiet iotistic-agent; then
+if sudo systemctl is-active --quiet $SERVICE_NAME; then
     # Get updated version from package.json
     NEW_VERSION="unknown"
     if [ -f /opt/iotistic/agent/package.json ]; then
@@ -235,7 +236,7 @@ if sudo systemctl is-active --quiet iotistic-agent; then
     echo "   New version: $NEW_VERSION"
     echo ""
     echo "≡ƒôï Recent logs:"
-    sudo journalctl -u iotistic-agent -n 20 --no-pager
+    sudo journalctl -u $SERVICE_NAME -n 20 --no-pager
     
     # Cleanup old backups (keep last 3)
     echo ""
@@ -249,7 +250,7 @@ else
     echo "Γ¥î Service failed to start, attempting rollback..."
     
     # Stop failed service
-    sudo systemctl stop iotistic-agent
+    sudo systemctl stop $SERVICE_NAME
     
     # Restore from backup
     if [ -f "$BACKUP_DIR/agent-backup-${CURRENT_VERSION}-${TIMESTAMP}.tar.gz" ]; then
@@ -259,18 +260,18 @@ else
         sudo tar -xzf "$BACKUP_DIR/agent-backup-${CURRENT_VERSION}-${TIMESTAMP}.tar.gz" -C /opt/iotistic
         
         # Restart service
-        sudo systemctl start iotistic-agent
+        sudo systemctl start $SERVICE_NAME
         sleep 10
         
-        if sudo systemctl is-active --quiet iotistic-agent; then
+        if sudo systemctl is-active --quiet $SERVICE_NAME; then
             echo "ΓÜá∩╕Å  Rollback complete, agent restored to version $CURRENT_VERSION"
         else
             echo "Γ¥î CRITICAL: Service failed to start after rollback"
-            echo "   Manual intervention required: sudo systemctl status iotistic-agent"
+            echo "   Manual intervention required: sudo systemctl status $SERVICE_NAME"
         fi
     else
         echo "Γ¥î CRITICAL: No backup found for rollback"
-        echo "   Manual intervention required: sudo systemctl status iotistic-agent"
+        echo "   Manual intervention required: sudo systemctl status $SERVICE_NAME"
     fi
     
     exit 1
