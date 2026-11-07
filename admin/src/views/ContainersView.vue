@@ -149,16 +149,25 @@ async function load() {
 const cpuTopCount = ref(3)
 const storageTopCount = ref(3)
 const cpuCurrent = computed(() => {
-  const value = sysStats.value?.cpu_usage
-  return typeof value === 'number' && Number.isFinite(value) ? value : null
+  if (!cpuSamples.value.length) return null
+  return cpuSamples.value[cpuSamples.value.length - 1].value
 })
 const cpuPeak = computed(() => cpuSamples.value.length
   ? Math.max(...cpuSamples.value.map(sample => sample.value))
   : null)
+const cpuYMax = computed(() => {
+  const peak = cpuPeak.value ?? 0
+  if (peak <= 0) return 10
+  if (peak <= 5) return Math.ceil(peak + 1)
+  if (peak <= 20) return Math.ceil(peak / 5) * 5
+  if (peak <= 50) return Math.ceil(peak / 10) * 10
+  return 100
+})
+const cpuYMid = computed(() => Math.round(cpuYMax.value / 2))
 const cpuChartPoints = computed(() => cpuSamples.value.map((sample, index) => ({
   ...sample,
   x: cpuSamples.value.length > 1 ? (index / (cpuSamples.value.length - 1)) * 300 : 150,
-  y: 5 + ((100 - Math.max(0, Math.min(100, sample.value))) / 100) * 80,
+  y: 5 + ((cpuYMax.value - Math.max(0, Math.min(cpuYMax.value, sample.value))) / cpuYMax.value) * 80,
 })))
 const cpuChartLine = computed(() => cpuChartPoints.value.reduce((path, point, index, points) => {
   if (index === 0) return `M${point.x.toFixed(1)},${point.y.toFixed(1)}`
@@ -1181,7 +1190,7 @@ async function deploy() {
           <span v-if="cpuPeak != null" class="cpu-peak">Peak {{ cpuPeak.toFixed(1) }}% · recent samples</span>
         </div>
         <div class="cpu-chart-layout">
-          <div class="cpu-y-axis" aria-hidden="true"><span>100%</span><span>50%</span><span>0%</span></div>
+          <div class="cpu-y-axis" aria-hidden="true"><span>{{ cpuYMax }}%</span><span>{{ cpuYMid }}%</span><span>0%</span></div>
           <div class="cpu-chart-wrap">
             <svg
               v-if="cpuChartPoints.length > 1"
