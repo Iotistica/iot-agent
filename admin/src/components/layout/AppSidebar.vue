@@ -132,7 +132,7 @@ function onMenuClick({ key }: { key: string }) {
 
         <a-menu-item key="/anomaly">
           <template #icon><BellOutlined /></template>
-          Detection
+          Analytics
         </a-menu-item>
 
         <a-menu-item key="/mqtt-broker">

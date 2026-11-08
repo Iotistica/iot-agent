@@ -1230,7 +1230,7 @@ async function saveAllAlertConfig() {
         </a-tab-pane>
 
         <!-- ══ ALERTS ════════════════════════════════════════════════════════ -->
-        <a-tab-pane key="alerts" tab="Detection &amp; Alerts">
+        <a-tab-pane key="alerts" tab="Analytics &amp; Alerts">
           <a-spin :spinning="alertConfigLoading">
             <template v-if="alertConfig">
 

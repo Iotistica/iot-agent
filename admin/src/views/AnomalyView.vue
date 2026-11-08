@@ -1307,7 +1307,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <AppLayout title="Detection">
+  <AppLayout title="Analytics">
     <div class="heading">
       <p>On-device anomaly detection, incident tracking, and baseline management.</p>
     </div>
@@ -1682,7 +1682,7 @@ onUnmounted(() => {
       </a-tab-pane>
 
       <!-- ══ RULES ══════════════════════════════════════════════════════════ -->
-      <a-tab-pane key="rules" tab="Rules">
+      <a-tab-pane key="rules" tab="Anomaly Rules">
         <!-- Hidden for now (device/metric name resolution needs more work first) — v-if="false", not deleted. -->
         <a-card v-if="false" size="small" class="list-card" style="margin-bottom: 16px">
           <div class="toolbar">
