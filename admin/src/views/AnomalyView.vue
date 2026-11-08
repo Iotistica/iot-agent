@@ -1650,46 +1650,6 @@ onUnmounted(() => {
         </a-card>
       </a-tab-pane>
 
-      <!-- Group rule detail modal -->
-      <a-modal
-        v-model:open="groupDetailVisible"
-        :title="groupDetailRule ? friendlyLabel(groupDetailRule.metric) : ''"
-        :footer="null"
-        width="720px"
-      >
-        <a-table
-          :columns="[
-            { title: 'Point', key: 'metric', ellipsis: true },
-            { title: 'Device', dataIndex: 'deviceId', key: 'deviceId', width: 140, ellipsis: true },
-            { title: 'State', dataIndex: 'deviceState', key: 'deviceState', width: 90 },
-            { title: 'Status', key: 'status', width: 100 },
-            { title: 'Samples', key: 'samples', width: 100 },
-          ]"
-          :data-source="groupDetailMetrics"
-          :row-key="(r: any) => `${r.metricName}::${r.deviceId}::${r.deviceState}`"
-          :pagination="false"
-          size="small"
-        >
-          <template #bodyCell="{ column, record }">
-            <template v-if="column.key === 'metric'">
-              <span :title="record.metricName">{{ friendlyLabel(record.metricName) }}</span>
-            </template>
-            <template v-else-if="column.key === 'status'">
-              <a-tag v-if="record.bufferSize >= record.windowSize" color="green">ready</a-tag>
-              <a-tag v-else color="blue">collecting</a-tag>
-            </template>
-            <template v-else-if="column.key === 'samples'">
-              <span style="font-variant-numeric: tabular-nums">{{ record.bufferSize }} / {{ record.windowSize }}</span>
-            </template>
-          </template>
-          <template #emptyText>
-            <div style="padding: 16px 0; text-align: center; color: var(--text-muted); font-size: 13px">
-              No data points matched this rule yet.
-            </div>
-          </template>
-        </a-table>
-      </a-modal>
-
       <!-- ══ SCHEMA DRIFT ═══════════════════════════════════════════════════ -->
       <a-tab-pane key="schema-drift" tab="Schema Drift">
         <a-alert
@@ -1917,6 +1877,46 @@ onUnmounted(() => {
       </a-tab-pane>
 
     </a-tabs>
+
+    <!-- ── Group rule detail modal ─────────────────────────────────────────── -->
+    <a-modal
+      v-model:open="groupDetailVisible"
+      :title="groupDetailRule ? friendlyLabel(groupDetailRule.metric) : ''"
+      :footer="null"
+      width="720px"
+    >
+      <a-table
+        :columns="[
+          { title: 'Point', key: 'metric', ellipsis: true },
+          { title: 'Device', dataIndex: 'deviceId', key: 'deviceId', width: 140, ellipsis: true },
+          { title: 'State', dataIndex: 'deviceState', key: 'deviceState', width: 90 },
+          { title: 'Status', key: 'status', width: 100 },
+          { title: 'Samples', key: 'samples', width: 100 },
+        ]"
+        :data-source="groupDetailMetrics"
+        :row-key="(r: any) => `${r.metricName}::${r.deviceId}::${r.deviceState}`"
+        :pagination="false"
+        size="small"
+      >
+        <template #bodyCell="{ column, record }">
+          <template v-if="column.key === 'metric'">
+            <span :title="record.metricName">{{ friendlyLabel(record.metricName) }}</span>
+          </template>
+          <template v-else-if="column.key === 'status'">
+            <a-tag v-if="record.bufferSize >= record.windowSize" color="green">ready</a-tag>
+            <a-tag v-else color="blue">collecting</a-tag>
+          </template>
+          <template v-else-if="column.key === 'samples'">
+            <span style="font-variant-numeric: tabular-nums">{{ record.bufferSize }} / {{ record.windowSize }}</span>
+          </template>
+        </template>
+        <template #emptyText>
+          <div style="padding: 16px 0; text-align: center; color: var(--text-muted); font-size: 13px">
+            No data points matched this rule yet.
+          </div>
+        </template>
+      </a-table>
+    </a-modal>
 
     <!-- ── Resolve incident modal ───────────────────────────────────────────── -->
     <a-modal
