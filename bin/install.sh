@@ -1103,6 +1103,44 @@ CPUQuota=80%
 WantedBy=multi-user.target
 EOFSVC
 
+    # ── Self-update helper (runs as root, triggered by agent writing a file) ──
+    # The agent process has NoNewPrivileges=true so it cannot sudo.
+    # Instead it writes the target version to a trigger file and this
+    # systemd path unit picks it up and runs update.sh as root.
+    cat > /etc/systemd/system/iotistica-agent-update.service << 'EOFUPDSVC'
+[Unit]
+Description=Iotistica Agent Self-Update (runs update.sh as root)
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash -c '\
+  TRIGGER=/var/lib/iotistic/agent/update-trigger; \
+  if [ ! -f "$TRIGGER" ]; then exit 0; fi; \
+  TARGET_VERSION=$(cat "$TRIGGER" | head -1 | tr -d "[:space:]"); \
+  rm -f "$TRIGGER"; \
+  if [ -z "$TARGET_VERSION" ]; then exit 0; fi; \
+  echo "Self-update triggered for version $TARGET_VERSION"; \
+  /opt/iotistic/agent/bin/update.sh "$TARGET_VERSION" false \
+    >> /var/lib/iotistic/agent/update.log 2>&1'
+EOFUPDSVC
+
+    cat > /etc/systemd/system/iotistica-agent-update.path << 'EOFUPDPATH'
+[Unit]
+Description=Watch for agent self-update trigger file
+
+[Path]
+PathExists=/var/lib/iotistic/agent/update-trigger
+Unit=iotistica-agent-update.service
+
+[Install]
+WantedBy=multi-user.target
+EOFUPDPATH
+
+    systemctl daemon-reload
+    systemctl enable --now iotistica-agent-update.path > /dev/null 2>&1
+    echo "✓ Agent self-update path unit installed and active"
+
     # Configure journald limits (prevent disk exhaustion on edge devices)
     # Configure journald log limits
     

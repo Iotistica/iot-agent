@@ -573,84 +573,34 @@ export async function triggerUpdate(targetVersion: string, force = false): Promi
 		throw new Error(`Already on version ${currentVersion}`);
 	}
 
-	const updateScript = '/opt/iotistic/agent/bin/update.sh';
-	const logFile = '/var/lib/iotistic/agent/update.log';
+	// The agent runs with NoNewPrivileges=true so it cannot sudo.
+	// Instead, write the target version to a trigger file that the
+	// iotistica-agent-update.path systemd unit watches. That unit
+	// fires iotistica-agent-update.service which runs update.sh as root.
+	const triggerFile = '/var/lib/iotistic/agent/update-trigger';
 
-	logger?.infoSync('Triggering agent update via update.sh', {
+	logger?.infoSync('Triggering agent update via systemd path unit', {
 		component: 'agent-updater',
 		currentVersion,
 		targetVersion,
-		updateScript,
-		logFile,
+		triggerFile,
 		force,
-		uid: process.getuid?.(),
-		euid: process.geteuid?.(),
-		user: process.env.USER,
 	});
 
-	const { spawn } = await import('child_process');
 	const fs = await import('fs');
 
-	// Check if update script exists
 	try {
-		fs.accessSync(updateScript, fs.constants.X_OK);
-		logger?.infoSync('update.sh found and executable', { component: 'agent-updater' });
+		fs.writeFileSync(triggerFile, targetVersion, { mode: 0o644 });
+		logger?.infoSync('Update trigger file written', {
+			component: 'agent-updater',
+			triggerFile,
+			targetVersion,
+		});
 	} catch (err) {
-		const msg = `update.sh not found or not executable at ${updateScript}`;
+		const msg = `Failed to write update trigger file: ${err}`;
 		logger?.errorSync(msg, { component: 'agent-updater', error: String(err) });
 		throw new Error(msg);
 	}
-
-	// Open log file for capturing output
-	let logFd: number;
-	try {
-		logFd = fs.openSync(logFile, 'a');
-		fs.writeSync(logFd, `\n--- Update triggered at ${new Date().toISOString()} ---\n`);
-		fs.writeSync(logFd, `Target: ${targetVersion}, Current: ${currentVersion}, Force: ${force}\n`);
-		logger?.infoSync('Log file opened', { component: 'agent-updater', logFile });
-	} catch (err) {
-		logger?.warnSync('Could not open update log file, using /tmp fallback', {
-			component: 'agent-updater',
-			error: String(err),
-			logFile,
-		});
-		const fallback = '/tmp/iotistica-update.log';
-		logFd = fs.openSync(fallback, 'a');
-		fs.writeSync(logFd, `\n--- Update triggered at ${new Date().toISOString()} ---\n`);
-	}
-
-	const forceArg = force ? 'true' : 'false';
-	const cmd = `sudo ${updateScript} ${targetVersion} ${forceArg}`;
-	logger?.infoSync('Spawning update process', { component: 'agent-updater', cmd });
-
-	const child = spawn('sudo', [updateScript, targetVersion, forceArg], {
-		detached: true,
-		stdio: ['ignore', logFd, logFd],
-	});
-
-	child.on('error', (err) => {
-		logger?.errorSync('Failed to spawn update process', {
-			component: 'agent-updater',
-			error: String(err),
-		});
-	});
-
-	child.on('exit', (code, signal) => {
-		logger?.infoSync('Update process exited', {
-			component: 'agent-updater',
-			exitCode: code,
-			signal,
-		});
-	});
-
-	child.unref();
-	// Close the fd in the parent after spawn inherits it
-	fs.closeSync(logFd);
-
-	logger?.infoSync('Update process spawned successfully', {
-		component: 'agent-updater',
-		pid: child.pid,
-	});
 }
 
 const DEFAULT_MANIFEST_URL = 'https://iotistic.blob.core.windows.net/scripts/agent/latest-version.json';
