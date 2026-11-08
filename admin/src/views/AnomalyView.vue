@@ -270,12 +270,25 @@ async function loadEdgeAlerts() {
 // buffer.size >= minSamples, which is far below windowSize, so a "real" row can
 // still be actively collecting). isSynthetic distinguishes the two: only true for
 // placeholder rows with no calculated_at/time_slot of their own.
-type BaselineRow = AnomalyBaseline & { pendingWindowSize?: number; isSynthetic?: boolean }
+type BaselineRow = AnomalyBaseline & { pendingWindowSize?: number; isSynthetic?: boolean; isGroupRule?: boolean; groupMetricCount?: number; groupReadyCount?: number }
 const baselines = ref<BaselineRow[]>([])
 const baselinesTotal = ref(0)
 const baselinesLoading = ref(false)
 const baselinesMetric = ref('')
 const baselinesPage = ref(1)
+
+// Group rule detail modal
+const groupDetailVisible = ref(false)
+const groupDetailRule = ref<BaselineRow | null>(null)
+const latestGroupProgress = ref<import('@/api/anomaly').BaselineProgress[]>([])
+const groupDetailMetrics = computed(() => {
+  if (!groupDetailRule.value) return []
+  return latestGroupProgress.value.filter((p) => p.configName === groupDetailRule.value!.metric)
+})
+function openGroupDetail(record: BaselineRow) {
+  groupDetailRule.value = record
+  groupDetailVisible.value = true
+}
 
 // Live-filter as you type instead of requiring Enter/a manual reload button —
 // debounced so every keystroke doesn't fire its own request.
@@ -519,20 +532,30 @@ async function loadBaselines() {
       progress.map((p) => [`${p.metricName}::${p.deviceId}::${p.deviceState}`, p]),
     )
 
-    // saveBaselines() persists a real row once buffer.size >= minSamples (default 5),
-    // well before the buffer reaches windowSize — so a metric can already have a real
-    // baseline row and still be actively collecting toward its full window. Annotate
-    // those rows in place instead of treating "a row exists" as "done collecting",
-    // otherwise the progress indicator disappears after the very first periodic save.
-    const annotatedBaselines: BaselineRow[] = r.baselines.map((b) => {
-      const key = `${b.metric}::${b.device_id}::${b.device_state}`
-      const p = progressByKey.get(key)
-      if (!p || p.bufferSize >= p.windowSize) return b
-      return { ...b, sample_count: p.bufferSize, pendingWindowSize: p.windowSize }
-    })
+    // Metrics covered by source/protocol rules are shown only in the group
+    // summary row + detail modal — hide them from the individual rows.
+    const groupRuleNames = new Set(
+      (config.value?.metrics ?? [])
+        .filter((m) => m.enabled && m.scope && m.scope !== 'point')
+        .map((m) => m.name),
+    )
+    const isGroupedMetric = (p: { configName?: string }) => p.configName && groupRuleNames.has(p.configName)
+    const groupedMetricKeys = new Set(
+      progress.filter((p) => isGroupedMetric(p)).map((p) => `${p.metricName}::${p.deviceId}::${p.deviceState}`),
+    )
+
+    const annotatedBaselines: BaselineRow[] = r.baselines
+      .filter((b) => !groupedMetricKeys.has(`${b.metric}::${b.device_id}::${b.device_state}`))
+      .map((b) => {
+        const key = `${b.metric}::${b.device_id}::${b.device_state}`
+        const p = progressByKey.get(key)
+        if (!p || p.bufferSize >= p.windowSize) return b
+        return { ...b, sample_count: p.bufferSize, pendingWindowSize: p.windowSize }
+      })
 
     const existingKeys = new Set(r.baselines.map((b) => `${b.metric}::${b.device_id}::${b.device_state}`))
     const pendingRows: BaselineRow[] = progress
+      .filter((p) => !isGroupedMetric(p))
       // <= not < : once the buffer fills, it stays visible ("ready, waiting to
       // save") until a real baseline row appears and dedupes it away, rather
       // than vanishing for the gap between filling up and the next periodic save.
@@ -554,21 +577,14 @@ async function loadBaselines() {
         isSynthetic: true,
       }))
 
-    // A rule that hasn't received a single data point yet has no buffer at all, so
-    // it's absent from both `r.baselines` and `progress` — nothing distinguishes
-    // "just added, waiting for first reading" from "not configured". Synthesize a
-    // 0-sample "Collecting" row straight from the rule config so a brand-new rule
-    // shows up immediately instead of appearing to do nothing until data arrives.
-    // Real rows are keyed by their canonical name ("{agentUuid}_{endpointUuid}_ahu_1_rf_speed")
-    // while a legacy pre-qualified rule's config name is the bare form ("ahu_1_rf_speed") —
-    // strip the UUID prefixes the same way the backend's getMetricConfig() does, or a rule
-    // that already has real data keeps showing a duplicate "Collecting" ghost row forever.
     const metricNamesWithData = new Set([
       ...r.baselines.map((b) => canonicalBareMetricName(b.metric)),
       ...progress.map((p) => canonicalBareMetricName(p.metricName)),
     ])
+
+    // Point-scoped rules that haven't received data yet — synthetic placeholder rows.
     const notStartedRows: BaselineRow[] = (config.value?.metrics ?? [])
-      .filter((m) => m.enabled)
+      .filter((m) => m.enabled && (!m.scope || m.scope === 'point'))
       .filter((m) => !metricNamesWithData.has(m.name))
       .filter((m) => !filterText || m.name.toLowerCase().includes(filterText))
       .map((m) => ({
@@ -586,8 +602,40 @@ async function loadBaselines() {
         isSynthetic: true,
       }))
 
-    baselines.value = [...notStartedRows, ...pendingRows, ...annotatedBaselines]
-    baselinesTotal.value = r.total + pendingRows.length + notStartedRows.length
+    // Source/protocol-scoped rules — one summary row per rule, aggregating
+    // all individual metric buffers matched by that rule via configName.
+    latestGroupProgress.value = progress
+    const groupRules = (config.value?.metrics ?? []).filter(
+      (m) => m.enabled && m.scope && m.scope !== 'point',
+    )
+    const groupRows: BaselineRow[] = groupRules
+      .filter((m) => !filterText || m.name.toLowerCase().includes(filterText))
+      .map((m) => {
+        const matched = progress.filter((p) => p.configName === m.name)
+        const readyCount = matched.filter((p) => p.bufferSize >= p.windowSize).length
+        const totalCount = matched.length
+        const allReady = totalCount > 0 && readyCount === totalCount
+        return {
+          metric: m.name,
+          device_id: m.scope === 'source' ? (m.sourcePattern ?? '') : '',
+          device_state: m.scope === 'protocol' ? (m.protocolPattern ?? '') : '',
+          time_slot: -1,
+          mean: null,
+          std_dev: null,
+          median: null,
+          mad: null,
+          sample_count: readyCount,
+          calculated_at: 0,
+          pendingWindowSize: allReady ? undefined : m.windowSize,
+          isSynthetic: true,
+          isGroupRule: true,
+          groupMetricCount: totalCount,
+          groupReadyCount: readyCount,
+        }
+      })
+
+    baselines.value = [...notStartedRows, ...groupRows, ...pendingRows, ...annotatedBaselines]
+    baselinesTotal.value = r.total + pendingRows.length + notStartedRows.length + groupRows.length
   } catch { /* non-fatal */ } finally {
     baselinesLoading.value = false
   }
@@ -1548,7 +1596,8 @@ onUnmounted(() => {
         >
           <template #bodyCell="{ column, record }">
             <template v-if="column.key === 'metric'">
-              <span :title="record.metric">{{ friendlyLabel(record.metric) }}</span>
+              <a v-if="record.isGroupRule" @click="openGroupDetail(record)" style="cursor: pointer">{{ friendlyLabel(record.metric) }}</a>
+              <span v-else :title="record.metric">{{ friendlyLabel(record.metric) }}</span>
             </template>
             <template v-else-if="column.key === 'device_id'">
               <span :title="record.device_id">{{ deviceDisplayName(record.device_id) }}</span>
@@ -1568,7 +1617,12 @@ onUnmounted(() => {
             </template>
             <template v-else-if="column.key === 'sample_count'">
               <span style="font-variant-numeric: tabular-nums">
-                {{ warmupRemainingMs && record.pendingWindowSize ? '—' : record.pendingWindowSize ? `${record.sample_count} / ${record.pendingWindowSize}` : record.sample_count }}
+                <template v-if="record.isGroupRule">
+                  {{ record.groupMetricCount ? `${record.groupReadyCount} of ${record.groupMetricCount} ready` : '—' }}
+                </template>
+                <template v-else>
+                  {{ warmupRemainingMs && record.pendingWindowSize ? '—' : record.pendingWindowSize ? `${record.sample_count} / ${record.pendingWindowSize}` : record.sample_count }}
+                </template>
               </span>
             </template>
             <template v-else-if="column.key === 'mean'">
@@ -1595,6 +1649,46 @@ onUnmounted(() => {
         </a-table>
         </a-card>
       </a-tab-pane>
+
+      <!-- Group rule detail modal -->
+      <a-modal
+        v-model:open="groupDetailVisible"
+        :title="groupDetailRule ? friendlyLabel(groupDetailRule.metric) : ''"
+        :footer="null"
+        width="720px"
+      >
+        <a-table
+          :columns="[
+            { title: 'Point', key: 'metric', ellipsis: true },
+            { title: 'Device', dataIndex: 'deviceId', key: 'deviceId', width: 140, ellipsis: true },
+            { title: 'State', dataIndex: 'deviceState', key: 'deviceState', width: 90 },
+            { title: 'Status', key: 'status', width: 100 },
+            { title: 'Samples', key: 'samples', width: 100 },
+          ]"
+          :data-source="groupDetailMetrics"
+          :row-key="(r: any) => `${r.metricName}::${r.deviceId}::${r.deviceState}`"
+          :pagination="false"
+          size="small"
+        >
+          <template #bodyCell="{ column, record }">
+            <template v-if="column.key === 'metric'">
+              <span :title="record.metricName">{{ friendlyLabel(record.metricName) }}</span>
+            </template>
+            <template v-else-if="column.key === 'status'">
+              <a-tag v-if="record.bufferSize >= record.windowSize" color="green">ready</a-tag>
+              <a-tag v-else color="blue">collecting</a-tag>
+            </template>
+            <template v-else-if="column.key === 'samples'">
+              <span style="font-variant-numeric: tabular-nums">{{ record.bufferSize }} / {{ record.windowSize }}</span>
+            </template>
+          </template>
+          <template #emptyText>
+            <div style="padding: 16px 0; text-align: center; color: var(--text-muted); font-size: 13px">
+              No data points matched this rule yet.
+            </div>
+          </template>
+        </a-table>
+      </a-modal>
 
       <!-- ══ SCHEMA DRIFT ═══════════════════════════════════════════════════ -->
       <a-tab-pane key="schema-drift" tab="Schema Drift">

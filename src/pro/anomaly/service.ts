@@ -135,6 +135,9 @@ export class AnomalyDetectionService {
 	private metricProfiles = new Map<string, string>();
 	// Throttle repetitive logs for metrics that are fed but not configured.
 	private unconfiguredMetricLogCounts = new Map<string, number>();
+	// Maps bufferKey → config rule name so getBaselineProgress() can trace
+	// buffers back to their matched rule (needed for source/protocol-scoped rules).
+	private bufferRuleMap = new Map<string, string>();
 	// Startup timestamp for warm-up period (prevents false positives on new agents)
 	private startupTimestamp: number = Date.now();
 	private warmupPeriodMs: number;
@@ -331,6 +334,7 @@ export class AnomalyDetectionService {
 			});
 		}
 
+		this.bufferRuleMap.set(bufferKey, metricConfig.name);
 		addValue(buffer, dataPoint.value, dataPoint.timestamp);
 
 		// Run detection if buffer has enough samples (async, updates cache)
@@ -889,20 +893,21 @@ export class AnomalyDetectionService {
 		deviceId: string;
 		bufferSize: number;
 		windowSize: number;
+		configName?: string;
 	}> {
 		const results: Array<{
 			metricName: string; deviceState: CanonicalDeviceState; deviceId: string;
-			bufferSize: number; windowSize: number;
+			bufferSize: number; windowSize: number; configName?: string;
 		}> = [];
 		for (const [bufferKey, buffer] of this.buffers.entries()) {
 			const parsed = this.parseBufferKey(bufferKey);
-			const metricConfig = this.getMetricConfig(parsed.metricName);
-			// A buffer created while the rule was enabled isn't torn down when the
-			// rule is later disabled — without this check it lingers here forever,
-			// showing "collecting" for a metric that will never actually progress.
+			const ruleName = this.bufferRuleMap.get(bufferKey);
+			const metricConfig = ruleName
+				? this.config.metrics.find(m => m.name === ruleName)
+				: this.getMetricConfig(parsed.metricName);
 			if (metricConfig && !metricConfig.enabled) continue;
 			const windowSize = metricConfig?.windowSize ?? this.config.defaults?.windowSize ?? 120;
-			results.push({ ...parsed, bufferSize: buffer.size, windowSize });
+			results.push({ ...parsed, bufferSize: buffer.size, windowSize, configName: ruleName });
 		}
 		return results;
 	}
@@ -1364,6 +1369,7 @@ export class AnomalyDetectionService {
 				const { metricName } = this.parseBufferKey(bufferKey);
 				if (!this.getMetricConfig(metricName)) {
 					this.buffers.delete(bufferKey);
+					this.bufferRuleMap.delete(bufferKey);
 					this.anomalyScores.delete(bufferKey);
 					this.anomalyMetadata.delete(bufferKey);
 					this.predictionCadenceState.delete(bufferKey);

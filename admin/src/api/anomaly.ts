@@ -64,6 +64,7 @@ export interface BaselineProgress {
   deviceId: string
   bufferSize: number
   windowSize: number
+  configName?: string
 }
 
 export interface SchemaDriftBaselineRow {
