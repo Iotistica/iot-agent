@@ -289,7 +289,7 @@ watch(baselinesMetric, () => {
 const baselineColumns = [
   { title: 'Point', key: 'metric', ellipsis: true, sorter: (a: BaselineRow, b: BaselineRow) => a.metric.localeCompare(b.metric) },
   { title: 'Device', key: 'device_id', width: 160, ellipsis: true, sorter: (a: BaselineRow, b: BaselineRow) => a.device_id.localeCompare(b.device_id) },
-  { title: 'State', dataIndex: 'device_state', key: 'device_state', width: 100, sorter: (a: BaselineRow, b: BaselineRow) => a.device_state.localeCompare(b.device_state) },
+  { title: 'Status', dataIndex: 'device_state', key: 'device_state', width: 100, sorter: (a: BaselineRow, b: BaselineRow) => a.device_state.localeCompare(b.device_state) },
   { title: 'Slot', dataIndex: 'time_slot', key: 'time_slot', width: 55, sorter: (a: BaselineRow, b: BaselineRow) => a.time_slot - b.time_slot },
   { title: 'Mean', key: 'mean', width: 90, sorter: (a: BaselineRow, b: BaselineRow) => (a.mean ?? 0) - (b.mean ?? 0) },
   { title: 'Std dev', key: 'std_dev', width: 90, sorter: (a: BaselineRow, b: BaselineRow) => (a.std_dev ?? 0) - (b.std_dev ?? 0) },
@@ -446,16 +446,6 @@ function deviceDisplayName(idOrName: string | undefined): string {
 }
 
 // Tag color for a baseline row's canonical device state (CanonicalDeviceState
-// in iot-agent-pro: 'running' | 'idle' | 'fault' | 'unknown').
-function deviceStateColor(state: string | undefined): string {
-  switch (state) {
-    case 'running': return 'green'
-    case 'idle': return 'default'
-    case 'fault': return 'red'
-    default: return 'default'
-  }
-}
-
 // The metric's own device UUID segment: metrics are named
 // "{agentUuid}_{deviceUuid}_{bare_metric}" — the LAST UUID segment is the
 // device's own endpoint UUID (the first is the agent-wide UUID, constant
@@ -1564,23 +1554,21 @@ onUnmounted(() => {
               <span :title="record.device_id">{{ deviceDisplayName(record.device_id) }}</span>
             </template>
             <template v-else-if="column.key === 'device_state'">
-              <template v-if="record.pendingWindowSize">
-                <a-tooltip
-                  v-if="warmupRemainingMs"
-                  :title="`Collecting baseline data. Alerts are paused during agent warmup (${warmupCountdownLabel} left).`"
-                >
-                  <a-tag color="blue">collecting</a-tag>
-                </a-tooltip>
-                <a-tag v-else color="blue">collecting</a-tag>
-              </template>
-              <a-tag v-else :color="deviceStateColor(record.device_state)">{{ record.device_state }}</a-tag>
+              <a-tooltip
+                v-if="warmupRemainingMs && record.pendingWindowSize"
+                :title="`Alerts are paused during warmup (${warmupCountdownLabel} left). Baseline collection will begin shortly.`"
+              >
+                <a-tag color="orange">warming up</a-tag>
+              </a-tooltip>
+              <a-tag v-else-if="record.pendingWindowSize" color="blue">collecting</a-tag>
+              <a-tag v-else color="green">ready</a-tag>
             </template>
             <template v-else-if="column.key === 'time_slot'">
               {{ record.isSynthetic ? '—' : record.time_slot }}
             </template>
             <template v-else-if="column.key === 'sample_count'">
               <span style="font-variant-numeric: tabular-nums">
-                {{ record.pendingWindowSize ? `${record.sample_count} / ${record.pendingWindowSize}` : record.sample_count }}
+                {{ warmupRemainingMs && record.pendingWindowSize ? '—' : record.pendingWindowSize ? `${record.sample_count} / ${record.pendingWindowSize}` : record.sample_count }}
               </span>
             </template>
             <template v-else-if="column.key === 'mean'">

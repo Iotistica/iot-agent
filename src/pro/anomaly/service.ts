@@ -304,6 +304,9 @@ export class AnomalyDetectionService {
 			return; // Metric not configured for anomaly detection
 		}
 
+		const agentUptimeMs = Date.now() - this.startupTimestamp;
+		if (agentUptimeMs < this.warmupPeriodMs) return;
+
 		// LOG: Entry point - new data point received
 		this.logger?.debugSync('Processing data point', {
 			component: LOG_COMPONENT,
@@ -423,30 +426,6 @@ export class AnomalyDetectionService {
 	): Promise<void> {
 		const results: AnomalyAlert[] = [];
 		let maxConfidence = 0.0; // Track max confidence across all detectors
-
-		// WARM-UP PERIOD: Suppress alerts for first 15 minutes after agent startup
-		// Prevents false positives from:
-		// - Initial data collection noise
-		// - Simulator/test environment static data
-		// - Insufficient baseline samples
-		const agentUptimeMs = Date.now() - this.startupTimestamp;
-		if (agentUptimeMs < this.warmupPeriodMs) {
-			const remainingMinutes = Math.ceil((this.warmupPeriodMs - agentUptimeMs) / 60000);
-			this.logger?.debugSync(`Anomaly detection in warm-up mode (${remainingMinutes} min remaining)`, {
-				component: LOG_COMPONENT,
-				metric: dataPoint.metric,
-				uptimeMs: agentUptimeMs,
-				warmupMs: this.warmupPeriodMs,
-			});
-			// Still update buffers and calculate scores for learning, just don't alert
-			const warmupKey = this.getBufferKey(
-				dataPoint.metric,
-				this.resolveDeviceState(dataPoint),
-				this.resolveDeviceId(dataPoint)
-			);
-			this.anomalyScores.set(warmupKey, 0.0);
-			return;
-		}
 
 		// Get time slot for seasonal baseline lookup
 		const seasonalityPattern = metricConfig.seasonality || 'none';
