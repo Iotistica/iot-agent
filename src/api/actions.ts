@@ -597,7 +597,7 @@ export async function triggerUpdate(targetVersion: string, force = false): Promi
 		logger?.infoSync('update.sh found and executable', { component: 'agent-updater' });
 	} catch (err) {
 		const msg = `update.sh not found or not executable at ${updateScript}`;
-		logger?.errorSync(msg, { component: 'agent-updater', error: String(err) });
+		logger?.errorSync(msg, err instanceof Error ? err : new Error(String(err)), { component: 'agent-updater' });
 		throw new Error(msg);
 	}
 
@@ -629,9 +629,8 @@ export async function triggerUpdate(targetVersion: string, force = false): Promi
 	});
 
 	child.on('error', (err) => {
-		logger?.errorSync('Failed to spawn update process', {
+		logger?.errorSync('Failed to spawn update process', err instanceof Error ? err : new Error(String(err)), {
 			component: 'agent-updater',
-			error: String(err),
 		});
 	});
 
