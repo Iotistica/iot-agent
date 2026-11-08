@@ -257,6 +257,7 @@ function selectSinglePoint(pt: PointCatalogEntry) {
                       :checked="checkedKeys.has(pt.pointKey)"
                       @change="togglePoint(pt.pointKey)"
                     />
+                    <span v-if="mode === 'single'" class="radio-dot" />
                     <span class="pt-name">{{ pt.normalizedName }}</span>
                     <span v-if="pt.rawName !== pt.normalizedName" class="pt-raw">{{ pt.rawName }}</span>
                   </div>
@@ -303,6 +304,8 @@ function selectSinglePoint(pt: PointCatalogEntry) {
 .point-item { display: flex; align-items: center; gap: 8px; padding: 4px 0; }
 .point-item--clickable { cursor: pointer; padding: 6px 4px; border-radius: 4px; }
 .point-item--clickable:hover { background: var(--bg-selected-light); }
+.point-item--clickable:hover .radio-dot { border-color: #1677ff; }
+.radio-dot { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--border-color-strong); flex-shrink: 0; box-sizing: border-box; }
 .pt-name { font-size: 13px; color: var(--text-primary); }
 .pt-raw { font-size: 11px; color: var(--text-tertiary); }
 
