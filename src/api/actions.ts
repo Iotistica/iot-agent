@@ -567,10 +567,30 @@ export function getLocalLogBackend(): LocalLogBackend | undefined {
 }
 
 export async function triggerUpdate(targetVersion: string, force = false): Promise<void> {
-	if (!agentUpdater) {
-		throw new Error('Agent updater not available');
+	const currentVersion = agentUpdater?.getCurrentVersion() ?? '0.0.0';
+
+	if (!force && targetVersion === currentVersion) {
+		throw new Error(`Already on version ${currentVersion}`);
 	}
-	await agentUpdater.reconcileVersion({ targetVersion, force });
+
+	const installScriptUrl = process.env.INSTALL_SCRIPT_URL?.trim()
+		|| 'https://iotistic.blob.core.windows.net/scripts/agent/install.sh';
+
+	logger?.infoSync('Triggering agent update via install.sh', {
+		component: 'agent-updater',
+		currentVersion,
+		targetVersion,
+		installScriptUrl,
+		force,
+	});
+
+	const { spawn } = await import('child_process');
+	const child = spawn('bash', ['-c', `curl -sfL "${installScriptUrl}" | sudo IOTISTICA_AGENT_VERSION="${targetVersion}" sh`], {
+		detached: true,
+		stdio: 'ignore',
+		env: { ...process.env, IOTISTICA_AGENT_VERSION: targetVersion },
+	});
+	child.unref();
 }
 
 const DEFAULT_MANIFEST_URL = 'https://iotistic.blob.core.windows.net/scripts/agent/latest-version.json';
