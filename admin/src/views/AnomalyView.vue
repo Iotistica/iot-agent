@@ -1564,13 +1564,15 @@ onUnmounted(() => {
               <span :title="record.device_id">{{ deviceDisplayName(record.device_id) }}</span>
             </template>
             <template v-else-if="column.key === 'device_state'">
-              <a-tooltip
-                v-if="warmupRemainingMs"
-                :title="`Agent-wide warmup, ${warmupCountdownLabel} left — not specific to this rule. Alerts pause for every metric for 15 minutes after the agent starts, to avoid false positives from startup noise. Baseline collection isn't affected.`"
-              >
-                <a-tag color="orange">warming up</a-tag>
-              </a-tooltip>
-              <a-tag v-else-if="record.pendingWindowSize" color="blue">collecting</a-tag>
+              <template v-if="record.pendingWindowSize">
+                <a-tooltip
+                  v-if="warmupRemainingMs"
+                  :title="`Collecting baseline data. Alerts are paused during agent warmup (${warmupCountdownLabel} left).`"
+                >
+                  <a-tag color="blue">collecting</a-tag>
+                </a-tooltip>
+                <a-tag v-else color="blue">collecting</a-tag>
+              </template>
               <a-tag v-else :color="deviceStateColor(record.device_state)">{{ record.device_state }}</a-tag>
             </template>
             <template v-else-if="column.key === 'time_slot'">
@@ -1932,7 +1934,7 @@ onUnmounted(() => {
         />
 
         <!-- Source scope: endpoint selector -->
-        <a-form-item v-if="scopeMode === 'source'" label="Source endpoint" required>
+        <a-form-item v-if="scopeMode === 'source'" label="Source" required>
           <a-select
             v-model:value="selectedSource"
             placeholder="Select an endpoint…"
