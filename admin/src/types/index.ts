@@ -355,9 +355,14 @@ export interface AnomalyAlert {
   consecutiveCount: number
 }
 
+export type MetricScope = 'point' | 'source' | 'protocol'
+
 export interface AnomalyMetricConfig {
   name: string
   deviceName?: string
+  scope?: MetricScope
+  sourcePattern?: string
+  protocolPattern?: string
   enabled: boolean
   methods: DetectionMethod[]
   threshold: number

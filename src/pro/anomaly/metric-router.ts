@@ -7,16 +7,22 @@ import type {
 	Protocol,
 } from './types.js';
 
+export interface MetricMatchContext {
+	protocol?: string;
+	endpointId?: string;
+}
+
 export function getMetricConfig(
 	metrics: readonly MetricConfig[],
 	metricName: string,
+	context?: MetricMatchContext,
 ): MetricConfig | undefined {
-	const exact = metrics.find((metric) => metric.name === metricName);
-	if (exact) {
-		return exact;
-	}
+	const pointScoped = metrics.filter((m) => !m.scope || m.scope === 'point');
 
-	for (const metric of metrics) {
+	const exact = pointScoped.find((metric) => metric.name === metricName);
+	if (exact) return exact;
+
+	for (const metric of pointScoped) {
 		if (metric.deviceName && `${metric.deviceName}_${metric.name}` === metricName) {
 			return metric;
 		}
@@ -25,18 +31,33 @@ export function getMetricConfig(
 	const systemPrefixMatch = metricName.match(/^[0-9a-f-]{36}_system_(.+)$/);
 	if (systemPrefixMatch) {
 		const bareName = systemPrefixMatch[1];
-		const bare = metrics.find((metric) => metric.name === bareName);
-		if (bare) {
-			return bare;
-		}
+		const bare = pointScoped.find((metric) => metric.name === bareName);
+		if (bare) return bare;
 	}
 
 	const endpointPrefixMatch = metricName.match(/^[0-9a-f-]{36}_[0-9a-f-]{36}_(.+)$/);
 	if (endpointPrefixMatch) {
 		const bareName = endpointPrefixMatch[1];
-		const bare = metrics.find((metric) => metric.name === bareName);
-		if (bare) {
-			return bare;
+		const bare = pointScoped.find((metric) => metric.name === bareName);
+		if (bare) return bare;
+	}
+
+	if (!context) return undefined;
+
+	if (context.endpointId) {
+		for (const metric of metrics) {
+			if (metric.scope === 'source' && metric.enabled && metric.sourcePattern === context.endpointId) {
+				return metric;
+			}
+		}
+	}
+
+	if (context.protocol) {
+		const proto = context.protocol.toLowerCase();
+		for (const metric of metrics) {
+			if (metric.scope === 'protocol' && metric.enabled && metric.protocolPattern?.toLowerCase() === proto) {
+				return metric;
+			}
 		}
 	}
 

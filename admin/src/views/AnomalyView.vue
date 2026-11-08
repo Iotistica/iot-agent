@@ -26,11 +26,12 @@ import type {
   EdgeAnomalyIncident,
   EdgeAnomalyAlert,
   DriftRuleConfig,
+  MetricScope,
 } from '@/types'
 import DriftRuleDrawer, { DRIFT_TYPE_LABELS, DRIFT_TYPE_TAG_COLORS } from '@/components/DriftRuleDrawer.vue'
 import PointPickerModal from '@/components/PointPickerModal.vue'
-import type { PointCatalogEntry } from '@/api/point-catalog'
-import { PROTOCOL_LABELS, protocolLabel } from '@/utils/protocol'
+import { pointCatalogApi, type PointCatalogEntry } from '@/api/point-catalog'
+import { PROTOCOL_LABELS, protocolLabel, protocolColor } from '@/utils/protocol'
 
 // ── Shared ────────────────────────────────────────────────────────────────────
 const activeTab = ref('incidents')
@@ -411,6 +412,12 @@ function ruleDeviceName(record: AnomalyMetricConfig): string | undefined {
   return SYSTEM_METRIC_NAMES.has(record.name) ? 'System' : undefined
 }
 
+function ruleScopeLabel(record: AnomalyMetricConfig): string {
+  if (record.scope === 'source') return record.sourcePattern ?? '—'
+  if (record.scope === 'protocol') return protocolLabel(record.protocolPattern ?? '')
+  return ruleDeviceName(record) ?? '—'
+}
+
 // Schema-drift device identifiers (e.g. "bms_gateway_5000_bc814573") carry a
 // "_{instance}_{8-hex-id}" suffix appended for fleet-wide uniqueness (see the
 // Pro schema-drift detector) — metricLeaf() below still needs to strip this
@@ -720,6 +727,43 @@ const expectedMax = ref<number | null>(null)
 const pointPickerOpen = ref(false)
 const selectedPointLabel = ref('')
 const selectedSourceLabel = ref('')
+
+const scopeMode = ref<MetricScope>('point')
+const selectedSource = ref<string | undefined>(undefined)
+const selectedProtocol = ref<string | undefined>(undefined)
+
+const catalogPoints = ref<PointCatalogEntry[]>([])
+const catalogLoaded = ref(false)
+
+async function ensureCatalog() {
+  if (catalogLoaded.value) return
+  try {
+    catalogPoints.value = await pointCatalogApi.getAll()
+    catalogLoaded.value = true
+  } catch { /* non-fatal */ }
+}
+
+const uniqueSources = computed(() => {
+  const seen = new Map<string, string | null>()
+  for (const p of catalogPoints.value) {
+    if (!seen.has(p.endpointName)) {
+      seen.set(p.endpointName, p.sourceSystem)
+    }
+  }
+  return [...seen.entries()].map(([name, protocol]) => ({ name, protocol }))
+})
+
+const uniqueProtocols = computed(() => {
+  const set = new Set<string>()
+  for (const p of catalogPoints.value) {
+    if (p.sourceSystem) set.add(p.sourceSystem.toLowerCase())
+  }
+  return [...set].sort()
+})
+
+function filterSourceOption(input: string, option: { label?: string }): boolean {
+  return (option?.label ?? '').toLowerCase().includes(input.toLowerCase())
+}
 
 function onPointSelected(point: PointCatalogEntry, deviceName: string) {
 	metricForm.value.name = point.normalizedName
@@ -1064,12 +1108,13 @@ function blankMetric(): AnomalyMetricConfig {
     minConfidence: 0.7,
     cooldownMs: 300_000,
     seasonality: 'none',
+    scope: 'point',
   }
 }
 
 const metricColumns: TableColumnType<AnomalyMetricConfig>[] = [
   { title: 'Point name', key: 'name', ellipsis: true, sorter: (a: AnomalyMetricConfig, b: AnomalyMetricConfig) => a.name.localeCompare(b.name) },
-  { title: 'Device', key: 'device', width: 160, ellipsis: true, sorter: (a: AnomalyMetricConfig, b: AnomalyMetricConfig) => (a.deviceName ?? '').localeCompare(b.deviceName ?? '') },
+  { title: 'Applies to', key: 'scope', width: 180, ellipsis: true, sorter: (a: AnomalyMetricConfig, b: AnomalyMetricConfig) => ruleScopeLabel(a).localeCompare(ruleScopeLabel(b)) },
   { title: 'Detection Type', key: 'methods', ellipsis: true },
   { title: 'Sensitivity', key: 'sensitivity', width: 100, sorter: (a: AnomalyMetricConfig, b: AnomalyMetricConfig) => a.threshold - b.threshold },
   { title: 'Seasonality', key: 'seasonality', width: 110, sorter: (a: AnomalyMetricConfig, b: AnomalyMetricConfig) => (a.seasonality ?? '').localeCompare(b.seasonality ?? '') },
@@ -1110,7 +1155,11 @@ function openAddMetric() {
   advancedOpen.value = []
   selectedPointLabel.value = ''
   selectedSourceLabel.value = ''
+  scopeMode.value = 'point'
+  selectedSource.value = undefined
+  selectedProtocol.value = undefined
   metricDrawerOpen.value = true
+  ensureCatalog()
 }
 
 function openEditMetric(metric: AnomalyMetricConfig, idx: number) {
@@ -1122,21 +1171,47 @@ function openEditMetric(metric: AnomalyMetricConfig, idx: number) {
   metricForm.value = { ...metric, name: friendlyLabel(metric.name), methods }
   expectedMin.value = metric.expectedRange?.[0] ?? null
   expectedMax.value = metric.expectedRange?.[1] ?? null
-  selectedPointLabel.value = friendlyLabel(metric.name)
-  selectedSourceLabel.value = metric.deviceName ?? ''
+  scopeMode.value = metric.scope ?? 'point'
+  selectedSource.value = metric.sourcePattern
+  selectedProtocol.value = metric.protocolPattern
+  if (metric.scope === 'source') {
+    selectedPointLabel.value = ''
+    selectedSourceLabel.value = ''
+  } else if (metric.scope === 'protocol') {
+    selectedPointLabel.value = ''
+    selectedSourceLabel.value = ''
+  } else {
+    selectedPointLabel.value = friendlyLabel(metric.name)
+    selectedSourceLabel.value = metric.deviceName ?? ''
+  }
   const pm = DETECTION_CATEGORIES.find(c => c.methods.some(m => metric.methods.includes(m)))?.defaultMethod ?? 'mad'
   const mapping = SENSITIVITY_THRESHOLDS[pm]
   const isCustom = !mapping || !Object.values(mapping).includes(metric.threshold)
   advancedOpen.value = isCustom ? ['advanced'] : []
   metricDrawerOpen.value = true
+  ensureCatalog()
 }
 
 async function saveMetric() {
   if (!config.value) return
-  if (!metricForm.value.name.trim()) {
-    message.error('Point is required — use the picker to select one')
-    return
+
+  if (scopeMode.value === 'point') {
+    if (!metricForm.value.name.trim()) {
+      message.error('Point is required — use the picker to select one')
+      return
+    }
+  } else if (scopeMode.value === 'source') {
+    if (!selectedSource.value) {
+      message.error('Select a source endpoint')
+      return
+    }
+  } else if (scopeMode.value === 'protocol') {
+    if (!selectedProtocol.value) {
+      message.error('Select a protocol')
+      return
+    }
   }
+
   if (metricForm.value.methods.length === 0) {
     message.error('Select at least one detection method')
     return
@@ -1153,10 +1228,25 @@ async function saveMetric() {
   }
   const entry: AnomalyMetricConfig = {
     ...metricForm.value,
+    scope: scopeMode.value,
     expectedRange:
       expectedMin.value != null && expectedMax.value != null
         ? [expectedMin.value, expectedMax.value]
         : undefined,
+  }
+  if (scopeMode.value === 'source') {
+    entry.name = entry.name || `All points from ${selectedSource.value}`
+    entry.sourcePattern = selectedSource.value
+    entry.protocolPattern = undefined
+    entry.deviceName = undefined
+  } else if (scopeMode.value === 'protocol') {
+    entry.name = entry.name || `All ${protocolLabel(selectedProtocol.value!)} points`
+    entry.protocolPattern = selectedProtocol.value
+    entry.sourcePattern = undefined
+    entry.deviceName = undefined
+  } else {
+    entry.sourcePattern = undefined
+    entry.protocolPattern = undefined
   }
   if (editingMetricIdx.value !== null) {
     config.value.metrics[editingMetricIdx.value] = entry
@@ -1689,8 +1779,16 @@ onUnmounted(() => {
                 <template v-if="column.key === 'name'">
                   <span :title="record.name" style="font-size: 12px">{{ friendlyLabel(record.name) }}</span>
                 </template>
-                <template v-else-if="column.key === 'device'">
-                  <span style="font-size: 12px">{{ ruleDeviceName(record) || '—' }}</span>
+                <template v-else-if="column.key === 'scope'">
+                  <template v-if="record.scope === 'protocol'">
+                    <a-tag :color="protocolColor(record.protocolPattern ?? '')" style="font-size: 11px; margin: 0">{{ protocolLabel(record.protocolPattern ?? '') }}</a-tag>
+                  </template>
+                  <template v-else-if="record.scope === 'source'">
+                    <span style="font-size: 12px" :title="record.sourcePattern">{{ record.sourcePattern }}</span>
+                  </template>
+                  <template v-else>
+                    <span style="font-size: 12px">{{ ruleDeviceName(record) || '—' }}</span>
+                  </template>
                 </template>
                 <template v-else-if="column.key === 'enabled'">
                   <a-switch
@@ -1800,7 +1898,20 @@ onUnmounted(() => {
       </template>
 
       <a-form layout="vertical">
-        <a-form-item label="Point" required>
+        <a-form-item label="Apply to">
+          <a-segmented
+            :value="scopeMode"
+            :options="[
+              { label: 'Specific point', value: 'point' },
+              { label: 'Source', value: 'source' },
+              { label: 'Protocol', value: 'protocol' },
+            ]"
+            @change="scopeMode = $event as MetricScope"
+          />
+        </a-form-item>
+
+        <!-- Point scope: existing point picker -->
+        <a-form-item v-if="scopeMode === 'point'" label="Point" required>
           <div
             class="point-picker-trigger"
             :class="{ 'point-picker-trigger--empty': !selectedPointLabel }"
@@ -1820,11 +1931,49 @@ onUnmounted(() => {
         </a-form-item>
 
         <PointPickerModal
+          v-if="scopeMode === 'point'"
           :open="pointPickerOpen"
           mode="single"
           @update:open="pointPickerOpen = $event"
           @select="onPointSelected"
         />
+
+        <!-- Source scope: endpoint selector -->
+        <a-form-item v-if="scopeMode === 'source'" label="Source endpoint" required>
+          <a-select
+            v-model:value="selectedSource"
+            placeholder="Select an endpoint…"
+            show-search
+            :filter-option="filterSourceOption"
+            style="width: 100%"
+          >
+            <a-select-option v-for="src in uniqueSources" :key="src.name" :value="src.name" :label="src.name">
+              <div style="display: flex; align-items: center; gap: 8px">
+                <a-tag v-if="src.protocol" :color="protocolColor(src.protocol)" style="margin: 0; font-size: 11px">{{ protocolLabel(src.protocol) }}</a-tag>
+                <span style="overflow: hidden; text-overflow: ellipsis">{{ src.name }}</span>
+              </div>
+            </a-select-option>
+          </a-select>
+          <div style="margin-top: 4px; font-size: 12px; color: var(--text-tertiary)">
+            Applies detection to all points from this endpoint.
+          </div>
+        </a-form-item>
+
+        <!-- Protocol scope: protocol selector -->
+        <a-form-item v-if="scopeMode === 'protocol'" label="Protocol" required>
+          <a-select
+            v-model:value="selectedProtocol"
+            placeholder="Select a protocol…"
+            style="width: 100%"
+          >
+            <a-select-option v-for="proto in uniqueProtocols" :key="proto" :value="proto">
+              <a-tag :color="protocolColor(proto)" style="margin: 0">{{ protocolLabel(proto) }}</a-tag>
+            </a-select-option>
+          </a-select>
+          <div style="margin-top: 4px; font-size: 12px; color: var(--text-tertiary)">
+            Applies detection to all points using this protocol.
+          </div>
+        </a-form-item>
 
         <a-form-item label="Detection type">
           <div class="detection-category-cards" role="group" aria-label="Detection type">

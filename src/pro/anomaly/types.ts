@@ -282,10 +282,15 @@ export interface AnomalyAlert {
 /**
  * Metric-specific configuration
  */
+export type MetricScope = 'point' | 'source' | 'protocol';
+
 export interface MetricConfig {
 	name: string;                    // Metric name field (e.g., 'level', 'temperature')
 	deviceName?: string;             // Optional: scope this config to a specific device (e.g., 'Zone A-uuid123')
 	// When set, matches incoming metric "deviceName_name" (e.g., 'Zone A-uuid123_level')
+	scope?: MetricScope;             // Rule scope: 'point' (default), 'source', or 'protocol'
+	sourcePattern?: string;          // For scope='source': endpoint name to match
+	protocolPattern?: string;        // For scope='protocol': protocol to match (e.g., 'modbus')
 	enabled: boolean;
 	methods: DetectionMethod[];      // Which detection methods to use
 	threshold: number;               // Threshold for detection (σ or MAD multiplier)

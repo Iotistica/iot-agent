@@ -36,6 +36,7 @@ import {
 } from './alert-factory.js';
 import {
 	getMetricConfig as selectMetricConfig,
+	type MetricMatchContext,
 	resolveDeviceState as resolveDataPointDeviceState,
 	resolveDeviceId as resolveDataPointDeviceId,
 	resolveEventDeviceType as resolveDataPointEventDeviceType,
@@ -249,7 +250,11 @@ export class AnomalyDetectionService {
 		this.recordMetricObservation(dataPoint);
 
 		if (!this.enabled) return;
-		if (!this.isMetricConfigured(dataPoint.metric)) return;
+		const matchCtx: MetricMatchContext = {
+			protocol: dataPoint.protocol,
+			endpointId: dataPoint.tags?.endpointId,
+		};
+		if (!this.isMetricConfigured(dataPoint.metric, matchCtx)) return;
 
 		const normalizedState = this.resolveDeviceState(dataPoint);
 		const normalizedDeviceId = this.resolveDeviceId(dataPoint);
@@ -274,7 +279,7 @@ export class AnomalyDetectionService {
 			});
 		}
 
-		const metricConfig = this.getMetricConfig(dataPoint.metric);
+		const metricConfig = this.getMetricConfig(dataPoint.metric, matchCtx);
 		if (!metricConfig?.enabled) {
 			const missingCount = (this.unconfiguredMetricLogCounts.get(dataPoint.metric) || 0) + 1;
 			this.unconfiguredMetricLogCounts.set(dataPoint.metric, missingCount);
@@ -747,8 +752,8 @@ export class AnomalyDetectionService {
 	*     metric keys and retry with the bare metric name so env/default configs like
 	*     "temperature" still apply to canonical keys.
 	*/
-	private getMetricConfig(metricName: string): MetricConfig | undefined {
-		return selectMetricConfig(this.config.metrics, metricName);
+	private getMetricConfig(metricName: string, context?: MetricMatchContext): MetricConfig | undefined {
+		return selectMetricConfig(this.config.metrics, metricName, context);
 	}
 
 	/**
@@ -832,8 +837,8 @@ export class AnomalyDetectionService {
 	}
 
 	/** Returns true when the given canonical metric key is configured and enabled. */
-	isMetricConfigured(metricName: string): boolean {
-		const cfg = this.getMetricConfig(metricName);
+	isMetricConfigured(metricName: string, context?: MetricMatchContext): boolean {
+		const cfg = this.getMetricConfig(metricName, context);
 		return !!(cfg?.enabled);
 	}
 
@@ -1371,16 +1376,21 @@ export class AnomalyDetectionService {
 		// (e.g. "{agentUuid}_{endpointUuid}_temperature") while config entries may store
 		// bare names ("temperature"). A Set check would falsely prune those buffers every
 		// time the config is saved, wiping accumulated samples needlessly.
+		const hasBroadRules = this.config.metrics.some(
+			(m) => m.enabled && (m.scope === 'source' || m.scope === 'protocol'),
+		);
 		let prunedMetrics = 0;
-		for (const bufferKey of Array.from(this.buffers.keys())) {
-			const { metricName } = this.parseBufferKey(bufferKey);
-			if (!this.getMetricConfig(metricName)) {
-				this.buffers.delete(bufferKey);
-				this.anomalyScores.delete(bufferKey);
-				this.anomalyMetadata.delete(bufferKey);
-				this.predictionCadenceState.delete(bufferKey);
-				this.unconfiguredMetricLogCounts.delete(metricName);
-				prunedMetrics++;
+		if (!hasBroadRules) {
+			for (const bufferKey of Array.from(this.buffers.keys())) {
+				const { metricName } = this.parseBufferKey(bufferKey);
+				if (!this.getMetricConfig(metricName)) {
+					this.buffers.delete(bufferKey);
+					this.anomalyScores.delete(bufferKey);
+					this.anomalyMetadata.delete(bufferKey);
+					this.predictionCadenceState.delete(bufferKey);
+					this.unconfiguredMetricLogCounts.delete(metricName);
+					prunedMetrics++;
+				}
 			}
 		}
 
