@@ -4,6 +4,7 @@ import { message } from 'ant-design-vue'
 import {
   DeleteOutlined,
   PlusOutlined,
+  ReloadOutlined,
   SearchOutlined,
 } from '@ant-design/icons-vue'
 import type { TableColumnType } from 'ant-design-vue'
@@ -1268,7 +1269,10 @@ onUnmounted(() => {
       <!-- ══ EVENTS ═════════════════════════════════════════════════════════ -->
       <a-tab-pane key="events" tab="Events">
         <a-card size="small" class="list-card">
-        <div class="filters">
+        <div class="toolbar-info" style="display: flex; justify-content: space-between; align-items: center">
+          <span>{{ edgeEventsTotal }} total · auto-refresh 5s</span>
+        </div>
+        <div class="filters" style="margin-bottom: 8px">
           <a-select
             v-model:value="edgeEventsSeverity"
             placeholder="All severities"
@@ -1281,7 +1285,6 @@ onUnmounted(() => {
             <a-select-option value="info">Info</a-select-option>
           </a-select>
         </div>
-        <div class="toolbar-info">{{ edgeEventsTotal }} total · auto-refresh 5s</div>
         <a-table
           :columns="edgeEventColumns"
           :data-source="edgeEvents"
@@ -1329,7 +1332,10 @@ onUnmounted(() => {
       <!-- ══ INCIDENTS ══════════════════════════════════════════════════════ -->
       <a-tab-pane key="incidents" tab="Incidents">
         <a-card size="small" class="list-card">
-        <div class="filters">
+        <div class="toolbar-info" style="display: flex; justify-content: space-between; align-items: center">
+          <span>{{ edgeIncidentsTotal }} total · auto-refresh 5s</span>
+        </div>
+        <div class="filters" style="margin-bottom: 8px">
           <a-select
             v-model:value="edgeIncidentsStatus"
             placeholder="All statuses"
@@ -1342,7 +1348,6 @@ onUnmounted(() => {
             <a-select-option value="resolved">Resolved</a-select-option>
           </a-select>
         </div>
-        <div class="toolbar-info">{{ edgeIncidentsTotal }} total · auto-refresh 5s</div>
         <a-table
           :columns="edgeIncidentColumns"
           :data-source="edgeIncidents"
@@ -1396,7 +1401,9 @@ onUnmounted(() => {
       <!-- ══ ALERTS (edge) ══════════════════════════════════════════════════ -->
       <a-tab-pane key="alerts" tab="Alerts">
         <a-card size="small" class="list-card">
-        <div class="toolbar-info">{{ edgeAlertsTotal }} total · auto-refresh 5s</div>
+        <div class="toolbar-info" style="display: flex; justify-content: space-between; align-items: center">
+          <span>{{ edgeAlertsTotal }} total · auto-refresh 5s</span>
+        </div>
         <a-table
           :columns="edgeAlertColumns"
           :data-source="edgeAlerts"
@@ -1438,7 +1445,16 @@ onUnmounted(() => {
       <!-- ══ BASELINES ══════════════════════════════════════════════════════ -->
       <a-tab-pane key="baselines" tab="Baselines">
         <a-card size="small" class="list-card">
-        <div class="filters">
+        <div class="toolbar-info" style="display: flex; justify-content: space-between; align-items: center">
+          <span>{{ baselinesTotal }} total · auto-refresh 5s</span>
+          <a-space>
+            <a-button size="small" :loading="baselinesLoading" @click="loadBaselines">
+              <template #icon><ReloadOutlined /></template>
+            </a-button>
+            <a-button danger size="small" :loading="clearingBaselines" @click="resetBaselinesModalOpen = true">Reset</a-button>
+          </a-space>
+        </div>
+        <div class="filters" style="margin-bottom: 8px">
           <a-input
             v-model:value="baselinesMetric"
             placeholder="Search by metric…"
@@ -1447,9 +1463,7 @@ onUnmounted(() => {
           >
             <template #prefix><SearchOutlined style="color: var(--text-placeholder)" /></template>
           </a-input>
-          <a-button danger :loading="clearingBaselines" @click="resetBaselinesModalOpen = true">Reset</a-button>
         </div>
-        <div class="toolbar-info">{{ baselinesTotal }} total · auto-refresh 5s</div>
         <a-table
           :columns="baselineColumns"
           :data-source="baselines"
