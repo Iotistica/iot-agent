@@ -30,7 +30,7 @@ import type {
 } from '@/types'
 import DriftRuleDrawer, { DRIFT_TYPE_LABELS, DRIFT_TYPE_TAG_COLORS } from '@/components/DriftRuleDrawer.vue'
 import PointPickerModal from '@/components/PointPickerModal.vue'
-import { pointCatalogApi, type PointCatalogEntry } from '@/api/point-catalog'
+import type { PointCatalogEntry } from '@/api/point-catalog'
 import { PROTOCOL_LABELS, protocolLabel, protocolColor } from '@/utils/protocol'
 
 // ── Shared ────────────────────────────────────────────────────────────────────
@@ -732,31 +732,24 @@ const scopeMode = ref<MetricScope>('point')
 const selectedSource = ref<string | undefined>(undefined)
 const selectedProtocol = ref<string | undefined>(undefined)
 
-const catalogPoints = ref<PointCatalogEntry[]>([])
-const catalogLoaded = ref(false)
+const scopeEndpoints = ref<Array<{ name: string; protocol: string }>>([])
+const scopeEndpointsLoaded = ref(false)
 
-async function ensureCatalog() {
-  if (catalogLoaded.value) return
+async function ensureScopeEndpoints() {
+  if (scopeEndpointsLoaded.value) return
   try {
-    catalogPoints.value = await pointCatalogApi.getAll()
-    catalogLoaded.value = true
+    const eps = await sourcesApi.getAll()
+    scopeEndpoints.value = eps.map(ep => ({ name: ep.name, protocol: ep.protocol }))
+    scopeEndpointsLoaded.value = true
   } catch { /* non-fatal */ }
 }
 
-const uniqueSources = computed(() => {
-  const seen = new Map<string, string | null>()
-  for (const p of catalogPoints.value) {
-    if (!seen.has(p.endpointName)) {
-      seen.set(p.endpointName, p.sourceSystem)
-    }
-  }
-  return [...seen.entries()].map(([name, protocol]) => ({ name, protocol }))
-})
+const uniqueSources = computed(() => scopeEndpoints.value)
 
 const uniqueProtocols = computed(() => {
   const set = new Set<string>()
-  for (const p of catalogPoints.value) {
-    if (p.sourceSystem) set.add(p.sourceSystem.toLowerCase())
+  for (const ep of scopeEndpoints.value) {
+    if (ep.protocol) set.add(ep.protocol.toLowerCase())
   }
   return [...set].sort()
 })
@@ -1159,7 +1152,7 @@ function openAddMetric() {
   selectedSource.value = undefined
   selectedProtocol.value = undefined
   metricDrawerOpen.value = true
-  ensureCatalog()
+  ensureScopeEndpoints()
 }
 
 function openEditMetric(metric: AnomalyMetricConfig, idx: number) {
@@ -1189,7 +1182,7 @@ function openEditMetric(metric: AnomalyMetricConfig, idx: number) {
   const isCustom = !mapping || !Object.values(mapping).includes(metric.threshold)
   advancedOpen.value = isCustom ? ['advanced'] : []
   metricDrawerOpen.value = true
-  ensureCatalog()
+  ensureScopeEndpoints()
 }
 
 async function saveMetric() {
