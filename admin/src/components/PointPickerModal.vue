@@ -6,14 +6,19 @@ import { client } from '@/api/client'
 import { protocolColor, protocolLabel } from '@/utils/protocol'
 import { getDevicePoints } from '@/utils/device-points'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   open: boolean
-  selectedKeys: string[]
-}>()
+  selectedKeys?: string[]
+  mode?: 'multi' | 'single'
+}>(), {
+  selectedKeys: () => [],
+  mode: 'multi',
+})
 
 const emit = defineEmits<{
   'update:open': [val: boolean]
   confirm: [keys: string[]]
+  select: [point: PointCatalogEntry, deviceName: string]
 }>()
 
 const loading = ref(false)
@@ -171,12 +176,18 @@ function onConfirm() {
   emit('confirm', [...checkedKeys.value])
   emit('update:open', false)
 }
+
+function selectSinglePoint(pt: PointCatalogEntry) {
+  const name = deviceNames.value.get(pt.deviceKey ?? '') ?? pt.endpointName
+  emit('select', pt, name)
+  emit('update:open', false)
+}
 </script>
 
 <template>
   <a-modal
     :open="open"
-    title="Select Points"
+    :title="mode === 'single' ? 'Select Point' : 'Select Points'"
     :width="680"
     :footer="null"
     @cancel="emit('update:open', false)"
@@ -197,7 +208,7 @@ function onConfirm() {
         :options="protocolOptions"
         style="width: 140px"
       />
-      <span class="selection-count">{{ checkedKeys.size }} selected</span>
+      <span v-if="mode === 'multi'" class="selection-count">{{ checkedKeys.size }} selected</span>
     </div>
 
     <a-spin :spinning="loading">
@@ -207,6 +218,7 @@ function onConfirm() {
           <div v-for="group in groupedByProtocol" :key="group.key" class="protocol-group">
             <div class="protocol-header" @click="expandedProtocols = toggleExpand(expandedProtocols, group.key)">
               <a-checkbox
+                v-if="mode === 'multi'"
                 :checked="group.allChecked"
                 :indeterminate="group.someChecked && !group.allChecked"
                 @click.stop
@@ -221,6 +233,7 @@ function onConfirm() {
               <div v-for="source in group.sources" :key="source.key" class="source-group">
                 <div class="source-header" @click="expandedSources = toggleExpand(expandedSources, source.key)">
                   <a-checkbox
+                    v-if="mode === 'multi'"
                     :checked="source.allChecked"
                     :indeterminate="source.someChecked && !source.allChecked"
                     @click.stop
@@ -232,8 +245,15 @@ function onConfirm() {
                 </div>
 
                 <div v-if="expandedSources.has(source.key)" class="point-items">
-                  <div v-for="pt in source.points" :key="pt.pointKey" class="point-item">
+                  <div
+                    v-for="pt in source.points"
+                    :key="pt.pointKey"
+                    class="point-item"
+                    :class="{ 'point-item--clickable': mode === 'single' }"
+                    @click="mode === 'single' && selectSinglePoint(pt)"
+                  >
                     <a-checkbox
+                      v-if="mode === 'multi'"
                       :checked="checkedKeys.has(pt.pointKey)"
                       @change="togglePoint(pt.pointKey)"
                     />
@@ -249,7 +269,7 @@ function onConfirm() {
       </div>
     </a-spin>
 
-    <div class="picker-footer">
+    <div v-if="mode === 'multi'" class="picker-footer">
       <a-button @click="emit('update:open', false)">Cancel</a-button>
       <a-button type="primary" :disabled="loading || !!loadError || checkedKeys.size === 0" @click="onConfirm">
         Confirm ({{ checkedKeys.size }})
@@ -281,6 +301,8 @@ function onConfirm() {
 
 .point-items { padding: 0 12px 4px 40px; }
 .point-item { display: flex; align-items: center; gap: 8px; padding: 4px 0; }
+.point-item--clickable { cursor: pointer; padding: 6px 4px; border-radius: 4px; }
+.point-item--clickable:hover { background: var(--bg-selected-light); }
 .pt-name { font-size: 13px; color: var(--text-primary); }
 .pt-raw { font-size: 11px; color: var(--text-tertiary); }
 

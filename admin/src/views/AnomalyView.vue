@@ -27,6 +27,8 @@ import type {
   DriftRuleConfig,
 } from '@/types'
 import DriftRuleDrawer, { DRIFT_TYPE_LABELS, DRIFT_TYPE_TAG_COLORS } from '@/components/DriftRuleDrawer.vue'
+import PointPickerModal from '@/components/PointPickerModal.vue'
+import type { PointCatalogEntry } from '@/api/point-catalog'
 import { PROTOCOL_LABELS, protocolLabel } from '@/utils/protocol'
 
 // ── Shared ────────────────────────────────────────────────────────────────────
@@ -714,6 +716,16 @@ const editingMetricIdx = ref<number | null>(null)
 const metricForm = ref<AnomalyMetricConfig>(blankMetric())
 const expectedMin = ref<number | null>(null)
 const expectedMax = ref<number | null>(null)
+const pointPickerOpen = ref(false)
+const selectedPointLabel = ref('')
+const selectedSourceLabel = ref('')
+
+function onPointSelected(point: PointCatalogEntry, deviceName: string) {
+	metricForm.value.name = point.normalizedName
+	metricForm.value.deviceName = deviceName
+	selectedPointLabel.value = point.normalizedName
+	selectedSourceLabel.value = deviceName
+}
 
 // expected_range is a no-op detector without bounds — surface that before save, not just on submit.
 const expectedRangeMissingBounds = computed(() =>
@@ -1019,63 +1031,6 @@ const hasStatisticalDetector = computed(() =>
 
 
 // ── Available metric suggestions ───────────────────────────────────────────
-type MetricSuggestion = {
-  name: string
-  deviceId?: string
-  deviceName?: string
-  score?: number
-  deviceState?: string
-  unit?: string
-  configured: boolean
-  endpointName?: string
-  protocol?: string
-}
-const metricSuggestions = ref<MetricSuggestion[]>([])
-const metricSuggestionsLoading = ref(false)
-const sourceFilter = ref<string | undefined>(undefined)
-
-// A suggestion's endpointName isn't always available — it's resolved
-// server-side via a UUID match against the endpoints table (actions.ts),
-// which only works for protocols whose live device identity is itself a UUID
-// (true for BACnet's device_uuid, not for e.g. OPC-UA's composite
-// "opcua:host:port:device" identity). Falling back to protocol keeps the
-// Source filter honest rather than fabricating a per-device name we don't
-// have: it groups those entries by the real protocol instead of hiding them.
-function sourceKey(s: MetricSuggestion): string | undefined {
-  return s.endpointName ?? s.protocol
-}
-
-// Distinct sources present in the current metric suggestions, for the
-// "Source" filter — built from suggestions rather than a separate sources
-// fetch so only sources that actually have metrics flowing show up.
-const sourceFilterOptions = computed(() => {
-  const seen = new Map<string, { value: string; label: string }>()
-  for (const s of metricSuggestions.value) {
-    const key = sourceKey(s)
-    if (!key || seen.has(key)) continue
-    seen.set(key, {
-      value: key,
-      label: s.endpointName && s.protocol ? `${s.endpointName} (${s.protocol})` : key,
-    })
-  }
-  return Array.from(seen.values()).sort((a, b) => a.label.localeCompare(b.label))
-})
-
-function filterSourceOption(input: string, option: { label: string }): boolean {
-  return option.label.toLowerCase().includes(input.toLowerCase())
-}
-
-async function loadMetricSuggestions() {
-  metricSuggestionsLoading.value = true
-  try {
-    metricSuggestions.value = await anomalyApi.getMetrics()
-  } catch {
-    // non-fatal
-  } finally {
-    metricSuggestionsLoading.value = false
-  }
-}
-
 // Strip all leading UUID prefixes from canonical metric names so they display readably.
 // e.g. "UUID1_UUID2_pioneer_gold_1_coil_temp" → "pioneer_gold_1_coil_temp"
 const UUID_PREFIX_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}_/gi
@@ -1096,67 +1051,6 @@ function canonicalBareMetricName(name: string): string {
   const systemMatch = name.match(/^[0-9a-f-]{36}_system_(.+)$/i)
   if (systemMatch) return systemMatch[1]
   return friendlyLabel(name)
-}
-
-// Build flat sorted list of metric suggestions for the autocomplete dropdown.
-// Deduplicate by (endpointName, friendlyLabel) so the same metric from two
-// different devices shows as two separate entries.
-const metricAutocompleteOptions = computed(() => {
-  const q = metricForm.value.name.toLowerCase()
-
-  // Group strictly by (name, deviceId) — the same identity the backend's
-  // observed-metrics catalog uses (anomalyMetricResultKey in actions.ts).
-  // AnomalyFeed now sources both the normalized name and the device identity
-  // from the single point-name catalog (src/points/), with no fabricated
-  // pseudo-ids — so this key is always correct and unique per real device.
-  // No UUID-preference heuristic needed: two entries sharing this key really
-  // are the same metric; two entries with the same name but different
-  // deviceId (e.g. 8 distinct OPC-UA meters that all happen to report a
-  // point literally named "active-power-kw") are genuinely different devices
-  // and must stay separate rows, not collapse into one.
-  const seen = new Map<string, MetricSuggestion>()
-  for (const s of metricSuggestions.value) {
-    if (sourceFilter.value && sourceKey(s) !== sourceFilter.value) continue
-    const friendly = friendlyLabel(s.name)
-    if (!friendly.trim()) continue
-    const key = `${friendly}::${s.deviceId ?? ''}`
-    const existing = seen.get(key)
-    if (!existing || (s.score ?? 0) > (existing.score ?? 0)) {
-      seen.set(key, s)
-    }
-  }
-
-  return Array.from(seen.entries())
-    .filter(([, s]) => {
-      const friendly = friendlyLabel(s.name)
-      const label = s.endpointName ? `${s.endpointName} ${friendly}` : friendly
-      return !q || label.toLowerCase().includes(q)
-    })
-    .sort(([, a], [, b]) => {
-      const fa = friendlyLabel(a.name)
-      const fb = friendlyLabel(b.name)
-      return fa.localeCompare(fb) || (a.endpointName ?? '').localeCompare(b.endpointName ?? '')
-    })
-    .map(([, s]) => {
-      const friendly = friendlyLabel(s.name)
-      // value/label — and what the #option template shows as the primary
-      // name — stay the verbatim normalized name, same as Live View's bold
-      // point name (admin/src/views/LiveView.vue). No device-prefix
-      // splitting or hyphenating here anymore: that was a different,
-      // invented display convention that didn't match Live View, and for a
-      // metric name whose device prefix isn't actually separable (most of
-      // them), it was actively misleading.
-      return {
-        value: friendly,
-        label: s.endpointName ? `${friendly} · ${s.endpointName}` : friendly,
-        protocol: s.protocol,
-        suggestion: s,
-      }
-    })
-})
-
-function onMetricSuggestionSelected(_value: string, option: { suggestion?: MetricSuggestion }) {
-  metricForm.value.deviceName = option.suggestion?.deviceName ?? option.suggestion?.endpointName
 }
 
 function blankMetric(): AnomalyMetricConfig {
@@ -1213,12 +1107,12 @@ function openAddMetric() {
   expectedMin.value = null
   expectedMax.value = null
   advancedOpen.value = []
-  sourceFilter.value = undefined
+  selectedPointLabel.value = ''
+  selectedSourceLabel.value = ''
   metricDrawerOpen.value = true
-  loadMetricSuggestions()
 }
 
-async function openEditMetric(metric: AnomalyMetricConfig, idx: number) {
+function openEditMetric(metric: AnomalyMetricConfig, idx: number) {
   editingMetricIdx.value = idx
   const methods = [...metric.methods]
   if (metric.expectedRange && !methods.includes('expected_range')) {
@@ -1227,34 +1121,23 @@ async function openEditMetric(metric: AnomalyMetricConfig, idx: number) {
   metricForm.value = { ...metric, name: friendlyLabel(metric.name), methods }
   expectedMin.value = metric.expectedRange?.[0] ?? null
   expectedMax.value = metric.expectedRange?.[1] ?? null
-  // Auto-expand Advanced if threshold doesn't match a sensitivity preset
+  selectedPointLabel.value = friendlyLabel(metric.name)
+  selectedSourceLabel.value = metric.deviceName ?? ''
   const pm = DETECTION_CATEGORIES.find(c => c.methods.some(m => metric.methods.includes(m)))?.defaultMethod ?? 'mad'
   const mapping = SENSITIVITY_THRESHOLDS[pm]
   const isCustom = !mapping || !Object.values(mapping).includes(metric.threshold)
   advancedOpen.value = isCustom ? ['advanced'] : []
-  sourceFilter.value = undefined
   metricDrawerOpen.value = true
-  await loadMetricSuggestions()
-  const match = metricSuggestions.value.find(s => s.name === metric.name)
-  if (match) sourceFilter.value = sourceKey(match)
 }
 
 async function saveMetric() {
   if (!config.value) return
-  // Source isn't part of the saved rule (sourceFilter is a UI-only filter),
-  // so this only applies when creating a new rule — an existing rule being
-  // edited has no source to re-pick (sourceFilter resets to undefined on
-  // open, see openEditMetric()).
-  if (editingMetricIdx.value === null && !sourceFilter.value) {
-    message.error('Source is required')
+  if (!metricForm.value.name.trim()) {
+    message.error('Point is required — use the picker to select one')
     return
   }
   if (metricForm.value.methods.length === 0) {
     message.error('Select at least one detection method')
-    return
-  }
-  if (!metricForm.value.name.trim()) {
-    message.error('Point name is required')
     return
   }
   if (metricForm.value.methods.includes('expected_range')) {
@@ -1328,7 +1211,7 @@ function onTabChange(tab: string) {
   else if (tab === 'alerts') { loadEdgeAlerts(); startTabAutoRefresh(loadEdgeAlerts, edgeAlertsLoading) }
   else if (tab === 'baselines') { loadBaselines(); startTabAutoRefresh(loadBaselines, baselinesLoading) }
   else if (tab === 'schema-drift') { loadDriftRules() }
-  else if (tab === 'rules') { loadConfig(); loadMetricSuggestions(); loadBadActors(); ensureEndpointMaps() }
+  else if (tab === 'rules') { loadConfig(); loadBadActors(); ensureEndpointMaps() }
 }
 
 onMounted(() => {
@@ -1903,70 +1786,31 @@ onUnmounted(() => {
       </template>
 
       <a-form layout="vertical">
-        <a-form-item
-          label="Source"
-          :required="editingMetricIdx === null"
-          :extra="editingMetricIdx === null ? 'Pick a source to choose a point from — only sources with live metrics are listed.' : 'Narrows the metric list below to one source.'"
-        >
-          <a-select
-            v-model:value="sourceFilter"
-            allow-clear
-            show-search
-            placeholder="Select a source…"
-            :options="sourceFilterOptions"
-            :filter-option="filterSourceOption"
-            @change="metricForm.name = ''"
-          />
-        </a-form-item>
-
-        <a-form-item label="Point name" required>
-          <a-auto-complete
-            v-model:value="metricForm.name"
-            :options="metricAutocompleteOptions"
-            :disabled="editingMetricIdx === null && !sourceFilter"
-            placeholder="e.g. cpu_usage, temperature"
-            :filter-option="false"
-            allow-clear
-            style="width: 100%"
-            @select="onMetricSuggestionSelected"
+        <a-form-item label="Point" required>
+          <div
+            class="point-picker-trigger"
+            :class="{ 'point-picker-trigger--empty': !selectedPointLabel }"
+            @click="pointPickerOpen = true"
           >
-            <template #option="{ value, suggestion }">
-              <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px">
-                <!-- Verbatim normalized name, same convention as Live View's
-                     bold point name (LiveView.vue's point-primary) — no
-                     device-prefix splitting or hyphenating, this is exactly
-                     the string that gets saved as the rule's metric name. -->
-                <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap">{{ value }}</span>
-                <!-- No protocol tag / device name here — the Source filter
-                     above already identifies both; repeating them on every
-                     row was redundant. -->
-                <a-tag
-                  v-if="suggestion?.configured"
-                  color="purple"
-                  style="font-size: 10px; line-height: 16px; padding: 0 4px; margin: 0; flex-shrink: 0"
-                >configured</a-tag>
+            <template v-if="selectedPointLabel">
+              <div style="flex: 1; min-width: 0">
+                <div style="font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">{{ selectedPointLabel }}</div>
+                <div v-if="selectedSourceLabel" style="font-size: 12px; color: var(--text-tertiary)">{{ selectedSourceLabel }}</div>
               </div>
+              <a-button size="small" @click.stop="pointPickerOpen = true">Change</a-button>
             </template>
-          </a-auto-complete>
-          <div style="font-size: 11px; color: var(--text-tertiary); margin-top: 4px">
-            <a-spin v-if="metricSuggestionsLoading" size="small" />
-            <template v-else-if="metricSuggestions.length">
-              {{ metricSuggestions.length }} metric{{ metricSuggestions.length !== 1 ? 's' : '' }} found —
-              type to filter, or enter a custom name
+            <template v-else>
+              <span style="color: var(--text-placeholder)">Click to select a point…</span>
             </template>
-            <template v-else>No metrics flowing yet — enter a name manually</template>
           </div>
         </a-form-item>
 
-        <!-- No separate "Device name" field: metricForm.deviceName is still
-             set in the background by onMetricSuggestionSelected() when a
-             dropdown suggestion is picked (it scopes the saved rule to one
-             device vs. matching the point name across all devices — still
-             meaningful for metrics whose name isn't already device-specific,
-             e.g. system metrics like cpu_usage). Redundant to show as its
-             own editable field for the common case: picking a point already
-             implies its device, and with normalized names the device is
-             usually baked into the point name itself. -->
+        <PointPickerModal
+          :open="pointPickerOpen"
+          mode="single"
+          @update:open="pointPickerOpen = $event"
+          @select="onPointSelected"
+        />
 
         <a-form-item label="Detection type">
           <div class="detection-category-cards" role="group" aria-label="Detection type">
@@ -2243,5 +2087,13 @@ onUnmounted(() => {
 .advanced-settings-collapse :deep(.ant-collapse-header) { font-size: 13px; color: var(--text-secondary); padding: 8px 12px !important; }
 .advanced-settings-collapse :deep(.ant-collapse-content-box) { padding: 0 12px !important; }
 .advanced-setting-help { font-size: 12px; color: var(--text-tertiary); margin-top: 4px; }
+
+.point-picker-trigger {
+	display: flex; align-items: center; gap: 10px;
+	padding: 8px 12px; border: 1px solid var(--border-color); border-radius: 6px;
+	cursor: pointer; transition: border-color 0.2s; min-height: 40px;
+}
+.point-picker-trigger:hover { border-color: #1677ff; }
+.point-picker-trigger--empty { justify-content: center; border-style: dashed; }
 
 </style>
