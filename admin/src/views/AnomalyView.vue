@@ -1386,28 +1386,28 @@ onUnmounted(() => {
         >
           <template #bodyCell="{ column, record }">
             <template v-if="column.key === 'severity'">
-              <a-tag :color="SEVERITY_TAG_COLOR[record.severity]" :class="record.severity === 'critical' && record.status !== 'resolved' ? 'severity-critical' : ''" style="font-size: 11px; margin: 0">{{ record.severity }}</a-tag>
+              <a-tag :color="SEVERITY_TAG_COLOR[record.severity]" :class="record.severity === 'critical' && record.status !== 'resolved' ? 'severity-critical' : ''" style="margin: 0">{{ record.severity }}</a-tag>
             </template>
             <template v-else-if="column.key === 'metric'">
               <span :title="record.metric">{{ friendlyLabel(record.metric) }}</span>
             </template>
             <template v-else-if="column.key === 'device_name'">
-              <span style="font-size: 12px">{{ deviceDisplayName(record.device_name) }}</span>
+              {{ deviceDisplayName(record.device_name) }}
             </template>
             <template v-else-if="column.key === 'value'">
               <span style="font-variant-numeric: tabular-nums">{{ fmtNum(record.observed_value, 3) }}</span>
             </template>
             <template v-else-if="column.key === 'score'">
-              <span style="font-variant-numeric: tabular-nums; font-size: 12px">{{ fmtNum(record.anomaly_score, 3) }}</span>
+              <span style="font-variant-numeric: tabular-nums">{{ fmtNum(record.anomaly_score, 3) }}</span>
             </template>
             <template v-else-if="column.key === 'conf'">
-              <span style="font-size: 12px">{{ Math.round(record.confidence * 100) }}%</span>
+              {{ Math.round(record.confidence * 100) }}%
             </template>
             <template v-else-if="column.key === 'consec'">
-              <span style="font-size: 12px; color: var(--text-tertiary)">{{ record.consecutive_count }}×</span>
+              <span style="color: var(--text-tertiary)">{{ record.consecutive_count }}×</span>
             </template>
             <template v-else-if="column.key === 'time'">
-              <span style="color: var(--text-tertiary); font-size: 12px">{{ fmtTs(record.timestamp_ms) }}</span>
+              <span style="color: var(--text-tertiary)">{{ fmtTs(record.timestamp_ms) }}</span>
             </template>
           </template>
           <template #emptyText>
@@ -1449,25 +1449,25 @@ onUnmounted(() => {
         >
           <template #bodyCell="{ column, record }">
             <template v-if="column.key === 'severity'">
-              <a-tag :color="SEVERITY_TAG_COLOR[record.severity]" :class="record.severity === 'critical' && record.status !== 'resolved' ? 'severity-critical' : ''" style="font-size: 11px; margin: 0">{{ record.severity }}</a-tag>
+              <a-tag :color="SEVERITY_TAG_COLOR[record.severity]" :class="record.severity === 'critical' && record.status !== 'resolved' ? 'severity-critical' : ''" style="margin: 0">{{ record.severity }}</a-tag>
             </template>
             <template v-else-if="column.key === 'metric'">
               <span :title="record.metric">{{ friendlyLabel(record.metric) }}</span>
             </template>
             <template v-else-if="column.key === 'device_name'">
-              <span style="font-size: 12px">{{ deviceDisplayName(record.device_name) }}</span>
+              {{ deviceDisplayName(record.device_name) }}
             </template>
             <template v-else-if="column.key === 'status'">
-              <a-tag :color="INCIDENT_STATUS_COLOR[record.status]" style="font-size: 11px">{{ record.status }}</a-tag>
+              <a-tag :color="INCIDENT_STATUS_COLOR[record.status]" style="margin: 0">{{ record.status }}</a-tag>
             </template>
             <template v-else-if="column.key === 'score'">
-              <span style="font-variant-numeric: tabular-nums; font-size: 12px">{{ fmtNum(record.max_anomaly_score, 3) }}</span>
+              <span style="font-variant-numeric: tabular-nums">{{ fmtNum(record.max_anomaly_score, 3) }}</span>
             </template>
             <template v-else-if="column.key === 'first_seen'">
-              <span style="color: var(--text-tertiary); font-size: 12px">{{ fmtTs(record.first_seen) }}</span>
+              <span style="color: var(--text-tertiary)">{{ fmtTs(record.first_seen) }}</span>
             </template>
             <template v-else-if="column.key === 'last_seen'">
-              <span style="color: var(--text-tertiary); font-size: 12px">{{ fmtTs(record.last_seen) }}</span>
+              <span style="color: var(--text-tertiary)">{{ fmtTs(record.last_seen) }}</span>
             </template>
             <template v-else-if="column.key === 'actions'">
               <a-button
@@ -1476,7 +1476,7 @@ onUnmounted(() => {
                 :loading="resolvingId === record.incident_id"
                 @click="openResolveModal(record)"
               >Resolve</a-button>
-              <span v-else style="color: var(--text-tertiary); font-size: 12px">—</span>
+              <span v-else style="color: var(--text-tertiary)">—</span>
             </template>
           </template>
           <template #emptyText>
@@ -1505,22 +1505,22 @@ onUnmounted(() => {
         >
           <template #bodyCell="{ column, record }">
             <template v-if="column.key === 'severity'">
-              <a-tag :color="SEVERITY_TAG_COLOR[record.severity]" :class="record.severity === 'critical' && record.status !== 'resolved' ? 'severity-critical' : ''" style="font-size: 11px; margin: 0">{{ record.severity }}</a-tag>
+              <a-tag :color="SEVERITY_TAG_COLOR[record.severity]" :class="record.severity === 'critical' && record.status !== 'resolved' ? 'severity-critical' : ''" style="margin: 0">{{ record.severity }}</a-tag>
             </template>
             <template v-else-if="column.key === 'metric'">
               <span :title="record.metric">{{ friendlyLabel(record.metric) }}</span>
             </template>
             <template v-else-if="column.key === 'device_name'">
-              <span style="font-size: 12px">{{ deviceDisplayName(record.device_name) }}</span>
+              {{ deviceDisplayName(record.device_name) }}
             </template>
             <template v-else-if="column.key === 'score'">
-              <span style="font-variant-numeric: tabular-nums; font-size: 12px">{{ fmtNum(record.max_anomaly_score, 3) }}</span>
+              <span style="font-variant-numeric: tabular-nums">{{ fmtNum(record.max_anomaly_score, 3) }}</span>
             </template>
             <template v-else-if="column.key === 'message'">
               <span :title="record.message" style="white-space: normal; word-break: break-word">{{ stripGuids(record.message) }}</span>
             </template>
             <template v-else-if="column.key === 'time'">
-              <span style="color: var(--text-tertiary); font-size: 12px">{{ fmtTs(record.created_at) }}</span>
+              <span style="color: var(--text-tertiary)">{{ fmtTs(record.created_at) }}</span>
             </template>
           </template>
           <template #emptyText>
@@ -1565,43 +1565,43 @@ onUnmounted(() => {
         >
           <template #bodyCell="{ column, record }">
             <template v-if="column.key === 'metric'">
-              <span :title="record.metric" style="font-size: 12px">{{ friendlyLabel(record.metric) }}</span>
+              <span :title="record.metric">{{ friendlyLabel(record.metric) }}</span>
             </template>
             <template v-else-if="column.key === 'device_id'">
-              <span :title="record.device_id" style="font-size: 12px">{{ deviceDisplayName(record.device_id) }}</span>
+              <span :title="record.device_id">{{ deviceDisplayName(record.device_id) }}</span>
             </template>
             <template v-else-if="column.key === 'device_state'">
               <a-tooltip
                 v-if="warmupRemainingMs"
                 :title="`Agent-wide warmup, ${warmupCountdownLabel} left — not specific to this rule. Alerts pause for every metric for 15 minutes after the agent starts, to avoid false positives from startup noise. Baseline collection isn't affected.`"
               >
-                <a-tag color="orange" style="font-size: 10px">warming up</a-tag>
+                <a-tag color="orange">warming up</a-tag>
               </a-tooltip>
-              <a-tag v-else-if="record.pendingWindowSize" color="blue" style="font-size: 10px">collecting</a-tag>
-              <a-tag v-else :color="deviceStateColor(record.device_state)" style="font-size: 10px">{{ record.device_state }}</a-tag>
+              <a-tag v-else-if="record.pendingWindowSize" color="blue">collecting</a-tag>
+              <a-tag v-else :color="deviceStateColor(record.device_state)">{{ record.device_state }}</a-tag>
             </template>
             <template v-else-if="column.key === 'time_slot'">
-              <span style="font-size: 12px">{{ record.isSynthetic ? '—' : record.time_slot }}</span>
+              {{ record.isSynthetic ? '—' : record.time_slot }}
             </template>
             <template v-else-if="column.key === 'sample_count'">
-              <span style="font-variant-numeric: tabular-nums; font-size: 12px">
+              <span style="font-variant-numeric: tabular-nums">
                 {{ record.pendingWindowSize ? `${record.sample_count} / ${record.pendingWindowSize}` : record.sample_count }}
               </span>
             </template>
             <template v-else-if="column.key === 'mean'">
-              <span style="font-variant-numeric: tabular-nums; font-size: 12px">{{ fmtNum(record.mean, 3) }}</span>
+              <span style="font-variant-numeric: tabular-nums">{{ fmtNum(record.mean, 3) }}</span>
             </template>
             <template v-else-if="column.key === 'std_dev'">
-              <span style="font-variant-numeric: tabular-nums; font-size: 12px">{{ fmtNum(record.std_dev, 3) }}</span>
+              <span style="font-variant-numeric: tabular-nums">{{ fmtNum(record.std_dev, 3) }}</span>
             </template>
             <template v-else-if="column.key === 'median'">
-              <span style="font-variant-numeric: tabular-nums; font-size: 12px">{{ fmtNum(record.median, 3) }}</span>
+              <span style="font-variant-numeric: tabular-nums">{{ fmtNum(record.median, 3) }}</span>
             </template>
             <template v-else-if="column.key === 'mad'">
-              <span style="font-variant-numeric: tabular-nums; font-size: 12px">{{ fmtNum(record.mad, 3) }}</span>
+              <span style="font-variant-numeric: tabular-nums">{{ fmtNum(record.mad, 3) }}</span>
             </template>
             <template v-else-if="column.key === 'calculated_at'">
-              <span style="color: var(--text-tertiary); font-size: 12px">{{ record.isSynthetic ? '—' : fmtTs(record.calculated_at) }}</span>
+              <span style="color: var(--text-tertiary)">{{ record.isSynthetic ? '—' : fmtTs(record.calculated_at) }}</span>
             </template>
           </template>
           <template #emptyText>
@@ -1644,24 +1644,24 @@ onUnmounted(() => {
           >
             <template #bodyCell="{ column, record }">
               <template v-if="column.key === 'name'">
-                <span style="font-size: 12px; cursor: pointer" @click="editDriftRule(record as DriftRuleConfig)">
+                <span style="cursor: pointer" @click="editDriftRule(record as DriftRuleConfig)">
                   {{ (record as DriftRuleConfig).name || '(unnamed)' }}
                 </span>
               </template>
               <template v-else-if="column.key === 'scope'">
-                <span style="font-size: 11px; color: var(--text-tertiary)">{{ driftRuleScopeLabel(record as DriftRuleConfig) }}</span>
+                <span style="color: var(--text-tertiary)">{{ driftRuleScopeLabel(record as DriftRuleConfig) }}</span>
               </template>
               <template v-else-if="column.key === 'driftType'">
                 <a-tag
                   v-for="tag of driftRuleDriftTypeTags(record as DriftRuleConfig)"
                   :key="tag.label"
                   :color="tag.color"
-                  style="font-size: 11px; margin: 1px"
+                  style="margin: 1px"
                 >{{ tag.label }}</a-tag>
-                <span v-if="driftRuleDriftTypeTags(record as DriftRuleConfig).length === 0" style="color: var(--text-muted); font-size: 11px">—</span>
+                <span v-if="driftRuleDriftTypeTags(record as DriftRuleConfig).length === 0" style="color: var(--text-muted)">—</span>
               </template>
               <template v-else-if="column.key === 'severity'">
-                <span style="font-size: 12px">{{ driftRuleSeverityLabel(record as DriftRuleConfig) }}</span>
+                {{ driftRuleSeverityLabel(record as DriftRuleConfig) }}
               </template>
               <template v-else-if="column.key === 'enabled'">
                 <a-switch
@@ -1777,17 +1777,17 @@ onUnmounted(() => {
             >
               <template #bodyCell="{ column, record, index }">
                 <template v-if="column.key === 'name'">
-                  <span :title="record.name" style="font-size: 12px">{{ friendlyLabel(record.name) }}</span>
+                  <span :title="record.name">{{ friendlyLabel(record.name) }}</span>
                 </template>
                 <template v-else-if="column.key === 'scope'">
                   <template v-if="record.scope === 'protocol'">
-                    <a-tag :color="protocolColor(record.protocolPattern ?? '')" style="font-size: 11px; margin: 0">{{ protocolLabel(record.protocolPattern ?? '') }}</a-tag>
+                    <a-tag :color="protocolColor(record.protocolPattern ?? '')" style="margin: 0">{{ protocolLabel(record.protocolPattern ?? '') }}</a-tag>
                   </template>
                   <template v-else-if="record.scope === 'source'">
-                    <span style="font-size: 12px" :title="record.sourcePattern">{{ record.sourcePattern }}</span>
+                    <span :title="record.sourcePattern">{{ record.sourcePattern }}</span>
                   </template>
                   <template v-else>
-                    <span style="font-size: 12px">{{ ruleDeviceName(record) || '—' }}</span>
+                    {{ ruleDeviceName(record) || '—' }}
                   </template>
                 </template>
                 <template v-else-if="column.key === 'enabled'">
@@ -1803,16 +1803,16 @@ onUnmounted(() => {
                     v-for="label in ruleDetectionLabels(record)"
                     :key="label"
                     :color="categoryLabelColor(label)"
-                    style="font-size: 11px; margin: 1px"
+                    style="margin: 1px"
                   >{{ label }}</a-tag>
                 </template>
 
                 <template v-else-if="column.key === 'sensitivity'">
-                  <span style="font-size: 12px">{{ tableSensitivityLabel(record) }}</span>
+                  {{ tableSensitivityLabel(record) }}
                 </template>
 
                 <template v-else-if="column.key === 'seasonality'">
-                  <span style="color: var(--text-tertiary); font-size: 12px">{{ record.seasonality || 'none' }}</span>
+                  <span style="color: var(--text-tertiary)">{{ record.seasonality || 'none' }}</span>
                 </template>
 
                 <template v-else-if="column.key === 'actions'">
@@ -1949,7 +1949,7 @@ onUnmounted(() => {
           >
             <a-select-option v-for="src in uniqueSources" :key="src.name" :value="src.name" :label="src.name">
               <div style="display: flex; align-items: center; gap: 8px">
-                <a-tag v-if="src.protocol" :color="protocolColor(src.protocol)" style="margin: 0; font-size: 11px">{{ protocolLabel(src.protocol) }}</a-tag>
+                <a-tag v-if="src.protocol" :color="protocolColor(src.protocol)" style="margin: 0">{{ protocolLabel(src.protocol) }}</a-tag>
                 <span style="overflow: hidden; text-overflow: ellipsis">{{ src.name }}</span>
               </div>
             </a-select-option>
