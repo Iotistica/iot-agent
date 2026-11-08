@@ -697,12 +697,12 @@ async function toggleDriftRuleEnabled(rule: DriftRuleConfig) {
   }
 }
 
-const driftRuleColumns: TableColumnType[] = [
-  { title: 'Rule name', dataIndex: 'name', key: 'name', ellipsis: true },
+const driftRuleColumns: TableColumnType<DriftRuleConfig>[] = [
+  { title: 'Rule name', dataIndex: 'name', key: 'name', ellipsis: true, sorter: (a: DriftRuleConfig, b: DriftRuleConfig) => (a.name ?? '').localeCompare(b.name ?? '') },
   { title: 'Applies to', key: 'scope', width: 160, ellipsis: true },
   { title: 'Detection Type', key: 'driftType' },
-  { title: 'Severity', key: 'severity', width: 100 },
-  { title: 'Enabled', key: 'enabled', width: 80 },
+  { title: 'Severity', key: 'severity', width: 100, sorter: (a: DriftRuleConfig, b: DriftRuleConfig) => driftRuleSeverityLabel(a).localeCompare(driftRuleSeverityLabel(b)) },
+  { title: 'Enabled', key: 'enabled', width: 80, sorter: (a: DriftRuleConfig, b: DriftRuleConfig) => Number(a.enabled) - Number(b.enabled) },
   { title: '', key: 'actions', width: 100, align: 'right' as const },
 ]
 
@@ -1540,9 +1540,9 @@ onUnmounted(() => {
           >
             <template #bodyCell="{ column, record }">
               <template v-if="column.key === 'name'">
-                <a style="font-size: 12px" @click="editDriftRule(record as DriftRuleConfig)">
+                <span style="font-size: 12px; cursor: pointer" @click="editDriftRule(record as DriftRuleConfig)">
                   {{ (record as DriftRuleConfig).name || '(unnamed)' }}
-                </a>
+                </span>
               </template>
               <template v-else-if="column.key === 'scope'">
                 <span style="font-size: 11px; color: var(--text-tertiary)">{{ driftRuleScopeLabel(record as DriftRuleConfig) }}</span>
@@ -1949,9 +1949,6 @@ onUnmounted(() => {
           </a-collapse-panel>
         </a-collapse>
 
-        <a-form-item label="Enabled">
-          <a-switch v-model:checked="metricForm.enabled" />
-        </a-form-item>
       </a-form>
 
       <template #footer>
