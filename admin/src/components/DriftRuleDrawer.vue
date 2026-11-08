@@ -467,11 +467,6 @@ function filterDevice(input: string, option: any) {
         </div>
       </a-form-item>
 
-      <!-- ── Enabled ──────────────────────────────────────────────────────── -->
-      <a-form-item label="Enabled">
-        <a-switch v-model:checked="enabled" />
-      </a-form-item>
-
       <!-- ── Advanced Settings ────────────────────────────────────────────── -->
       <a-collapse v-model:activeKey="advancedActiveKey" ghost class="advanced-settings-collapse">
         <a-collapse-panel key="advanced" header="Advanced Settings (Optional)">
