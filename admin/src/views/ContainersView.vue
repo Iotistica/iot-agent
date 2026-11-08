@@ -280,6 +280,9 @@ const STATUS_LABEL: Record<RunState, string> = {
   unknown: '—',
 }
 
+function stateColor(svc: ContainerService): string { return STATUS_COLOR[resolveState(svc)] }
+function stateLabel(svc: ContainerService): string { return STATUS_LABEL[resolveState(svc)] }
+
 function summaryForApp(app: ContainerApp) {
   const total = app.services.length
   const running = app.services.filter(s => resolveState(s) === 'running').length
@@ -1391,7 +1394,7 @@ async function deploy() {
             :key="svc.serviceId ?? svc.serviceName"
             class="service-row"
           >
-            <span class="service-state-dot" :class="[`state-${resolveState(svc)}`, { 'socket-active': svc.socketConnected && resolveState(svc) === 'running' }]" :aria-label="STATUS_LABEL[resolveState(svc)]" />
+            <span class="service-state-dot" :class="[`state-${resolveState(svc)}`, { 'socket-active': svc.socketConnected && resolveState(svc) === 'running' }]" :aria-label="stateLabel(svc)" />
             <div class="svc-identity">
               <button class="service-name service-name-button" type="button" @click="openServiceDetails(fullApp(app), svc)">
                 {{ svc.serviceName }}
@@ -1823,8 +1826,8 @@ async function deploy() {
               <div style="font-weight: 500">{{ svc.serviceName }}</div>
               <div style="font-size: 12px; color: var(--text-tertiary); font-family: monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">{{ svc.imageName }}</div>
             </div>
-            <a-tag :color="STATUS_COLOR[resolveState(svc)]" style="margin: 0; font-size: 11px">
-              {{ STATUS_LABEL[resolveState(svc)] }}
+            <a-tag :color="stateColor(svc)" style="margin: 0; font-size: 11px">
+              {{ stateLabel(svc) }}
             </a-tag>
             <a-button size="small" @click="appDetailsOpen = false; openEditService(appDetailsTarget!, svc)">
               <template #icon><EditOutlined /></template>
@@ -2117,8 +2120,8 @@ async function deploy() {
       <template v-if="currentServiceDetailsApp && currentServiceDetailsService">
         <div class="details-heading">
           <span>Application: {{ currentServiceDetailsApp.appName }}</span>
-          <a-tag :color="STATUS_COLOR[resolveState(currentServiceDetailsService)]">
-            {{ STATUS_LABEL[resolveState(currentServiceDetailsService)] }}
+          <a-tag :color="stateColor(currentServiceDetailsService)">
+            {{ stateLabel(currentServiceDetailsService) }}
           </a-tag>
         </div>
         <div class="details-actions">
