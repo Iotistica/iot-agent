@@ -591,15 +591,13 @@ export async function triggerUpdate(targetVersion: string, force = false): Promi
 	const { spawn } = await import('child_process');
 	const fs = await import('fs');
 
-	// Check if update script exists
-	try {
-		fs.accessSync(updateScript, fs.constants.X_OK);
-		logger?.infoSync('update.sh found and executable', { component: 'agent-updater' });
-	} catch (err) {
-		const msg = `update.sh not found or not executable at ${updateScript}`;
-		logger?.errorSync(msg, err instanceof Error ? err : new Error(String(err)), { component: 'agent-updater' });
+	// Check if update script exists (don't require +x — invoke via bash)
+	if (!fs.existsSync(updateScript)) {
+		const msg = `update.sh not found at ${updateScript}`;
+		logger?.errorSync(msg, new Error(msg), { component: 'agent-updater' });
 		throw new Error(msg);
 	}
+	logger?.infoSync('update.sh found', { component: 'agent-updater' });
 
 	// Open log file for capturing output
 	let logFd: number;
@@ -620,10 +618,10 @@ export async function triggerUpdate(targetVersion: string, force = false): Promi
 	}
 
 	const forceArg = force ? 'true' : 'false';
-	const cmd = `sudo ${updateScript} ${targetVersion} ${forceArg}`;
+	const cmd = `bash ${updateScript} ${targetVersion} ${forceArg}`;
 	logger?.infoSync('Spawning update process', { component: 'agent-updater', cmd });
 
-	const child = spawn('sudo', [updateScript, targetVersion, forceArg], {
+	const child = spawn('bash', [updateScript, targetVersion, forceArg], {
 		detached: true,
 		stdio: ['ignore', logFd, logFd],
 	});
