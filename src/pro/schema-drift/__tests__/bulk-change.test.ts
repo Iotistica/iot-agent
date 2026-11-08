@@ -45,7 +45,7 @@ describe('SchemaDriftDetector bulk-change guard', () => {
 		assert.deepEqual(alerts, [], 'a mass rename must not raise any missing-field/new-field alerts');
 
 		const persisted = store.saved.at(-1)!;
-		const device = persisted.devices!['modbus_pm556x'];
+		const device = persisted.devices['modbus_pm556x'];
 		assert.deepEqual(
 			[...device.baselineFields].sort(),
 			newFields.map((f) => `reading:${f}`).sort(),

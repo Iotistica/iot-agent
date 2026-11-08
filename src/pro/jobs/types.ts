@@ -22,67 +22,67 @@ export enum ActionType {
 }
 
 export const JobConditionSchema = z.object({
-  key: z.string(),
-  value: z.array(z.string()),
-  type: z.string().optional().default('stringEqual')
+	key: z.string(),
+	value: z.array(z.string()),
+	type: z.string().optional().default('stringEqual')
 });
 
 export type JobCondition = z.infer<typeof JobConditionSchema>;
 
 export const ActionHandlerInputSchema = z.object({
-  handler: z.string(),
-  args: z.array(z.string()).optional(),
-  path: z.string().optional()
+	handler: z.string(),
+	args: z.array(z.string()).optional(),
+	path: z.string().optional()
 });
 
 export type ActionHandlerInput = z.infer<typeof ActionHandlerInputSchema>;
 
 export const ActionCommandInputSchema = z.object({
-  command: z.string()
+	command: z.string()
 });
 
 export type ActionCommandInput = z.infer<typeof ActionCommandInputSchema>;
 
 export const JobActionSchema = z.object({
-  name: z.string(),
-  type: z.nativeEnum(ActionType),
-  input: z.union([ActionHandlerInputSchema, ActionCommandInputSchema]),
-  runAsUser: z.string().optional(),
-  allowStdErr: z.number().optional(),
-  ignoreStepFailure: z.boolean().optional().default(false)
+	name: z.string(),
+	type: z.nativeEnum(ActionType),
+	input: z.union([ActionHandlerInputSchema, ActionCommandInputSchema]),
+	runAsUser: z.string().optional(),
+	allowStdErr: z.number().optional(),
+	ignoreStepFailure: z.boolean().optional().default(false)
 });
 
 export type JobAction = z.infer<typeof JobActionSchema>;
 
 export const JobScheduleSchema = z.object({
-  type: z.enum(['interval', 'cron']),
-  intervalMinutes: z.number().optional(),
-  cronExpression: z.string().optional(),
-  startTime: z.string().optional(),
-  endTime: z.string().optional()
+	type: z.enum(['interval', 'cron']),
+	intervalMinutes: z.number().optional(),
+	cronExpression: z.string().optional(),
+	startTime: z.string().optional(),
+	endTime: z.string().optional()
 });
 
 export type JobSchedule = z.infer<typeof JobScheduleSchema>;
 
 export const JobDocumentSchema = z.object({
-  version: z.string().default('1.0'),
-  includeStdOut: z.boolean().optional().default(false),
-  conditions: z.array(JobConditionSchema).optional(),
-  steps: z.array(JobActionSchema),
-  finalStep: JobActionSchema.optional(),
+	version: z.string().default('1.0'),
+	includeStdOut: z.boolean().optional().default(false),
+	conditions: z.array(JobConditionSchema).optional(),
+	steps: z.array(JobActionSchema),
+	finalStep: JobActionSchema.optional(),
 
-  executionType: z.nativeEnum(JobExecutionType).optional().default(JobExecutionType.ONE_TIME),
-  schedule: JobScheduleSchema.optional(),
-  maxExecutions: z.number().optional(),
-  maxDurationMinutes: z.number().optional(),
-  reportProgress: z.boolean().optional().default(false),
-  progressIntervalSeconds: z.number().optional().default(60),
+	executionType: z.nativeEnum(JobExecutionType).optional().default(JobExecutionType.ONE_TIME),
+	schedule: JobScheduleSchema.optional(),
+	maxExecutions: z.number().optional(),
+	maxDurationMinutes: z.number().optional(),
+	reportProgress: z.boolean().optional().default(false),
+	progressIntervalSeconds: z.number().optional().default(60),
 
-  // Legacy schema support (version 0.0)
-  operation: z.string().optional(),
-  args: z.array(z.string()).optional(),
-  allowStdErr: z.number().optional(),
-  path: z.string().optional()
+	// Legacy schema support (version 0.0)
+	operation: z.string().optional(),
+	args: z.array(z.string()).optional(),
+	allowStdErr: z.number().optional(),
+	path: z.string().optional()
 });
 
 export type JobDocument = z.infer<typeof JobDocumentSchema>;

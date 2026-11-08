@@ -9,7 +9,7 @@
 import type { AgentDatabase as Database } from '../db-compat.js';
 import type { SQLInputValue } from 'node:sqlite';
 import type { AgentLogger } from '../shared/types.js';
-import type { AnomalyAlert, CanonicalDeviceState, StatisticalBuffer } from './types.js';
+import type { CanonicalDeviceState, StatisticalBuffer } from './types.js';
 import { getMedian, getMAD } from './buffer.js';
 
 export interface AnomalyBaselineRecord {

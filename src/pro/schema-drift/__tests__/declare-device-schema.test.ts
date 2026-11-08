@@ -25,10 +25,10 @@ describe('SchemaDriftDetector.declareDeviceSchema', () => {
 
 		const persisted = store.saved.at(-1);
 		assert.ok(persisted, 'expected a baseline to be persisted');
-		const device = persisted!.devices?.['ahu_1'];
+		const device = persisted.devices?.['ahu_1'];
 		assert.ok(device, 'expected the declared fields to land in the "ahu_1" bucket (matching resolveDeviceId normalization)');
 		assert.deepEqual(
-			[...device!.baselineFields].sort(),
+			[...device.baselineFields].sort(),
 			['reading:cc_valve', 'reading:filter_dp_alarm', 'reading:hc_valve'],
 		);
 	});
@@ -45,7 +45,7 @@ describe('SchemaDriftDetector.declareDeviceSchema', () => {
 		detector.observe([{ deviceName: 'AHU-1', metric: 'cc_valve', value: 22 }]);
 
 		const persisted = store.saved.at(-1)!;
-		const device = persisted.devices!['ahu_1'];
+		const device = persisted.devices['ahu_1'];
 		assert.ok(device.baselineFields.includes('reading:hc_valve'), 'hc_valve should remain in baseline despite zero observations');
 	});
 
@@ -59,7 +59,7 @@ describe('SchemaDriftDetector.declareDeviceSchema', () => {
 		detector.declareDeviceSchema('AHU-1', ['CC-Valve', 'HC-Valve']);
 
 		const persisted = store.saved.at(-1)!;
-		const device = persisted.devices!['ahu_1'];
+		const device = persisted.devices['ahu_1'];
 		assert.deepEqual([...device.baselineFields].sort(), ['reading:cc_valve', 'reading:hc_valve']);
 	});
 });

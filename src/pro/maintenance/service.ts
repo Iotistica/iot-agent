@@ -307,7 +307,7 @@ export class MaintenanceEnergyService {
 	/** (Re)creates the alert MQTT client for `module` only when its configured destination has changed — same reconnect-on-change strategy as AnomalyDetectionService.initAlertMqttClient(). */
 	private async getAlertClient(module: RecommendationPublishModule, destinationId: number): Promise<IPublishClient | null> {
 		const cached = this.alertClients.get(module);
-		if (cached && cached.destinationId === destinationId) return cached.client;
+		if (cached?.destinationId === destinationId) return cached.client;
 
 		if (cached) {
 			await cached.client.disconnect?.().catch(() => {});
@@ -315,7 +315,7 @@ export class MaintenanceEnergyService {
 		}
 
 		const destination = this.options.getAlertDestination?.(destinationId);
-		if (!destination || destination.type !== 'mqtt') {
+		if (destination?.type !== 'mqtt') {
 			this.options.logger?.warnSync?.(`Alert destination ${destinationId} for ${module} is missing or not an MQTT destination`);
 			return null;
 		}

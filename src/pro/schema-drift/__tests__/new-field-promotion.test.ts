@@ -77,7 +77,7 @@ describe('SchemaDriftDetector new-field promotion (time-based)', () => {
 			}
 
 			const persisted = store.saved.at(-1)!;
-			const device = persisted.devices!['ahu_1'];
+			const device = persisted.devices['ahu_1'];
 			assert.ok(
 				device.baselineFields.includes('reading:zone_setpoint'),
 				'an infrequent-but-reliably-reporting field should promote once adaptivePromotionMinElapsedMs has genuinely elapsed, regardless of how many unrelated batches occurred in between',
@@ -143,7 +143,7 @@ describe('SchemaDriftDetector new-field promotion (time-based)', () => {
 			]);
 
 			const persisted = store.saved.at(-1)!;
-			const device = persisted.devices!['ahu_1'];
+			const device = persisted.devices['ahu_1'];
 			assert.equal(
 				device.newFieldCounts?.['reading:zone_setpoint'],
 				2,

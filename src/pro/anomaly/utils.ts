@@ -78,7 +78,7 @@ export function loadConfigFromEnv(): AnomalyConfig {
 	// Statistical parameters
 	const _windowSize = parseInt(process.env.ANOMALY_WINDOW_SIZE || '500', 10);
 	const zscoreThreshold = parseFloat(process.env.ANOMALY_ZSCORE_THRESHOLD || '3.0');
-	const madThreshold = parseFloat(process.env.ANOMALY_MAD_THRESHOLD || '3.0');
+	const _madThreshold = parseFloat(process.env.ANOMALY_MAD_THRESHOLD || '3.0');
 	const _rateThreshold = parseFloat(process.env.ANOMALY_RATE_THRESHOLD || '10.0');
 
 	// ML parameters
