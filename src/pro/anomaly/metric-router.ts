@@ -9,7 +9,7 @@ import type {
 
 export interface MetricMatchContext {
 	protocol?: string;
-	endpointId?: string;
+	deviceName?: string;
 }
 
 export function getMetricConfig(
@@ -44,9 +44,9 @@ export function getMetricConfig(
 
 	if (!context) return undefined;
 
-	if (context.endpointId) {
+	if (context.deviceName) {
 		for (const metric of metrics) {
-			if (metric.scope === 'source' && metric.enabled && metric.sourcePattern === context.endpointId) {
+			if (metric.scope === 'source' && metric.enabled && metric.sourcePattern === context.deviceName) {
 				return metric;
 			}
 		}

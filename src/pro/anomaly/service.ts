@@ -252,7 +252,7 @@ export class AnomalyDetectionService {
 		if (!this.enabled) return;
 		const matchCtx: MetricMatchContext = {
 			protocol: dataPoint.protocol,
-			endpointId: dataPoint.tags?.endpointId,
+			deviceName: dataPoint.tags?.deviceName,
 		};
 		if (!this.isMetricConfigured(dataPoint.metric, matchCtx)) return;
 

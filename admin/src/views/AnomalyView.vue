@@ -732,24 +732,24 @@ const scopeMode = ref<MetricScope>('point')
 const selectedSource = ref<string | undefined>(undefined)
 const selectedProtocol = ref<string | undefined>(undefined)
 
-const scopeEndpoints = ref<Array<{ name: string; protocol: string }>>([])
-const scopeEndpointsLoaded = ref(false)
+const scopeDevices = ref<Array<{ name: string; protocol: string }>>([])
+const scopeDevicesLoaded = ref(false)
 
-async function ensureScopeEndpoints() {
-  if (scopeEndpointsLoaded.value) return
+async function ensureScopeDevices() {
+  if (scopeDevicesLoaded.value) return
   try {
-    const eps = await sourcesApi.getAll()
-    scopeEndpoints.value = eps.map(ep => ({ name: ep.name, protocol: ep.protocol }))
-    scopeEndpointsLoaded.value = true
+    const { data } = await apiClient.get<{ devices: Array<{ name: string; protocol: string }> }>('/v1/devices')
+    scopeDevices.value = (data.devices ?? []).map(d => ({ name: d.name, protocol: d.protocol }))
+    scopeDevicesLoaded.value = true
   } catch { /* non-fatal */ }
 }
 
-const uniqueSources = computed(() => scopeEndpoints.value)
+const uniqueSources = computed(() => scopeDevices.value)
 
 const uniqueProtocols = computed(() => {
   const set = new Set<string>()
-  for (const ep of scopeEndpoints.value) {
-    if (ep.protocol) set.add(ep.protocol.toLowerCase())
+  for (const d of scopeDevices.value) {
+    if (d.protocol) set.add(d.protocol.toLowerCase())
   }
   return [...set].sort()
 })
@@ -1152,7 +1152,7 @@ function openAddMetric() {
   selectedSource.value = undefined
   selectedProtocol.value = undefined
   metricDrawerOpen.value = true
-  ensureScopeEndpoints()
+  ensureScopeDevices()
 }
 
 function openEditMetric(metric: AnomalyMetricConfig, idx: number) {
@@ -1182,7 +1182,7 @@ function openEditMetric(metric: AnomalyMetricConfig, idx: number) {
   const isCustom = !mapping || !Object.values(mapping).includes(metric.threshold)
   advancedOpen.value = isCustom ? ['advanced'] : []
   metricDrawerOpen.value = true
-  ensureScopeEndpoints()
+  ensureScopeDevices()
 }
 
 async function saveMetric() {
