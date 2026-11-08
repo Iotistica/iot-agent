@@ -1,19 +1,18 @@
 import { LogComponents } from '../logging/types.js';
-import { loadSimulationModule } from '../pro/loader.js';
+import { isProLicensed } from '../pro/license-gate.js';
+import { SimulationOrchestrator, loadSimulationConfig } from '../pro/anomaly/index.js';
 import type { AgentInitContext } from './context.js';
 
 export async function initSimulationMode(ctx: AgentInitContext): Promise<void> {
-	const pro = await loadSimulationModule();
-
-	if (!pro) {
-		ctx.agentLogger?.debugSync('Simulation mode requires Iotistica Agent Pro', {
+	if (!isProLicensed()) {
+		ctx.agentLogger?.debugSync('Simulation mode requires active license', {
 			component: LogComponents.agent,
 		});
 		ctx.simulationOrchestrator = undefined;
 		return;
 	}
 
-	const config = pro.loadSimulationConfig();
+	const config = loadSimulationConfig();
 
 	if (!config.enabled) {
 		ctx.agentLogger?.debugSync('Simulation mode disabled by environment', {
@@ -54,7 +53,7 @@ export async function initSimulationMode(ctx: AgentInitContext): Promise<void> {
 			: undefined,
 	});
 
-	const orchestrator = new pro.SimulationOrchestrator(config, {
+	const orchestrator = new SimulationOrchestrator(config, {
 		logger: ctx.agentLogger,
 		anomalyService: ctx.anomalyService,
 	});

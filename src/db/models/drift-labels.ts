@@ -12,11 +12,9 @@
  * neither is meaningful to an operator.
  *
  * The device-id logic here (prettifyDriftDeviceId) is a deliberate, documented
- * duplicate of iot-agent-pro's src/device-identity/index.ts (prettifyDeviceId)
- * — not an independent reimplementation that's free to drift. This file has to
- * build and run without @iotistica/agent-pro installed (it's an optional,
- * dynamically-loaded dependency — see src/pro/loader.ts), so it can't take a
- * static import from that package. If the formatting rules change, change both.
+ * duplicate of src/pro/device-identity/index.ts (prettifyDeviceId)
+ * — not an independent reimplementation that's free to drift.
+ * If the formatting rules change, change both.
  */
 
 const DRIFT_FIELD_PREFIX_RE = /^(reading|key):/;
@@ -37,7 +35,7 @@ export function cleanDriftFieldName(field: string): string {
  * swaps the separator. Apply after cleanDriftFieldName()/stripFieldDevicePrefix()
  * (both still expect underscore-joined input), not before.
  *
- * Kept in sync with iot-agent-pro/src/device-identity/index.ts's
+ * Kept in sync with src/pro/device-identity/index.ts's
  * prettifyFieldName — see the module doc comment above for why this file
  * can't just import it.
  */
@@ -59,10 +57,7 @@ export function prettifyDriftDeviceId(id: string): string {
 	// segment. A normalized slug can't recover the original separator, but
 	// hyphen is the one actually in use everywhere, so that's the target.
 	//
-	// Kept in sync by hand with iot-agent-pro/src/device-identity/index.ts's
-	// prettifyDeviceId — this file can't take a static import from
-	// @iotistica/agent-pro (see the module doc comment above), so this is a
-	// deliberate, documented duplicate rather than an independent reimplementation.
+	// Kept in sync with src/pro/device-identity/index.ts's prettifyDeviceId.
 	return stripped
 		.split('_')
 		.filter(Boolean)

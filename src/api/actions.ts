@@ -33,7 +33,7 @@ import type { DiscoveryRulesScheduler } from '../discovery/rules-scheduler.js';
 import type { AgentFirewall } from '../network/firewall.js';
 import type { CaptureEngine } from '../network/capture.js';
 import type { DockerOptions } from 'dockerode';
-import { isProInstalled } from '../pro/loader.js';
+import { isProLicensed } from '../pro/license-gate.js';
 
 type AgentInstance = {
 	getLifecycleState: () => string;
@@ -527,7 +527,7 @@ export function getAnomalyService(): any | undefined {
 
 /**
  * Get the preventive maintenance / energy recommendations service (Pro-only —
- * undefined when @iotistica/agent-pro isn't installed, same gating as anomalyService).
+ * undefined when the agent lacks an active Pro license, same gating as anomalyService).
  */
 export function getMaintenanceEnergyService(): any | undefined {
 	return maintenanceEnergyService;
@@ -903,7 +903,7 @@ export const getDeviceState = async () => {
 		apps: Object.keys(currentState.apps).length,
 		is_online: isOnline,
 		status: 'Idle',
-		pro_installed: isProInstalled(),
+		pro_installed: isProLicensed(),
 		docker_available: dockerAvailable,
 	};
 };

@@ -13,7 +13,11 @@ import { getDatabase } from '../db/sqlite.js';
 import { CloudMqttClient } from '../mqtt/manager.js';
 import type { DictionaryManager } from '../mqtt/dictionary.js';
 import { EventEmitter } from 'events';
-import { loadAzureDestination, loadAwsDestination, loadGcpDestination, loadInfluxDbDestination } from '../pro/loader.js';
+import { isProLicensed } from '../pro/license-gate.js';
+import { AzurePublishPlugin } from '../pro/destinations/azure-plugin.js';
+import { AwsPublishPlugin } from '../pro/destinations/aws-plugin.js';
+import { GcpPublishPlugin } from '../pro/destinations/gcp-plugin.js';
+import { InfluxDbPublishPlugin } from '../pro/destinations/influxdb-plugin.js';
 import { MqttPublishPlugin } from './plugins/mqtt.js';
 import { NoopPublishPlugin } from './plugins/noop.js';
 import { TimescaleDbPublishPlugin } from './plugins/timescaledb.js';
@@ -237,16 +241,12 @@ export class DevicePublish extends EventEmitter {
 
 		this.validateConfig();
 		await this.onInitialize();
-		const [azure, aws, gcp, influxdb] = await Promise.all([
-			loadAzureDestination(),
-			loadAwsDestination(),
-			loadGcpDestination(),
-			loadInfluxDbDestination(),
-		]);
-		this.proPlugins.azure = azure?.AzurePublishPlugin;
-		this.proPlugins.aws = aws?.AwsPublishPlugin;
-		this.proPlugins.gcp = gcp?.GcpPublishPlugin;
-		this.proPlugins.influxdb = influxdb?.InfluxDbPublishPlugin;
+		if (isProLicensed()) {
+			this.proPlugins.azure = AzurePublishPlugin;
+			this.proPlugins.aws = AwsPublishPlugin;
+			this.proPlugins.gcp = GcpPublishPlugin;
+			this.proPlugins.influxdb = InfluxDbPublishPlugin;
+		}
 		await this.onStart();
 		this.isRunning = true;
 	}

@@ -9,7 +9,9 @@ import type { AgentLogger } from '../logging/agent-logger';
 import type { AgentInfo } from '../core/types.js';
 import type { AgentInitContext } from './context.js';
 import { LogComponents } from '../logging/types';
-import { loadJobsFeature, loadShellHandler as loadShellHandlerPro } from '../pro/loader.js';
+import { isProLicensed } from '../pro/license-gate.js';
+import { JobsFeature } from '../pro/jobs/index.js';
+import { ShellHandler } from '../pro/shell/index.js';
 import { DiscoveryService } from '../discovery/service.js';
 import { DiscoveryRulesScheduler } from '../discovery/rules-scheduler.js';
 import { BackupScheduler } from '../db/backup-scheduler.js';
@@ -226,9 +228,8 @@ export class FeatureInitializer {
 		}
 
 		try {
-			const pro = await loadJobsFeature();
-			if (!pro) {
-				logger.debugSync('Jobs Feature skipped — requires Iotistica Pro', {
+			if (!isProLicensed()) {
+				logger.debugSync('Jobs Feature skipped — requires active license', {
 					component: LogComponents.agent,
 				});
 				return;
@@ -239,7 +240,7 @@ export class FeatureInitializer {
         configSettings.cloudJobsPollingIntervalMs ||
         parseInt(process.env.CLOUD_JOBS_POLLING_INTERVAL || "30000", 10);
 
-			this.features.jobs = new pro.JobsFeature(
+			this.features.jobs = new JobsFeature(
 				{
 					enabled: deviceJobsEnabled,
 					cloudApiUrl,
@@ -534,15 +535,12 @@ export class FeatureInitializer {
 		}
 
 		try {
-			const pro = await loadShellHandlerPro();
-			if (!pro) {
-				logger.debugSync('Shell handler skipped — requires Iotistica Pro', {
+			if (!isProLicensed()) {
+				logger.debugSync('Shell handler skipped — requires active license', {
 					component: LogComponents.agent,
 				});
 				return;
 			}
-			const { ShellHandler } = pro;
-			const { agentTopic } = await import('../mqtt/topics.js');
 
 			this.features.shellHandler = new ShellHandler(
 				deviceInfo.uuid,

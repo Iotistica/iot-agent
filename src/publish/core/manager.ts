@@ -14,7 +14,9 @@ import { SocketConnection } from './socket.js';
 import { PublishStats } from './stats.js';
 import { HeartbeatManager } from './heartbeat.js';
 import { createHash } from 'crypto';
-import { loadSchemaDrift } from '../../pro/loader.js';
+import { isProLicensed } from '../../pro/license-gate.js';
+import { SchemaDriftDetector } from '../../pro/schema-drift/index.js';
+import type { DriftAlertEvent } from '../../pro/schema-drift/index.js';
 import { SchemaDriftModel } from '../../db/models/schema-drift.model.js';
 import { SchemaDriftRuleModel } from '../../db/models/schema-drift-rule.model.js';
 import type { AnomalyEventPayload } from '../../db/models/anomaly-event.model.js';
@@ -47,24 +49,6 @@ const MAX_BATCH_BYTES = (() => {
 // the full field set instead of flagging most of every batch as "new".
 const DRIFT_OBSERVE_WINDOW_MS = 15000;
 const DRIFT_ACCUMULATOR_MAX_MESSAGES = 5000;
-
-// Mirrors the Pro package's own DriftAlertEvent shape structurally (schema
-// drift detection is a Pro feature — see pro/loader.ts's loadSchemaDrift()) —
-// defined locally rather than imported so this file has no compile-time
-// dependency on the Pro package being installed. Community builds still type-
-// check cleanly even without @iotistica/agent-pro present.
-type DriftAlertEvent = {
-	endpointName: string;
-	device?: string;
-	driftType: 'new-field' | 'missing-field' | 'type-drift' | 'rename-candidate';
-	severity: 'warning' | 'critical';
-	fieldName?: string;
-	expectedType?: string;
-	observedTypes?: string[];
-	renameCandidateFrom?: string;
-	renameCandidateTo?: string;
-	renameSimilarity?: number;
-};
 
 type PayloadFormat = 'custom' | 'tags' | 'ecp' | 'ml';
 
@@ -334,15 +318,13 @@ export class PublishManager extends EventEmitter {
 		});
 	}
 
-	/** Schema drift is Pro-only — resolves to a no-op (schemaDriftDetector stays undefined) on Community builds. */
 	private async initSchemaDrift(): Promise<void> {
-		const pro = await loadSchemaDrift();
-		if (!pro) {
-			this.logger?.debug(`Schema drift detection skipped for endpoint '${this.endpointName}' — requires Iotistica Pro`);
+		if (!isProLicensed()) {
+			this.logger?.debug(`Schema drift detection skipped for endpoint '${this.endpointName}' — requires active license`);
 			return;
 		}
 
-		this.schemaDriftDetector = new pro.SchemaDriftDetector(
+		this.schemaDriftDetector = new SchemaDriftDetector(
 			this.config.name || 'unknown',
 			this.logger,
 			this.config.driftOptions ?? undefined,

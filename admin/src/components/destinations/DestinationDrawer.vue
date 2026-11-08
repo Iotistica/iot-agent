@@ -203,7 +203,7 @@ function close() {
           >
             <a-tooltip
               v-if="PRO_DESTINATION_TYPES.has(t) && !proInstalled"
-              title="Requires Pro — install @iotistica/agent-pro to enable"
+              title="Requires an active license"
             >
               <span style="color: var(--text-placeholder)">{{ t }}</span>
               <a-tag color="gold" style="font-size:10px;padding:0 4px;height:16px;line-height:16px;margin-left:4px;border-radius:3px">Pro</a-tag>

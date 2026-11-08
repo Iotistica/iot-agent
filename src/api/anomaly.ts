@@ -14,8 +14,8 @@ const VALID_RESOLUTION_REASONS: ResolutionReason[] = ['false_positive', 'true_po
 // The agent's own self-monitoring metrics (cpu/memory/etc.) are keyed with a
 // UUID prefix for fleet-wide uniqueness — "{agentUuid}_system_memory_percent",
 // or "{uuid}_{uuid}_metric" for some container/endpoint-scoped metrics — see
-// getMetricConfig's systemPrefixMatch/endpointPrefixMatch in iot-agent-pro's
-// anomaly/metric-router.ts, which strips the same prefix to resolve config.
+// getMetricConfig's systemPrefixMatch/endpointPrefixMatch in
+// pro/anomaly/metric-router.ts, which strips the same prefix to resolve config.
 // Pure noise for display: the Device column already identifies the agent by
 // (a truncated form of) the same UUID, so showing the full UUID again in the
 // metric name adds nothing. Strip it before prettifying.
@@ -44,8 +44,8 @@ function stripDeviceUuidSuffix(deviceName: string): string {
 }
 
 // device_name/metric are stored as whatever raw identifiers the anomaly
-// pipeline resolved at ingest time (resolveDeviceId in iot-agent-pro's
-// anomaly/metric-router.ts for device_name; the point-name normalization
+// pipeline resolved at ingest time (resolveDeviceId in
+// pro/anomaly/metric-router.ts for device_name; the point-name normalization
 // pipeline's normalizedName for metric) — left untouched here rather than
 // renormalized, since changing either would split a device/metric's existing
 // history across two different stored keys. device_name still gets the same

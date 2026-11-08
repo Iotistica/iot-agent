@@ -1359,7 +1359,7 @@ onUnmounted(() => {
       <template #message>Catch anomalies before they become failures</template>
       <template #description>
         <div style="margin-top: 4px">
-          <strong>Iotistica Agent Pro</strong> adds on-device ML anomaly detection — baseline tracking,
+          An active license enables on-device ML anomaly detection — baseline tracking,
           per-metric alert rules, and trend forecasting that runs entirely on the device with no cloud
           round-trip required. Get notified the moment a sensor drifts outside its normal range.
         </div>
@@ -1370,7 +1370,7 @@ onUnmounted(() => {
             href="https://iotistica.com/solutions.html"
             target="_blank"
             rel="noopener"
-          >Upgrade to Agent Pro →</a-button>
+          >Activate License →</a-button>
           <a
             href="https://iotistica.com/solutions.html"
             target="_blank"
@@ -1632,7 +1632,7 @@ onUnmounted(() => {
           v-if="!proInstalled"
           type="info"
           show-icon
-          message="Schema drift detection requires Iotistica Agent Pro"
+          message="Schema drift detection requires an active license"
           style="margin-bottom: 12px"
         />
         <a-card size="small" class="list-card">

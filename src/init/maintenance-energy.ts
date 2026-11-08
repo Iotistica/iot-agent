@@ -1,6 +1,7 @@
 import { LogComponents } from '../logging/types.js';
 import { DatabaseModel } from '../db/models/index.js';
-import { loadMaintenanceEnergy } from '../pro/loader.js';
+import { isProLicensed } from '../pro/license-gate.js';
+import { MaintenanceEnergyService } from '../pro/maintenance/index.js';
 import { CloudMqttClient } from '../mqtt/manager.js';
 import { agentTopic } from '../mqtt/topics.js';
 import { PublishDestinationsModel } from '../db/models/publish-destinations.model.js';
@@ -16,12 +17,12 @@ import type { AgentInitContext } from './context.js';
  * so there's no correlator equivalent to wire up. Phase 3 publishing DOES
  * reuse the exact same options-bag pattern anomaly uses though (buildTopic,
  * getAlertDestination, createAlertMqttClient) — see MaintenanceEnergyService
- * in iot-agent-pro for the consumer side.
+ * in pro/maintenance/service.ts for the consumer side.
  *
  * No cloud feature-flag gate exists for this yet (unlike
  * features.enableAnomalyDetection) — the service simply starts whenever
- * @iotistica/agent-pro is installed. Add one later if a reason to
- * enable/disable it independently of the Pro license shows up.
+ * the agent has an active Pro license. Add one later if a reason to
+ * enable/disable it independently of the license shows up.
  */
 export async function initMaintenanceEnergy(ctx: AgentInitContext): Promise<void> {
 	if (ctx.maintenanceEnergyService) {
@@ -33,22 +34,23 @@ export async function initMaintenanceEnergy(ctx: AgentInitContext): Promise<void
 	}
 
 	try {
-		const pro = await loadMaintenanceEnergy();
-		if (!pro) {
-			ctx.agentLogger?.debugSync('Preventive maintenance / energy recommendations skipped — requires Iotistica Pro', {
+		if (!isProLicensed()) {
+			ctx.agentLogger?.debugSync('Preventive maintenance / energy recommendations skipped — requires active license', {
 				component: LogComponents.agent,
 			});
 			return;
 		}
 
 		const dbInstance = DatabaseModel.getConnection();
-		const { MaintenanceEnergyService } = pro;
 		ctx.maintenanceEnergyService = new MaintenanceEnergyService(dbInstance, {
 			logger: ctx.agentLogger,
 			mqttManager: CloudMqttClient.getInstance(),
 			deviceUuid: ctx.agentInfo!.uuid,
 			buildTopic: (deviceUuid: string, ...segments: string[]) => agentTopic(deviceUuid, ...segments),
-			getAlertDestination: (id: number) => PublishDestinationsModel.getById(id) ?? null,
+			getAlertDestination: (id: number) => {
+				const dest = PublishDestinationsModel.getById(id);
+				return dest ? { id: dest.id!, type: dest.type, config_json: dest.config_json } : null;
+			},
 			createAlertMqttClient: (config: Record<string, unknown> | null | undefined, deviceId?: string, name?: string, logger?: any) =>
 				createExternalMqttClientFromDestination(config, deviceId, name, logger),
 		});

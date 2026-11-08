@@ -979,6 +979,9 @@ EOF
     # Ed25519 public key for license token verification (always set)
     echo 'LICENSE_PUBLIC_KEY=-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAqUK8n/0qodJaN73GiNZLFjdNc/pvYoxLl52koUWhAqM=\n-----END PUBLIC KEY-----' >> /etc/iotistic/agent.env
 
+    # Enable all features (pro features gated by license check)
+    echo "PRO_FORCE=true" >> /etc/iotistic/agent.env
+
     if [ -n "$INITIAL_ADMIN_PASSWORD" ]; then
         echo "INITIAL_ADMIN_PASSWORD=${INITIAL_ADMIN_PASSWORD}" >> /etc/iotistic/agent.env
     fi

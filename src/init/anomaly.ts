@@ -1,6 +1,7 @@
 import { LogComponents } from '../logging/types.js';
 import { DatabaseModel } from '../db/models/index.js';
-import { loadAnomalyDetection } from '../pro/loader.js';
+import { isProLicensed } from '../pro/license-gate.js';
+import { AnomalyDetectionService, loadConfigFromTargetState } from '../pro/anomaly/index.js';
 import { CloudMqttClient } from '../mqtt/manager.js';
 import { agentTopic } from '../mqtt/topics.js';
 import { PublishDestinationsModel } from '../db/models/publish-destinations.model.js';
@@ -62,15 +63,14 @@ export async function initAnomalyDetection(ctx: AgentInitContext): Promise<void>
 	ctx.featureInitializer?.setIncidentCorrelator?.(ctx.correlator);
 
 	try {
-		const pro = await loadAnomalyDetection();
-		if (!pro) {
-			ctx.agentLogger?.debugSync('Anomaly detection skipped — requires Iotistica Pro', {
+		if (!isProLicensed()) {
+			ctx.agentLogger?.debugSync('Anomaly detection skipped — requires active license', {
 				component: LogComponents.agent,
 			});
 			return;
 		}
 
-		const config = pro.loadConfigFromTargetState(targetConfig);
+		const config = loadConfigFromTargetState(targetConfig);
 		const enabledMetrics = config.metrics.filter((metric: any) => metric.enabled);
 
 		const dbInstance = DatabaseModel.getConnection();
@@ -83,7 +83,6 @@ export async function initAnomalyDetection(ctx: AgentInitContext): Promise<void>
 			defaults: config.defaults,
 		});
 
-		const { AnomalyDetectionService } = pro;
 		const correlator = ctx.correlator;
 		ctx.anomalyService = new AnomalyDetectionService(
 			config,
@@ -96,8 +95,10 @@ export async function initAnomalyDetection(ctx: AgentInitContext): Promise<void>
 			{
 				buildTopic: (deviceUuid: string, ...segments: string[]) =>
 					agentTopic(deviceUuid, ...segments),
-				getAlertDestination: (id: number) =>
-					PublishDestinationsModel.getById(id) ?? null,
+				getAlertDestination: (id: number) => {
+					const dest = PublishDestinationsModel.getById(id);
+					return dest ? { id: dest.id!, name: dest.name, type: dest.type, config_json: dest.config_json ?? null } : null;
+				},
 				createAlertMqttClient: (config: Record<string, unknown> | null | undefined, deviceId?: string, name?: string, logger?: any) =>
 					createExternalMqttClientFromDestination(config, deviceId, name, logger),
 				onAnomalyDetected: (event: any) =>

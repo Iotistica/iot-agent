@@ -2691,7 +2691,7 @@ router.delete('/v1/assets/:uuid/metrics/:bindingId', requireRole('operator'), as
 
 /**
  * Preventive maintenance / energy recommendations — Pro-only feature.
- * Every route below 503s if @iotistica/agent-pro isn't installed, same
+ * Every route below 503s if the agent lacks an active Pro license, same
  * gating as the /v1/anomaly/* routes.
  */
 

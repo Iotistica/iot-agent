@@ -1,15 +1,11 @@
 import { initDatabase } from './database.js';
 import { LogComponents } from '../logging/types.js';
-import { primeProInstalled } from '../pro/loader.js';
 import type { AgentInitContext } from './context.js';
 
 export async function initCore(ctx: AgentInitContext): Promise<void> {
 	await initDatabase(ctx);
 	await initializeStateReconciler(ctx);
 	setupConfigEventListeners(ctx);
-	// Prime before the Device API (phase "infra") starts accepting requests,
-	// so isProInstalled() never serves a false negative to GET /v1/device.
-	await primeProInstalled();
 }
 
 export async function initializeStateReconciler(ctx: AgentInitContext): Promise<void> {

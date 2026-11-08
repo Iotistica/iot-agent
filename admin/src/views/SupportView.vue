@@ -28,7 +28,7 @@ const resources = [
   },
   {
     title: 'Solutions & Pricing',
-    description: 'Compare Community, Agent Pro, and Pro + Ingestion to find the right fit.',
+    description: 'Compare plans and find the right fit.',
     href: 'https://iotistica.com/solutions.html',
     icon: GlobalOutlined,
     color: '#00d4aa',
@@ -49,9 +49,9 @@ const resources = [
       show-icon
       style="margin-bottom: 24px"
     >
-      <template #message>Priority support requires Agent Pro</template>
+      <template #message>Priority support requires an active license</template>
       <template #description>
-        Upgrade to <strong>Iotistica Agent Pro</strong> to access priority email support,
+        Activate a license to access priority email support,
         guaranteed response times, and direct access to the engineering team.
         <a
           href="https://iotistica.com/solutions.html"
@@ -69,7 +69,7 @@ const resources = [
         Priority Support
       </template>
       <p style="color: var(--text-secondary); margin-bottom: 20px">
-        As an Agent Pro customer you have direct access to our engineering team.
+        As a licensed customer you have direct access to our engineering team.
         We aim to respond within one business day.
       </p>
       <a-space direction="vertical" style="width: 100%" :size="12">
