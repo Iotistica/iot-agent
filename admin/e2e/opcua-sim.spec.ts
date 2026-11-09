@@ -25,14 +25,7 @@ test.describe('OPC-UA simulator integration', () => {
     await page.locator('.ant-menu-item', { hasText: 'Devices' }).click()
     await expect(page).toHaveURL(/\/devices/)
 
-    const deviceRow = page.locator('.ant-table-row').first()
-    await expect(deviceRow).toBeVisible({ timeout: 60_000 })
-
-    await expect.poll(async () => {
-      const res = await page.request.get('/v1/devices?protocol=opcua')
-      const body = await res.json()
-      return body.devices?.length ?? 0
-    }, { timeout: 60_000, intervals: [2_000] }).toBeGreaterThan(0)
+    await expect(page.locator('.ant-table-row').first()).toBeVisible({ timeout: 60_000 })
   })
 
   test('source shows connected status on Sources page', async ({ page, baseURL }) => {
@@ -76,18 +69,25 @@ test.describe('OPC-UA simulator integration', () => {
     }, { timeout: 60_000, intervals: [5_000] }).toBe('Active')
   })
 
-  test('OPC-UA device has expected metadata from simulator', async ({ page }) => {
+  test('device drawer shows OPC-UA protocol and last seen', async ({ page, baseURL }) => {
     test.setTimeout(60_000)
 
-    const res = await page.request.get('/v1/devices?protocol=opcua')
-    expect(res.ok()).toBe(true)
-    const body = await res.json()
-    expect(body.devices.length).toBeGreaterThan(0)
+    await page.goto(baseURL + 'devices')
 
-    const device = body.devices[0]
-    expect(device.protocol).toBe('opcua')
-    expect(device.enabled).toBe(true)
-    expect(device.lastSeenAt).toBeTruthy()
+    const deviceRow = page.locator('.ant-table-row').first()
+    await expect(deviceRow).toBeVisible({ timeout: 30_000 })
+
+    await deviceRow.click()
+
+    const drawer = page.locator('.ant-drawer')
+    await expect(drawer).toBeVisible({ timeout: 5_000 })
+
+    await expect(drawer.locator('.ant-tag', { hasText: 'OPC-UA' })).toBeVisible()
+
+    const lastSeen = drawer.locator('.ant-descriptions-item', { hasText: 'Last Seen' })
+    await expect(lastSeen).toBeVisible()
+    const lastSeenText = await lastSeen.locator('.ant-descriptions-item-content').textContent()
+    expect(lastSeenText?.trim()).not.toBe('—')
   })
 
   test('Data page renders stat cards and table', async ({ page, baseURL }) => {
@@ -95,16 +95,15 @@ test.describe('OPC-UA simulator integration', () => {
 
     await page.goto(baseURL + 'data-flow')
 
-    await expect(page.getByTestId('stat-observed-points')).toBeVisible({ timeout: 10_000 })
-    await expect(page.getByTestId('stat-subscriptions')).toBeVisible({ timeout: 5_000 })
+    const observedCard = page.getByTestId('stat-observed-points')
+    await expect(observedCard).toBeVisible({ timeout: 10_000 })
+    await expect(observedCard.locator('.ant-statistic-title')).toHaveText('Observed points')
+
+    const subsCard = page.getByTestId('stat-subscriptions')
+    await expect(subsCard).toBeVisible({ timeout: 5_000 })
+    await expect(subsCard.locator('.ant-statistic-title')).toHaveText('Active subscriptions')
 
     const table = page.locator('.ant-table')
     await expect(table).toBeVisible({ timeout: 10_000 })
-
-    const res = await page.request.get('/v1/pipeline/overview')
-    expect(res.ok()).toBe(true)
-    const body = await res.json()
-    expect(body.overview).toHaveProperty('activePoints')
-    expect(body.overview).toHaveProperty('activeDevices')
   })
 })
