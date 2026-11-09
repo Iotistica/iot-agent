@@ -424,8 +424,7 @@ jobs:
       - name: Start OPC-UA simulator
         run: |
           docker run -d --name opcua-sim \
-            -p 4840:4840 \
-            -p 47901:47901 \
+            --network host \
             iotistic/opcua-simulator:latest
 
           # Wait for the OPC-UA server to accept connections
