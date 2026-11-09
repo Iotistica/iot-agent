@@ -8,6 +8,15 @@ function makeManager(): any {
 }
 
 describe('PublishManager source routing', () => {
+	it('allows topic-less noop destinations', () => {
+		const manager = makeManager();
+
+		expect((manager as any).resolveDestinationTopic({
+			publisher: { id: 1, type: 'noop' },
+			subscription: { route_json: null },
+		}, 'source/topic')).toBe('');
+	});
+
 	it('keeps subscriptions with selected sources on the protocol pipe', () => {
 		const manager = makeManager();
 

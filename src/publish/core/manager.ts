@@ -1917,7 +1917,8 @@ export class PublishManager extends EventEmitter {
 		if (destinationTopic.length === 0) {
 			// InfluxDB uses an optional measurement name — empty topic is valid, plugin defaults to 'metrics'.
 			// TimescaleDB has no per-topic column at all, so an empty topic is likewise valid and ignored.
-			if (binding.publisher.type === 'influxdb' || binding.publisher.type === 'timescaledb' || binding.publisher.type === 'socket') {
+			// Noop discards payloads without using a destination topic.
+			if (binding.publisher.type === 'influxdb' || binding.publisher.type === 'timescaledb' || binding.publisher.type === 'socket' || binding.publisher.type === 'noop') {
 				return '';
 			}
 			this.logger?.warn('Skipping publish binding without route_json.topic destination', {
