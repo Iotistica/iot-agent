@@ -421,6 +421,27 @@ jobs:
         working-directory: ./admin
         run: npx playwright install --with-deps chromium
 
+      - name: Start OPC-UA simulator
+        run: |
+          docker run -d --name opcua-sim \
+            -p 4840:4840 \
+            -p 47901:47901 \
+            iotistic/opcua-simulator:latest
+
+          # Wait for the OPC-UA server to accept connections
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:47901/health > /dev/null 2>&1; then
+              echo "OPC-UA simulator is ready"
+              break
+            fi
+            if [ "$i" -eq 30 ]; then
+              echo "OPC-UA simulator failed to start within 60s"
+              docker logs opcua-sim
+              exit 1
+            fi
+            sleep 2
+          done
+
       - name: Start agent and capture admin password
         run: |
           mkdir -p ./e2e-data
@@ -457,12 +478,13 @@ jobs:
           E2E_ADMIN_PASSWORD_FILE: /tmp/e2e-admin-password.txt
         run: npx playwright test
 
-      - name: Stop agent
+      - name: Stop agent and simulators
         if: always()
         run: |
           if [ -n "$AGENT_PID" ]; then
             kill "$AGENT_PID" 2>/dev/null || true
           fi
+          docker rm -f opcua-sim 2>/dev/null || true
 
       - name: Upload Playwright report
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
