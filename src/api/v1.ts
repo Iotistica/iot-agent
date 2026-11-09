@@ -1054,7 +1054,11 @@ router.post('/v1/test/anomaly', requireRole('operator'), async (req: Request, re
 router.get('/v1/anomaly/metrics', async (req: Request, res: Response, next: NextFunction) => {
 	try {
 		const metrics = await actions.getAvailableAnomalyMetrics();
-		return res.status(200).json({ metrics });
+		const anomalyService = actions.getAnomalyService();
+		const sourceDevices = typeof anomalyService?.getObservedDeviceNames === 'function'
+			? anomalyService.getObservedDeviceNames()
+			: [];
+		return res.status(200).json({ metrics, sourceDevices });
 	} catch (error) {
 		next(error);
 	}
@@ -1233,27 +1237,6 @@ router.get('/v1/anomaly/baseline-progress', (req: Request, res: Response, next: 
 		}
 		const progress = anomalyService.getBaselineProgress();
 		return res.status(200).json({ progress });
-	} catch (error) {
-		next(error);
-	}
-});
-
-/**
- * GET /v1/anomaly/source-devices
- * Unique device names observed by the anomaly service — the values that
- * source-scoped rules match against (tags.deviceName on live data points).
- */
-router.get('/v1/anomaly/source-devices', (req: Request, res: Response, next: NextFunction) => {
-	try {
-		const anomalyService = actions.getAnomalyService();
-		if (!anomalyService) {
-			return res.status(503).json({ error: 'Anomaly detection service not available' });
-		}
-		if (typeof anomalyService.getObservedDeviceNames !== 'function') {
-			return res.status(200).json({ devices: [] });
-		}
-		const devices = anomalyService.getObservedDeviceNames();
-		return res.status(200).json({ devices });
 	} catch (error) {
 		next(error);
 	}
