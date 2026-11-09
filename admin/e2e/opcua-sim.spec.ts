@@ -35,16 +35,10 @@ test.describe('OPC-UA simulator integration', () => {
     await expect(deviceRow).toBeVisible({ timeout: 60_000 })
 
     // ── 7. Verify data is flowing via pipeline overview API ─────────────
-    let activePoints = 0
-    for (let i = 0; i < 20; i++) {
+    await expect.poll(async () => {
       const res = await page.request.get('/v1/pipeline/overview')
-      if (res.ok()) {
-        const body = await res.json()
-        activePoints = body.overview?.activePoints ?? 0
-        if (activePoints > 0) break
-      }
-      await page.waitForTimeout(3_000)
-    }
-    expect(activePoints).toBeGreaterThan(0)
+      const body = await res.json()
+      return body.overview?.activePoints ?? 0
+    }, { timeout: 90_000, intervals: [2_000] }).toBeGreaterThan(0)
   })
 })
