@@ -528,12 +528,39 @@ jobs:
           fi
           docker rm -f opcua-sim 2>/dev/null || true
 
+      - name: Playwright screenshots to job summary
+        if: ${{ !cancelled() }}
+        run: |
+          echo "## 🎭 Playwright Screenshots" >> "$GITHUB_STEP_SUMMARY"
+          shopt -s globstar nullglob
+          found=0
+          for img in admin/test-results/**/*.png; do
+            found=1
+            test_name="${img#admin/test-results/}"
+            echo "<details><summary><code>${test_name}</code></summary>" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "![${test_name}](data:image/png;base64,$(base64 -w0 "$img"))" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "</details>" >> "$GITHUB_STEP_SUMMARY"
+          done
+          if [ "$found" -eq 0 ]; then
+            echo "_No screenshots captured._" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
       - name: Upload Playwright report
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: ${{ !cancelled() }}
         with:
           name: playwright-report
           path: admin/playwright-report/
+          retention-days: 7
+
+      - name: Upload Playwright screenshots
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: ${{ !cancelled() }}
+        with:
+          name: playwright-screenshots
+          path: admin/test-results/
           retention-days: 7
 
   upload-azure:
