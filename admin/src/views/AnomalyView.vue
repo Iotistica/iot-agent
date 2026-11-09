@@ -776,15 +776,8 @@ const scopeDevicesLoaded = ref(false)
 async function ensureScopeDevices() {
   if (scopeDevicesLoaded.value) return
   try {
-    const { data } = await apiClient.get<{ points: Array<{ deviceKey: string; sourceSystem: string | null }> }>('/v1/point-catalog')
-    const seen = new Set<string>()
-    const devices: Array<{ name: string; protocol: string }> = []
-    for (const p of data.points ?? []) {
-      if (!p.deviceKey || seen.has(p.deviceKey)) continue
-      seen.add(p.deviceKey)
-      devices.push({ name: p.deviceKey, protocol: (p.sourceSystem ?? '').toLowerCase() })
-    }
-    scopeDevices.value = devices.sort((a, b) => a.name.localeCompare(b.name))
+    const { data } = await apiClient.get<{ devices: Array<{ name: string; protocol: string }> }>('/v1/anomaly/source-devices')
+    scopeDevices.value = data.devices ?? []
     scopeDevicesLoaded.value = true
   } catch { /* non-fatal */ }
 }

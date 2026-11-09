@@ -138,6 +138,7 @@ export class AnomalyDetectionService {
 	// Maps bufferKey → config rule name so getBaselineProgress() can trace
 	// buffers back to their matched rule (needed for source/protocol-scoped rules).
 	private bufferRuleMap = new Map<string, string>();
+	private observedDeviceNames = new Map<string, string>();
 	// Startup timestamp for warm-up period (prevents false positives on new agents)
 	private startupTimestamp: number = Date.now();
 	private warmupPeriodMs: number;
@@ -252,10 +253,15 @@ export class AnomalyDetectionService {
 	processDataPoint(dataPoint: DataPoint): void {
 		this.recordMetricObservation(dataPoint);
 
+		const deviceName = dataPoint.tags?.deviceName;
+		if (deviceName && !this.observedDeviceNames.has(deviceName)) {
+			this.observedDeviceNames.set(deviceName, dataPoint.protocol ?? '');
+		}
+
 		if (!this.enabled) return;
 		const matchCtx: MetricMatchContext = {
 			protocol: dataPoint.protocol,
-			deviceName: dataPoint.tags?.deviceName,
+			deviceName,
 		};
 		if (!this.isMetricConfigured(dataPoint.metric, matchCtx)) return;
 
@@ -1036,6 +1042,12 @@ export class AnomalyDetectionService {
 		lastSeenAt: number;
 	}> {
 		return Array.from(this.observedMetrics.values()).map(({ pendingCount: _, ...rest }) => rest);
+	}
+
+	getObservedDeviceNames(): Array<{ name: string; protocol: string }> {
+		return Array.from(this.observedDeviceNames.entries())
+			.map(([name, protocol]) => ({ name, protocol }))
+			.sort((a, b) => a.name.localeCompare(b.name));
 	}
 
 	/**

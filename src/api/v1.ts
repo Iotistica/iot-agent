@@ -1239,6 +1239,27 @@ router.get('/v1/anomaly/baseline-progress', (req: Request, res: Response, next: 
 });
 
 /**
+ * GET /v1/anomaly/source-devices
+ * Unique device names observed by the anomaly service — the values that
+ * source-scoped rules match against (tags.deviceName on live data points).
+ */
+router.get('/v1/anomaly/source-devices', (req: Request, res: Response, next: NextFunction) => {
+	try {
+		const anomalyService = actions.getAnomalyService();
+		if (!anomalyService) {
+			return res.status(503).json({ error: 'Anomaly detection service not available' });
+		}
+		if (typeof anomalyService.getObservedDeviceNames !== 'function') {
+			return res.status(200).json({ devices: [] });
+		}
+		const devices = anomalyService.getObservedDeviceNames();
+		return res.status(200).json({ devices });
+	} catch (error) {
+		next(error);
+	}
+});
+
+/**
  * DELETE /v1/anomaly/baselines
  * Clear all persisted baseline statistics from SQLite and reset in-memory buffers.
  */
