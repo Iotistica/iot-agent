@@ -2267,7 +2267,7 @@ export const factoryResetDevice = async () => {
  *   - system   — always-available system metrics seeded as defaults
  *   - endpoint — data-point names from configured endpoints not yet seen in live data
  * Each entry carries a `configured` flag so the UI can highlight gaps.
- * Used by: GET /v1/anomaly/metrics
+ * Used by: GET /v1/anomaly/points
  */
 // Metric name alone isn't unique across devices — some sources (e.g. OPC-UA's
 // bare field names, "hc_valve" reported identically by every AHU) reuse the

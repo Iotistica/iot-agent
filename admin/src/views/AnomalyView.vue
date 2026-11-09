@@ -776,7 +776,7 @@ const scopeDevicesLoaded = ref(false)
 async function ensureScopeDevices() {
   if (scopeDevicesLoaded.value) return
   try {
-    const { data } = await apiClient.get<{ sourceDevices?: Array<{ name: string; protocol: string }> }>('/v1/anomaly/metrics')
+    const { data } = await apiClient.get<{ sourceDevices?: Array<{ name: string; protocol: string }> }>('/v1/anomaly/points')
     scopeDevices.value = data.sourceDevices ?? []
     scopeDevicesLoaded.value = true
   } catch { /* non-fatal */ }

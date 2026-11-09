@@ -1046,12 +1046,12 @@ router.post('/v1/test/anomaly', requireRole('operator'), async (req: Request, re
 });
 
 /**
- * GET /v1/anomaly/metrics
- * Return all metric names available for anomaly rule configuration.
+ * GET /v1/anomaly/points
+ * Return all point names available for anomaly rule configuration.
  * Merges live tracked metrics, always-on system metrics, and endpoint data-point names.
  * Each entry carries source, optional live score, and a `configured` flag.
  */
-router.get('/v1/anomaly/metrics', async (req: Request, res: Response, next: NextFunction) => {
+router.get('/v1/anomaly/points', async (req: Request, res: Response, next: NextFunction) => {
 	try {
 		const metrics = await actions.getAvailableAnomalyMetrics();
 		const anomalyService = actions.getAnomalyService();

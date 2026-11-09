@@ -1031,7 +1031,7 @@ export class AnomalyDetectionService {
 	/**
 	* Return all metrics ever observed by this agent (loaded from SQLite on startup,
 	* updated in-memory as data flows through).
-	* Used by the admin UI metric picker and GET /v1/anomaly/metrics.
+	* Used by the admin UI metric picker and GET /v1/anomaly/points.
 	*/
 	getObservedMetrics(): Array<{
 		name: string;

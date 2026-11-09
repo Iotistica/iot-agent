@@ -199,7 +199,7 @@ export const anomalyApi = {
     return client.get<{ alerts: EdgeAnomalyAlert[]; total: number }>('/v1/anomaly-alerts', { params }).then((r) => r.data)
   },
 
-  getMetrics(): Promise<
+  getPoints(): Promise<
     Array<{
       name: string
       deviceId?: string
@@ -225,7 +225,7 @@ export const anomalyApi = {
           endpointName?: string
           protocol?: string
         }>
-      }>(`${BASE}/metrics`)
+      }>(`${BASE}/points`)
       .then((r) => r.data.metrics)
   },
 
