@@ -429,13 +429,26 @@ jobs:
 
           # Wait for the OPC-UA server to accept connections
           for i in $(seq 1 30); do
+            # Check if the container is still running
+            if ! docker ps --filter name=opcua-sim --filter status=running -q | grep -q .; then
+              echo "OPC-UA simulator container exited unexpectedly"
+              docker logs opcua-sim
+              docker inspect opcua-sim --format='{{.State.ExitCode}} {{.State.Error}}'
+              exit 1
+            fi
+
             if curl -sf http://localhost:47901/health > /dev/null 2>&1; then
               echo "OPC-UA simulator is ready"
               break
             fi
+
             if [ "$i" -eq 30 ]; then
-              echo "OPC-UA simulator failed to start within 60s"
+              echo "OPC-UA simulator health check timed out after 60s"
               docker logs opcua-sim
+              echo "--- container state ---"
+              docker inspect opcua-sim --format='{{.State.Status}} exit={{.State.ExitCode}}'
+              echo "--- curl verbose ---"
+              curl -v http://localhost:47901/health 2>&1 || true
               exit 1
             fi
             sleep 2
