@@ -442,7 +442,7 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
       </a-row>
       <a-card size="small" class="browser-card">
         <div class="filters">
-          <a-input v-model:value="search" placeholder="Search source, point, destination…" allow-clear class="search" />
+          <a-input v-model:value="search" data-testid="data-search" placeholder="Search source, point, destination…" allow-clear class="search" />
           <a-select v-model:value="protocolFilter" :options="protocolOptions" placeholder="All protocols" allow-clear class="filter" />
           <a-select v-model:value="sourceFilter" :options="sourceOptions" show-search option-filter-prop="label" placeholder="All sources" allow-clear class="filter" />
           <a-select v-model:value="qualityFilter" placeholder="All states" allow-clear class="filter">
@@ -450,35 +450,35 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
             <a-select-option value="BAD">Bad quality</a-select-option>
             <a-select-option value="STALE">No update in 60s</a-select-option>
           </a-select>
-          <a-button @click="resetFilters">Clear</a-button>
+          <a-button data-testid="data-clear-filters" @click="resetFilters">Clear</a-button>
           <div class="filters-actions">
-            <a-button @click="paused = !paused">
+            <a-button data-testid="data-pause" @click="paused = !paused">
               <PauseOutlined v-if="!paused" />
               <PlayCircleOutlined v-else />
               {{ paused ? 'Resume' : 'Pause' }}
             </a-button>
-            <a-button @click="poll"><ReloadOutlined :spin="refreshing" /> Refresh</a-button>
+            <a-button data-testid="data-refresh" @click="poll"><ReloadOutlined :spin="refreshing" /> Refresh</a-button>
             <a-button class="save-view-button" @click="openCreateView(false)"><SaveOutlined /> Add View</a-button>
             <a-button type="primary" :disabled="!filteredPoints.length" @click="openCreateDataset()"><DatabaseOutlined /> Add Dataset</a-button>
           </div>
         </div>
         <div class="views-bar">
           <div class="views-list">
-            <button type="button" :class="['view-tab', { active: activeTab === 'all' }]" @click="activateTab('all')">Live ({{ livePointCount }})</button>
-            <button type="button" :class="['view-tab', { active: activeTab === 'favorites' }]" @click="activateTab('favorites')"> Favorites ({{ favoriteCount }})</button>
+            <button type="button" data-testid="data-tab-live" :class="['view-tab', { active: activeTab === 'all' }]" @click="activateTab('all')">Live ({{ livePointCount }})</button>
+            <button type="button" data-testid="data-tab-favorites" :class="['view-tab', { active: activeTab === 'favorites' }]" @click="activateTab('favorites')"> Favorites ({{ favoriteCount }})</button>
             <div v-for="view in savedViews.filter(v => openViewIds.includes(v.id))" :key="view.id" :class="['saved-view-tab', { active: activeTab === view.id }]">
               <button type="button" @click="activateTab(view.id)">{{ view.name }} ({{ new Set(view.pointKeys.map(normalizeDataExplorerPointKey)).size }})</button>
               <button type="button" class="close-view" :aria-label="`Close ${view.name} tab`" @click="closeSavedView(view.id)"><CloseOutlined /></button>
             </div>
-            <button type="button" :class="['view-tab', { active: activeTab === 'views' }]" @click="activateTab('views')">Views ({{ savedViews.length }})</button>
-            <button type="button" :class="['view-tab', { active: activeTab === 'datasets' }]" @click="activateTab('datasets')">Datasets ({{ datasets.length }})</button>
+            <button type="button" data-testid="data-tab-views" :class="['view-tab', { active: activeTab === 'views' }]" @click="activateTab('views')">Views ({{ savedViews.length }})</button>
+            <button type="button" data-testid="data-tab-datasets" :class="['view-tab', { active: activeTab === 'datasets' }]" @click="activateTab('datasets')">Datasets ({{ datasets.length }})</button>
           </div>
         </div>
         <a-alert v-if="viewError" type="warning" show-icon :message="viewError" style="margin-bottom: 10px" />
         <a-alert v-if="activeSavedView && missingViewCount" type="info" show-icon :message="`${missingViewCount} saved point(s) are not in the recent sample. They remain saved in this view.`" style="margin-bottom: 10px" />
         <div class="table-meta">
           <div></div>
-          <span class="toolbar-info">Showing {{ activeTab === 'datasets' ? datasets.length + ' datasets' : activeTab === 'views' ? savedViews.length + ' views' : filteredPoints.length + ' points' }}<template v-if="lastSync"> · Last sync {{ lastSync }}</template></span>
+          <span class="toolbar-info" data-testid="data-toolbar-info">Showing {{ activeTab === 'datasets' ? datasets.length + ' datasets' : activeTab === 'views' ? savedViews.length + ' views' : filteredPoints.length + ' points' }}<template v-if="lastSync"> · Last sync {{ lastSync }}</template></span>
         </div>
 
         <!-- Views tab content -->

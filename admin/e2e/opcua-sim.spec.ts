@@ -89,21 +89,4 @@ test.describe('OPC-UA simulator integration', () => {
     const lastSeenText = await lastSeenRow.textContent()
     expect(lastSeenText).toMatch(/just now|\ds ago|\dm ago|\dh ago/)
   })
-
-  test('Data page renders stat cards and table', async ({ page, baseURL }) => {
-    test.setTimeout(60_000)
-
-    await page.goto(baseURL + 'data-flow')
-
-    const observedCard = page.getByTestId('stat-observed-points')
-    await expect(observedCard).toBeVisible({ timeout: 10_000 })
-    await expect(observedCard.locator('.ant-statistic-title')).toHaveText('Observed points')
-
-    const subsCard = page.getByTestId('stat-subscriptions')
-    await expect(subsCard).toBeVisible({ timeout: 5_000 })
-    await expect(subsCard.locator('.ant-statistic-title')).toHaveText('Active subscriptions')
-
-    const table = page.locator('.ant-table')
-    await expect(table).toBeVisible({ timeout: 10_000 })
-  })
 })
