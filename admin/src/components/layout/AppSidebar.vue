@@ -26,7 +26,6 @@ import {
 import IotisticaLogo from '@/components/IotisticaLogo.vue'
 import { useSidebar } from '@/composables/useSidebar'
 import { useAuth } from '@/composables/useAuth'
-import { useProStatus } from '@/composables/useProStatus'
 import { useImageUpdates } from '@/composables/useImageUpdates'
 import { useDockerStatus } from '@/composables/useDockerStatus'
 
@@ -35,7 +34,6 @@ const router = useRouter()
 
 const { collapsed, toggle } = useSidebar()
 const { hasRole } = useAuth()
-const { proInstalled } = useProStatus()
 const { updateCount } = useImageUpdates()
 const { dockerAvailable } = useDockerStatus()
 
