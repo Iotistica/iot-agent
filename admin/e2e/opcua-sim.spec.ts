@@ -89,4 +89,23 @@ test.describe('OPC-UA simulator integration', () => {
     const lastSeenText = await lastSeenRow.textContent()
     expect(lastSeenText).toMatch(/just now|\ds ago|\dm ago|\dh ago/)
   })
+
+  test('Data Explorer shows live OPC-UA points', async ({ page, baseURL }) => {
+    test.setTimeout(120_000)
+
+    await page.goto(baseURL + 'data-flow')
+    await expect(page.getByTestId('stat-observed-points')).toBeVisible({ timeout: 10_000 })
+
+    await expect.poll(async () => {
+      await page.reload()
+      const value = await page.getByTestId('stat-observed-points').locator('.ant-statistic-content-value').textContent()
+      return parseInt(value?.trim() ?? '0', 10)
+    }, { timeout: 90_000, intervals: [5_000] }).toBeGreaterThanOrEqual(1)
+
+    const pointNames = page.getByTestId('point-name')
+    await expect(pointNames.first()).toBeVisible({ timeout: 10_000 })
+
+    const count = await pointNames.count()
+    expect(count).toBeGreaterThanOrEqual(1)
+  })
 })
