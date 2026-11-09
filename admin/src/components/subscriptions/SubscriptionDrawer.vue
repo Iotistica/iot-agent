@@ -286,10 +286,10 @@ const isIotisticaDestination = computed(() => selectedDestination.value?.type ==
 const isExternalDestination = computed(() => !!selectedDestination.value && !isIotisticaDestination.value)
 const isInfluxDbDestination = computed(() => selectedDestination.value?.type === 'influxdb')
 const isTimescaleDbDestination = computed(() => selectedDestination.value?.type === 'timescaledb')
-const isSocketDestination = computed(() => selectedDestination.value?.type === 'socket')
+const TOPIC_OPTIONAL_TYPES = new Set(['iotistica', 'influxdb', 'timescaledb', 'socket', 'databricks', 'noop'])
 
 const destinationTopicRules = computed(() =>
-  isExternalDestination.value && !isInfluxDbDestination.value && !isTimescaleDbDestination.value && !isSocketDestination.value
+  isExternalDestination.value && !TOPIC_OPTIONAL_TYPES.has(selectedDestination.value?.type ?? '')
     ? [{ required: true, message: 'Destination topic is required for external destinations' }]
     : [],
 )
@@ -454,7 +454,7 @@ function close() {
 
       <!-- Destination Topic / Measurement -->
       <a-form-item
-        v-if="isExternalDestination && !isTimescaleDbDestination && !isSocketDestination"
+        v-if="isExternalDestination && !TOPIC_OPTIONAL_TYPES.has(selectedDestination?.type ?? '')"
         :label="isInfluxDbDestination ? 'Measurement' : 'Destination Topic'"
         :name="['route_json', 'topic']"
         :rules="destinationTopicRules"
