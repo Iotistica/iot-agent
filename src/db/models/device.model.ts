@@ -365,6 +365,8 @@ export class DeviceModel {
 
 			const hasIdentifiedDevices = [...seen.keys()].some(k => k !== '__default__');
 
+			const upsertedUuids: string[] = [];
+
 			for (const [deviceUuid, { nodeCount, deviceName }] of seen) {
 				const isDefault = deviceUuid === '__default__';
 
@@ -390,8 +392,9 @@ export class DeviceModel {
 					? endpoint.name
 					: (deviceName || (uuidSuffix ? `${endpoint.name}-${uuidSuffix}` : endpoint.name));
 
+				const devUuid = isDefault ? (endpoint.uuid || randomUUID()) : toDeviceUuid(deviceUuid);
 				await this.upsertDevice({
-					uuid: isDefault ? (endpoint.uuid || randomUUID()) : toDeviceUuid(deviceUuid),
+					uuid: devUuid,
 					endpoint_id: endpointId,
 					name: devName,
 					protocol,
@@ -400,6 +403,17 @@ export class DeviceModel {
 					metadata: { nodeCount },
 					lastSeenAt,
 				});
+				upsertedUuids.push(devUuid);
+			}
+
+			// Prune stale device rows for this endpoint that no longer match any
+			// device_uuid group — e.g. the placeholder created when the endpoint
+			// had 0 data_points (before discovery populated them).
+			const existing = await this.getByEndpointId(endpointId);
+			for (const dev of existing) {
+				if (!upsertedUuids.includes(dev.uuid)) {
+					await this.deleteByUuid(dev.uuid);
+				}
 			}
 
 		} else {
