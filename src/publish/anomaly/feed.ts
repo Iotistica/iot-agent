@@ -269,13 +269,20 @@ export class AnomalyFeed {
 		});
 	}
 
+	private resolveDisplayDeviceName(reading: any, fallback: string): string {
+		if (typeof reading.resolvedDisplayName === 'string' && reading.resolvedDisplayName.trim()) {
+			return reading.resolvedDisplayName.trim();
+		}
+		return reading.deviceName || fallback;
+	}
+
 	// OPC-UA reading object: { deviceName, metric|name, value, ... }
 	private dispatchReadingObject(
 		data: any,
 		parentDeviceName: string,
 		timestampMs: number,
 	): void {
-		const readingDeviceName: string = data.deviceName;
+		const readingDeviceName: string = this.resolveDisplayDeviceName(data, parentDeviceName);
 		const payloadDeviceUuid: string | undefined =
 			data.device_uuid || data.deviceUuid;
 		const fieldName: string = data.metric || data.name;
@@ -339,7 +346,7 @@ export class AnomalyFeed {
 		for (const reading of readings) {
 			if (typeof reading !== "object" || reading === null) continue;
 
-			const readingDeviceName: string = reading.deviceName || parentDeviceName;
+			const readingDeviceName: string = this.resolveDisplayDeviceName(reading, parentDeviceName);
 			const payloadDeviceUuid: string | undefined =
 				reading.device_uuid || reading.deviceUuid;
 			// metric (standard) > registerName (Modbus) > name (legacy)
