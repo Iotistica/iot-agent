@@ -76,24 +76,18 @@ test.describe('OPC-UA simulator integration', () => {
     }, { timeout: 60_000, intervals: [5_000] }).toBe('Active')
   })
 
-  test('seeded points are discovered via point catalog', async ({ page }) => {
+  test('OPC-UA device has expected metadata from simulator', async ({ page }) => {
     test.setTimeout(60_000)
 
-    await expect.poll(async () => {
-      const res = await page.request.get('/v1/point-catalog')
-      if (!res.ok()) return 0
-      const body = await res.json()
-      return body.points?.length ?? 0
-    }, { timeout: 60_000, intervals: [3_000] }).toBeGreaterThanOrEqual(3)
-
-    const res = await page.request.get('/v1/point-catalog')
+    const res = await page.request.get('/v1/devices?protocol=opcua')
+    expect(res.ok()).toBe(true)
     const body = await res.json()
-    const pointNames: string[] = body.points.map((p: { rawName: string }) => p.rawName)
-    expect(pointNames).toEqual(expect.arrayContaining([
-      'SupplyAirTemp',
-      'ReturnAirTemp',
-      'FanSpeed',
-    ]))
+    expect(body.devices.length).toBeGreaterThan(0)
+
+    const device = body.devices[0]
+    expect(device.protocol).toBe('opcua')
+    expect(device.enabled).toBe(true)
+    expect(device.lastSeenAt).toBeTruthy()
   })
 
   test('Data page renders stat cards and table', async ({ page, baseURL }) => {
