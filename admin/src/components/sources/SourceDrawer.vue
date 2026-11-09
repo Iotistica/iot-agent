@@ -188,12 +188,12 @@ function close() {
     <template #footer>
       <a-space style="width: 100%; justify-content: space-between">
         <a-space>
-          <a-button :loading="testing" @click="testConnection">Test Connection</a-button>
+          <a-button :loading="testing" data-testid="source-drawer-test-connection" @click="testConnection">Test Connection</a-button>
           
         </a-space>
         <a-space>
           <a-button @click="close">Cancel</a-button>
-          <a-button type="primary" :loading="saving" @click="submit">
+          <a-button type="primary" :loading="saving" data-testid="source-drawer-submit" @click="submit">
             {{ editing ? 'Save' : 'Add Source' }}
           </a-button>
         </a-space>

@@ -369,7 +369,7 @@ onUnmounted(() => {
           <a-button v-if="hasRole('operator')" danger :loading="deleting" @click="confirmDeleteSelected"><template #icon><DeleteOutlined /></template>Delete</a-button>
         </template>
         <a-button @click="discoveryOpen = true"><template #icon><RadarChartOutlined /></template>Discover</a-button>
-        <a-button type="primary" @click="openCreate"><template #icon><PlusOutlined /></template>Add Source</a-button>
+        <a-button type="primary" data-testid="sources-add-button" @click="openCreate"><template #icon><PlusOutlined /></template>Add Source</a-button>
         <a-button v-if="rows.length > 0 && hasRole('admin')" danger :loading="deletingAll" :disabled="selectedUuids.length > 0" @click="confirmDeleteAll"><template #icon><DeleteOutlined /></template>Delete All</a-button>
       </div>
     </div>
