@@ -84,10 +84,10 @@ test.describe('OPC-UA simulator integration', () => {
 
     await expect(drawer.locator('.ant-tag', { hasText: 'OPC-UA' })).toBeVisible()
 
-    const lastSeen = drawer.locator('.ant-descriptions-item', { hasText: 'Last Seen' })
-    await expect(lastSeen).toBeVisible()
-    const lastSeenText = await lastSeen.locator('.ant-descriptions-item-content').textContent()
-    expect(lastSeenText?.trim()).not.toBe('—')
+    await expect(drawer.getByText('Last Seen')).toBeVisible()
+    const lastSeenRow = drawer.locator('.ant-descriptions-row', { hasText: 'Last Seen' })
+    const lastSeenText = await lastSeenRow.textContent()
+    expect(lastSeenText).toMatch(/just now|\ds ago|\dm ago|\dh ago/)
   })
 
   test('Data page renders stat cards and table', async ({ page, baseURL }) => {
