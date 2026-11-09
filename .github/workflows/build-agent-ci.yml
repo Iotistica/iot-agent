@@ -454,6 +454,36 @@ jobs:
             sleep 2
           done
 
+      - name: Seed OPC-UA simulator with test device
+        run: |
+          SIM=http://localhost:47901
+
+          # Create admin user (first-time setup, no auth needed)
+          TOKEN=$(curl -sf -X POST "$SIM/auth/setup" \
+            -H 'Content-Type: application/json' \
+            -d '{"username":"admin","password":"testpass123"}' | jq -r '.access_token')
+
+          AUTH="Authorization: Bearer $TOKEN"
+
+          # Create a device with a few tags that produce changing values
+          DEVICE_ID=$(curl -sf -X POST "$SIM/devices" \
+            -H 'Content-Type: application/json' -H "$AUTH" \
+            -d '{"name":"AHU-1","description":"Test air handler","manufacturer":"TestCo","model":"AHU-100"}' | jq -r '.id')
+
+          curl -sf -X POST "$SIM/devices/$DEVICE_ID/tags" \
+            -H 'Content-Type: application/json' -H "$AUTH" \
+            -d '{"name":"SupplyAirTemp","data_type":"Double","behavior":"sine","behavior_params":"{\"base\":72,\"amplitude\":5,\"period_seconds\":60}"}'
+
+          curl -sf -X POST "$SIM/devices/$DEVICE_ID/tags" \
+            -H 'Content-Type: application/json' -H "$AUTH" \
+            -d '{"name":"ReturnAirTemp","data_type":"Double","behavior":"random_walk","behavior_params":"{\"base\":75,\"step\":0.5,\"min\":70,\"max\":80}"}'
+
+          curl -sf -X POST "$SIM/devices/$DEVICE_ID/tags" \
+            -H 'Content-Type: application/json' -H "$AUTH" \
+            -d '{"name":"FanSpeed","data_type":"Double","behavior":"noise","behavior_params":"{\"base\":1200,\"amplitude\":50}"}'
+
+          echo "OPC-UA simulator seeded: device=$DEVICE_ID (3 tags)"
+
       - name: Start agent and capture admin password
         run: |
           mkdir -p ./e2e-data
