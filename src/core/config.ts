@@ -637,7 +637,7 @@ export class ConfigManager extends EventEmitter {
 
 		return {
 			enableDevicePublish: publish.enabled,
-			enableAnomalyDetection: cloud?.enableAnomalyDetection ?? false,
+			enableAnomalyDetection: cloud?.enableAnomalyDetection ?? true,
 			enableDeviceJobs: cloud?.enableDeviceJobs ?? true,
 			enableDeviceRemoteAccess: cloud?.enableDeviceRemoteAccess ?? true,
 			enableUnitNormalization: cloud?.enableUnitNormalization ?? true,
