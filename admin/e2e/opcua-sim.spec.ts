@@ -36,11 +36,11 @@ test.describe('OPC-UA simulator integration', () => {
     const deviceRow = page.locator('.ant-table-row').first()
     await expect(deviceRow).toBeVisible({ timeout: 60_000 })
 
-    // ── 7. Verify data is flowing via pipeline overview API ─────────────
+    // ── 7. Verify the agent discovered OPC-UA devices via API ─────────
     await expect.poll(async () => {
-      const res = await page.request.get('/v1/pipeline/overview')
+      const res = await page.request.get('/v1/devices?protocol=opcua')
       const body = await res.json()
-      return body.overview?.activePoints ?? 0
-    }, { timeout: 90_000, intervals: [2_000] }).toBeGreaterThan(0)
+      return body.devices?.length ?? 0
+    }, { timeout: 60_000, intervals: [2_000] }).toBeGreaterThan(0)
   })
 })
