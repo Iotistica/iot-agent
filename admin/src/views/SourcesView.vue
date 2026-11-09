@@ -419,11 +419,12 @@ onUnmounted(() => {
             <div class="status-cell">
               <span
                 class="status-dot"
+                data-testid="source-status-dot"
                 :style="{ background: qualityMeta(record).dotColor }"
                 :class="{ 'status-dot--pulse': record.health?.communicationQuality === 'good' }">
               </span>
               
-              <span class="status-label" :style="{ color: qualityMeta(record).color }">
+              <span class="status-label" data-testid="source-status-label" :style="{ color: qualityMeta(record).color }">
                 {{ qualityMeta(record).label }}
               </span>
             </div>

@@ -435,8 +435,8 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
       </div>
       <a-alert v-if="error"  type="warning" show-icon :message="error" style="margin-bottom: 14px" />
       <a-row :gutter="12" class="stats">
-        <a-col :xs="12" :md="6"><a-card size="small" class="metric-card"><div class="metric-inner"><span class="metric-icon icon-points"><BarChartOutlined /></span><a-statistic title="Observed points" :value="observedPointCount" /></div></a-card></a-col>
-        <a-col :xs="12" :md="6"><a-card size="small" class="metric-card"><div class="metric-inner"><span class="metric-icon icon-subscriptions"><WifiOutlined /></span><a-statistic title="Active subscriptions" :value="subscriptions.length" /></div></a-card></a-col>
+        <a-col :xs="12" :md="6"><a-card size="small" class="metric-card" data-testid="stat-observed-points"><div class="metric-inner"><span class="metric-icon icon-points"><BarChartOutlined /></span><a-statistic title="Observed points" :value="observedPointCount" /></div></a-card></a-col>
+        <a-col :xs="12" :md="6"><a-card size="small" class="metric-card" data-testid="stat-subscriptions"><div class="metric-inner"><span class="metric-icon icon-subscriptions"><WifiOutlined /></span><a-statistic title="Active subscriptions" :value="subscriptions.length" /></div></a-card></a-col>
         <a-col :xs="12" :md="6"><a-card size="small" class="metric-card"><div class="metric-inner"><span class="metric-icon icon-quality"><WarningOutlined /></span><a-statistic title="Bad quality" :value="badCount" /></div></a-card></a-col>
         <a-col :xs="12" :md="6"><a-card size="small" class="metric-card"><div class="metric-inner"><span class="metric-icon icon-stale"><ClockCircleOutlined /></span><a-statistic title="No update in 60s" :value="staleCount" /></div></a-card></a-col>
       </a-row>
@@ -533,7 +533,7 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
           <template #bodyCell="{ column, record }">
             <template v-if="column.key === 'protocol'"><a-tag :color="protocolColor(record.protocol)">{{ protocolLabel(record.protocol) }}</a-tag></template>
             <template v-else-if="column.key === 'source'">{{ friendlySource(record.endpointName) }}</template>
-            <template v-else-if="column.key === 'point'"><div class="point-primary" :title="pointName(record)">{{ pointName(record) }}</div><div v-if="record.normalizedName" class="point-secondary" :title="originalName(record)">Original: {{ originalName(record) }}</div></template>
+            <template v-else-if="column.key === 'point'"><div class="point-primary" data-testid="point-name" :title="pointName(record)">{{ pointName(record) }}</div><div v-if="record.normalizedName" class="point-secondary" :title="originalName(record)">Original: {{ originalName(record) }}</div></template>
             <template v-else-if="column.key === 'value'"><a-tag v-if="record.quality === 'BAD' && record.value == null" color="red">No Value</a-tag><span v-else>{{ valueText(record.value) }}</span></template>
             <template v-else-if="column.key === 'unit'">{{ record.unit || '—' }}</template>
             <template v-else-if="column.key === 'quality'"><a-tag v-if="record.quality === 'BAD'" color="red">BAD</a-tag><a-tag v-else-if="isStale(record.timestamp)" color="orange">STALE</a-tag><a-tag v-else color="green">{{ record.quality || 'CURRENT' }}</a-tag></template>

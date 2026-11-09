@@ -215,7 +215,7 @@ onUnmounted(() => {
         <template #bodyCell="{ column, record }">
 
           <template v-if="column.key === 'name'">
-            <span class="device-name" :title="record.name">{{ record.metadata?.objectName || record.name }}</span>
+            <span class="device-name" data-testid="device-name" :title="record.name">{{ record.metadata?.objectName || record.name }}</span>
           </template>
 
           <template v-else-if="column.key === 'protocol'">
@@ -236,6 +236,7 @@ onUnmounted(() => {
 
           <template v-else-if="column.key === 'status'">
             <a-badge
+              data-testid="device-status"
               :color="deviceStatus(record).color === 'green' ? '#52c41a' : deviceStatus(record).color === 'orange' ? '#fa8c16' : deviceStatus(record).color === 'red' ? '#ff4d4f' : deviceStatus(record).color === 'gold' ? '#faad14' : '#8c8c8c'"
               :text="deviceStatus(record).label"
             />
