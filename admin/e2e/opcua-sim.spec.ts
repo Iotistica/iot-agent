@@ -1,6 +1,39 @@
 import { test, expect } from '@playwright/test'
 
 test.describe('OPC-UA simulator integration', () => {
+  test('create noop destination and subscription via UI', async ({ page, baseURL }) => {
+    test.setTimeout(30_000)
+
+    // Create noop destination
+    await page.goto(baseURL + 'destinations')
+    await page.getByRole('button', { name: 'New Destination' }).click()
+
+    const drawer = page.locator('.ant-drawer')
+    await expect(drawer).toBeVisible({ timeout: 5_000 })
+
+    await drawer.locator('input[placeholder="e.g. Cloud MQTT"]').fill('e2e-noop')
+    await drawer.locator('.ant-form-item', { hasText: 'Type' }).locator('.ant-select-selector').click()
+    await page.locator('.ant-select-item-option', { hasText: 'noop' }).click()
+
+    await drawer.getByRole('button', { name: 'Create' }).click()
+    await expect(page.getByText('Destination created')).toBeVisible({ timeout: 5_000 })
+
+    // Create catch-all subscription
+    await page.locator('.ant-menu-item', { hasText: 'Subscriptions' }).click()
+    await expect(page).toHaveURL(/\/subscriptions/)
+
+    await page.getByRole('button', { name: 'New Subscription' }).click()
+
+    const subDrawer = page.locator('.ant-drawer')
+    await expect(subDrawer).toBeVisible({ timeout: 5_000 })
+
+    await subDrawer.locator('.ant-form-item', { hasText: 'Destination' }).locator('.ant-select-selector').click()
+    await page.locator('.ant-select-item-option', { hasText: 'e2e-noop' }).click()
+
+    await subDrawer.getByRole('button', { name: 'Create' }).click()
+    await expect(page.getByText('Subscription created')).toBeVisible({ timeout: 5_000 })
+  })
+
   test('add OPC-UA source via UI and verify discovery', async ({ page, baseURL }) => {
     test.setTimeout(120_000)
 

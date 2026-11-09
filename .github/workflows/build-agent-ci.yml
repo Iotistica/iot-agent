@@ -514,41 +514,6 @@ jobs:
           fi
           echo "$PASSWORD" > /tmp/e2e-admin-password.txt
 
-      - name: Create noop publish destination for pipeline data
-        run: |
-          PASSWORD=$(cat /tmp/e2e-admin-password.txt)
-          # Login and capture session cookie
-          SESSION=$(curl -sf -X POST http://localhost:48484/v1/auth/login \
-            -H 'Content-Type: application/json' \
-            -d "{\"username\":\"admin\",\"password\":\"$PASSWORD\"}" \
-            -c - | grep admin_session | awk '{print $NF}')
-
-          if [ -z "$SESSION" ]; then
-            echo "Failed to get admin session"
-            exit 1
-          fi
-          COOKIE="admin_session=$SESSION"
-
-          # Create noop destination
-          DEST=$(curl -sf -X POST http://localhost:48484/v1/publish/destinations \
-            -H 'Content-Type: application/json' \
-            -b "$COOKIE" \
-            -d '{"name":"e2e-noop","type":"noop"}')
-          DEST_ID=$(echo "$DEST" | jq -r '.publisher.id // empty')
-
-          if [ -z "$DEST_ID" ]; then
-            echo "Failed to create noop destination: $DEST"
-            exit 1
-          fi
-          echo "Created noop destination id=$DEST_ID"
-
-          # Create catch-all subscription (empty topics = all protocols)
-          SUB=$(curl -sf -X POST http://localhost:48484/v1/publish/subscriptions \
-            -H 'Content-Type: application/json' \
-            -b "$COOKIE" \
-            -d "{\"publish_destination_id\":$DEST_ID}")
-          echo "Created subscription: $SUB"
-
       - name: Run Playwright tests
         working-directory: ./admin
         env:
