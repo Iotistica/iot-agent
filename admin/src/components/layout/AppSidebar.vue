@@ -68,7 +68,6 @@ function onMenuClick({ key }: { key: string }) {
         <IotisticaLogo :size="36" />
         <template v-if="!collapsed">
           <span class="logo-title">Iotistica Edge</span>
-          <a-tag v-if="proInstalled" class="pro-badge">PRO</a-tag>
         </template>
       </div>
     </div>
