@@ -4,7 +4,7 @@ test.describe('OPC-UA simulator integration', () => {
   test('add OPC-UA source via UI and verify discovery', async ({ page, baseURL }) => {
     // ── 1. Navigate to Sources and open the "Add Source" drawer ──────────
     await page.goto(baseURL + 'sources')
-    await page.getByRole('button', { name: 'Add Source' }).click()
+    await page.getByRole('button', { name: 'plus Add Source' }).click()
 
     // ── 2. Fill in the source form ──────────────────────────────────────
     await page.locator('input[placeholder="e.g. Warehouse Modbus Bus"]').fill('opcua-sim')
@@ -21,7 +21,7 @@ test.describe('OPC-UA simulator integration', () => {
     await expect(page.locator('.ant-alert-success')).toBeVisible({ timeout: 15_000 })
 
     // ── 4. Save the source ──────────────────────────────────────────────
-    await page.getByRole('button', { name: 'Add Source' }).click()
+    await page.getByRole('button', { name: 'Add Source', exact: true }).click()
     await expect(page.getByText('Source added')).toBeVisible({ timeout: 5_000 })
 
     // ── 5. Verify the endpoint appears in the Sources table ─────────────
