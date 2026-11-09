@@ -1,7 +1,9 @@
 import { test, expect } from '@playwright/test'
 
 test.describe('OPC-UA simulator integration', () => {
-  test('add OPC-UA source via UI and verify discovery', { timeout: 120_000 }, async ({ page, baseURL }) => {
+  test('add OPC-UA source via UI and verify discovery', async ({ page, baseURL }) => {
+    test.setTimeout(120_000)
+
     // ── 1. Navigate to Sources and open the "Add Source" drawer ──────────
     await page.goto(baseURL + 'sources')
     await page.getByTestId('sources-add-button').click()
