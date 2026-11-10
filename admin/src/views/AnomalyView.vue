@@ -152,13 +152,15 @@ const edgeEventColumns = [
 
 async function loadEdgeEvents() {
   edgeEventsLoading.value = true
-  await ensureEndpointMaps()
   try {
-    const r = await anomalyApi.getEdgeEvents({
-      severity: edgeEventsSeverity.value || undefined,
-      limit: PAGE_SIZE,
-      offset: (edgeEventsPage.value - 1) * PAGE_SIZE,
-    })
+    const [r] = await Promise.all([
+      anomalyApi.getEdgeEvents({
+        severity: edgeEventsSeverity.value || undefined,
+        limit: PAGE_SIZE,
+        offset: (edgeEventsPage.value - 1) * PAGE_SIZE,
+      }),
+      ensureEndpointMaps(),
+    ])
     edgeEvents.value = r.events
     edgeEventsTotal.value = r.total
   } catch { /* non-fatal */ } finally {
@@ -190,13 +192,15 @@ const INCIDENT_STATUS_COLOR: Record<string, string> = { open: 'orange', active: 
 
 async function loadEdgeIncidents() {
   edgeIncidentsLoading.value = true
-  await ensureEndpointMaps()
   try {
-    const r = await anomalyApi.getEdgeIncidents({
-      status: edgeIncidentsStatus.value || undefined,
-      limit: PAGE_SIZE,
-      offset: (edgeIncidentsPage.value - 1) * PAGE_SIZE,
-    })
+    const [r] = await Promise.all([
+      anomalyApi.getEdgeIncidents({
+        status: edgeIncidentsStatus.value || undefined,
+        limit: PAGE_SIZE,
+        offset: (edgeIncidentsPage.value - 1) * PAGE_SIZE,
+      }),
+      ensureEndpointMaps(),
+    ])
     edgeIncidents.value = r.incidents
     edgeIncidentsTotal.value = r.total
   } catch { /* non-fatal */ } finally {
@@ -253,9 +257,11 @@ const edgeAlertColumns = [
 
 async function loadEdgeAlerts() {
   edgeAlertsLoading.value = true
-  await ensureEndpointMaps()
   try {
-    const r = await anomalyApi.getEdgeAlerts({ limit: PAGE_SIZE, offset: (edgeAlertsPage.value - 1) * PAGE_SIZE })
+    const [r] = await Promise.all([
+      anomalyApi.getEdgeAlerts({ limit: PAGE_SIZE, offset: (edgeAlertsPage.value - 1) * PAGE_SIZE }),
+      ensureEndpointMaps(),
+    ])
     edgeAlerts.value = r.alerts
     edgeAlertsTotal.value = r.total
   } catch { /* non-fatal */ } finally {
@@ -331,10 +337,19 @@ const pointRawNameByKey = ref<Map<string, string>>(new Map())
 // this rule actually for" without guessing from the name's word count.
 const pointNameToDevice = ref<Map<string, string>>(new Map())
 
+let _endpointMapsPromise: Promise<void> | null = null
 async function ensureEndpointMaps() {
   if (endpointsByUuid.value.size > 0) return
+  if (_endpointMapsPromise) return _endpointMapsPromise
+  _endpointMapsPromise = _loadEndpointMaps()
+  try { await _endpointMapsPromise } finally { _endpointMapsPromise = null }
+}
+async function _loadEndpointMaps() {
   try {
-    const eps = await sourcesApi.getAll()
+    const [eps, devResult] = await Promise.all([
+      sourcesApi.getAll(),
+      apiClient.get<{ devices: Array<{ uuid: string; name: string }> }>('/v1/devices').catch(() => ({ data: { devices: [] } })),
+    ])
     const byUuid = new Map<string, string>()
     const byRawName = new Map<string, string>()
     const rawNameByKey = new Map<string, string>()
@@ -356,23 +371,9 @@ async function ensureEndpointMaps() {
       }
     }
 
-    // Protocols that fan out one endpoint into several physical devices
-    // (OPC-UA by device_uuid tag, Modbus by slaveId) record each device as
-    // its own row in the `devices` table with its own uuid, distinct from
-    // the owning endpoint's uuid — e.g. endpoint "opcua" (070cc992-...) owns
-    // device "BMS-Gateway" (2adb15f8-...). Baselines/events key off that
-    // device uuid, not the endpoint uuid, so it needs its own lookup here
-    // too. Endpoint entries are set first above and never overwritten below
-    // (devices are a fallback), matching getAvailableAnomalyMetrics()'s
-    // endpointById-before-deviceById precedence on the backend — BACnet's
-    // device uuid equals its endpoint uuid, and the endpoint's name is the
-    // nicer, discovery-captured one.
-    try {
-      const { data } = await apiClient.get<{ devices: Array<{ uuid: string; name: string }> }>('/v1/devices')
-      for (const dev of data.devices ?? []) {
-        if (!byUuid.has(dev.uuid)) byUuid.set(dev.uuid, dev.name)
-      }
-    } catch { /* non-fatal — device-uuid lookups just fall through to raw */ }
+    for (const dev of devResult.data.devices ?? []) {
+      if (!byUuid.has(dev.uuid)) byUuid.set(dev.uuid, dev.name)
+    }
 
     endpointsByUuid.value = byUuid
     displayNameByRawName.value = byRawName
@@ -514,7 +515,6 @@ function metricLeaf(metric: string, deviceName?: string): string {
 async function loadBaselines() {
   baselinesLoading.value = true
   try {
-    await ensureEndpointMaps()
     const filterText = baselinesMetric.value.trim().toLowerCase()
     const [r, progress, cfg] = await Promise.all([
       anomalyApi.getBaselines({ metric: baselinesMetric.value.trim() || undefined, limit: PAGE_SIZE }),
@@ -525,6 +525,7 @@ async function loadBaselines() {
       // notStartedRows below) — reuse the cached config if the Rules/Config tab
       // already loaded it, otherwise fetch it just for this.
       baselinesPage.value === 1 && !config.value ? anomalyApi.getConfig() : Promise.resolve(config.value),
+      ensureEndpointMaps(),
     ])
     if (cfg) config.value = cfg
 
@@ -1347,6 +1348,7 @@ function onTabChange(tab: string) {
 }
 
 onMounted(() => {
+  ensureEndpointMaps()
   loadEdgeIncidents()
   startTabAutoRefresh(loadEdgeIncidents, edgeIncidentsLoading)
 })
@@ -1419,7 +1421,7 @@ onUnmounted(() => {
         <a-table
           :columns="edgeEventColumns"
           :data-source="edgeEvents"
-          :loading="edgeEventsLoading"
+          :loading="edgeEventsLoading && edgeEvents.length === 0"
           :pagination="{ current: edgeEventsPage, pageSize: PAGE_SIZE, total: edgeEventsTotal, showSizeChanger: false, onChange: (p: number) => { edgeEventsPage = p; loadEdgeEvents() } }"
           row-key="id"
           size="small"
@@ -1482,7 +1484,7 @@ onUnmounted(() => {
         <a-table
           :columns="edgeIncidentColumns"
           :data-source="edgeIncidents"
-          :loading="edgeIncidentsLoading"
+          :loading="edgeIncidentsLoading && edgeIncidents.length === 0"
           :pagination="{ current: edgeIncidentsPage, pageSize: PAGE_SIZE, total: edgeIncidentsTotal, showSizeChanger: false, onChange: (p: number) => { edgeIncidentsPage = p; loadEdgeIncidents() } }"
           row-key="incident_id"
           size="small"
@@ -1538,7 +1540,7 @@ onUnmounted(() => {
         <a-table
           :columns="edgeAlertColumns"
           :data-source="edgeAlerts"
-          :loading="edgeAlertsLoading"
+          :loading="edgeAlertsLoading && edgeAlerts.length === 0"
           :pagination="{ current: edgeAlertsPage, pageSize: PAGE_SIZE, total: edgeAlertsTotal, showSizeChanger: false, onChange: (p: number) => { edgeAlertsPage = p; loadEdgeAlerts() } }"
           row-key="alert_id"
           size="small"
@@ -1596,7 +1598,7 @@ onUnmounted(() => {
         <a-table
           :columns="baselineColumns"
           :data-source="baselines"
-          :loading="baselinesLoading"
+          :loading="baselinesLoading && baselines.length === 0"
           :pagination="{ current: baselinesPage, pageSize: PAGE_SIZE, total: baselinesTotal, showSizeChanger: false, onChange: (p: number) => { baselinesPage = p; loadBaselines() } }"
           :row-key="(record: BaselineRow) => `${record.isSynthetic ? 'pending' : 'done'}::${record.metric}::${record.device_id}::${record.device_state}`"
           size="small"
