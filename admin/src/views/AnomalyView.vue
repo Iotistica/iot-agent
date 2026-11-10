@@ -534,18 +534,31 @@ async function loadBaselines() {
 
     // Metrics covered by source/protocol rules are shown only in the group
     // summary row + detail modal — hide them from the individual rows.
-    const groupRuleNames = new Set(
-      (config.value?.metrics ?? [])
-        .filter((m) => m.enabled && m.scope && m.scope !== 'point')
-        .map((m) => m.name),
+    const groupRules = (config.value?.metrics ?? []).filter(
+      (m) => m.enabled && m.scope && m.scope !== 'point',
     )
+    const groupRuleNames = new Set(groupRules.map((m) => m.name))
     const isGroupedMetric = (p: { configName?: string }) => p.configName && groupRuleNames.has(p.configName)
     const groupedMetricKeys = new Set(
       progress.filter((p) => isGroupedMetric(p)).map((p) => `${p.metricName}::${p.deviceId}::${p.deviceState}`),
     )
 
+    // Device UUIDs covered by source-scoped group rules — stale DB baselines
+    // from a previous config (before the group rule existed) carry a device_id
+    // UUID that has no live progress entry, so groupedMetricKeys misses them.
+    // Reverse-map sourcePattern → UUID via the endpoint/device name maps.
+    const groupedDeviceUuids = new Set<string>()
+    for (const rule of groupRules) {
+      if (rule.scope === 'source' && rule.sourcePattern) {
+        for (const [uuid, name] of endpointsByUuid.value) {
+          if (name === rule.sourcePattern) groupedDeviceUuids.add(uuid)
+        }
+      }
+    }
+
     const annotatedBaselines: BaselineRow[] = r.baselines
       .filter((b) => !groupedMetricKeys.has(`${b.metric}::${b.device_id}::${b.device_state}`))
+      .filter((b) => !groupedDeviceUuids.has(b.device_id))
       .map((b) => {
         const key = `${b.metric}::${b.device_id}::${b.device_state}`
         const p = progressByKey.get(key)
@@ -605,9 +618,6 @@ async function loadBaselines() {
     // Source/protocol-scoped rules — one summary row per rule, aggregating
     // all individual metric buffers matched by that rule via configName.
     latestGroupProgress.value = progress
-    const groupRules = (config.value?.metrics ?? []).filter(
-      (m) => m.enabled && m.scope && m.scope !== 'point',
-    )
     const groupRows: BaselineRow[] = groupRules
       .filter((m) => !filterText || m.name.toLowerCase().includes(filterText))
       .map((m) => {
