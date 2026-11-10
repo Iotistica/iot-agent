@@ -2,7 +2,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import type { DatabaseSync } from 'node:sqlite';
-import type { MarketplaceImage } from '../../src/data/marketplace-image';
+import type { MarketplaceImage } from '../../src/containers/types';
 import { migration as seedAppMarketplace } from '../../src/db/migrations/20261106000000_seed_app_marketplace';
 
 describe('AppMarketplaceModel (integration)', () => {
