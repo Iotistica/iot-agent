@@ -425,6 +425,7 @@ export class BACnetAdapter extends BaseProtocolAdapter {
 					...(resolvedDisplayName && { resolvedDisplayName }),
 					...(rawObjectName && { rawObjectName }),
 					...(rawPointName && { rawPointName }),
+					...(object.writable && { writable: true }),
 
 					// Point-only input for the shared point-name normalizer.
 					...(rawPointName && { normalizationName: rawPointName }),

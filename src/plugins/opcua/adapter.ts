@@ -898,6 +898,7 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 					// (see discovery.ts); dp.browseName (when discovery captured one) is the true
 					// server-reported name — surfaced for accurate display only, see types.ts.
 					...(dp.browseName && { rawObjectName: dp.browseName }),
+					...(dp.writable && { writable: true }),
 				};
 
 				if (pendingDataPoints.length === 0) {

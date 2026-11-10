@@ -152,6 +152,11 @@ export class AnomalyFeed {
 	): boolean {
 		this.dispatchToMaintenanceEnergy(point);
 
+		// Writable/commandable points are setpoints whose value changes by
+		// operator action — intentional, not anomalous. Still flow to
+		// maintenance/energy above but skip anomaly detection entirely.
+		if (point.writable) return false;
+
 		const service = this.currentService;
 		this.batchCandidateMetrics.add(metricKey);
 		this.batchMetricLabels.set(
