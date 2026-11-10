@@ -210,8 +210,11 @@ export class ZScoreDetector extends BaseDetector {
 			return expectedRangeOverride;
 		}
 
-		// Prefer database baseline if available (more samples = more stable)
-		const useDbBaseline = !!dbBaseline && dbBaseline.sampleCount >= MIN_DB_BASELINE_SAMPLES && hasZScoreBaseline(dbBaseline);
+		// Use DB baseline only when the live buffer hasn't reached statistical
+		// maturity — once the buffer itself has enough samples it reflects the
+		// current signal better than a snapshot persisted minutes ago.
+		const useDbBaseline = buffer.size < MIN_DB_BASELINE_SAMPLES
+			&& !!dbBaseline && dbBaseline.sampleCount >= MIN_DB_BASELINE_SAMPLES && hasZScoreBaseline(dbBaseline);
 		const mean = useDbBaseline ? dbBaseline.mean : buffer.mean;
 		const stdDev = useDbBaseline ? dbBaseline.stdDev : buffer.stdDev;
 		const baselineSource = useDbBaseline ? 'database' as const : 'buffer' as const;
@@ -282,8 +285,11 @@ export class MADDetector extends BaseDetector {
 			return expectedRangeOverride;
 		}
 
-		// Prefer database baseline if available (more samples = more stable)
-		const useDbBaseline = baseline.sampleCount >= MIN_DB_BASELINE_SAMPLES && hasMadBaseline(baseline);
+		// Use DB baseline only when the live buffer hasn't reached statistical
+		// maturity — once the buffer itself has enough samples it reflects the
+		// current signal better than a snapshot persisted minutes ago.
+		const useDbBaseline = buffer.size < MIN_DB_BASELINE_SAMPLES
+			&& baseline.sampleCount >= MIN_DB_BASELINE_SAMPLES && hasMadBaseline(baseline);
 		const mad = useDbBaseline ? baseline.mad : getMAD(buffer);
 		const median = useDbBaseline
 			? baseline.median
@@ -656,7 +662,11 @@ export class CUSUMDetector extends BaseDetector {
 			return expectedRangeOverride;
 		}
 
-		const useDbBaseline = !!dbBaseline && dbBaseline.sampleCount >= MIN_DB_BASELINE_SAMPLES && hasZScoreBaseline(dbBaseline);
+		// Use DB baseline only when the live buffer hasn't reached statistical
+		// maturity — once the buffer itself has enough samples it reflects the
+		// current signal better than a snapshot persisted minutes ago.
+		const useDbBaseline = buffer.size < MIN_DB_BASELINE_SAMPLES
+			&& !!dbBaseline && dbBaseline.sampleCount >= MIN_DB_BASELINE_SAMPLES && hasZScoreBaseline(dbBaseline);
 		const target = useDbBaseline ? dbBaseline.mean : buffer.mean;
 		const stdDev = useDbBaseline ? dbBaseline.stdDev : buffer.stdDev;
 		const baselineSource = useDbBaseline ? 'database' as const : 'buffer' as const;
