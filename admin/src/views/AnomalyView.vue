@@ -1904,6 +1904,9 @@ onUnmounted(() => {
           <template v-if="column.key === 'metric'">
             <span :title="record.metricName">{{ friendlyLabel(record.metricName) }}</span>
           </template>
+          <template v-else-if="column.key === 'deviceId'">
+            <span :title="record.deviceId">{{ deviceDisplayName(record.deviceId) }}</span>
+          </template>
           <template v-else-if="column.key === 'status'">
             <a-tag v-if="record.bufferSize >= record.windowSize" color="green">ready</a-tag>
             <a-tag v-else color="blue">collecting</a-tag>
