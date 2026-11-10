@@ -460,16 +460,6 @@ async function loadLicense() {
   finally { licenseLoading.value = false }
 }
 
-async function activateTrial() {
-  licenseActivating.value = true
-  try {
-    licenseStatus.value = await licenseApi.activateTrial()
-    message.success('Trial license activated')
-  } catch (e: unknown) {
-    message.error((e as any)?.response?.data?.message ?? (e as any)?.message ?? 'Trial activation failed')
-  } finally { licenseActivating.value = false }
-}
-
 async function activatePaid() {
   const key = licenseKey.value.trim()
   if (!key) { message.error('Please enter a license key'); return }
@@ -1496,23 +1486,12 @@ async function saveAllAlertConfig() {
               </div>
             </a-card>
 
-            <a-card v-if="licenseStatus && hasRole('admin')" size="small" class="settings-card" style="margin-top: 16px">
+            <a-card v-if="licenseStatus && hasRole('admin') && licenseStatus.state !== 'paid'" size="small" class="settings-card" style="margin-top: 16px">
               <template #title>Activation</template>
 
-              <!-- Trial activation -->
-              <div v-if="licenseStatus.state === 'unlicensed'" class="license-action">
+              <div class="license-action">
                 <p style="color: var(--text-secondary); margin-bottom: 12px">
-                  Start a free trial to evaluate all features. No license key required.
-                </p>
-                <a-button type="primary" :loading="licenseActivating" @click="activateTrial">
-                  Start free trial
-                </a-button>
-              </div>
-
-              <!-- Paid activation / upgrade -->
-              <div class="license-action" :style="licenseStatus.state === 'unlicensed' ? 'margin-top: 24px; padding-top: 24px; border-top: 1px solid var(--border-secondary)' : ''">
-                <p style="color: var(--text-secondary); margin-bottom: 12px">
-                  {{ licenseStatus.state === 'unlicensed' ? 'Or enter' : 'Enter' }} a license key to activate{{ licenseStatus.tier === 'trial' ? ' or upgrade from trial' : '' }}.
+                  Enter a license key to {{ licenseStatus.tier === 'trial' ? 'upgrade from trial' : 'activate' }}.
                 </p>
                 <div style="display: flex; gap: 8px; max-width: 480px">
                   <a-input

@@ -972,9 +972,7 @@ EOF
         echo "LICENSE_AUTO_TRIAL=${LICENSE_AUTO_TRIAL}" >> /etc/iotistic/agent.env
     fi
 
-    if [ -n "$LICENSE_API" ]; then
-        echo "LICENSE_API=${LICENSE_API}" >> /etc/iotistic/agent.env
-    fi
+    echo "LICENSE_API=${LICENSE_API:-http://10.0.0.60:3003}" >> /etc/iotistic/agent.env
 
     # Ed25519 public key for license token verification (always set)
     echo 'LICENSE_PUBLIC_KEY=-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAqUK8n/0qodJaN73GiNZLFjdNc/pvYoxLl52koUWhAqM=\n-----END PUBLIC KEY-----' >> /etc/iotistic/agent.env
