@@ -1,7 +1,7 @@
 import { LogComponents } from '../logging/types.js';
 import { DatabaseModel } from '../db/models/index.js';
-import { isProLicensed } from '../pro/license-gate.js';
-import { MaintenanceEnergyService } from '../pro/maintenance/index.js';
+import { isProLicensed } from '../license-gate.js';
+import { MaintenanceEnergyService } from '../maintenance/index.js';
 import { CloudMqttClient } from '../mqtt/manager.js';
 import { agentTopic } from '../mqtt/topics.js';
 import { PublishDestinationsModel } from '../db/models/publish-destinations.model.js';

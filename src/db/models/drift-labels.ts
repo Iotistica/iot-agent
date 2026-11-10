@@ -12,7 +12,7 @@
  * neither is meaningful to an operator.
  *
  * The device-id logic here (prettifyDriftDeviceId) is a deliberate, documented
- * duplicate of src/pro/device-identity/index.ts (prettifyDeviceId)
+ * duplicate of src/device-identity/index.ts (prettifyDeviceId)
  * — not an independent reimplementation that's free to drift.
  * If the formatting rules change, change both.
  */
@@ -35,7 +35,7 @@ export function cleanDriftFieldName(field: string): string {
  * swaps the separator. Apply after cleanDriftFieldName()/stripFieldDevicePrefix()
  * (both still expect underscore-joined input), not before.
  *
- * Kept in sync with src/pro/device-identity/index.ts's
+ * Kept in sync with src/device-identity/index.ts's
  * prettifyFieldName — see the module doc comment above for why this file
  * can't just import it.
  */
@@ -57,7 +57,7 @@ export function prettifyDriftDeviceId(id: string): string {
 	// segment. A normalized slug can't recover the original separator, but
 	// hyphen is the one actually in use everywhere, so that's the target.
 	//
-	// Kept in sync with src/pro/device-identity/index.ts's prettifyDeviceId.
+	// Kept in sync with src/device-identity/index.ts's prettifyDeviceId.
 	return stripped
 		.split('_')
 		.filter(Boolean)

@@ -1,4 +1,4 @@
-import { getLicenseService } from '../licensing/runtime.js';
+import { getLicenseService } from './licensing/runtime.js';
 
 const PRO_STATES = new Set(['trial', 'paid']);
 

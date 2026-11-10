@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, h } from 'vue'
+import { ref, computed, onMounted, watch, h } from 'vue'
 import { useRoute } from 'vue-router'
 import { message, Modal } from 'ant-design-vue'
 import type { TableColumnType } from 'ant-design-vue'
@@ -25,7 +25,7 @@ import type { UpdateCheckResult } from '@/api/update'
 const route = useRoute()
 const { hasRole } = useAuth()
 
-const VALID_TABS = ['agent', 'features', 'logging', 'intervals', 'docker', 'units', 'alerts', 'license']
+const VALID_TABS = ['agent', 'features', 'logging', 'intervals', 'docker', 'units', 'alerts', 'license', 'state']
 const activeTab = ref(
   typeof route.query.tab === 'string' && VALID_TABS.includes(route.query.tab) ? route.query.tab : 'agent'
 )
@@ -556,6 +556,29 @@ async function saveAllAlertConfig() {
     alertConfigSaving.value = false
   }
 }
+
+// ── Agent State ──────────────────────────────────────────────────────────────
+
+const stateData = ref<{ current?: any; target?: any } | null>(null)
+const stateLoading = ref(false)
+const stateLoaded = ref(false)
+
+async function loadState() {
+  stateLoading.value = true
+  try {
+    const { data } = await apiClient.get('/v1/state')
+    stateData.value = data
+  } catch (e: any) {
+    message.error(e?.message ?? 'Failed to load state')
+  } finally {
+    stateLoading.value = false
+    stateLoaded.value = true
+  }
+}
+
+watch(activeTab, (tab) => {
+  if (tab === 'state' && !stateLoaded.value) loadState()
+})
 </script>
 
 <template>
@@ -1509,6 +1532,33 @@ async function saveAllAlertConfig() {
           </a-spin>
         </a-tab-pane>
 
+        <!-- ══ STATE ═════════════════════════════════════════════════════════ -->
+        <a-tab-pane key="state" tab="State">
+          <a-spin :spinning="stateLoading">
+            <a-card size="small" class="settings-card">
+              <template #title>Current State</template>
+              <template #extra>
+                <a-button size="small" @click="loadState">
+                  <template #icon><ReloadOutlined /></template>
+                  Refresh
+                </a-button>
+              </template>
+              <pre v-if="stateData?.current" class="state-json">{{ JSON.stringify(stateData.current, null, 2) }}</pre>
+              <div v-else style="color: var(--text-tertiary); text-align: center; padding: 24px">
+                No current state available.
+              </div>
+            </a-card>
+
+            <a-card size="small" class="settings-card" style="margin-top: 16px">
+              <template #title>Target State</template>
+              <pre v-if="stateData?.target" class="state-json">{{ JSON.stringify(stateData.target, null, 2) }}</pre>
+              <div v-else style="color: var(--text-tertiary); text-align: center; padding: 24px">
+                No target state available.
+              </div>
+            </a-card>
+          </a-spin>
+        </a-tab-pane>
+
       </a-tabs>
       </div>
     </a-spin>
@@ -1674,6 +1724,18 @@ async function saveAllAlertConfig() {
 .settings-shell :deep(.ant-table-thead > tr > th) { background: var(--bg-table-header); font-weight: 650; font-size: 12px; }
 .settings-shell :deep(.ant-table-tbody > tr:hover > td) { background: var(--bg-table-hover); }
 .drift-alert-on__group { row-gap: 12px; }
+.state-json {
+  margin: 0;
+  padding: 12px;
+  background: var(--bg-table-header);
+  border-radius: 6px;
+  font-size: 12px;
+  line-height: 1.55;
+  overflow-x: auto;
+  max-height: 600px;
+  white-space: pre;
+  tab-size: 2;
+}
 @media (max-width: 767px) {
   .settings-shell { padding-bottom: 18px; }
   .settings-card :deep(.ant-card-body) { padding: 16px; }
