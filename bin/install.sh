@@ -975,7 +975,7 @@ EOF
     echo "LICENSE_API=${LICENSE_API:-http://10.0.0.60:3003}" >> /etc/iotistic/agent.env
 
     # Ed25519 public key for license token verification (always set)
-    echo 'LICENSE_PUBLIC_KEY=-----BEGIN PUBLIC KEY-----\\nMCowBQYDK2VwAyEAqUK8n/0qodJaN73GiNZLFjdNc/pvYoxLl52koUWhAqM=\\n-----END PUBLIC KEY-----' >> /etc/iotistic/agent.env
+    printf '%s\n' 'LICENSE_PUBLIC_KEY=-----BEGIN PUBLIC KEY-----\\nMCowBQYDK2VwAyEAqUK8n/0qodJaN73GiNZLFjdNc/pvYoxLl52koUWhAqM=\\n-----END PUBLIC KEY-----' >> /etc/iotistic/agent.env
 
     # Enable all features (pro features gated by license check)
     echo "PRO_FORCE=true" >> /etc/iotistic/agent.env
