@@ -333,6 +333,7 @@ export class AnomalyFeed {
 			timestamp: timestampMs,
 			quality: quality === "GOOD" || quality === "Good" ? "GOOD" : "BAD",
 			deviceId: pointIdentity.deviceKey,
+			...(data.writable && { writable: true }),
 			tags: {
 				endpointId: parentDeviceName,
 				...(payloadDeviceUuid && { deviceUuid: payloadDeviceUuid }),
@@ -406,6 +407,7 @@ export class AnomalyFeed {
 				timestamp: timestampMs,
 				quality: quality === "GOOD" || quality === "Good" ? "GOOD" : "BAD",
 				deviceId: pointIdentity.deviceKey,
+				...(reading.writable && { writable: true }),
 				tags: {
 					endpointId: parentDeviceName,
 					...(payloadDeviceUuid && { deviceUuid: payloadDeviceUuid }),
@@ -502,6 +504,7 @@ export class AnomalyFeed {
 					timestamp: timestampMs,
 					quality: "GOOD",
 					deviceId: effectiveDeviceId,
+					...(data.writable && { writable: true }),
 					tags: {
 						deviceName,
 						endpointId: deviceName,
