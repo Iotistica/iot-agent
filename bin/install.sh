@@ -48,7 +48,7 @@ echo "--------------------------------------------------------------------------
 echo ""
 
 
-# Ensure common binary locations are in PATH — sudo sh strips user profile
+# Ensuree common binary locations are in PATH — sudo sh strips user profile
 export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH"
 
 # Check if running as root
