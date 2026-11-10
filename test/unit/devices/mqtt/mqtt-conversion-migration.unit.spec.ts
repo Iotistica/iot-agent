@@ -14,7 +14,7 @@
  *
  * Mocks the DB layer the same way test/unit/units/
  * normalize-unit.unit.spec.ts does: an in-memory store seeded from the
- * real production seed data (src/data/unit-catalog-seed.ts), so this
+ * real production seed data (src/units/unit-catalog-seed.ts), so this
  * exercises the actual shared catalog (including the atm/mbar units and
  * the corrected psi multiplier added as part of this same change) without
  * touching real SQLite.

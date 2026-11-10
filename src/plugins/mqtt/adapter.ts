@@ -13,7 +13,7 @@ import { getUnitCatalog } from "../../units/catalog.js";
 
 // MQTT's own short-code canonical vocabulary (set by canonicalizeUnit()
 // below) translated to the shared catalog's canonical unit names
-// (src/data/unit-catalog-seed.ts), used only at the boundary where
+// (src/units/unit-catalog-seed.ts), used only at the boundary where
 // convertUnitValue() calls into the shared conversion implementation. MQTT
 // keeps its own per-metric "target unit" config and short-code vocabulary —
 // no other protocol has an equivalent config surface yet (see

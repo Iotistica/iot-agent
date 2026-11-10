@@ -45,7 +45,7 @@ export interface OPCUABrowseTreeNode {
 // whitespace. The Description-attribute fallback below only runs when a
 // node exposes no standard EngineeringUnits property — and some OPC-UA
 // server libraries (confirmed against a live simulator; see
-// src/data/unit-catalog-seed.ts's opcua section) default an unset
+// src/units/unit-catalog-seed.ts's opcua section) default an unset
 // Description to the node's own display name, which would otherwise get
 // silently captured here as a bogus "unit" (observed live: points named
 // "Power-Factor"/"CH-1-COP"/"CH-2-COP", all configured with no unit at

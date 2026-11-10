@@ -4,7 +4,7 @@ import type { NativeSqliteMigration } from '../migration-types.js';
 /**
  * Unit Normalization Service catalog — canonical engineering units + protocol
  * aliases. Reference data (like Haystack tags or BACnet object types), not a
- * user-editable registry: reseeded from src/data/unit-catalog-seed.ts on every
+ * user-editable registry: reseeded from src/units/unit-catalog-seed.ts on every
  * startup, no CRUD/admin surface in v1. Conversion uses a base-unit hub model
  * (each row's own base_unit/multiplier/offset), so no separate conversion-rules
  * table is needed.

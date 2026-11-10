@@ -1,5 +1,5 @@
 import { UnitDefinitionsModel, UnitAliasesModel, CustomUnitAliasesModel, type UnitDefinitionRecord, type UnitAliasRecord, type CustomUnitAliasRecord } from '../db/models/index.js';
-import { UNIT_DEFINITIONS, UNIT_ALIASES, validateUnitCatalogSeed } from '../data/unit-catalog-seed.js';
+import { UNIT_DEFINITIONS, UNIT_ALIASES, validateUnitCatalogSeed } from './unit-catalog-seed.js';
 import { normalizeSourceSystem } from './source-system.js';
 import { getNormalizationHealthTracker } from './normalization-health-tracker.js';
 import type { Logger } from './types.js';

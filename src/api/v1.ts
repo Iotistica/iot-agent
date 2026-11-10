@@ -3456,7 +3456,7 @@ router.delete('/v1/units/canonical/:name', requireRole('admin'), async (req: Req
 		const { name } = req.params;
 
 		const { UnitDefinitionsModel, CustomUnitAliasesModel } = await import('../db/models/index.js');
-		const { UNIT_DEFINITIONS } = await import('../data/unit-catalog-seed.js');
+		const { UNIT_DEFINITIONS } = await import('../units/unit-catalog-seed.js');
 		const { getUnitCatalog } = await import('../units/catalog.js');
 
 		if (!UnitDefinitionsModel.getByCanonicalUnit(name)) {

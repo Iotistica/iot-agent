@@ -24,7 +24,7 @@ export interface ConvertUnitResult {
  * module's canonical names first) — that's a deliberate, narrow use of this
  * shared implementation, not evidence it should be wired into the generic
  * interceptor. Any *new* unit needed by MQTT (or anywhere else) should be
- * added to the shared catalog (src/data/unit-catalog-seed.ts), not a new
+ * added to the shared catalog (src/units/unit-catalog-seed.ts), not a new
  * protocol-local conversion table.
  */
 export function convertUnit(value: number, fromUnit: string, toUnit: string): ConvertUnitResult {
