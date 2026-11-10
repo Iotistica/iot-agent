@@ -1579,10 +1579,8 @@ onUnmounted(() => {
         <div class="toolbar-info" style="display: flex; justify-content: space-between; align-items: center">
           <span>{{ baselinesTotal }} total · auto-refresh 5s</span>
           <a-space>
-            <a-button size="small" :loading="baselinesLoading" @click="loadBaselines">
-              <template #icon><ReloadOutlined /></template>
-            </a-button>
-            <a-button danger size="small" :loading="clearingBaselines" @click="resetBaselinesModalOpen = true">Reset</a-button>
+            <a-button :loading="baselinesLoading" @click="loadBaselines"><ReloadOutlined /> Refresh</a-button>
+            <a-button danger :loading="clearingBaselines" @click="resetBaselinesModalOpen = true"><DeleteOutlined /> Reset</a-button>
           </a-space>
         </div>
         <div class="filters" style="margin-bottom: 8px">
@@ -1672,10 +1670,7 @@ onUnmounted(() => {
         <a-card size="small" class="list-card">
           <div class="toolbar-info" style="display: flex; justify-content: space-between; align-items: center">
             <span>{{ driftRules.length }} rule{{ driftRules.length !== 1 ? 's' : '' }}</span>
-            <a-button type="primary" size="small" @click="openNewDriftRule()">
-              <template #icon><PlusOutlined /></template>
-              Add rule
-            </a-button>
+            <a-button type="primary" @click="openNewDriftRule()"><PlusOutlined /> Add rule</a-button>
           </div>
           <div style="font-size: 12px; color: var(--text-tertiary); margin-bottom: 8px">
             Alerts fire only for devices and types covered by a rule.
@@ -1809,10 +1804,7 @@ onUnmounted(() => {
             <a-card size="small" class="list-card">
             <div class="toolbar-info" style="display: flex; justify-content: space-between; align-items: center">
               <span>{{ config.metrics.length }} rule{{ config.metrics.length !== 1 ? 's' : '' }}</span>
-              <a-button type="primary" size="small" @click="openAddMetric">
-                <template #icon><PlusOutlined /></template>
-                Add rule
-              </a-button>
+              <a-button type="primary" @click="openAddMetric"><PlusOutlined /> Add rule</a-button>
             </div>
 
             <a-table
