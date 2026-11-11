@@ -283,8 +283,8 @@ function normalizeFieldName(value: string): string {
 // imports of it from this module keep working) — defense in depth against a
 // self-referential trailing suffix, e.g. "ahu_1_ahu1" -> "ahu_1". See that
 // module for the full rationale.
-export { collapseRedundantSuffix, normalizeDeviceId } from "../device-identity/index.js";
-import { normalizeDeviceId } from "../device-identity/index.js";
+export { collapseRedundantSuffix, normalizeDeviceId } from "../utils/device-identity";
+import { normalizeDeviceId } from "../utils/device-identity";
 
 /**
  * Resolves which device a message belongs to, mirroring the same field
