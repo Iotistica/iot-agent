@@ -21,6 +21,7 @@ set -e
 #   IOTISTICA_INSTALL_SOURCE       - Install source: auto | repo | artifact (default: auto)
 #   IOTISTICA_INSTALL_DOCKER       - Set to yes/true/1 to allow automatic Docker installation
 #   IOTISTICA_INSTALL_MOSQUITTO    - Set to yes/true/1 to install and manage a local Mosquitto broker
+#   IOTISTICA_NONINTERACTIVE      - Set to yes/true/1 to disable terminal prompts (CI deployments)
 #   MQTT_BROKER_PORT               - Port for the local Mosquitto broker (default: 1883); set if 1883 is already in use
 #   INITIAL_ADMIN_PASSWORD          - Admin UI password (default: randomly generated on first start)
 #   MQTT_USERNAME                  - MQTT broker username (default: admin; prompted interactively on first install)
@@ -106,6 +107,20 @@ is_debian_family() {
     return 1
 }
 
+# CI/non-interactive installs must never attempt to open /dev/tty.
+# A device node may exist even when no controlling terminal is available.
+has_interactive_tty() {
+    case "${IOTISTICA_NONINTERACTIVE:-no}" in
+        yes|true|1) return 1 ;;
+    esac
+    [ -t 0 ] && [ -r /dev/tty ] && [ -w /dev/tty ]
+}
+
+# Suppress debconf frontend selection warnings when running unattended.
+if ! has_interactive_tty; then
+    export DEBIAN_FRONTEND=noninteractive
+fi
+
 # Helper function to install Docker if needed
 install_docker_if_needed() {
     REQUIRE_INSTALL="${1:-no}"  # Internal override only; prefer explicit env var opt-in
@@ -133,7 +148,7 @@ install_docker_if_needed() {
         SHOULD_INSTALL="yes"
     fi
 
-    if [ "$SHOULD_INSTALL" != "yes" ] && [ "$SHOULD_INSTALL" != "y" ] && [ -e /dev/tty ]; then
+    if [ "$SHOULD_INSTALL" != "yes" ] && [ "$SHOULD_INSTALL" != "y" ] && has_interactive_tty; then
         echo -n "Would you like to install Docker now? (yes/no): " >/dev/tty
         read SHOULD_INSTALL </dev/tty
     fi
@@ -204,7 +219,7 @@ should_manage_mosquitto() {
         SHOULD_INSTALL_MOSQUITTO="yes"
     elif command -v mosquitto >/dev/null 2>&1; then
         SHOULD_INSTALL_MOSQUITTO="no"
-    elif [ -e /dev/tty ]; then
+    elif has_interactive_tty; then
         echo ""
         echo -n "Install and manage a local Mosquitto MQTT broker? (yes/no): " >/dev/tty
         read SHOULD_INSTALL_MOSQUITTO </dev/tty
@@ -249,7 +264,7 @@ mask_password() {
 }
 
 prompt_mqtt_credentials() {
-    if [ -e /dev/tty ]; then
+    if has_interactive_tty; then
         # Restore terminal echo on interrupt
         trap 'stty echo 2>/dev/null' INT TERM
 
@@ -303,6 +318,7 @@ prompt_mqtt_credentials() {
     else
         MQTT_USERNAME_VALUE="${MQTT_USERNAME:-admin}"
         MQTT_PASSWORD_VALUE="${MQTT_PASSWORD:-$(generate_password)}"
+        echo "✓ MQTT credentials configured non-interactively (user: ${MQTT_USERNAME_VALUE})"
     fi
 }
 
@@ -333,7 +349,7 @@ configure_mosquitto_file_auth() {
         echo "⚠️  Port $MQTT_BROKER_PORT_VALUE is already in use by another process."
         echo "   (A Docker container or existing service may be running on this port.)"
         echo ""
-        if [ -e /dev/tty ]; then
+        if has_interactive_tty; then
             echo -n "Enter an alternative port for Mosquitto [8883]: " >/dev/tty
             read ALT_PORT </dev/tty
             MQTT_BROKER_PORT_VALUE="${ALT_PORT:-8883}"
