@@ -25,13 +25,13 @@ const DEVICE_ID_SUFFIX_RE = /_\d+_[0-9a-f]{8}$/i;
 const KNOWN_DEVICE_ACRONYMS = new Set(['ahu', 'vav', 'fcu', 'bms', 'hvac', 'rtu']);
 
 function normalizeSlug(value: string): string {
-    return value
-        .trim()
-        .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
-        .replace(/[\s-]+/g, '_')
-        .replace(/_+/g, '_')
-        .replace(/[^a-zA-Z0-9_.:]/g, '')
-        .toLowerCase();
+	return value
+		.trim()
+		.replace(/([a-z0-9])([A-Z])/g, '$1_$2')
+		.replace(/[\s-]+/g, '_')
+		.replace(/_+/g, '_')
+		.replace(/[^a-zA-Z0-9_.:]/g, '')
+		.toLowerCase();
 }
 
 /**
@@ -40,28 +40,28 @@ function normalizeSlug(value: string): string {
  * See detector.ts's resolveDeviceId for why this defense-in-depth exists.
  */
 export function collapseRedundantSuffix(normalized: string): string {
-    const segments = normalized.split('_');
-    if (segments.length < 2) {
-        return normalized;
-    }
+	const segments = normalized.split('_');
+	if (segments.length < 2) {
+		return normalized;
+	}
 
-    const suffix = segments[segments.length - 1];
-    // Require a few characters before treating a match as "redundant" — a
-    // short segment (a single letter/digit room or unit label, e.g.
-    // "conference_room_a") is far more likely a real distinguishing suffix
-    // than a restated identifier, and single characters trivially collide
-    // with unrelated prefixes (e.g. "data_1_a" contains "a").
-    if (suffix.length < 3) {
-        return normalized;
-    }
+	const suffix = segments[segments.length - 1];
+	// Require a few characters before treating a match as "redundant" — a
+	// short segment (a single letter/digit room or unit label, e.g.
+	// "conference_room_a") is far more likely a real distinguishing suffix
+	// than a restated identifier, and single characters trivially collide
+	// with unrelated prefixes (e.g. "data_1_a" contains "a").
+	if (suffix.length < 3) {
+		return normalized;
+	}
 
-    const prefix = segments.slice(0, -1).join('');
-    return prefix.includes(suffix) ? segments.slice(0, -1).join('_') : normalized;
+	const prefix = segments.slice(0, -1).join('');
+	return prefix.includes(suffix) ? segments.slice(0, -1).join('_') : normalized;
 }
 
 /** Canonical bucket-key normalization: raw device name -> stable, format-insensitive slug. */
 export function normalizeDeviceId(raw: string): string {
-    return collapseRedundantSuffix(normalizeSlug(raw));
+	return collapseRedundantSuffix(normalizeSlug(raw));
 }
 
 /**
@@ -88,15 +88,15 @@ export function normalizeDeviceId(raw: string): string {
  * swaps the separator, nothing else.
  */
 export function prettifyFieldName(field: string): string {
-    return field.replace(/_/g, '-');
+	return field.replace(/_/g, '-');
 }
 
 export function prettifyDeviceId(id: string): string {
-    const stripped = id.replace(DEVICE_ID_SUFFIX_RE, '');
+	const stripped = id.replace(DEVICE_ID_SUFFIX_RE, '');
 
-    return stripped
-        .split('_')
-        .filter(Boolean)
-        .map((p) => (KNOWN_DEVICE_ACRONYMS.has(p.toLowerCase()) ? p.toUpperCase() : p.charAt(0).toUpperCase() + p.slice(1)))
-        .join('-');
+	return stripped
+		.split('_')
+		.filter(Boolean)
+		.map((p) => (KNOWN_DEVICE_ACRONYMS.has(p.toLowerCase()) ? p.toUpperCase() : p.charAt(0).toUpperCase() + p.slice(1)))
+		.join('-');
 }
