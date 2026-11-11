@@ -573,7 +573,7 @@ export class FeatureInitializer {
 		const firewallMode =
       configSettings.firewallMode ||
       process.env.FIREWALL_MODE ||
-      'auto';
+      'on';
 
 		if (firewallMode === 'disabled') {
 			logger.debugSync('Firewall disabled by configuration', {
@@ -581,26 +581,12 @@ export class FeatureInitializer {
 			});
 			return;
 		}
-    
-		// Check if running as root (required for iptables)
-		const hasGetuid = typeof process.getuid === 'function';
-    
-		if (!hasGetuid) {
-			logger.warnSync('Firewall disabled - cannot detect root privileges', {
+
+		const hasRoot = typeof process.getuid === 'function' && process.getuid!() === 0;
+		if (!hasRoot) {
+			logger.warnSync('Firewall rules require root — iptables commands may fail', {
 				component: LogComponents.agent,
-				note: 'Firewall requires root privileges to manage iptables',
 			});
-			return;
-		}
-    
-		const uid = process.getuid!();
-		if (uid !== 0) {
-			logger.warnSync('Firewall disabled - requires root privileges', {
-				component: LogComponents.agent,
-				note: 'Run container with --privileged or set FIREWALL_MODE=disabled',
-				uid,
-			});
-			return;
 		}
 
 		// Determine MQTT port (if Mosquitto is running locally)
