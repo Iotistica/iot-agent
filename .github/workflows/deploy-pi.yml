@@ -19,13 +19,13 @@ jobs:
     runs-on: [self-hosted]
 
     steps:
-      - name: Deploy via SSH
+      - name: Deploy via SSH (Docker + Mosquitto)
         shell: cmd
         run: >
           "%PLINK%" %PLINK_ARGS%
           -pw "${{ secrets.PI_SSH_PASS }}"
           ${{ secrets.PI_SSH_USER }}@${{ secrets.PI_SSH_HOST }}
-          "curl -sfL https://get.iotistica.com/agent/builds/latest/install.sh | sudo IOTISTICA_INSTALL_DOCKER=yes IOTISTICA_DOWNLOAD_BASE_URL=https://get.iotistica.com/agent/builds/latest sh"
+          "set -e; curl -fsSL https://get.iotistica.com/agent/builds/latest/install.sh -o /tmp/iotistica-install.sh && sudo -n env IOTISTICA_INSTALL_DOCKER=yes IOTISTICA_INSTALL_MOSQUITTO=yes IOTISTICA_DOWNLOAD_BASE_URL=https://get.iotistica.com/agent/builds/latest sh /tmp/iotistica-install.sh"
 
       - name: Verify agent version
         shell: cmd
@@ -34,7 +34,15 @@ jobs:
           && "%PLINK%" %PLINK_ARGS%
           -pw "${{ secrets.PI_SSH_PASS }}"
           ${{ secrets.PI_SSH_USER }}@${{ secrets.PI_SSH_HOST }}
-          "sleep 5 && echo Deployed version: $(grep -m1 version /opt/iotistic/agent/package.json | tr -d ' ,') && echo Deployed build: $(sudo grep -m1 '^BUILD_ID=' /etc/iotistic/agent.env | cut -d= -f2)"
+          "sleep 5 && echo Deployed version: $(grep -m1 version /opt/iotistic/agent/package.json | tr -d ' ,') && echo Deployed build: $(sudo -n grep -m1 '^BUILD_ID=' /etc/iotistic/agent.env | cut -d= -f2)"
+
+      - name: Verify Mosquitto service
+        shell: cmd
+        run: >
+          "%PLINK%" %PLINK_ARGS%
+          -pw "${{ secrets.PI_SSH_PASS }}"
+          ${{ secrets.PI_SSH_USER }}@${{ secrets.PI_SSH_HOST }}
+          "sudo -n systemctl is-active --quiet mosquitto && echo Mosquitto is running"
 
       - name: Show license status and logs
         shell: cmd
@@ -42,4 +50,4 @@ jobs:
           "%PLINK%" %PLINK_ARGS%
           -pw "${{ secrets.PI_SSH_PASS }}"
           ${{ secrets.PI_SSH_USER }}@${{ secrets.PI_SSH_HOST }}
-          "echo '--- License status ---'; sudo iotctl license; echo '--- License journal (last 10 minutes) ---'; sudo journalctl -u iotistica-agent --since '10 minutes ago' --no-pager | grep -i license || echo 'No licensing journal entries found'"
+          "echo '--- License status ---'; sudo -n iotctl license; echo '--- License journal (last 10 minutes) ---'; sudo -n journalctl -u iotistica-agent --since '10 minutes ago' --no-pager | grep -i license || echo 'No licensing journal entries found'"
