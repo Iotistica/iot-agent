@@ -156,6 +156,14 @@ export class AgentFirewall {
 				matches: ['-m state', '--state ESTABLISHED,RELATED'],
 				target: 'ACCEPT',
 			},
+			// Allow SSH so enabling the firewall does not lock out remote administration
+			{
+				comment: 'Allow SSH access',
+				action: RuleAction.Append,
+				proto: 'tcp',
+				matches: ['--dport 22'],
+				target: 'ACCEPT',
+			},
 			// Allow loopback
 			{
 				comment: 'Allow loopback',
