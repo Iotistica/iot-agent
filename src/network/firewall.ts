@@ -188,23 +188,42 @@ export class AgentFirewall {
 		];
 	}
 
+	
 	/**
-   * Device API protection rules
-   * Device API is host-local only.
-   */
+	 * Device API protection rules
+	 * Allow trusted LAN networks while blocking untrusted networks.
+	 */
 	private getDeviceApiRules(): Rule[] {
-		return [
-			// Base rules already allow loopback and locally-originated traffic.
-			// Reject any non-local attempt to reach the Device API.
-			{
-				comment: 'Block Device API from external networks',
+		const rules: Rule[] = [];
+		const allowedLanNetworks = this.config.allowedLanNetworks ?? [];
+
+		// Allow Device API / Admin UI from trusted LAN networks.
+		allowedLanNetworks.forEach((network) => {
+			rules.push({
+				comment: `Allow Device API from LAN ${network}`,
 				action: RuleAction.Append,
+				family: 4,
 				proto: 'tcp',
-				matches: [`--dport ${this.config.deviceApiPort}`],
-				target: 'REJECT',
-			},
-		];
+				matches: [
+					`--dport ${this.config.deviceApiPort}`,
+					`-s ${network}`,
+				],
+				target: 'ACCEPT',
+			});
+		});
+
+		// Block Device API access from all other networks.
+		rules.push({
+			comment: 'Block Device API from untrusted networks',
+			action: RuleAction.Append,
+			proto: 'tcp',
+			matches: [`--dport ${this.config.deviceApiPort}`],
+			target: 'REJECT',
+		});
+
+		return rules;
 	}
+
 
 	/**
    * MQTT protection rules
