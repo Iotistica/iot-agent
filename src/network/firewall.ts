@@ -171,14 +171,6 @@ export class AgentFirewall {
 				matches: ['-i lo'],
 				target: 'ACCEPT',
 			},
-			// Allow SSH — critical for remote management; must never be blocked
-			{
-				comment: 'Allow SSH',
-				action: RuleAction.Append,
-				proto: 'tcp',
-				matches: ['--dport 22'],
-				target: 'ACCEPT',
-			},
 			// Allow ICMP (ping, etc.)
 			{
 				comment: 'Allow ICMP',
