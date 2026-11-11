@@ -14,6 +14,7 @@ import type { AgentLogger } from '../logging/agent-logger';
 import { LogComponents } from '../logging/types';
 import { build, getDefaultRuleAdaptor, RuleAction, type Rule } from '../lib/iptables';
 import { FirewallRuleModel, type FirewallRule } from '../db/models/firewall-rule.model';
+import { getLocalLanNetworks, type LocalLanNetworks } from './utils';
 
 export interface FirewallConfig {
   enabled: boolean;
@@ -21,17 +22,13 @@ export interface FirewallConfig {
   deviceApiPort: number;
   mqttPort?: number;
   allowedLanNetworks?: string[];
+  allowedLanNetworksV6?: string[];
   allowedDockerNetworks?: string[];
 }
 
 const FIREWALL_CHAIN = 'IOTISTIC-FIREWALL';
 const _USER_CHAIN = 'IOTISTIC-USER';
 
-// Default LAN ranges. Keep Docker separate so container access can be controlled independently.
-const DEFAULT_ALLOWED_LAN_NETWORKS = [
-	'10.0.0.0/8',
-	'192.168.0.0/16',
-];
 
 // Default Docker bridge. User-defined bridge networks should be configured explicitly.
 const DEFAULT_ALLOWED_DOCKER_NETWORKS = [
@@ -46,9 +43,10 @@ export class AgentFirewall {
 	constructor(config: FirewallConfig, logger: AgentLogger) {
 		this.config = {
 			...config,
-			allowedLanNetworks: config.allowedLanNetworks || DEFAULT_ALLOWED_LAN_NETWORKS,
-			allowedDockerNetworks: config.allowedDockerNetworks || DEFAULT_ALLOWED_DOCKER_NETWORKS,
+			allowedDockerNetworks:
+				config.allowedDockerNetworks ?? DEFAULT_ALLOWED_DOCKER_NETWORKS,
 		};
+
 		this.logger = logger;
 	}
 
@@ -128,9 +126,9 @@ export class AgentFirewall {
 						chain
 							.addRule({ action: RuleAction.Flush })
 							.addRule(this.getBaseRules())
+							.addRule(isActive ? this.getDeviceApiRules() : [])
+							.addRule(isActive ? this.getMqttRules() : [])
 							.addRule(this.getUserIptablesRules(userRules))
-							.addRule(this.getDeviceApiRules())
-							.addRule(this.getMqttRules())
 							.addRule(this.getFinalRule(isActive))
 					)
 			)
@@ -171,11 +169,20 @@ export class AgentFirewall {
 				matches: ['-i lo'],
 				target: 'ACCEPT',
 			},
-			// Allow ICMP (ping, etc.)
+			// IPv4 ICMP (ping, diagnostics).
 			{
-				comment: 'Allow ICMP',
+				comment: 'Allow IPv4 ICMP',
 				action: RuleAction.Append,
+				family: 4,
 				proto: 'icmp',
+				target: 'ACCEPT',
+			},
+			// IPv6 relies on ICMPv6 for Neighbor Discovery and Path MTU Discovery.
+			{
+				comment: 'Allow ICMPv6',
+				action: RuleAction.Append,
+				family: 6,
+				proto: 'ipv6-icmp',
 				target: 'ACCEPT',
 			},
 			// Allow mDNS (multicast DNS)
@@ -193,84 +200,90 @@ export class AgentFirewall {
 	 * Device API protection rules
 	 * Allow trusted LAN networks while blocking untrusted networks.
 	 */
+	/**
+	 * Use explicitly configured subnets when provided, otherwise detect local LANs.
+	 * An explicit empty array disables auto-allow for that address family.
+	 */
+	private getAllowedLanNetworks(): LocalLanNetworks {
+		const detected = getLocalLanNetworks();
+		return {
+			ipv4: this.config.allowedLanNetworks ?? detected.ipv4,
+			ipv6: this.config.allowedLanNetworksV6 ?? detected.ipv6,
+		};
+	}
+
 	private getDeviceApiRules(): Rule[] {
 		const rules: Rule[] = [];
-		const allowedLanNetworks = this.config.allowedLanNetworks ?? [];
+		const networks = this.getAllowedLanNetworks();
 
-		// Allow Device API / Admin UI from trusted LAN networks.
-		allowedLanNetworks.forEach((network) => {
+		for (const [family, subnets] of [
+			[4, networks.ipv4],
+			[6, networks.ipv6],
+		] as const) {
+			for (const subnet of subnets) {
+				rules.push({
+					comment: `Allow Device API IPv${family} LAN ${subnet}`,
+					action: RuleAction.Append,
+					family,
+					proto: 'tcp',
+					matches: [`--dport ${this.config.deviceApiPort}`, `-s ${subnet}`],
+					target: 'ACCEPT',
+				});
+			}
 			rules.push({
-				comment: `Allow Device API from LAN ${network}`,
+				comment: `Block Device API IPv${family} from untrusted networks`,
 				action: RuleAction.Append,
-				family: 4,
+				family,
 				proto: 'tcp',
-				matches: [
-					`--dport ${this.config.deviceApiPort}`,
-					`-s ${network}`,
-				],
-				target: 'ACCEPT',
+				matches: [`--dport ${this.config.deviceApiPort}`],
+				target: 'REJECT',
 			});
-		});
-
-		// Block Device API access from all other networks.
-		rules.push({
-			comment: 'Block Device API from untrusted networks',
-			action: RuleAction.Append,
-			proto: 'tcp',
-			matches: [`--dport ${this.config.deviceApiPort}`],
-			target: 'REJECT',
-		});
-
+		}
 		return rules;
 	}
 
-
-	/**
-   * MQTT protection rules
-   * Only allow from explicitly trusted LAN and Docker networks.
-   */
+	/** MQTT: LAN IPv4/IPv6 plus existing IPv4 Docker bridge access. */
 	private getMqttRules(): Rule[] {
-		if (!this.config.mqttPort) {
-			return [];
-		}
-
+		if (!this.config.mqttPort) return [];
 		const rules: Rule[] = [];
-		const allowedLanNetworks = this.config.allowedLanNetworks!;
-		const allowedDockerNetworks = this.config.allowedDockerNetworks!;
+		const networks = this.getAllowedLanNetworks();
+		const dockerNetworks = this.config.allowedDockerNetworks ?? DEFAULT_ALLOWED_DOCKER_NETWORKS;
 
-		// Allow MQTT from each trusted LAN network.
-		allowedLanNetworks.forEach((network) => {
+		for (const [family, subnets] of [
+			[4, networks.ipv4],
+			[6, networks.ipv6],
+		] as const) {
+			for (const subnet of subnets) {
+				rules.push({
+					comment: `MQTT IPv${family} LAN ${subnet}`,
+					action: RuleAction.Append,
+					family,
+					proto: 'tcp',
+					matches: [`--dport ${this.config.mqttPort}`, `-s ${subnet}`],
+					target: 'ACCEPT',
+				});
+			}
+			if (family === 4) {
+				for (const subnet of dockerNetworks) {
+					rules.push({
+						comment: `MQTT Docker ${subnet}`,
+						action: RuleAction.Append,
+						family: 4,
+						proto: 'tcp',
+						matches: [`--dport ${this.config.mqttPort}`, `-s ${subnet}`],
+						target: 'ACCEPT',
+					});
+				}
+			}
 			rules.push({
-				comment: `MQTT from LAN ${network}`,
+				comment: `Block MQTT IPv${family} from untrusted networks`,
 				action: RuleAction.Append,
-				family: 4,
+				family,
 				proto: 'tcp',
-				matches: [`--dport ${this.config.mqttPort}`, `-s ${network}`],
-				target: 'ACCEPT',
+				matches: [`--dport ${this.config.mqttPort}`],
+				target: 'REJECT',
 			});
-		});
-
-		// Allow MQTT from explicitly trusted Docker bridge networks.
-		allowedDockerNetworks.forEach((network) => {
-			rules.push({
-				comment: `MQTT from Docker ${network}`,
-				action: RuleAction.Append,
-				family: 4,
-				proto: 'tcp',
-				matches: [`--dport ${this.config.mqttPort}`, `-s ${network}`],
-				target: 'ACCEPT',
-			});
-		});
-
-		// Block MQTT from all other networks
-		rules.push({
-			comment: 'Block MQTT from public networks',
-			action: RuleAction.Append,
-			proto: 'tcp',
-			matches: [`--dport ${this.config.mqttPort}`],
-			target: 'REJECT',
-		});
-
+		}
 		return rules;
 	}
 
@@ -338,6 +351,8 @@ export class AgentFirewall {
 			await this.applyFirewallRules();
 		}
 	}
+
+	
 
 	/**
    * Stop firewall and remove all rules
