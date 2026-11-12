@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-REQUEST_FILE="/var/lib/iotistica/agent/update.lock"
+REQUEST_FILE="/var/lib/iotistic/agent/update.lock"
 RUNNING_FILE="${REQUEST_FILE}.running"
 UPDATE_SCRIPT="/usr/local/bin/update.sh"
 RUN_LOCK_FILE="/run/lock/update-runner.lock"
@@ -56,7 +56,7 @@ while [ -e "$RUNNING_FILE" ] || [ -e "$REQUEST_FILE" ]; do
 
     echo "Starting validated update to $target_version (force=$force)"
     if ! "$UPDATE_SCRIPT" "$target_version" "$force" "$RUNNING_FILE"; then
-        echo "Update script failed for $target_version; see /var/lib/iotistica/agent/update.log" >&2
+        echo "Update script failed for $target_version; see journalctl -u update.service" >&2
     fi
     rm -f -- "$RUNNING_FILE"
 done

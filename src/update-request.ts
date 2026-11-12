@@ -2,7 +2,7 @@ import { closeSync, existsSync, fsyncSync, linkSync, openSync, unlinkSync, write
 import { basename, dirname, join } from 'path';
 import { randomUUID } from 'crypto';
 
-export const UPDATE_REQUEST_FILE = '/var/lib/iotistica/agent/update.lock';
+export const UPDATE_REQUEST_FILE = '/var/lib/iotistic/agent/update.lock';
 export const UPDATE_RUNNING_FILE = `${UPDATE_REQUEST_FILE}.running`;
 
 const VALID_UPDATE_TARGET = /^(?:latest|\d+\.\d+\.\d+(?:-[\w.]+)?)$/;
