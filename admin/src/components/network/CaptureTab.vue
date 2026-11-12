@@ -67,6 +67,35 @@ const loadingDetail = ref(false)
 let ws: WebSocket | null = null
 const wsConnected = ref(false)
 const paused = ref(false)
+// Prevent queued WebSocket messages from extending the UI while Stop is pending.
+const stopRequested = ref(false)
+let pendingPackets: CapturePacket[] = []
+let packetFlushTimer: ReturnType<typeof setTimeout> | null = null
+const PACKET_FLUSH_MS = 75
+
+function cancelPacketFlush() {
+  if (packetFlushTimer !== null) {
+    clearTimeout(packetFlushTimer)
+    packetFlushTimer = null
+  }
+  pendingPackets = []
+}
+
+function flushPacketBatch() {
+  packetFlushTimer = null
+  if (stopRequested.value || paused.value || pendingPackets.length === 0) {
+    pendingPackets = []
+    return
+  }
+  packets.value = [...packets.value, ...pendingPackets].slice(-10_000)
+  pendingPackets = []
+  if (autoScroll.value) {
+    nextTick(() => {
+      const el = tableContainer.value?.querySelector('.ant-table-body')
+      if (el) el.scrollTop = el.scrollHeight
+    })
+  }
+}
 
 // Auto-scroll
 const tableContainer = ref<HTMLElement | null>(null)
@@ -227,7 +256,7 @@ async function loadPackets() {
   loading.value = true
   try {
     const data = await networkApi.getCapturePackets({ limit: 10000 })
-    packets.value = data.packets
+    if (!stopRequested.value) packets.value = data.packets
   } finally {
     loading.value = false
   }
@@ -236,6 +265,7 @@ async function loadPackets() {
 async function startCapture() {
   if (starting.value || stopping.value || switchingInterface.value) return
   starting.value = true
+  stopRequested.value = false
   try {
     const opts: { filter?: string; iface: string } = { iface: selectedInterface.value }
     if (bpfFilter.value.trim()) opts.filter = bpfFilter.value.trim()
@@ -244,6 +274,7 @@ async function startCapture() {
     selectedInterface.value = result.status.iface
     saveSelectedInterface(selectedInterface.value)
     packets.value = []
+    cancelPacketFlush()
     paused.value = false
     connectWs()
     message.success('Capture started')
@@ -258,13 +289,20 @@ async function startCapture() {
 async function stopCapture() {
   if (starting.value || stopping.value || switchingInterface.value) return
   stopping.value = true
+  // Stop UI ingestion immediately; do not wait for the backend tcpdump shutdown.
+  stopRequested.value = true
+  disconnectWs()
   try {
     status.value = await networkApi.stopCapture()
-    disconnectWs()
     message.success('Capture stopped')
   } catch (err: any) {
-    message.error(err?.message || 'Failed to stop capture')
+    message.error(err?.response?.data?.error || err?.message || 'Failed to stop capture')
     await loadStatus()
+    // Restore the live feed only if the backend says capture is still running.
+    if (status.value?.running) {
+      stopRequested.value = false
+      connectWs()
+    }
   } finally {
     stopping.value = false
   }
@@ -340,32 +378,29 @@ function captureWsUrl(): string {
 
 function connectWs() {
   disconnectWs()
-  ws = new WebSocket(captureWsUrl())
-  ws.onopen = () => { wsConnected.value = true }
-  ws.onclose = () => { wsConnected.value = false }
-  ws.onerror = () => { wsConnected.value = false }
-  ws.onmessage = (ev) => {
-    if (paused.value) return
+  const socket = new WebSocket(captureWsUrl())
+  ws = socket
+  socket.onopen = () => { if (ws === socket) wsConnected.value = true }
+  socket.onclose = () => { if (ws === socket) wsConnected.value = false }
+  socket.onerror = () => { if (ws === socket) wsConnected.value = false }
+  socket.onmessage = (ev) => {
+    if (ws !== socket) return
+    if (paused.value || stopRequested.value || stopping.value) return
     try {
-      const pkt = JSON.parse(ev.data) as CapturePacket
-      packets.value.push(pkt)
-      // Cap local array at 10k
-      if (packets.value.length > 10_000) {
-        packets.value = packets.value.slice(-10_000)
-      }
-      if (autoScroll.value) {
-        nextTick(() => {
-          const el = tableContainer.value?.querySelector('.ant-table-body')
-          if (el) el.scrollTop = el.scrollHeight
-        })
-      }
+      pendingPackets.push(JSON.parse(ev.data) as CapturePacket)
+      // Batch reactive table updates to avoid rendering on every incoming packet.
+      if (packetFlushTimer === null) packetFlushTimer = setTimeout(flushPacketBatch, PACKET_FLUSH_MS)
     } catch { /* ignore malformed */ }
   }
 }
 
 function disconnectWs() {
+  cancelPacketFlush()
   if (ws) {
+    ws.onopen = null
+    ws.onmessage = null
     ws.onclose = null
+    ws.onerror = null
     ws.close()
     ws = null
     wsConnected.value = false
@@ -383,12 +418,13 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  stopRequested.value = true
   disconnectWs()
 })
 
 // Reconnect WS when capture starts externally
 watch(running, (val) => {
-  if (val && !wsConnected.value) connectWs()
+  if (val && !wsConnected.value && !stopping.value && !stopRequested.value) connectWs()
   if (!val) disconnectWs()
 })
 </script>
