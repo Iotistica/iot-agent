@@ -99,6 +99,7 @@ export interface CapturePacket {
   dstPort: number | null
   ipProtocol: number
   protocolName: string
+  arp?: ArpPacketInfo
   direction: 'inbound' | 'outbound' | 'unknown'
   info: string
   size: number
@@ -107,6 +108,17 @@ export interface CapturePacket {
 
 export interface CapturePacketDetail extends CapturePacket {
   hexDump: string
+}
+
+export interface ArpPacketInfo {
+  hardwareType: number
+  protocolType: number
+  operation: 1 | 2
+  operationName: 'Request' | 'Reply'
+  senderMac: string
+  senderIp: string
+  targetMac: string
+  targetIp: string
 }
 
 export interface CaptureCounters {

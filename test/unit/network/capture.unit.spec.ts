@@ -40,14 +40,74 @@ function createChildProcess() {
 	return proc;
 }
 
-function createPcapHeader(): Buffer {
+function createPcapHeader(linkType = 101): Buffer {
 	const header = Buffer.alloc(24);
 	header.writeUInt32LE(0xa1b2c3d4, 0);
 	header.writeUInt16LE(2, 4);
 	header.writeUInt16LE(4, 6);
 	header.writeUInt32LE(65535, 16);
-	header.writeUInt32LE(101, 20);
+	header.writeUInt32LE(linkType, 20);
 	return header;
+}
+
+function createPcapRecord(payload: Buffer): Buffer {
+	const record = Buffer.alloc(16);
+	record.writeUInt32LE(1, 0);
+	record.writeUInt32LE(0, 4);
+	record.writeUInt32LE(payload.length, 8);
+	record.writeUInt32LE(payload.length, 12);
+	return Buffer.concat([record, payload]);
+}
+
+const packet29 = Buffer.from(
+	'82832cc01469bae329fb640f08060001080006040001bae329fb640fac110001000000000000ac110003',
+	'hex',
+);
+
+function createArpPayload(operation: 1 | 2): Buffer {
+	const payload = Buffer.alloc(28);
+	payload.writeUInt16BE(1, 0);
+	payload.writeUInt16BE(0x0800, 2);
+	payload[4] = 6;
+	payload[5] = 4;
+	payload.writeUInt16BE(operation, 6);
+	Buffer.from('0242ac110003', 'hex').copy(payload, 8);
+	Buffer.from('ac110003', 'hex').copy(payload, 14);
+	Buffer.from('bae329fb640f', 'hex').copy(payload, 18);
+	Buffer.from('ac110001', 'hex').copy(payload, 24);
+	return payload;
+}
+
+function wrapArp(linkType: number, arp: Buffer, vlan = false): Buffer {
+	if (linkType === 1) {
+		const ethernet = Buffer.from('82832cc01469bae329fb640f', 'hex');
+		const ethertype = vlan ? Buffer.from('810000010806', 'hex') : Buffer.from('0806', 'hex');
+		return Buffer.concat([ethernet, ethertype, arp]);
+	}
+	if (linkType === 113) {
+		const cooked = Buffer.alloc(16);
+		cooked.writeUInt16BE(1, 0);
+		cooked.writeUInt16BE(1, 2);
+		cooked.writeUInt16BE(6, 4);
+		Buffer.from('bae329fb640f', 'hex').copy(cooked, 6);
+		cooked.writeUInt16BE(0x0806, 14);
+		return Buffer.concat([cooked, arp]);
+	}
+	if (linkType === 276) {
+		const cooked = Buffer.alloc(20);
+		cooked.writeUInt16BE(0x0806, 0);
+		cooked.writeUInt16BE(1, 8);
+		cooked[11] = 6;
+		Buffer.from('bae329fb640f', 'hex').copy(cooked, 12);
+		return Buffer.concat([cooked, arp]);
+	}
+	throw new Error(`Unsupported ARP test link type: ${linkType}`);
+}
+
+function decodeFrame(linkType: number, frame: Buffer) {
+	const engine = new CaptureEngine(createLogger());
+	(engine as any).onData(Buffer.concat([createPcapHeader(linkType), createPcapRecord(frame)]));
+	return engine.getPacket(1);
 }
 
 function createPcapRecords(start: number, count: number): Buffer {
@@ -267,5 +327,77 @@ describe('CaptureEngine', () => {
 		secondProcess.stderr.write('3 packets dropped by kernel\n');
 		await engine.stop();
 		expect(engine.getStatus().counters).toMatchObject({ seen: 12, stored: 2, evicted: 10, dropped: 5 });
+	});
+
+	it('decodes the supplied Ethernet ARP request without assigning an IP protocol', () => {
+		const packet = decodeFrame(1, packet29)!;
+
+		expect(packet).toMatchObject({
+			srcIp: '172.17.0.1',
+			dstIp: '172.17.0.3',
+			srcPort: null,
+			dstPort: null,
+			ipProtocol: -1,
+			protocolName: 'ARP',
+			info: 'Who has 172.17.0.3? Tell 172.17.0.1',
+			arp: {
+				hardwareType: 1,
+				protocolType: 0x0800,
+				operation: 1,
+				operationName: 'Request',
+				senderMac: 'ba:e3:29:fb:64:0f',
+				senderIp: '172.17.0.1',
+				targetMac: '00:00:00:00:00:00',
+				targetIp: '172.17.0.3',
+			},
+		});
+	});
+
+	it('decodes ARP replies', () => {
+		const packet = decodeFrame(1, wrapArp(1, createArpPayload(2)))!;
+
+		expect(packet).toMatchObject({
+			protocolName: 'ARP',
+			srcIp: '172.17.0.3',
+			dstIp: '172.17.0.1',
+			info: '172.17.0.3 is at 02:42:ac:11:00:03',
+			arp: { operation: 2, operationName: 'Reply', senderMac: '02:42:ac:11:00:03' },
+		});
+	});
+
+	it.each([113, 276])('decodes ARP over Linux cooked link type %s', (linkType) => {
+		const packet = decodeFrame(linkType, wrapArp(linkType, createArpPayload(1)))!;
+
+		expect(packet).toMatchObject({
+			protocolName: 'ARP',
+			srcIp: '172.17.0.3',
+			dstIp: '172.17.0.1',
+		});
+	});
+
+	it('decodes VLAN-tagged Ethernet ARP', () => {
+		const packet = decodeFrame(1, wrapArp(1, createArpPayload(1), true))!;
+
+		expect(packet).toMatchObject({ protocolName: 'ARP', srcIp: '172.17.0.3', dstIp: '172.17.0.1' });
+	});
+
+	it('keeps truncated and unsupported ARP identifiable without throwing', () => {
+		const frame = wrapArp(1, createArpPayload(1));
+		const truncated = decodeFrame(1, frame.subarray(0, 20))!;
+		const unsupported = Buffer.from(frame);
+		unsupported.writeUInt16BE(2, 14);
+		const unsupportedPacket = decodeFrame(1, unsupported)!;
+
+		expect(truncated).toMatchObject({ protocolName: 'ARP', srcIp: '?', dstIp: '?', ipProtocol: -1 });
+		expect(truncated.arp).toBeUndefined();
+		expect(unsupportedPacket).toMatchObject({ protocolName: 'ARP', srcIp: '?', dstIp: '?', ipProtocol: -1 });
+		expect(unsupportedPacket.arp).toBeUndefined();
+	});
+
+	it('keeps original ARP bytes in PCAP exports', () => {
+		const engine = new CaptureEngine(createLogger());
+		(engine as any).onData(Buffer.concat([createPcapHeader(1), createPcapRecord(packet29)]));
+
+		expect(engine.exportPcap().subarray(40)).toEqual(packet29);
 	});
 });

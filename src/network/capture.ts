@@ -28,11 +28,36 @@ export interface CapturedPacket {
 	dstPort: number | null;
 	ipProtocol: number;
 	protocolName: string;
+	arp?: ArpPacketInfo;
 	direction: 'inbound' | 'outbound' | 'unknown';
 	info: string;
 	tcpSeq: number | null;
 	tcpFlags: number | null;
 	reassembledDecoded?: DecodedPacket;
+}
+
+export interface ArpPacketInfo {
+	hardwareType: number;
+	protocolType: number;
+	operation: 1 | 2;
+	operationName: 'Request' | 'Reply';
+	senderMac: string;
+	senderIp: string;
+	targetMac: string;
+	targetIp: string;
+}
+
+interface ParsedCapturePayload {
+	srcIp: string;
+	dstIp: string;
+	srcPort: number | null;
+	dstPort: number | null;
+	ipProtocol: number;
+	appPayload: Buffer | null;
+	tcpSeq: number | null;
+	tcpFlags: number | null;
+	protocolName?: string;
+	arp?: ArpPacketInfo;
 }
 
 export interface CaptureStatus {
@@ -529,7 +554,7 @@ export class CaptureEngine extends EventEmitter {
 				const parsed = this.parsePayload(payload);
 
 				const direction = this.detectDirection(parsed.srcIp, parsed.dstIp);
-				const protocolName = this.resolveProtocolName(parsed.ipProtocol, parsed.srcPort, parsed.dstPort);
+				const protocolName = parsed.protocolName ?? this.resolveProtocolName(parsed.ipProtocol, parsed.srcPort, parsed.dstPort);
 
 				const packet: CapturedPacket = {
 					id: this.nextId++,
@@ -546,6 +571,7 @@ export class CaptureEngine extends EventEmitter {
 					dstPort: parsed.dstPort,
 					ipProtocol: parsed.ipProtocol,
 					protocolName,
+					arp: parsed.arp,
 					direction,
 					info: '',
 					tcpSeq: parsed.tcpSeq,
@@ -580,15 +606,8 @@ export class CaptureEngine extends EventEmitter {
 		}
 	}
 
-	private parsePayload(payload: Buffer): {
-		srcIp: string; dstIp: string;
-		srcPort: number | null; dstPort: number | null;
-		ipProtocol: number;
-		appPayload: Buffer | null;
-		tcpSeq: number | null;
-		tcpFlags: number | null;
-	} {
-		const unknown = (protocol = -1) => ({
+	private parsePayload(payload: Buffer): ParsedCapturePayload {
+		const unknown = (protocol = -1): ParsedCapturePayload => ({
 			srcIp: '?', dstIp: '?', srcPort: null, dstPort: null,
 			ipProtocol: protocol, appPayload: null, tcpSeq: null, tcpFlags: null,
 		});
@@ -620,6 +639,14 @@ export class CaptureEngine extends EventEmitter {
 				break;
 			default:
 				return unknown();
+		}
+		if (etherType === 0x0806) {
+			const arp = this.parseArpPayload(payload, ipOffset);
+			return {
+				...unknown(),
+				...(arp ? { srcIp: arp.senderIp, dstIp: arp.targetIp, arp } : {}),
+				protocolName: 'ARP',
+			};
 		}
 		let srcIp: string;
 		let dstIp: string;
@@ -718,6 +745,46 @@ export class CaptureEngine extends EventEmitter {
 		return { srcIp, dstIp, srcPort, dstPort, ipProtocol, appPayload, tcpSeq, tcpFlags };
 	}
 
+	private parseArpPayload(payload: Buffer, offset: number): ArpPacketInfo | undefined {
+		if (offset < 0 || payload.length < offset + 8) return undefined;
+
+		const hardwareType = payload.readUInt16BE(offset);
+		const protocolType = payload.readUInt16BE(offset + 2);
+		const hardwareLength = payload[offset + 4];
+		const protocolLength = payload[offset + 5];
+		const operation = payload.readUInt16BE(offset + 6);
+		const addressDataLength = hardwareLength * 2 + protocolLength * 2;
+		const packetEnd = offset + 8 + addressDataLength;
+
+		if (payload.length < packetEnd) return undefined;
+		if (hardwareType !== 1 || protocolType !== 0x0800 || hardwareLength !== 6 || protocolLength !== 4) {
+			return undefined;
+		}
+		if (operation !== 1 && operation !== 2) return undefined;
+
+		const senderMacOffset = offset + 8;
+		const senderIpOffset = senderMacOffset + hardwareLength;
+		const targetMacOffset = senderIpOffset + protocolLength;
+		const targetIpOffset = targetMacOffset + hardwareLength;
+		const formatMac = (start: number): string =>
+			Array.from(payload.subarray(start, start + hardwareLength))
+				.map((byte) => byte.toString(16).padStart(2, '0'))
+				.join(':');
+		const formatIp = (start: number): string =>
+			Array.from(payload.subarray(start, start + protocolLength)).join('.');
+
+		return {
+			hardwareType,
+			protocolType,
+			operation,
+			operationName: operation === 1 ? 'Request' : 'Reply',
+			senderMac: formatMac(senderMacOffset),
+			senderIp: formatIp(senderIpOffset),
+			targetMac: formatMac(targetMacOffset),
+			targetIp: formatIp(targetIpOffset),
+		};
+	}
+
 	private resolveProtocolName(ipProtocol: number, srcPort: number | null, dstPort: number | null): string {
 		// Check well-known ports first for application-layer identification
 		if (dstPort != null && WELL_KNOWN_PORTS[dstPort]) return WELL_KNOWN_PORTS[dstPort];
@@ -732,6 +799,12 @@ export class CaptureEngine extends EventEmitter {
 	}
 
 	private buildInfoString(p: CapturedPacket): string {
+		if (p.arp) {
+			return p.arp.operation === 1
+				? `Who has ${p.arp.targetIp}? Tell ${p.arp.senderIp}`
+				: `${p.arp.senderIp} is at ${p.arp.senderMac}`;
+		}
+		if (p.protocolName === 'ARP') return 'ARP (unsupported or malformed)';
 		const src = p.srcPort != null ? `${p.srcIp}:${p.srcPort}` : p.srcIp;
 		const dst = p.dstPort != null ? `${p.dstIp}:${p.dstPort}` : p.dstIp;
 		return `${src} → ${dst} ${p.protocolName} len=${p.length}`;

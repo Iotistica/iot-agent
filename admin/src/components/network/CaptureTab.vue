@@ -131,7 +131,7 @@ const filteredPackets = computed(() => {
 })
 
 const KNOWN_PROTOCOLS = [
-  'BACnet/IP', 'DNS', 'HTTP', 'HTTPS', 'ICMP', 'MQTT', 'MQTT/TLS',
+  'ARP', 'BACnet/IP', 'DNS', 'HTTP', 'HTTPS', 'ICMP', 'MQTT', 'MQTT/TLS',
   'Modbus/TCP', 'OPC-UA', 'SSH', 'TCP', 'UDP',
 ]
 
@@ -193,6 +193,7 @@ function formatDetailKey(key: string): string {
 // ── Protocol tag colors ────────────────────────────────────────────────────
 
 const protocolColors: Record<string, string> = {
+    ARP: 'gold', TCP: 'blue', UDP: 'green', ICMP: 'orange',
   TCP: 'blue', UDP: 'green', ICMP: 'orange',
   MQTT: 'purple', 'MQTT/TLS': 'purple',
   HTTP: 'cyan', HTTPS: 'cyan', 'HTTP-Alt': 'cyan', 'HTTPS-Alt': 'cyan',
@@ -610,7 +611,24 @@ watch(running, (val) => {
             {{ selectedPacket.direction }}
           </a-tag>
         </a-descriptions-item>
-        <a-descriptions-item label="IP Protocol">{{ selectedPacket.ipProtocol }}</a-descriptions-item>
+        <a-descriptions-item v-if="selectedPacket.arp" label="Operation">
+          {{ selectedPacket.arp.operationName }}
+        </a-descriptions-item>
+        <a-descriptions-item v-if="selectedPacket.arp" label="Sender IP">
+          {{ selectedPacket.arp.senderIp }}
+        </a-descriptions-item>
+        <a-descriptions-item v-if="selectedPacket.arp" label="Sender MAC">
+          {{ selectedPacket.arp.senderMac }}
+        </a-descriptions-item>
+        <a-descriptions-item v-if="selectedPacket.arp" label="Target IP">
+          {{ selectedPacket.arp.targetIp }}
+        </a-descriptions-item>
+        <a-descriptions-item v-if="selectedPacket.arp" label="Target MAC">
+          {{ selectedPacket.arp.targetMac }}
+        </a-descriptions-item>
+        <a-descriptions-item v-else label="IP Protocol">
+          {{ selectedPacket.ipProtocol < 0 ? 'N/A' : selectedPacket.ipProtocol }}
+        </a-descriptions-item>
         <a-descriptions-item label="Length">{{ selectedPacket.length }} bytes</a-descriptions-item>
         <a-descriptions-item label="Captured">{{ selectedPacket.capturedLength }} bytes</a-descriptions-item>
         <a-descriptions-item label="Info">{{ selectedPacket.info }}</a-descriptions-item>
