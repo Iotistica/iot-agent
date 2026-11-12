@@ -193,7 +193,7 @@ function formatDetailKey(key: string): string {
 // ── Protocol tag colors ────────────────────────────────────────────────────
 
 const protocolColors: Record<string, string> = {
-    ARP: 'gold', TCP: 'blue', UDP: 'green', ICMP: 'orange',
+  ARP: 'gold',
   TCP: 'blue', UDP: 'green', ICMP: 'orange',
   MQTT: 'purple', 'MQTT/TLS': 'purple',
   HTTP: 'cyan', HTTPS: 'cyan', 'HTTP-Alt': 'cyan', 'HTTPS-Alt': 'cyan',

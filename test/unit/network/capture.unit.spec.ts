@@ -1,6 +1,7 @@
 import { EventEmitter } from 'events';
 import { PassThrough } from 'stream';
 import { CaptureEngine, CaptureInterfaceError } from '../../../src/network/capture';
+import type { CaptureStartOptions } from '../../../src/network/capture';
 import type { AgentLogger } from '../../../src/logging/agent-logger';
 
 jest.mock('../../../src/system/interfaces', () => ({
@@ -189,7 +190,7 @@ describe('CaptureEngine', () => {
 			(engine as any).state = 'idle';
 			return engine.getStatus();
 		});
-		const startCapture = jest.spyOn(engine as any, 'startCapture').mockImplementation(async (options, preservePackets) => {
+		const startCapture = jest.spyOn(engine as any, 'startCapture').mockImplementation(async (options: CaptureStartOptions, preservePackets?: boolean) => {
 			(engine as any).captureIface = options.iface;
 			(engine as any).state = 'running';
 			expect(preservePackets).toBe(true);
@@ -219,11 +220,11 @@ describe('CaptureEngine', () => {
 			return engine.getStatus();
 		});
 		const startCapture = jest.spyOn(engine as any, 'startCapture')
-			.mockImplementationOnce(async (options) => {
+			.mockImplementationOnce(async (options: CaptureStartOptions) => {
 				(engine as any).captureIface = options.iface;
 				throw new Error('interface disappeared');
 			})
-			.mockImplementationOnce(async (options) => {
+			.mockImplementationOnce(async (options: CaptureStartOptions) => {
 				(engine as any).captureIface = options.iface;
 				(engine as any).state = 'running';
 				return engine.getStatus();
