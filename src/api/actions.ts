@@ -34,6 +34,7 @@ import type { AgentFirewall, FirewallMode } from '../network/firewall.js';
 import type { CaptureEngine } from '../network/capture.js';
 import type { DockerOptions } from 'dockerode';
 import { isProLicensed } from '../licensing/runtime.js';
+import { queueAgentUpdateRequest } from '../update-request.js';
 
 type AgentInstance = {
 	getLifecycleState: () => string;
@@ -587,80 +588,17 @@ export async function triggerUpdate(targetVersion: string, force = false): Promi
 		throw new Error(`Already on version ${currentVersion}`);
 	}
 
-	const updateScript = '/opt/iotistic/agent/bin/update.sh';
-	const logFile = '/var/lib/iotistic/agent/update.log';
-
-	logger?.infoSync('Triggering agent update via update.sh', {
+	logger?.infoSync('Queueing agent update through the root-owned systemd updater', {
 		component: 'agent-updater',
 		currentVersion,
 		targetVersion,
-		updateScript,
-		logFile,
 		force,
-		uid: process.getuid?.(),
-		euid: process.geteuid?.(),
-		user: process.env.USER,
 	});
 
-	const { spawn } = await import('child_process');
-	const fs = await import('fs');
-
-	// Check if update script exists (don't require +x — invoke via bash)
-	if (!fs.existsSync(updateScript)) {
-		const msg = `update.sh not found at ${updateScript}`;
-		logger?.errorSync(msg, new Error(msg), { component: 'agent-updater' });
-		throw new Error(msg);
-	}
-	logger?.infoSync('update.sh found', { component: 'agent-updater' });
-
-	// Open log file for capturing output
-	let logFd: number;
-	try {
-		logFd = fs.openSync(logFile, 'a');
-		fs.writeSync(logFd, `\n--- Update triggered at ${new Date().toISOString()} ---\n`);
-		fs.writeSync(logFd, `Target: ${targetVersion}, Current: ${currentVersion}, Force: ${force}\n`);
-		logger?.infoSync('Log file opened', { component: 'agent-updater', logFile });
-	} catch (err) {
-		logger?.warnSync('Could not open update log file, using /tmp fallback', {
-			component: 'agent-updater',
-			error: String(err),
-			logFile,
-		});
-		const fallback = '/tmp/iotistica-update.log';
-		logFd = fs.openSync(fallback, 'a');
-		fs.writeSync(logFd, `\n--- Update triggered at ${new Date().toISOString()} ---\n`);
-	}
-
-	const forceArg = force ? 'true' : 'false';
-	const cmd = `bash ${updateScript} ${targetVersion} ${forceArg}`;
-	logger?.infoSync('Spawning update process', { component: 'agent-updater', cmd });
-
-	const child = spawn('bash', [updateScript, targetVersion, forceArg], {
-		detached: true,
-		stdio: ['ignore', logFd, logFd],
-	});
-
-	child.on('error', (err) => {
-		logger?.errorSync('Failed to spawn update process', err instanceof Error ? err : new Error(String(err)), {
-			component: 'agent-updater',
-		});
-	});
-
-	child.on('exit', (code, signal) => {
-		logger?.infoSync('Update process exited', {
-			component: 'agent-updater',
-			exitCode: code,
-			signal,
-		});
-	});
-
-	child.unref();
-	// Close the fd in the parent after spawn inherits it
-	fs.closeSync(logFd);
-
-	logger?.infoSync('Update process spawned successfully', {
+	queueAgentUpdateRequest(targetVersion, force);
+	logger?.infoSync('Agent update request queued for systemd', {
 		component: 'agent-updater',
-		pid: child.pid,
+		targetVersion,
 	});
 }
 

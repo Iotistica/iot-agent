@@ -15,6 +15,7 @@ import { LogComponents } from './logging/types.js';
 import { CloudMqttClient, createJsonPayload } from './mqtt/manager.js';
 import { notifySystemd } from './system/watchdog.js';
 import { agentTopic } from './mqtt/topics.js';
+import { queueAgentUpdateRequest, UPDATE_REQUEST_FILE, UPDATE_RUNNING_FILE } from './update-request.js';
 
 const execAsync = promisify(exec);
 
@@ -22,7 +23,7 @@ const execAsync = promisify(exec);
 const UPDATE_SCRIPT_SYSTEMD = '/usr/local/bin/update.sh';
 
 // Update lock file path (prevents concurrent updates)
-const UPDATE_LOCK_FILE = '/var/lib/iotistic/agent/update.lock';
+const UPDATE_LOCK_FILE = UPDATE_REQUEST_FILE;
 
 // Pending update file path (survives restarts)
 const PENDING_UPDATE_FILE = '/var/lib/iotistic/agent/pending-update.json';
@@ -629,7 +630,7 @@ export class AgentUpdater {
 		}
 
 		// Check for existing update lock (prevent concurrent updates)
-		if (existsSync(UPDATE_LOCK_FILE) && !force) {
+		if (existsSync(UPDATE_LOCK_FILE) || existsSync(UPDATE_RUNNING_FILE)) {
 			this.logger.warnSync("Update already in progress", {
 				component: LogComponents.agentUpdater,
 				lockFile: UPDATE_LOCK_FILE,
@@ -668,40 +669,6 @@ export class AgentUpdater {
 			return;
 		}
 
-		// Create update lock file (agent owns lock until successful script spawn)
-		// OWNERSHIP: Agent creates lock, script removes it after successful spawn
-		// Agent only removes lock on spawn failure (before transfer of ownership)
-		try {
-			writeFileSync(UPDATE_LOCK_FILE, JSON.stringify({
-				version,
-				started_at: Date.now(),
-				current_version: this.currentVersion
-			}));
-      
-			this.logger.debugSync("Update lock created", {
-				component: LogComponents.agentUpdater,
-				lockFile: UPDATE_LOCK_FILE
-			});
-		} catch (error) {
-			this.logger.errorSync(
-				"Failed to create update lock",
-				error instanceof Error ? error : new Error(String(error)),
-				{
-					component: LogComponents.agentUpdater,
-					lockFile: UPDATE_LOCK_FILE
-				}
-			);
-      
-			await this.publishStatus({
-				type: 'update_failed',
-				reason: 'failed_to_create_lock',
-				error: error instanceof Error ? error.message : String(error),
-				timestamp: Date.now()
-			});
-      
-			return;
-		}
-
 		const deploymentType = 'systemd';
     
 		this.logger.infoSync("Starting agent self-update", {
@@ -711,22 +678,6 @@ export class AgentUpdater {
 			deploymentType,
 			force
 		});
-
-		// Report update started
-		try {
-			await this.publishStatus({
-				type: 'update_started',
-				current_version: this.currentVersion,
-				target_version: version,
-				deployment_type: deploymentType,
-				timestamp: Date.now()
-			});
-		} catch (error) {
-			this.logger.warnSync("Failed to publish update started status", {
-				component: LogComponents.agentUpdater,
-				error: error instanceof Error ? error.message : String(error)
-			});
-		}
 
 		// Update script path (hardcoded for security)
 		const updateScript = UPDATE_SCRIPT_SYSTEMD;
@@ -757,18 +708,6 @@ export class AgentUpdater {
 					timestamp: Date.now()
 				});
         
-				// Remove update lock
-				try {
-					if (existsSync(UPDATE_LOCK_FILE)) {
-						unlinkSync(UPDATE_LOCK_FILE);
-					}
-				} catch (cleanupError) {
-					this.logger.warnSync("Failed to remove update lock", {
-						component: LogComponents.agentUpdater,
-						error: cleanupError instanceof Error ? cleanupError.message : String(cleanupError)
-					});
-				}
-        
 				return;
 			}
       
@@ -791,18 +730,6 @@ export class AgentUpdater {
 				integrity_error: scriptIntegrityCheck.reason,
 				timestamp: Date.now()
 			});
-      
-			// Remove update lock
-			try {
-				if (existsSync(UPDATE_LOCK_FILE)) {
-					unlinkSync(UPDATE_LOCK_FILE);
-				}
-			} catch (cleanupError) {
-				this.logger.warnSync("Failed to remove update lock after integrity failure", {
-					component: LogComponents.agentUpdater,
-					error: cleanupError instanceof Error ? cleanupError.message : String(cleanupError)
-				});
-			}
       
 			return;
 		}
@@ -829,91 +756,35 @@ export class AgentUpdater {
 			return;
 		}
 
-		this.logger.infoSync("Executing update script", {
+		try {
+			queueAgentUpdateRequest(version, force);
+		} catch (error) {
+			this.logger.errorSync(
+				'Failed to queue root-owned update request',
+				error instanceof Error ? error : new Error(String(error)),
+				{ component: LogComponents.agentUpdater, version }
+			);
+			await this.publishStatus({
+				type: 'update_failed',
+				reason: 'failed_to_queue_update',
+				error: error instanceof Error ? error.message : String(error),
+				timestamp: Date.now(),
+			});
+			return;
+		}
+
+		this.logger.infoSync('Update request queued for root-owned systemd service', {
 			component: LogComponents.agentUpdater,
-			script: updateScript,
 			version,
-			note: "Agent will restart shortly. Update script MUST: 1) Remove lock file, 2) Write status file on completion."
+			deploymentType,
 		});
-
-		// Notify systemd of update sequence (prevents watchdog false positives)
-		notifySystemd('STATUS=Starting agent update', this.logger);
-		notifySystemd('STOPPING=1', this.logger);
-
-		// Execute update script in background (agent will restart)
-		// Pass version, force flag, and lock file path as arguments
-		// Update script MUST remove lock file when done (success or failure)
-		const forceFlag = force ? 'true' : 'false';
-		const command = `${updateScript} ${version} ${forceFlag} ${UPDATE_LOCK_FILE} > /tmp/agent-update.log 2>&1 &`;
-    
-		// Use callback form to verify shell spawn (not async - we don't wait for completion)
-		exec(command, async (err) => {
-			if (err) {
-				this.logger.errorSync(
-					"Failed to spawn update script",
-					err instanceof Error ? err : new Error(String(err)),
-					{
-						component: LogComponents.agentUpdater,
-						script: updateScript,
-						note: "Shell failed to start update script"
-					}
-				);
-        
-				await this.publishStatus({
-					type: 'update_failed',
-					reason: 'script_spawn_failed',
-					error: err.message,
-					timestamp: Date.now()
-				});
-        
-				// Remove lock file on script spawn failure (agent still owns lock)
-				// OWNERSHIP: Spawn failed, so agent retains ownership and must clean up
-				try {
-					if (existsSync(UPDATE_LOCK_FILE)) {
-						unlinkSync(UPDATE_LOCK_FILE);
-						this.logger.debugSync("Update lock removed after script spawn failure", {
-							component: LogComponents.agentUpdater,
-							lockFile: UPDATE_LOCK_FILE
-						});
-					}
-				} catch (cleanupError) {
-					this.logger.warnSync("Failed to remove update lock after spawn error", {
-						component: LogComponents.agentUpdater,
-						error: cleanupError instanceof Error ? cleanupError.message : String(cleanupError)
-					});
-				}
-			} else {
-				// OWNERSHIP TRANSFER: Lock ownership transferred to update script
-				// Agent MUST NOT touch lock file after this point - script owns cleanup
-				// Violating this creates race conditions between exiting agent and running script
-        
-				this.logger.infoSync("Update script spawned successfully, exiting agent for systemd restart", {
-					component: LogComponents.agentUpdater,
-					deploymentType,
-					note: "Agent exiting cleanly - systemd will restart after update completes. Update script must write status file on success."
-				});
-
-				// Do NOT record timestamp here - update hasn't completed yet
-				// Update script will write status file, next agent boot will verify and record
-
-				// Flush logs if async logger supports it
-				const logger = this.logger as any;
-				if (typeof logger.flush === 'function') {
-					try {
-						await logger.flush();
-					} catch (flushError) {
-						// Best effort - don't block on flush failure
-						console.error('Failed to flush logs before exit:', flushError);
-					}
-				}
-
-				// Exit cleanly so systemd restarts us (Restart=always policy)
-				// This prevents split-brain state where:
-				// - Agent is running with active watchdog
-				// - Update script is trying to stop/update the service
-				// - Race conditions, zombie processes, and partial state corruption
-				process.exit(0);
-			}
+		notifySystemd('STATUS=Update request queued for systemd updater', this.logger);
+		await this.publishStatus({
+			type: 'update_started',
+			current_version: this.currentVersion,
+			target_version: version,
+			deployment_type: deploymentType,
+			timestamp: Date.now(),
 		});
 	}
 

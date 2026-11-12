@@ -317,6 +317,23 @@ if ! command -v systemctl > /dev/null 2>&1; then
     exit 0
 fi
 
+# Install the same root-owned updater worker used by the shell installer.
+UPDATE_ASSET_DIR="$AGENT_DIR/bin"
+for update_asset in update.sh update-runner.sh systemd/update.service systemd/update.path; do
+    if [ ! -f "$UPDATE_ASSET_DIR/$update_asset" ]; then
+        echo "Error: Required update asset is missing: $UPDATE_ASSET_DIR/$update_asset" >&2
+        exit 1
+    fi
+done
+install -d -o root -g root /usr/local/bin /usr/local/sbin /etc/systemd/system
+install -o root -g root -m 0755 "$UPDATE_ASSET_DIR/update.sh" /usr/local/bin/update.sh
+install -o root -g root -m 0755 "$UPDATE_ASSET_DIR/update-runner.sh" /usr/local/sbin/update-runner.sh
+install -o root -g root -m 0644 "$UPDATE_ASSET_DIR/systemd/update.service" /etc/systemd/system/update.service
+install -o root -g root -m 0644 "$UPDATE_ASSET_DIR/systemd/update.path" /etc/systemd/system/update.path
+systemctl daemon-reload
+systemctl enable update.service > /dev/null 2>&1
+systemctl enable --now update.path > /dev/null 2>&1
+
 # NodeSource installs node to /usr/bin/node; use that as the canonical path.
 # If node is already present (upgrade), use the actual path.
 NODE_BIN=$(command -v node 2>/dev/null || echo "/usr/bin/node")

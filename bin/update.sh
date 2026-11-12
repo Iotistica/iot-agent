@@ -4,6 +4,12 @@
 
 set -euo pipefail
 
+if [ "$(id -u)" -ne 0 ]; then
+    echo "update.sh must be run by the root-owned update service" >&2
+    exit 1
+fi
+umask 0022
+
 echo "≡ƒöä Iotistica Agent Update (Systemd Mode)"
 echo "========================================"
 
@@ -50,6 +56,8 @@ EOF
 EOF
         echo "Γ¥î Update status written: FAILURE"
     fi
+    chown iotistic:iotistic "$STATUS_FILE"
+    chmod 0644 "$STATUS_FILE"
 }
 
 # Register cleanup on script exit (success or failure)
@@ -100,15 +108,15 @@ fi
 
 # Create backup directory
 BACKUP_DIR="/var/lib/iotistic/backups"
-sudo mkdir -p "$BACKUP_DIR"
+mkdir -p "$BACKUP_DIR"
 TIMESTAMP=$(date +%Y%m%d-%H%M%S)
 
 # Backup current installation
 echo ""
 echo "≡ƒÆ╛ Backing up current installation..."
 if [ -d /opt/iotistic/agent ]; then
-    sudo tar -czf "$BACKUP_DIR/agent-backup-${CURRENT_VERSION}-${TIMESTAMP}.tar.gz" \
-        -C /opt/iotistic agent 2>/dev/null || true
+    tar -czf "$BACKUP_DIR/agent-backup-${CURRENT_VERSION}-${TIMESTAMP}.tar.gz" \
+        -C /opt/iotistic agent
     echo "Γ£ô Backup saved to $BACKUP_DIR/agent-backup-${CURRENT_VERSION}-${TIMESTAMP}.tar.gz"
 fi
 
@@ -184,46 +192,65 @@ EXTRACTED_VERSION=$(grep -o '"version"[[:space:]]*:[[:space:]]*"[^"]*"' iotistic
 echo "Γ£ô Downloaded version: $EXTRACTED_VERSION"
 
 # Stop agent service
+if [ "$TARGET_VERSION" != "latest" ] && [ "$EXTRACTED_VERSION" != "$TARGET_VERSION" ]; then
+    echo "Downloaded version does not match the requested version" >&2
+    exit 1
+fi
+
 echo ""
 echo "≡ƒ¢æ Stopping agent service..."
-sudo systemctl stop $SERVICE_NAME
+systemctl stop "$SERVICE_NAME"
 
 # Replace installation files
 echo ""
 echo "≡ƒôª Installing new version..."
 
 # Clean up existing installation (except config and data)
-sudo rm -rf /opt/iotistic/agent/node_modules
-sudo rm -rf /opt/iotistic/agent/dist
-sudo rm -f /opt/iotistic/agent/package*.json
+rm -rf /opt/iotistic/agent/node_modules
+rm -rf /opt/iotistic/agent/dist
+rm -f /opt/iotistic/agent/package*.json
 
 # Copy new files
-sudo cp -r iotistic-agent-update/* /opt/iotistic/agent/ || {
+cp -r iotistic-agent-update/* /opt/iotistic/agent/ || {
     echo "Γ¥î Failed to copy agent files"
     
     # Attempt rollback
     if [ -f "$BACKUP_DIR/agent-backup-${CURRENT_VERSION}-${TIMESTAMP}.tar.gz" ]; then
         echo "ΓÅ«∩╕Å  Rolling back to previous version..."
-        sudo tar -xzf "$BACKUP_DIR/agent-backup-${CURRENT_VERSION}-${TIMESTAMP}.tar.gz" -C /opt/iotistic
+        tar -xzf "$BACKUP_DIR/agent-backup-${CURRENT_VERSION}-${TIMESTAMP}.tar.gz" -C /opt/iotistic
     fi
     
-    sudo systemctl start $SERVICE_NAME
+    systemctl start "$SERVICE_NAME"
     exit 1
 }
 
 echo "Γ£ô Files installed"
 
 # Start agent service
+if [ -f /opt/iotistic/agent/bin/update.sh ]; then
+    install -o root -g root -m 0755 /opt/iotistic/agent/bin/update.sh /usr/local/bin/update.sh
+fi
+if [ -f /opt/iotistic/agent/bin/update-runner.sh ]; then
+    install -o root -g root -m 0755 /opt/iotistic/agent/bin/update-runner.sh /usr/local/sbin/update-runner.sh
+fi
+if [ -f /opt/iotistic/agent/bin/systemd/update.service ] && [ -f /opt/iotistic/agent/bin/systemd/update.path ]; then
+    install -o root -g root -m 0644 /opt/iotistic/agent/bin/systemd/update.service /etc/systemd/system/update.service
+    install -o root -g root -m 0644 /opt/iotistic/agent/bin/systemd/update.path /etc/systemd/system/update.path
+    systemctl daemon-reload
+    systemctl enable update.service update.path >/dev/null
+    systemctl enable --now update.path >/dev/null
+fi
+
 echo ""
 echo "Γû╢∩╕Å  Starting agent service..."
-sudo systemctl start $SERVICE_NAME
+systemctl start "$SERVICE_NAME"
 
 # Wait for service to stabilize
 echo "ΓÅ│ Waiting for service to start (15 seconds)..."
 sleep 15
 
 # Verify service is running with new version
-if sudo systemctl is-active --quiet $SERVICE_NAME; then
+if systemctl is-active --quiet "$SERVICE_NAME"; then
     # Get updated version from package.json
     NEW_VERSION="unknown"
     if [ -f /opt/iotistic/agent/package.json ]; then
@@ -236,12 +263,12 @@ if sudo systemctl is-active --quiet $SERVICE_NAME; then
     echo "   New version: $NEW_VERSION"
     echo ""
     echo "≡ƒôï Recent logs:"
-    sudo journalctl -u $SERVICE_NAME -n 20 --no-pager
+    journalctl -u "$SERVICE_NAME" -n 20 --no-pager
     
     # Cleanup old backups (keep last 3)
     echo ""
     echo "≡ƒº╣ Cleaning up old backups..."
-    sudo find "$BACKUP_DIR" -name "agent-backup-*" -type f | sort -r | tail -n +4 | xargs sudo rm -f 2>/dev/null || true
+    find "$BACKUP_DIR" -name "agent-backup-*" -type f | sort -r | tail -n +4 | xargs -r rm -f 2>/dev/null || true
     
     echo ""
     echo "Γ£à Update complete!"
@@ -250,28 +277,28 @@ else
     echo "Γ¥î Service failed to start, attempting rollback..."
     
     # Stop failed service
-    sudo systemctl stop $SERVICE_NAME
+    systemctl stop "$SERVICE_NAME"
     
     # Restore from backup
     if [ -f "$BACKUP_DIR/agent-backup-${CURRENT_VERSION}-${TIMESTAMP}.tar.gz" ]; then
         echo "ΓÅ«∩╕Å  Restoring backup..."
-        sudo rm -rf /opt/iotistic/agent
-        sudo mkdir -p /opt/iotistic
-        sudo tar -xzf "$BACKUP_DIR/agent-backup-${CURRENT_VERSION}-${TIMESTAMP}.tar.gz" -C /opt/iotistic
+        rm -rf /opt/iotistic/agent
+        mkdir -p /opt/iotistic
+        tar -xzf "$BACKUP_DIR/agent-backup-${CURRENT_VERSION}-${TIMESTAMP}.tar.gz" -C /opt/iotistic
         
         # Restart service
-        sudo systemctl start $SERVICE_NAME
+        systemctl start "$SERVICE_NAME"
         sleep 10
         
-        if sudo systemctl is-active --quiet $SERVICE_NAME; then
+        if systemctl is-active --quiet "$SERVICE_NAME"; then
             echo "ΓÜá∩╕Å  Rollback complete, agent restored to version $CURRENT_VERSION"
         else
             echo "Γ¥î CRITICAL: Service failed to start after rollback"
-            echo "   Manual intervention required: sudo systemctl status $SERVICE_NAME"
+            echo "   Manual intervention required: systemctl status $SERVICE_NAME"
         fi
     else
         echo "Γ¥î CRITICAL: No backup found for rollback"
-        echo "   Manual intervention required: sudo systemctl status $SERVICE_NAME"
+        echo "   Manual intervention required: systemctl status $SERVICE_NAME"
     fi
     
     exit 1

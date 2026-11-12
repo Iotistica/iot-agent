@@ -976,11 +976,22 @@ echo ""
         fi
     fi
 
-    # Install update script
-    if [ -f /opt/iotistic/agent/bin/update.sh ]; then
-        cp /opt/iotistic/agent/bin/update.sh /usr/local/bin/update.sh
-        chmod +x /usr/local/bin/update.sh
-    fi
+    # Install root-owned updater assets. The agent itself receives no sudo privileges.
+    UPDATE_ASSET_DIR="/opt/iotistic/agent/bin"
+    for update_asset in update.sh update-runner.sh systemd/update.service systemd/update.path; do
+        if [ ! -f "$UPDATE_ASSET_DIR/$update_asset" ]; then
+            echo "Error: Required update asset is missing: $UPDATE_ASSET_DIR/$update_asset"
+            exit 1
+        fi
+    done
+    mkdir -p /usr/local/bin /usr/local/sbin /etc/systemd/system
+    install -o root -g root -m 0755 "$UPDATE_ASSET_DIR/update.sh" /usr/local/bin/update.sh
+    install -o root -g root -m 0755 "$UPDATE_ASSET_DIR/update-runner.sh" /usr/local/sbin/update-runner.sh
+    install -o root -g root -m 0644 "$UPDATE_ASSET_DIR/systemd/update.service" /etc/systemd/system/update.service
+    install -o root -g root -m 0644 "$UPDATE_ASSET_DIR/systemd/update.path" /etc/systemd/system/update.path
+    systemctl daemon-reload
+    systemctl enable update.service > /dev/null 2>&1
+    systemctl enable --now update.path > /dev/null 2>&1
 
     # Create environment file
     

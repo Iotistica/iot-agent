@@ -1,0 +1,22 @@
+[Unit]
+Description=Iotistica Agent Update Worker
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=3
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+UMask=0077
+ExecStart=/usr/local/sbin/update-runner.sh
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=0
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=iotistica-agent-update
+
+[Install]
+WantedBy=multi-user.target
