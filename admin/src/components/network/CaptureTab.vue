@@ -446,9 +446,10 @@ watch(running, (val) => {
       </a-tag>
       <a-tag v-if="wsConnected" color="blue">Live</a-tag>
       <template v-if="status.counters.seen > 0">
-        <span class="counter">Packets: {{ status.counters.stored.toLocaleString() }}</span>
+        <span class="counter">Stored: {{ status.counters.stored.toLocaleString() }}</span>
         <span class="counter">Seen: {{ status.counters.seen.toLocaleString() }}</span>
-        <span v-if="status.counters.dropped > 0" class="counter" style="color: #ff4d4f">
+        <span class="counter">Evicted: {{ status.counters.evicted.toLocaleString() }}</span>
+        <span v-if="status.counters.dropped !== null && status.counters.dropped > 0" class="counter" style="color: #ff4d4f">
           Dropped: {{ status.counters.dropped.toLocaleString() }}
         </span>
         <span class="counter">{{ formatBytes(status.counters.bytes) }}</span>

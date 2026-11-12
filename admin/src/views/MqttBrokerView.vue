@@ -7,7 +7,7 @@ import MessageViewer from '@/components/mqtt/MessageViewer.vue'
 import MqttSettingsTab from '@/components/mqtt/MqttSettingsTab.vue'
 import MqttUsersTab from '@/components/mqtt/MqttUsersTab.vue'
 import { mqttApi, type TopicNode, type BrokerMetrics } from '@/api/mqtt'
-import { WifiOutlined, GlobalOutlined, TeamOutlined, NodeIndexOutlined, LoginOutlined, LogoutOutlined, SettingOutlined, UserOutlined } from '@ant-design/icons-vue'
+import { WifiOutlined, GlobalOutlined, TeamOutlined, NodeIndexOutlined, LoginOutlined, LogoutOutlined } from '@ant-design/icons-vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -116,7 +116,7 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
 
     <a-tabs v-model:activeKey="activeTab">
       <a-tab-pane key="monitor">
-        <template #tab><WifiOutlined /> Monitor</template>
+        <template #tab>Monitor</template>
 
         <!-- Connection banner -->
         <a-alert
@@ -243,12 +243,12 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
       </a-tab-pane>
 
       <a-tab-pane key="settings">
-        <template #tab><SettingOutlined /> Settings</template>
+        <template #tab>Settings</template>
         <MqttSettingsTab />
       </a-tab-pane>
 
       <a-tab-pane key="users">
-        <template #tab><UserOutlined /> Users</template>
+        <template #tab>Users</template>
         <MqttUsersTab />
       </a-tab-pane>
     </a-tabs>

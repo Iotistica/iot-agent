@@ -42,7 +42,8 @@ export interface CaptureStatus {
 	counters: {
 		seen: number;
 		stored: number;
-		dropped: number;
+		evicted: number;
+		dropped: number | null;
 		inbound: number;
 		outbound: number;
 		bytes: number;
@@ -104,7 +105,13 @@ export class CaptureEngine extends EventEmitter {
 	private maxPackets = 10_000;
 	private nextId = 1;
 
-	private counters = { seen: 0, stored: 0, dropped: 0, inbound: 0, outbound: 0, bytes: 0 };
+	private counters = { seen: 0, stored: 0, evicted: 0, dropped: null as number | null, inbound: 0, outbound: 0, bytes: 0 };
+	private completedKernelDrops = 0;
+	private kernelDropStatsAvailable = true;
+	private stderrLineBuffers = new WeakMap<ChildProcess, string>();
+	private processKernelDrops = new WeakMap<ChildProcess, number>();
+	private processDropStatsEligible = new WeakMap<ChildProcess, boolean>();
+	private finalizedCaptureProcesses = new WeakSet<ChildProcess>();
 
 	private captureIface = 'any';
 	private captureFilter: string | null = null;
@@ -234,6 +241,7 @@ export class CaptureEngine extends EventEmitter {
 			this.clear();
 			this.nextId = 1;
 		}
+		this.counters.dropped = null;
 
 		this.sessionId = randomUUID();
 		this.startedAt = new Date().toISOString();
@@ -252,12 +260,15 @@ export class CaptureEngine extends EventEmitter {
 
 		const proc = this.spawnCaptureProcess(args);
 		this.proc = proc;
+		this.stderrLineBuffers.set(proc, '');
+		this.processDropStatsEligible.set(proc, this.kernelDropStatsAvailable);
 		proc.stdout?.on('data', (chunk: Buffer) => this.onData(chunk));
 		proc.stderr?.on('data', (data: Buffer) => {
-			const msg = data.toString().trim();
-			if (msg) this.logger.infoSync(`tcpdump: ${msg}`, { component: LogComponents.capture });
+			this.consumeStderr(proc, data.toString('utf8'));
 		});
 		proc.on('error', (err) => {
+			this.consumeStderr(proc, '', true);
+			this.finalizeKernelDropStats(proc);
 			this.logger.warnSync(`tcpdump process error: ${err.message}`, {
 				component: LogComponents.capture,
 			});
@@ -269,6 +280,8 @@ export class CaptureEngine extends EventEmitter {
 			}
 		});
 		proc.on('close', (code) => {
+			this.consumeStderr(proc, '', true);
+			this.finalizeKernelDropStats(proc);
 			this.logger.infoSync(`tcpdump exited with code ${code}`, {
 				component: LogComponents.capture,
 			});
@@ -329,7 +342,6 @@ export class CaptureEngine extends EventEmitter {
 		const proc = this.proc;
 		if (proc) {
 			proc.stdout?.removeAllListeners('data');
-			proc.stderr?.removeAllListeners('data');
 			await new Promise<void>((resolve) => {
 				const killTimer = setTimeout(() => {
 					if (proc.exitCode === null && proc.signalCode === null) proc.kill('SIGKILL');
@@ -357,7 +369,43 @@ export class CaptureEngine extends EventEmitter {
 
 	clear(): void {
 		this.packets = [];
-		this.counters = { seen: 0, stored: 0, dropped: 0, inbound: 0, outbound: 0, bytes: 0 };
+		this.counters = { seen: 0, stored: 0, evicted: 0, dropped: null, inbound: 0, outbound: 0, bytes: 0 };
+		this.completedKernelDrops = 0;
+		this.kernelDropStatsAvailable = this.state === 'idle';
+	}
+
+	private consumeStderr(proc: ChildProcess, chunk: string, flush = false): void {
+		const text = `${this.stderrLineBuffers.get(proc) ?? ''}${chunk}`;
+		const parts = text.split(/\r?\n/);
+		const lines = flush ? parts : parts.slice(0, -1);
+		this.stderrLineBuffers.set(proc, flush ? '' : parts[parts.length - 1] ?? '');
+		if (flush && lines[lines.length - 1] === '') lines.pop();
+
+		for (const line of lines) {
+			const match = line.match(/^\s*(\d+)\s+packets?\s+dropped\s+by\s+kernel\s*$/i);
+			if (match) {
+				const drops = Number(match[1]);
+				if (Number.isSafeInteger(drops)) this.processKernelDrops.set(proc, drops);
+			}
+			if (line.trim()) {
+				this.logger.infoSync(`tcpdump: ${line.trim()}`, { component: LogComponents.capture });
+			}
+		}
+	}
+
+	private finalizeKernelDropStats(proc: ChildProcess): void {
+		if (this.finalizedCaptureProcesses.has(proc)) return;
+		this.finalizedCaptureProcesses.add(proc);
+
+		const drops = this.processKernelDrops.get(proc);
+		if (!this.processDropStatsEligible.get(proc) || drops === undefined) {
+			this.kernelDropStatsAvailable = false;
+			this.counters.dropped = null;
+			return;
+		}
+
+		this.completedKernelDrops += drops;
+		this.counters.dropped = this.kernelDropStatsAvailable ? this.completedKernelDrops : null;
 	}
 
 	getStatus(): CaptureStatus {
@@ -512,7 +560,7 @@ export class CaptureEngine extends EventEmitter {
 
 				if (this.packets.length >= this.maxPackets) {
 					this.packets.shift();
-					this.counters.dropped++;
+					this.counters.evicted++;
 				}
 				this.packets.push(packet);
 				this.counters.stored = this.packets.length;

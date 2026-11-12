@@ -112,7 +112,8 @@ export interface CapturePacketDetail extends CapturePacket {
 export interface CaptureCounters {
   seen: number
   stored: number
-  dropped: number
+  evicted: number
+  dropped: number | null
   inbound: number
   outbound: number
   bytes: number

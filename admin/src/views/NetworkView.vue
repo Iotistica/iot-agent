@@ -3,14 +3,7 @@ import { computed, ref, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { message, Modal } from 'ant-design-vue'
 import type { TableColumnType } from 'ant-design-vue'
-import {
-  PlusOutlined,
-  EditOutlined,
-  DeleteOutlined,
-  SafetyCertificateOutlined,
-  ApiOutlined,
-  WifiOutlined,
-} from '@ant-design/icons-vue'
+import { PlusOutlined, EditOutlined, DeleteOutlined } from '@ant-design/icons-vue'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import CaptureTab from '@/components/network/CaptureTab.vue'
 import {
@@ -299,7 +292,7 @@ onMounted(() => {
   <AppLayout title="Network">
     <a-tabs v-model:activeKey="activeTab">
       <a-tab-pane key="firewall">
-        <template #tab><SafetyCertificateOutlined /> Firewall</template>
+        <template #tab>Firewall</template>
 
         <a-alert
           v-if="firewallData && !firewallData.status"
@@ -393,7 +386,7 @@ onMounted(() => {
       </a-tab-pane>
 
       <a-tab-pane key="ports">
-        <template #tab><ApiOutlined /> Ports</template>
+        <template #tab>Ports</template>
 
         <a-table
           :columns="portsColumns"
@@ -418,7 +411,7 @@ onMounted(() => {
       </a-tab-pane>
 
       <a-tab-pane key="capture">
-        <template #tab><WifiOutlined /> Capture</template>
+        <template #tab>Capture</template>
         <CaptureTab />
       </a-tab-pane>
     </a-tabs>
