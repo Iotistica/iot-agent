@@ -581,7 +581,7 @@ export class FeatureInitializer {
 			});
 		}
 
-		const hasRoot = typeof process.getuid === 'function' && process.getuid!() === 0;
+		const hasRoot = typeof process.getuid === 'function' && process.getuid() === 0;
 		if (!hasRoot) {
 			logger.warnSync('Firewall rules require root — iptables commands may fail', {
 				component: LogComponents.agent,

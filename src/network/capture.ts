@@ -200,7 +200,11 @@ export class CaptureEngine extends EventEmitter {
 	private async validateInterface(requested?: string): Promise<string> {
 		const iface = requested || 'any';
 		if (iface === 'any') return iface;
-		if (iface.startsWith('-') || /[\u0000-\u001f\u007f]/.test(iface)) {
+		const hasControlCharacters = Array.from(iface).some((character) => {
+			const code = character.charCodeAt(0);
+			return code <= 0x1f || code === 0x7f;
+		});
+		if (iface.startsWith('-') || hasControlCharacters) {
 			throw new CaptureInterfaceError(iface);
 		}
 
@@ -323,15 +327,14 @@ export class CaptureEngine extends EventEmitter {
 			proc.stdout?.removeAllListeners('data');
 			proc.stderr?.removeAllListeners('data');
 			await new Promise<void>((resolve) => {
-				let killTimer: ReturnType<typeof setTimeout>;
+				const killTimer = setTimeout(() => {
+					if (proc.exitCode === null && proc.signalCode === null) proc.kill('SIGKILL');
+				}, 5_000);
 				const onClose = () => {
 					clearTimeout(killTimer);
 					resolve();
 				};
 				proc.once('close', onClose);
-				killTimer = setTimeout(() => {
-					if (proc.exitCode === null && proc.signalCode === null) proc.kill('SIGKILL');
-				}, 5_000);
 				proc.kill('SIGINT');
 			});
 		}

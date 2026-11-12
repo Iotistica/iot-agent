@@ -249,7 +249,7 @@ async function startCapture() {
     message.success('Capture started')
   } catch (err: any) {
     message.error(err?.response?.data?.error || err?.message || 'Failed to start capture')
-    await loadStatus()
+    await Promise.all([loadStatus(), loadInterfaces()])
   } finally {
     starting.value = false
   }
@@ -293,7 +293,7 @@ async function handleInterfaceChange(value: string) {
     message.success(`Capture switched to ${formatCaptureInterface(result.status.iface)}`)
   } catch (err: any) {
     message.error(err?.response?.data?.error || err?.message || 'Failed to switch capture interface')
-    await loadStatus()
+    await Promise.all([loadStatus(), loadInterfaces()])
     selectedInterface.value = status.value?.running ? status.value.iface : previousInterface
   } finally {
     switchingInterface.value = false
@@ -428,6 +428,7 @@ watch(running, (val) => {
           :loading="interfacesLoading || switchingInterface"
           :disabled="starting || stopping || switchingInterface"
           :not-found-content="interfacesLoadError ? 'Could not load interfaces' : 'No interfaces found'"
+          @focus="loadInterfaces"
           @change="handleInterfaceChange"
         >
           <a-select-option value="any">Any interface (all)</a-select-option>
@@ -618,20 +619,80 @@ watch(running, (val) => {
   color: var(--text-secondary, rgba(255, 255, 255, 0.65));
 }
 
-.controls-bar {
+.capture-toolbar {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 10px;
   margin-bottom: 12px;
-  flex-wrap: wrap;
-  gap: 8px;
 }
 
-.filter-bar {
+.capture-filters {
   display: flex;
+  align-items: center;
   gap: 8px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.capture-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.toolbar-interface {
+  width: 180px;
+  flex-shrink: 0;
+}
+
+.toolbar-bpf {
+  width: 210px;
+  flex: 1 1 180px;
+  min-width: 160px;
+}
+
+.toolbar-direction {
+  width: 125px;
+  flex-shrink: 0;
+}
+
+.toolbar-protocol {
+  width: 145px;
+  flex-shrink: 0;
+}
+
+.toolbar-search {
+  width: 190px;
+  flex: 1 1 160px;
+  min-width: 145px;
+}
+
+@media (max-width: 1200px) {
+  .capture-toolbar {
   margin-bottom: 12px;
   flex-wrap: wrap;
+  }
+
+  .capture-filters {
+    flex: 1 1 100%;
+    flex-wrap: wrap;
+  }
+}
+
+@media (max-width: 760px) {
+  .capture-filters > * {
+    flex: 1 1 160px;
+    min-width: 0;
+  }
+
+  .capture-actions {
+    flex-wrap: wrap;
+    margin-left: 0;
+  }
 }
 
 .section-divider {
