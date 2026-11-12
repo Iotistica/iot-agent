@@ -19,13 +19,25 @@ jobs:
     runs-on: [self-hosted]
 
     steps:
-      - name: Deploy via SSH (Docker + Mosquitto)
+      - name: Install agent, updater, Docker and Mosquitto
         shell: cmd
         run: >
+          echo Starting agent installation on the test Pi...
+          &&
           "%PLINK%" %PLINK_ARGS%
           -pw "${{ secrets.PI_SSH_PASS }}"
           ${{ secrets.PI_SSH_USER }}@${{ secrets.PI_SSH_HOST }}
-          "set -e; curl -fsSL https://get.iotistica.com/agent/builds/latest/install.sh -o /tmp/iotistica-install.sh && sudo -n env IOTISTICA_INSTALL_DOCKER=yes IOTISTICA_INSTALL_MOSQUITTO=yes IOTISTICA_DOWNLOAD_BASE_URL=https://get.iotistica.com/agent/builds/latest sh /tmp/iotistica-install.sh"
+          "set -e; echo '[install] Downloading installer'; curl -fsSL https://get.iotistica.com/agent/builds/latest/install.sh -o /tmp/iotistica-install.sh; echo '[install] Installing agent and root-owned update service'; sudo -n env IOTISTICA_INSTALL_DOCKER=yes IOTISTICA_INSTALL_MOSQUITTO=yes IOTISTICA_DOWNLOAD_BASE_URL=https://get.iotistica.com/agent/builds/latest sh /tmp/iotistica-install.sh; echo '[install] Agent and updater installation completed'"
+
+      - name: Verify root-owned updater service
+        shell: cmd
+        run: >
+          echo Verifying updater installation on the test Pi...
+          &&
+          "%PLINK%" %PLINK_ARGS%
+          -pw "${{ secrets.PI_SSH_PASS }}"
+          ${{ secrets.PI_SSH_USER }}@${{ secrets.PI_SSH_HOST }}
+          "set -e; if [ ! -x /usr/local/sbin/update-runner.sh ] || [ ! -x /usr/local/bin/update.sh ]; then echo '[error] Update runner or update script is missing'; exit 1; fi; if ! systemctl is-enabled --quiet update.path || ! systemctl is-active --quiet update.path; then echo '[error] Update watcher is not enabled and active'; systemctl status update.path --no-pager || true; exit 1; fi; if ! systemctl show update.service --property=User | grep -qx User=root; then echo '[error] Update service is not configured to run as root'; exit 1; fi; echo '[ok] Root-owned updater is installed and watching for requests'"
 
       - name: Verify agent version
         shell: cmd

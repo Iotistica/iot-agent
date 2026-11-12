@@ -977,6 +977,7 @@ echo ""
     fi
 
     # Install root-owned updater assets. The agent itself receives no sudo privileges.
+    installer_step "Installing root-owned agent update service..."
     UPDATE_ASSET_DIR="/opt/iotistic/agent/bin"
     for update_asset in update.sh update-runner.sh systemd/update.service systemd/update.path; do
         if [ ! -f "$UPDATE_ASSET_DIR/$update_asset" ]; then
@@ -992,6 +993,13 @@ echo ""
     systemctl daemon-reload
     systemctl enable update.service > /dev/null 2>&1
     systemctl enable --now update.path > /dev/null 2>&1
+    if systemctl is-active --quiet update.path; then
+        echo "✓ Root-owned agent update service is installed and watching for requests"
+    else
+        echo "✗ Agent update watcher failed to start"
+        systemctl status update.path --no-pager || true
+        exit 1
+    fi
 
     # Create environment file
     
