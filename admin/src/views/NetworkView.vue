@@ -73,10 +73,13 @@ const selectedInterfaceNotListed = computed(() => {
 
 function getInterfaceTypeLabel(iface: NetworkInterfaceInfo): string {
   const type = iface.type?.toLowerCase()
-  if (type === 'wireless' || type === 'wifi') return 'Wi-Fi'
-  if (type === 'wired' || type === 'ethernet') return 'Ethernet'
-  if (type) return iface.type!
-  return iface.virtual ? 'Virtual' : ''
+  const typeLabel = type === 'wireless' || type === 'wifi'
+    ? 'Wi-Fi'
+    : type === 'wired' || type === 'ethernet'
+      ? 'Ethernet'
+      : iface.type ?? ''
+  if (iface.virtual) return typeLabel ? `Virtual ${typeLabel}` : 'Virtual'
+  return typeLabel
 }
 
 const firewallColumns: TableColumnType<InboundRule>[] = [
@@ -241,8 +244,6 @@ onMounted(() => {
             <a-tag :color="firewallData.status.initialized ? 'green' : 'default'">
               {{ firewallData.status.initialized ? 'Active' : 'Inactive' }}
             </a-tag>
-            <span class="status-label">Device API: {{ firewallData.status.deviceApiPort }}</span>
-            <span v-if="firewallData.status.mqttPort" class="status-label">MQTT: {{ firewallData.status.mqttPort }}</span>
           </div>
         </template>
 
