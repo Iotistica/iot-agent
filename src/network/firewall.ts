@@ -27,6 +27,7 @@ export interface FirewallConfig {
 }
 
 const FIREWALL_CHAIN = 'IOTISTIC-FIREWALL';
+const DEFAULT_MQTT_PORT = 1883;
 const _USER_CHAIN = 'IOTISTIC-USER';
 
 
@@ -43,6 +44,7 @@ export class AgentFirewall {
 	constructor(config: FirewallConfig, logger: AgentLogger) {
 		this.config = {
 			...config,
+			mqttPort: config.mqttPort ?? DEFAULT_MQTT_PORT,
 			allowedDockerNetworks:
 				config.allowedDockerNetworks ?? DEFAULT_ALLOWED_DOCKER_NETWORKS,
 		};
@@ -242,7 +244,7 @@ export class AgentFirewall {
 		return rules;
 	}
 
-	/** MQTT: LAN IPv4/IPv6 plus existing IPv4 Docker bridge access. */
+	/** MQTT: LAN IPv4/IPv6 and Docker default bridge access (docker0). */
 	private getMqttRules(): Rule[] {
 		if (!this.config.mqttPort) return [];
 		const rules: Rule[] = [];
@@ -270,7 +272,7 @@ export class AgentFirewall {
 						action: RuleAction.Append,
 						family: 4,
 						proto: 'tcp',
-						matches: [`--dport ${this.config.mqttPort}`, `-s ${subnet}`],
+						matches: [`-i docker0`, `--dport ${this.config.mqttPort}`, `-s ${subnet}`],
 						target: 'ACCEPT',
 					});
 				}
