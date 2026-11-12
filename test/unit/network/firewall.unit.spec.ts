@@ -38,6 +38,15 @@ describe('AgentFirewall', () => {
 		(firewall as unknown as { initialized: boolean }).initialized = true;
 		const activeRules = await firewall.getSystemRules();
 
+		expect(activeRules.slice(0, 7).map((rule) => rule.comment)).toEqual([
+			'Allow local traffic',
+			'Allow established connections',
+			'Allow SSH access',
+			'Allow loopback',
+			'Allow IPv4 ICMP',
+			'Allow ICMPv6',
+			'Allow mDNS',
+		]);
 		expect(activeRules).toContainEqual(expect.objectContaining({
 			comment: 'Allow Device API IPv4 LAN 192.0.2.0/24',
 			family: 4,
@@ -48,6 +57,20 @@ describe('AgentFirewall', () => {
 			comment: 'Allow Device API IPv6 LAN 2001:db8:1::/64',
 			family: 6,
 			matches: ['--dport 48484', '-s 2001:db8:1::/64'],
+			target: 'ACCEPT',
+		}));
+		expect(activeRules).toContainEqual(expect.objectContaining({
+			comment: 'MQTT IPv4 LAN 192.0.2.0/24',
+			family: 4,
+			proto: 'tcp',
+			matches: ['--dport 1883', '-s 192.0.2.0/24'],
+			target: 'ACCEPT',
+		}));
+		expect(activeRules).toContainEqual(expect.objectContaining({
+			comment: 'MQTT IPv6 LAN 2001:db8:1::/64',
+			family: 6,
+			proto: 'tcp',
+			matches: ['--dport 1883', '-s 2001:db8:1::/64'],
 			target: 'ACCEPT',
 		}));
 		expect(activeRules).toContainEqual(expect.objectContaining({

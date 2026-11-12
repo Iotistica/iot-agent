@@ -31,6 +31,15 @@ export interface ReservedPort {
   service: string
 }
 
+export interface NetworkInterfaceInfo {
+  name: string
+  type: string | null
+  virtual: boolean
+  operstate: string | null
+  ip4: string | null
+  ip6: string | null
+}
+
 export interface FirewallStatus {
   enabled: boolean
   initialized: boolean
@@ -131,6 +140,9 @@ export interface CapturePacketsResponse {
 // ── API ────────────────────────────────────────────────────────────────────
 
 export const networkApi = {
+  getInterfaces: () =>
+    client.get<{ interfaces: NetworkInterfaceInfo[] }>('/v1/network/interfaces').then((r) => r.data.interfaces),
+
   getFirewall: () => client.get<FirewallResponse>('/v1/network/firewall').then((r) => r.data),
 
   addRule: (rule: FirewallRuleInput) => client.post<FirewallRule>('/v1/network/firewall/rules', rule).then((r) => r.data),

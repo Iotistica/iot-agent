@@ -21,6 +21,7 @@ import {
   type PortEntry,
   type ReservedPort,
   type FirewallRuleInput,
+  type NetworkInterfaceInfo,
 } from '@/api/network'
 
 const route = useRoute()
@@ -61,6 +62,22 @@ const drawerOpen = ref(false)
 const editingRule = ref<FirewallRule | null>(null)
 const ruleForm = ref<FirewallRuleInput>({ port: '', protocol: 'tcp', action: 'ACCEPT', interface_name: '', description: '' })
 const saving = ref(false)
+const networkInterfaces = ref<NetworkInterfaceInfo[]>([])
+const interfacesLoading = ref(false)
+const interfacesLoadError = ref(false)
+
+const selectedInterfaceNotListed = computed(() => {
+  const selectedInterface = ruleForm.value.interface_name
+  return !!selectedInterface && !networkInterfaces.value.some((iface) => iface.name === selectedInterface)
+})
+
+function getInterfaceTypeLabel(iface: NetworkInterfaceInfo): string {
+  const type = iface.type?.toLowerCase()
+  if (type === 'wireless' || type === 'wifi') return 'Wi-Fi'
+  if (type === 'wired' || type === 'ethernet') return 'Ethernet'
+  if (type) return iface.type!
+  return iface.virtual ? 'Virtual' : ''
+}
 
 const firewallColumns: TableColumnType<InboundRule>[] = [
   { title: 'Port', dataIndex: 'port', key: 'port', width: 120 },
@@ -91,10 +108,23 @@ async function loadFirewall() {
   }
 }
 
+async function loadNetworkInterfaces() {
+  interfacesLoading.value = true
+  interfacesLoadError.value = false
+  try {
+    networkInterfaces.value = await networkApi.getInterfaces()
+  } catch {
+    interfacesLoadError.value = true
+  } finally {
+    interfacesLoading.value = false
+  }
+}
+
 function openAddRule() {
   editingRule.value = null
   ruleForm.value = { port: '', protocol: 'tcp', action: 'ACCEPT', interface_name: '', description: '' }
   drawerOpen.value = true
+  void loadNetworkInterfaces()
 }
 
 function openEditRule(rule: FirewallRule) {
@@ -107,6 +137,7 @@ function openEditRule(rule: FirewallRule) {
     description: rule.description || '',
   }
   drawerOpen.value = true
+  void loadNetworkInterfaces()
 }
 
 async function submitRule() {
@@ -328,7 +359,34 @@ onMounted(() => {
           </a-select>
         </a-form-item>
         <a-form-item label="Interface">
-          <a-input v-model:value="ruleForm.interface_name" placeholder="e.g. eth0 (optional)" />
+          <a-select
+            v-model:value="ruleForm.interface_name"
+            placeholder="Any interface"
+            :loading="interfacesLoading"
+            :not-found-content="interfacesLoadError ? 'Could not load interfaces' : 'No matching interfaces'"
+            :get-popup-container="(trigger: HTMLElement) => trigger.parentElement!"
+          >
+            <a-select-option value="">Any interface</a-select-option>
+            <a-select-option
+              v-if="ruleForm.interface_name && selectedInterfaceNotListed"
+              :value="ruleForm.interface_name"
+            >
+              {{ ruleForm.interface_name }} ({{ interfacesLoadError ? 'availability unknown' : interfacesLoading ? 'checking' : 'unavailable' }})
+            </a-select-option>
+            <a-select-option
+              v-for="iface in networkInterfaces"
+              :key="iface.name"
+              :value="iface.name"
+            >
+              {{ iface.name }}<span v-if="getInterfaceTypeLabel(iface)"> — {{ getInterfaceTypeLabel(iface) }}</span>
+            </a-select-option>
+          </a-select>
+          <div v-if="interfacesLoadError" class="interface-hint">
+            Could not load network interfaces. The saved selection is preserved.
+          </div>
+          <div v-else-if="!interfacesLoading && networkInterfaces.length === 0" class="interface-hint">
+            No network interfaces found. Any interface can still be selected.
+          </div>
         </a-form-item>
         <a-form-item label="Description">
           <a-input v-model:value="ruleForm.description" placeholder="Optional description" />

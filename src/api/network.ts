@@ -2,6 +2,7 @@ import express from 'express';
 import type { Request, Response } from 'express';
 import { exec } from '../lib/fs-utils.js';
 import type { Rule } from '../lib/iptables.js';
+import { getNetworkInterfaces } from '../system/interfaces.js';
 import { getFirewall, getDockerPortBindings, getCaptureEngine } from './actions.js';
 import type { CaptureFilter, CapturedPacket } from '../network/capture.js';
 import { requireRole } from './middleware/roles.js';
@@ -74,6 +75,11 @@ export function normalizeSystemFirewallRules(rules: Rule[]): SystemFirewallRule[
 		};
 	});
 }
+
+networkRouter.get('/v1/network/interfaces', async (_req: Request, res: Response) => {
+	const interfaces = await getNetworkInterfaces();
+	res.json({ interfaces });
+});
 
 // ── Firewall ────────────────────────────────────────────────────────────────
 
