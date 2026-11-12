@@ -11,7 +11,7 @@
  * - MAD: relative deviation
  *
  * Solution:
- * - Normalize all to [0, 1] using sigmoid function
+ * - Normalize all to [0, 1] using sigmoid function.
  * - confidence = sigmoid(deviation / threshold)
  *
  * Benefits:
