@@ -124,20 +124,22 @@ networkRouter.put('/v1/network/firewall/mode', requireRole('admin'), async (req:
 
 	try {
 		const status = await enqueueFirewallModeUpdate(async () => {
-			const previousPersistedMode = await persistFirewallMode(mode);
+			const previousMode = fw.getStatus().mode;
+			const appliedStatus = await fw.updateMode(mode);
 			try {
-				return await fw.updateMode(mode);
-			} catch (applyError) {
+				await persistFirewallMode(mode);
+			} catch (persistError) {
 				try {
-					await persistFirewallMode(previousPersistedMode);
-				} catch (persistError) {
+					await fw.updateMode(previousMode);
+				} catch (rollbackError) {
 					throw new AggregateError(
-						[applyError, persistError],
-						'Firewall apply failed and the previous mode could not be restored in persistent settings'
+						[persistError, rollbackError],
+						'Firewall mode persistence and runtime rollback both failed'
 					);
 				}
-				throw applyError;
+				throw persistError;
 			}
+			return appliedStatus;
 		});
 		return res.json({ status });
 	} catch (error) {

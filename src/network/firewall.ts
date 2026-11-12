@@ -359,13 +359,13 @@ export class AgentFirewall {
 	/**
    * Update firewall mode dynamically
    */
-	async updateMode(mode: Exclude<FirewallMode, 'disabled'>): Promise<FirewallStatus> {
+	async updateMode(mode: FirewallMode): Promise<FirewallStatus> {
 		const operation = this.modeChangeQueue.then(() => this.applyModeChange(mode));
 		this.modeChangeQueue = operation.then(() => undefined, () => undefined);
 		return operation;
 	}
 
-	private async applyModeChange(mode: Exclude<FirewallMode, 'disabled'>): Promise<FirewallStatus> {
+	private async applyModeChange(mode: FirewallMode): Promise<FirewallStatus> {
 		const previousMode = this.config.mode;
 		const wasEnabled = this.config.enabled;
 		const wasInitialized = this.initialized;
@@ -377,10 +377,18 @@ export class AgentFirewall {
 		});
 
 		this.config.mode = mode;
-		this.config.enabled = true;
+		this.config.enabled = mode !== 'disabled';
 		try {
-			await this.applyFirewallRules();
-			this.initialized = true;
+			if (mode === 'disabled') {
+				if (wasInitialized || wasEnabled) {
+					this.initialized = true;
+					await this.stop({ throwOnError: true });
+				}
+				this.initialized = false;
+			} else {
+				await this.applyFirewallRules();
+				this.initialized = true;
+			}
 			this.logger.infoSync('Firewall mode applied', {
 				component: LogComponents.firewall,
 				from: previousMode,

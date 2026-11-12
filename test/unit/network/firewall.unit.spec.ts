@@ -3,6 +3,12 @@ import { normalizeSystemFirewallRules } from '../../../src/api/network';
 import { RuleAction, type Rule } from '../../../src/lib/iptables';
 import type { AgentLogger } from '../../../src/logging/agent-logger';
 
+const createLogger = () => ({
+	debugSync: jest.fn(),
+	infoSync: jest.fn(),
+	errorSync: jest.fn(),
+}) as unknown as AgentLogger;
+
 describe('AgentFirewall', () => {
 	it('allows SSH through the active firewall', () => {
 		const firewall = new AgentFirewall({
@@ -131,5 +137,51 @@ describe('AgentFirewall', () => {
 			action: 'RETURN',
 			isFinal: true,
 		});
+	});
+
+	it.each(['on', 'off'] as const)('immediately applies manual mode %s', async (mode) => {
+		const previousMode = mode === 'on' ? 'off' : 'on';
+		const firewall = new AgentFirewall({
+			enabled: true,
+			mode: previousMode,
+			deviceApiPort: 48484,
+		}, createLogger());
+		const applyRules = jest.spyOn(firewall as any, 'applyFirewallRules').mockResolvedValue(undefined);
+
+		const status = await firewall.updateMode(mode);
+
+		expect(applyRules).toHaveBeenCalledTimes(1);
+		expect(status).toMatchObject({ mode, enabled: true, initialized: true });
+	});
+
+	it('serializes concurrent mode updates', async () => {
+		const firewall = new AgentFirewall({
+			enabled: true,
+			mode: 'off',
+			deviceApiPort: 48484,
+		}, createLogger());
+		const applyRules = jest.spyOn(firewall as any, 'applyFirewallRules').mockResolvedValue(undefined);
+
+		await Promise.all([firewall.updateMode('on'), firewall.updateMode('off')]);
+
+		expect(applyRules).toHaveBeenCalledTimes(2);
+		expect(firewall.getStatus().mode).toBe('off');
+	});
+
+	it('restores the previous mode after rule application fails', async () => {
+		const firewall = new AgentFirewall({
+			enabled: true,
+			mode: 'on',
+			deviceApiPort: 48484,
+		}, createLogger());
+		(firewall as unknown as { initialized: boolean }).initialized = true;
+		const applyRules = jest.spyOn(firewall as any, 'applyFirewallRules')
+			.mockRejectedValueOnce(new Error('IPv6 apply failed'))
+			.mockResolvedValueOnce(undefined);
+
+		await expect(firewall.updateMode('off')).rejects.toThrow('IPv6 apply failed');
+
+		expect(applyRules).toHaveBeenCalledTimes(2);
+		expect(firewall.getStatus()).toMatchObject({ mode: 'on', enabled: true, initialized: true });
 	});
 });

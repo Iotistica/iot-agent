@@ -43,6 +43,7 @@ watch(activeTab, (tab) => {
 const firewallData = ref<FirewallResponse | null>(null)
 const firewallLoading = ref(false)
 const firewallModeChanging = ref(false)
+const firewallDisableConfirmationOpen = ref(false)
 
 const manualFirewallMode = computed(() => {
   const mode = firewallData.value?.status?.mode
@@ -155,19 +156,26 @@ async function applyFirewallMode(mode: 'on' | 'off') {
 }
 
 function handleFirewallSwitchChange(enabled: boolean) {
-  if (firewallModeChanging.value) return
+  if (firewallModeChanging.value || firewallDisableConfirmationOpen.value) return
   if (enabled) {
     void applyFirewallMode('on')
     return
   }
 
+  firewallDisableConfirmationOpen.value = true
   Modal.confirm({
     title: 'Disable Firewall?',
     content: 'Disabling the Iotistica firewall removes its managed network restrictions. Other system firewall rules may still apply. Do you want to continue?',
     okText: 'Disable Firewall',
     cancelText: 'Cancel',
     okType: 'danger',
-    onOk: () => applyFirewallMode('off'),
+    onOk: async () => {
+      firewallDisableConfirmationOpen.value = false
+      await applyFirewallMode('off')
+    },
+    onCancel: () => {
+      firewallDisableConfirmationOpen.value = false
+    },
   })
 }
 
@@ -307,7 +315,7 @@ onMounted(() => {
               checked-children="ON"
               un-checked-children="OFF"
               :loading="firewallModeChanging"
-              :disabled="firewallModeChanging || !manualFirewallMode"
+              :disabled="firewallModeChanging || firewallDisableConfirmationOpen || !manualFirewallMode"
               @change="handleFirewallSwitchChange"
             />
             <a-tag v-if="!manualFirewallMode" color="blue">

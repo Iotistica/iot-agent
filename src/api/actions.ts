@@ -424,25 +424,18 @@ export function setStateManager(sm: StateManager | undefined): void {
 	stateManager = sm;
 }
 
-export async function persistFirewallMode(mode: FirewallMode | undefined): Promise<FirewallMode | undefined> {
+export async function persistFirewallMode(mode: FirewallMode): Promise<void> {
 	if (!stateManager) throw new Error('State manager not initialized');
 
 	const targetState = stateManager.getTargetState();
 	const config = targetState.config ?? {};
 	const settings = { ...(config.settings ?? {}) };
-	const previousMode = settings.firewallMode as FirewallMode | undefined;
-
-	if (mode === undefined) {
-		delete settings.firewallMode;
-	} else {
-		settings.firewallMode = mode;
-	}
+	settings.firewallMode = mode;
 
 	await stateManager.updateTargetStateQuietly(
 		{ ...targetState, config: { ...config, settings } },
 		{ throwOnSaveError: true },
 	);
-	return previousMode;
 }
 
 /**
