@@ -72,6 +72,7 @@ const paused = ref(false)
 // Prevent queued WebSocket messages from extending the UI while Stop is pending.
 const stopRequested = ref(false)
 let pendingPackets: CapturePacket[] = []
+let pendingPacketStart = 0
 let packetFlushTimer: ReturnType<typeof setTimeout> | null = null
 const PACKET_FLUSH_MS = 75
 
@@ -81,17 +82,20 @@ function cancelPacketFlush() {
     packetFlushTimer = null
   }
   pendingPackets = []
+  pendingPacketStart = 0
 }
 
 function flushPacketBatch() {
   packetFlushTimer = null
-  if (stopRequested.value || pendingPackets.length === 0) {
+  if (stopRequested.value || pendingPackets.length === pendingPacketStart) {
     pendingPackets = []
+    pendingPacketStart = 0
     return
   }
   if (paused.value) return
-  packets.value = [...packets.value, ...pendingPackets].slice(-10_000)
+  packets.value = [...packets.value, ...pendingPackets.slice(pendingPacketStart)].slice(-10_000)
   pendingPackets = []
+  pendingPacketStart = 0
   if (autoScroll.value) scrollToLatestPacket()
 }
 
@@ -301,7 +305,7 @@ async function resumeDisplay() {
     if (stopRequested.value || stopping.value || !running.value) return
 
     const byId = new Map(retained.map((packet) => [packet.id, packet]))
-    for (const packet of pendingPackets) byId.set(packet.id, packet)
+    for (const packet of pendingPackets.slice(pendingPacketStart)) byId.set(packet.id, packet)
     packets.value = [...byId.values()].sort((left, right) => left.id - right.id).slice(-10_000)
     cancelPacketFlush()
     paused.value = false
@@ -449,7 +453,11 @@ function connectWs() {
     try {
       pendingPackets.push(JSON.parse(ev.data) as CapturePacket)
       if (paused.value) {
-        if (pendingPackets.length > 10_000) pendingPackets.shift()
+        if (pendingPackets.length - pendingPacketStart >= 10_000) pendingPacketStart++
+        if (pendingPacketStart >= 1024) {
+          pendingPackets = pendingPackets.slice(pendingPacketStart)
+          pendingPacketStart = 0
+        }
         return
       }
       // Batch reactive table updates to avoid rendering on every incoming packet.
@@ -601,7 +609,7 @@ watch(running, (val) => {
           Stop
         </a-button>
 
-        <a-button :disabled="packets.length === 0 || starting || stopping || switchingInterface" @click="clearCapture">
+        <a-button :disabled="packets.length === 0 || starting || stopping || switchingInterface || resumingDisplay" @click="clearCapture">
           <template #icon><ClearOutlined /></template>
           Clear
         </a-button>

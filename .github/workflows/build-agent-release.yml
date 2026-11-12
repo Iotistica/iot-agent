@@ -1,7 +1,7 @@
 name: Agent Release
 
 # Push a version tag to build, package, and release the agent in one shot.
-# No CI pre-run required — this workflow builds everything from source.
+# Requires successful CI for the exact tagged commit before any build or publish.
 #
 #   git tag v1.0.531 && git push origin v1.0.531
 #
@@ -23,7 +23,7 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
 
 concurrency:
-  group: agent-release-${{ github.ref }}
+  group: agent-release-publish
   cancel-in-progress: false
 
 jobs:
@@ -44,14 +44,95 @@ jobs:
             TAG="${{ github.ref_name }}"
             VERSION="${TAG#v}"
           fi
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Invalid release version: $VERSION" >&2
+            exit 1
+          fi
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "tag=v${VERSION}"  >> $GITHUB_OUTPUT
           echo "Releasing v${VERSION}"
 
+  # ── Verify tagged source and its CI run ─────────────────────────────────────
+  verify_ci:
+    name: Verify tagged commit passed CI
+    needs: version
+    runs-on: [ubuntu-24.04]
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      sha: ${{ steps.verify.outputs.sha }}
+      promote_latest: ${{ steps.verify.outputs.promote_latest }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      CI_WORKFLOW: ${{ vars.RELEASE_CI_WORKFLOW_FILE }}
+      RELEASE_BRANCH: ${{ vars.RELEASE_BRANCH || 'main' }}
+      RELEASE_TAG: ${{ needs.version.outputs.tag }}
+    steps:
+      - name: Checkout tags and release branch
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify release source and CI
+        id: verify
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "$CI_WORKFLOW" ]; then
+            # Discover the CI workflow by its exact declared name, not a guessed filename.
+            WORKFLOWS=$(gh api --paginate "repos/${GH_REPO}/actions/workflows?per_page=100" --jq '.workflows[] | select(.name == "CI Build, Test & Push Agent" and .state == "active") | .id')
+            COUNT=$(printf '%s\n' "$WORKFLOWS" | sed '/^$/d' | wc -l)
+            if [ "$COUNT" -ne 1 ]; then
+              echo "Expected exactly one active workflow named 'CI Build, Test & Push Agent'; found $COUNT. Set RELEASE_CI_WORKFLOW_FILE to its filename." >&2
+              exit 1
+            fi
+            CI_WORKFLOW="$WORKFLOWS"
+          fi
+          git fetch --force origin "refs/heads/${RELEASE_BRANCH}:refs/remotes/origin/${RELEASE_BRANCH}" 'refs/tags/*:refs/tags/*'
+          SHA=$(git rev-parse --verify "refs/tags/${RELEASE_TAG}^{commit}")
+          MAIN_SHA=$(git rev-parse --verify "refs/remotes/origin/${RELEASE_BRANCH}^{commit}")
+          PROMOTE=false
+          if [ "${GITHUB_EVENT_NAME}" = 'push' ]; then
+            if [ "$SHA" != "$MAIN_SHA" ]; then
+              echo "New release tag must point to current ${RELEASE_BRANCH} HEAD: tag=$SHA branch=$MAIN_SHA" >&2
+              exit 1
+            fi
+            PROMOTE=true
+          fi
+          # Find CI runs for this exact SHA; never accept a run for another commit.
+          # The most recent matching push run must have completed successfully.
+          RUNS=$(gh api --method GET "repos/${GH_REPO}/actions/workflows/${CI_WORKFLOW}/runs" \
+            -f head_sha="$SHA" -f per_page=100 -f event=push)
+          MATCH=$(jq -c --arg sha "$SHA" --arg branch "$RELEASE_BRANCH" \
+            '[.workflow_runs[] | select(.head_sha == $sha and .head_branch == $branch and .event == "push")] | sort_by(.created_at, .id) | last // empty' <<< "$RUNS")
+          if [ -z "$MATCH" ]; then
+            echo "No CI push run found for tag ${RELEASE_TAG}, SHA ${SHA} on ${RELEASE_BRANCH}" >&2
+            exit 1
+          fi
+          STATUS=$(jq -r '.status' <<< "$MATCH")
+          CONCLUSION=$(jq -r '.conclusion // "none"' <<< "$MATCH")
+          RUN_URL=$(jq -r '.html_url' <<< "$MATCH")
+          if [ "$STATUS" != 'completed' ] || [ "$CONCLUSION" != 'success' ]; then
+            echo "CI is not successful for $SHA: status=$STATUS conclusion=$CONCLUSION ($RUN_URL)" >&2
+            exit 1
+          fi
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "promote_latest=$PROMOTE" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Verified release source"
+            echo "- Tag: \`$RELEASE_TAG\`"
+            echo "- Commit: \`$SHA\`"
+            echo "- CI: $RUN_URL (success)"
+            echo "- Promote latest: $PROMOTE"
+          } >> "$GITHUB_STEP_SUMMARY"
+
   # ── Build tarball + .deb (matrix: x86_64 / arm64) ───────────────────────────
   package:
     name: Build & Package (${{ matrix.arch }})
-    needs: version
+    needs: [version, verify_ci]
     runs-on: [ubuntu-24.04]
     permissions:
       contents: write
@@ -66,8 +147,10 @@ jobs:
             deb_arch: arm64
 
     steps:
-      - name: Checkout
+      - name: Checkout verified commit
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ needs.verify_ci.outputs.sha }}
 
       - name: Stamp root package.json version
         run: |
@@ -179,6 +262,7 @@ jobs:
             --name "agent/versions/agent-${VERSION}-${ARCH}.tar.gz.sha256" \
             --file "/tmp/artifacts/agent-${VERSION}-${ARCH}.tar.gz.sha256" \
             --overwrite true --auth-mode key --only-show-errors --output none --content-type text/plain
+          if [ "${{ needs.verify_ci.outputs.promote_latest }}" = "true" ]; then
           az storage blob upload --account-name "$ACCT" --container-name scripts \
             --name "agent/agent-latest-${ARCH}.tar.gz" \
             --file "/tmp/artifacts/agent-${VERSION}-${ARCH}.tar.gz" \
@@ -187,6 +271,8 @@ jobs:
             --name "agent/agent-latest-${ARCH}.tar.gz.sha256" \
             --file "/tmp/artifacts/agent-${VERSION}-${ARCH}.tar.gz.sha256" \
             --overwrite true --auth-mode key --only-show-errors --output none --content-type text/plain
+
+          fi
 
           # .deb — versioned + rolling latest
           az storage blob upload --account-name "$ACCT" --container-name scripts \
@@ -198,14 +284,18 @@ jobs:
             --name "agent/versions/${DEB}.sha256" \
             --file "/tmp/artifacts/${DEB}.sha256" \
             --overwrite true --auth-mode key --only-show-errors --output none --content-type text/plain
+          if [ "${{ needs.verify_ci.outputs.promote_latest }}" = "true" ]; then
           az storage blob upload --account-name "$ACCT" --container-name scripts \
             --name "agent/iotistica-agent-latest-${DEB_ARCH}.deb" \
             --file "/tmp/artifacts/${DEB}" \
             --overwrite true --auth-mode key --only-show-errors --output none \
             --content-type "application/vnd.debian.binary-package"
 
+          fi
+
           # x86_64-only: generic latest tarball, install.sh, versioned install snapshot
           if [ "$ARCH" = "x86_64" ]; then
+            if [ "${{ needs.verify_ci.outputs.promote_latest }}" = "true" ]; then
             az storage blob upload --account-name "$ACCT" --container-name scripts \
               --name "agent/agent-latest.tar.gz" \
               --file "/tmp/artifacts/agent-${VERSION}-x86_64.tar.gz" \
@@ -218,6 +308,7 @@ jobs:
               --name "agent/install.sh.sha256" \
               --file "/tmp/artifacts/install.sh.sha256" \
               --overwrite true --auth-mode key --only-show-errors --output none --content-type text/plain
+            fi
             az storage blob upload --account-name "$ACCT" --container-name scripts \
               --name "agent/versions/install-${VERSION}.sh" \
               --file "/tmp/artifacts/install.sh" \
@@ -234,14 +325,16 @@ jobs:
   # ── Docker: build + push with version tag ───────────────────────────────────
   docker:
     name: Docker Build & Push
-    needs: version
+    needs: [version, verify_ci]
     runs-on: [ubuntu-24.04]
     permissions:
       contents: read
 
     steps:
-      - name: Checkout
+      - name: Checkout verified commit
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ needs.verify_ci.outputs.sha }}
 
       - name: Stamp root package.json version
         run: |
@@ -274,7 +367,7 @@ jobs:
           platforms: linux/amd64
           tags: |
             iotistic/agent:${{ needs.version.outputs.version }}
-            iotistic/agent:latest
+            ${{ needs.verify_ci.outputs.promote_latest == 'true' && 'iotistic/agent:latest' || '' }}
           cache-from: type=registry,ref=iotistic/agent:buildcache
           cache-to: type=registry,ref=iotistic/agent:buildcache,mode=min,ignore-error=true
           build-args: |
@@ -335,15 +428,16 @@ jobs:
   # ── SBOM + GitHub Release ───────────────────────────────────────────────────
   publish:
     name: SBOM & GitHub Release
-    needs: [version, package, docker]
+    needs: [version, verify_ci, package, docker]
     runs-on: [ubuntu-24.04]
     permissions:
       contents: write
 
     steps:
-      - name: Checkout
+      - name: Checkout verified commit
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
+          ref: ${{ needs.verify_ci.outputs.sha }}
           fetch-depth: 0
 
       - name: Download release artifacts
@@ -390,12 +484,15 @@ jobs:
               --name "agent/versions/${VERSION}/sbom/${f}.cyclonedx.json" \
               --file "/tmp/sbom/${f}.cyclonedx.json" \
               --overwrite true --auth-mode key --only-show-errors --output none --content-type application/json
+            if [ "${{ needs.verify_ci.outputs.promote_latest }}" = "true" ]; then
             az storage blob upload --account-name "$ACCT" --container-name scripts \
               --name "agent/sbom/${f}.cyclonedx.json" \
               --file "/tmp/sbom/${f}.cyclonedx.json" \
               --overwrite true --auth-mode key --only-show-errors --output none --content-type application/json
+            fi
           done
 
+          if [ "${{ needs.verify_ci.outputs.promote_latest }}" = "true" ]; then
           cat > /tmp/sbom/sbom-latest.json << EOF
           {
             "version": "${VERSION}",
@@ -415,8 +512,10 @@ jobs:
             --overwrite true --auth-mode key --only-show-errors --output none \
             --content-type application/json \
             --content-cache-control "no-cache"
+          fi
 
       - name: Upload update manifest
+        if: needs.verify_ci.outputs.promote_latest == 'true'
         run: |
           set -euo pipefail
           VERSION="${{ needs.version.outputs.version }}"
@@ -528,7 +627,7 @@ jobs:
           echo "| arm64 tarball  | \`agent/versions/agent-${VERSION}-arm64.tar.gz\`  |" >> $GITHUB_STEP_SUMMARY
           echo "| amd64 .deb     | \`agent/versions/iotistica-agent_${VERSION}_amd64.deb\` |" >> $GITHUB_STEP_SUMMARY
           echo "| arm64 .deb     | \`agent/versions/iotistica-agent_${VERSION}_arm64.deb\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| install.sh     | \`agent/install.sh\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| install.sh     | \`agent/versions/install-${VERSION}.sh\` |" >> $GITHUB_STEP_SUMMARY
           echo "| Docker         | \`iotistic/agent:${VERSION}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| SBOM           | \`agent/versions/${VERSION}/sbom/\` |" >> $GITHUB_STEP_SUMMARY
           echo "| Update manifest | \`agent/latest-version.json\` |" >> $GITHUB_STEP_SUMMARY
