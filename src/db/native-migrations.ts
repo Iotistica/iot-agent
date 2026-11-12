@@ -48,6 +48,7 @@ import { migration as addFirewallRules } from './migrations/20261101020000_add_f
 import { migration as addAssetPathToDevices } from './migrations/20261102000000_add_asset_path_to_devices.js';
 import { migration as addLicense } from './migrations/20261103000000_add_license.js';
 import { migration as seedAppMarketplace } from './migrations/20261106000000_seed_app_marketplace.js';
+import { migration as addFirewallRuleAction } from './migrations/20261111000000_add_firewall_rule_action.js';
 import type { NativeSqliteMigration } from './migration-types.js';
 
 export const nativeMigrations: NativeSqliteMigration[] = [
@@ -101,4 +102,5 @@ export const nativeMigrations: NativeSqliteMigration[] = [
 	addAssetPathToDevices,
 	addLicense,
 	seedAppMarketplace,
+	addFirewallRuleAction,
 ];

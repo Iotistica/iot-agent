@@ -43,12 +43,13 @@ const firewallLoading = ref(false)
 
 const drawerOpen = ref(false)
 const editingRule = ref<FirewallRule | null>(null)
-const ruleForm = ref<FirewallRuleInput>({ port: '', protocol: 'tcp', interface_name: '', description: '' })
+const ruleForm = ref<FirewallRuleInput>({ port: '', protocol: 'tcp', action: 'ACCEPT', interface_name: '', description: '' })
 const saving = ref(false)
 
 const firewallColumns: TableColumnType<FirewallRule>[] = [
   { title: 'Port', dataIndex: 'port', key: 'port', width: 120 },
   { title: 'Protocol', dataIndex: 'protocol', key: 'protocol', width: 100 },
+  { title: 'Action', dataIndex: 'action', key: 'action', width: 110 },
   { title: 'Interface', dataIndex: 'interface_name', key: 'interface_name', width: 120 },
   { title: 'Description', dataIndex: 'description', key: 'description' },
   {
@@ -77,7 +78,7 @@ async function loadFirewall() {
 
 function openAddRule() {
   editingRule.value = null
-  ruleForm.value = { port: '', protocol: 'tcp', interface_name: '', description: '' }
+  ruleForm.value = { port: '', protocol: 'tcp', action: 'ACCEPT', interface_name: '', description: '' }
   drawerOpen.value = true
 }
 
@@ -86,6 +87,7 @@ function openEditRule(rule: FirewallRule) {
   ruleForm.value = {
     port: rule.port,
     protocol: rule.protocol,
+    action: rule.action ?? 'ACCEPT',
     interface_name: rule.interface_name || '',
     description: rule.description || '',
   }
@@ -218,6 +220,11 @@ onMounted(() => {
             <template v-if="column.key === 'protocol'">
               <a-tag>{{ (record as FirewallRule).protocol.toUpperCase() }}</a-tag>
             </template>
+            <template v-else-if="column.key === 'action'">
+              <a-tag :color="(record as FirewallRule).action === 'ACCEPT' ? 'green' : (record as FirewallRule).action === 'REJECT' ? 'orange' : 'red'">
+                {{ (record as FirewallRule).action ?? 'ACCEPT' }}
+              </a-tag>
+            </template>
             <template v-else-if="column.key === 'interface_name'">
               {{ (record as FirewallRule).interface_name || '—' }}
             </template>
@@ -293,6 +300,13 @@ onMounted(() => {
           <a-select v-model:value="ruleForm.protocol" :get-popup-container="(t: HTMLElement) => t.parentElement!">
             <a-select-option value="tcp">TCP</a-select-option>
             <a-select-option value="udp">UDP</a-select-option>
+          </a-select>
+        </a-form-item>
+        <a-form-item label="Action" required>
+          <a-select v-model:value="ruleForm.action" :get-popup-container="(t: HTMLElement) => t.parentElement!">
+            <a-select-option value="ACCEPT">ACCEPT — Allow traffic</a-select-option>
+            <a-select-option value="REJECT">REJECT — Refuse traffic</a-select-option>
+            <a-select-option value="DROP">DROP — Silently discard traffic</a-select-option>
           </a-select>
         </a-form-item>
         <a-form-item label="Interface">

@@ -26,6 +26,14 @@ export interface FirewallConfig {
   allowedDockerNetworks?: string[];
 }
 
+export type FirewallRuleAction = 'ACCEPT' | 'REJECT' | 'DROP';
+
+function normalizeFirewallAction(value: unknown): FirewallRuleAction {
+	if (value === undefined || value === null) return 'ACCEPT';
+	if (value === 'ACCEPT' || value === 'REJECT' || value === 'DROP') return value;
+	throw new Error('Invalid firewall action: expected ACCEPT, REJECT, or DROP');
+}
+
 const FIREWALL_CHAIN = 'IOTISTIC-FIREWALL';
 const DEFAULT_MQTT_PORT = 1883;
 const _USER_CHAIN = 'IOTISTIC-USER';
@@ -419,7 +427,7 @@ export class AgentFirewall {
 	}
 
 	/**
-   * Convert persisted user rules to iptables ACCEPT rules
+   * Convert persisted user rules to iptables rules with their configured action
    */
 	private getUserIptablesRules(userRules: FirewallRule[]): Rule[] {
 		return userRules.map((r) => {
@@ -437,7 +445,7 @@ export class AgentFirewall {
 				action: RuleAction.Append,
 				proto: r.protocol,
 				matches,
-				target: 'ACCEPT',
+				target: normalizeFirewallAction((r as FirewallRule & { action?: FirewallRuleAction }).action),
 			} as Rule;
 		});
 	}
@@ -462,15 +470,16 @@ export class AgentFirewall {
 		return FirewallRuleModel.getAll();
 	}
 
-	async addUserRule(rule: { port: string; protocol: string; interface_name?: string | null; description?: string | null }): Promise<FirewallRule> {
-		const created = FirewallRuleModel.create(rule);
+	async addUserRule(rule: { port: string; protocol: string; action?: FirewallRuleAction; interface_name?: string | null; description?: string | null }): Promise<FirewallRule> {
+		const action = normalizeFirewallAction(rule.action);
+		const created = FirewallRuleModel.create({ ...rule, action });
 		this.logger.debugSync('User firewall rule added', { component: LogComponents.firewall, ruleId: created.id, port: rule.port });
 		if (this.initialized) await this.applyFirewallRules();
 		return created;
 	}
 
-	async updateUserRule(id: number, fields: { port?: string; protocol?: string; interface_name?: string | null; description?: string | null }): Promise<FirewallRule | null> {
-		const updated = FirewallRuleModel.update(id, fields);
+	async updateUserRule(id: number, fields: { port?: string; protocol?: string; action?: FirewallRuleAction; interface_name?: string | null; description?: string | null }): Promise<FirewallRule | null> {
+		const updated = FirewallRuleModel.update(id, fields.action === undefined ? fields : { ...fields, action: normalizeFirewallAction(fields.action) });
 		if (updated) {
 			this.logger.debugSync('User firewall rule updated', { component: LogComponents.firewall, ruleId: id });
 			if (this.initialized) await this.applyFirewallRules();

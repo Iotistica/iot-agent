@@ -1,5 +1,7 @@
 import { client } from './client'
 
+export type FirewallRuleAction = 'ACCEPT' | 'REJECT' | 'DROP';
+
 export interface FirewallRule {
   id: number
   port: string
@@ -7,6 +9,7 @@ export interface FirewallRule {
   interface_name: string | null
   description: string | null
   created_at: string
+  action: FirewallRuleAction;
 }
 
 export interface ReservedPort {
@@ -47,6 +50,7 @@ export interface FirewallRuleInput {
   protocol: string
   interface_name?: string
   description?: string
+  action: FirewallRuleAction;
 }
 
 // ── Capture types ──────────────────────────────────────────────────────────

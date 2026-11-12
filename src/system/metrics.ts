@@ -23,9 +23,6 @@ const safe = async <T>(fn: () => Promise<T>, fallback: T): Promise<T> => {
 let cachedHostname: string | null = null;
 let cachedCpuCores: number | null = null;
 
-// Cache network interfaces with a short TTL because NIC state can change.
-let cachedNetworkInterfaces: { ts: number; data: NetworkInterfaceInfo[] } | null = null;
-
 
 let cachedCpuLoad = 0;
 
@@ -92,18 +89,9 @@ export interface ProcessInfo {
 	command?: string;
 }
 
-export interface NetworkInterfaceInfo {
-	name: string;
-	ip4: string | null;
-	ip6: string | null;
-	mac: string | null;
-	type: string | null;
-	default: boolean;
-	virtual: boolean;
-	operstate: string | null;
-	ssid?: string;
-	signalLevel?: number;
-}
+import { getNetworkInterfaces, type NetworkInterfaceInfo } from './interfaces';
+export { getNetworkInterfaces } from './interfaces';
+export type { NetworkInterfaceInfo } from './interfaces';
 
 export interface ExtendedMetrics {
 	load_average?: number[];
@@ -256,49 +244,6 @@ async function getExtendedMetrics(): Promise<ExtendedMetrics | undefined> {
 	}
 	
 	return Object.keys(extended).length > 0 ? extended : undefined;
-}
-
-/** Get network interfaces and details. */
-export async function getNetworkInterfaces(): Promise<NetworkInterfaceInfo[]> {
-	const now = Date.now();
-	if (cachedNetworkInterfaces && now - cachedNetworkInterfaces.ts < 30_000) {
-		return cachedNetworkInterfaces.data;
-	}
-	
-	try {
-		const interfaces = await systeminformation.networkInterfaces();
-		const defaultIface = await systeminformation.networkInterfaceDefault();
-
-		const formatted = interfaces.map((iface) => {
-			const base: NetworkInterfaceInfo = {
-				name: iface.iface,
-				ip4: iface.ip4 || null,
-				ip6: iface.ip6 || null,
-				mac: iface.mac || null,
-				type: iface.type || null,
-				default: iface.iface === defaultIface,
-				virtual: iface.virtual || false,
-				operstate: iface.operstate || null,
-			};
-
-			// Add Wi-Fi details when present.
-			if ('ssid' in iface && typeof iface.ssid === 'string') {
-				(base as any).ssid = iface.ssid;
-			}
-			if ('signalLevel' in iface && typeof iface.signalLevel === 'number') {
-				(base as any).signalLevel = iface.signalLevel;
-			}
-
-			return base;
-		});
-
-		// Cache with timestamp for TTL.
-		cachedNetworkInterfaces = { ts: now, data: formatted };
-		return formatted;
-	} catch (_error) {
-		// Do not cache failures.
-		return [];
-	}
 }
 
 export async function getCpuUsage(): Promise<number> {
