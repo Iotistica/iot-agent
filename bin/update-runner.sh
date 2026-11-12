@@ -23,6 +23,7 @@ fi
 
 # A marker left by a killed worker is safe to retry: update.sh validates the
 # archive checksum and rolls back if the updated service does not become active.
+overall_status=0
 while [ -e "$RUNNING_FILE" ] || [ -e "$REQUEST_FILE" ]; do
     if [ ! -e "$RUNNING_FILE" ]; then
         mv -- "$REQUEST_FILE" "$RUNNING_FILE" || continue
@@ -37,6 +38,7 @@ while [ -e "$RUNNING_FILE" ] || [ -e "$REQUEST_FILE" ]; do
     mapfile -t request < "$RUNNING_FILE"
     if [ "${#request[@]}" -ne 2 ]; then
         echo "Rejecting malformed update request" >&2
+        overall_status=1
         rm -f -- "$RUNNING_FILE"
         continue
     fi
@@ -45,18 +47,25 @@ while [ -e "$RUNNING_FILE" ] || [ -e "$REQUEST_FILE" ]; do
     force="${request[1]}"
     if [[ "$target_version" != "latest" && ! "$target_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[[:alnum:]_.]+)?$ ]]; then
         echo "Rejecting invalid update version" >&2
+        overall_status=1
         rm -f -- "$RUNNING_FILE"
         continue
     fi
     if [[ "$force" != "true" && "$force" != "false" ]]; then
         echo "Rejecting invalid update force flag" >&2
+        overall_status=1
         rm -f -- "$RUNNING_FILE"
         continue
     fi
 
     echo "Starting validated update to $target_version (force=$force)"
-    if ! "$UPDATE_SCRIPT" "$target_version" "$force" "$RUNNING_FILE"; then
+    if "$UPDATE_SCRIPT" "$target_version" "$force" "$RUNNING_FILE"; then
+        :
+    else
+        overall_status=1
         echo "Update script failed for $target_version; see journalctl -u update.service" >&2
     fi
     rm -f -- "$RUNNING_FILE"
 done
+
+exit "$overall_status"

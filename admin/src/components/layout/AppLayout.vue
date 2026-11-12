@@ -1,6 +1,6 @@
 
 <script setup lang="ts">
-import { onMounted, ref, computed } from 'vue'
+import { onMounted, onUnmounted, ref, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   LogoutOutlined,
@@ -33,6 +33,12 @@ const { isDark, toggle: toggleTheme } = useTheme()
 
 const agentVersion = ref<string | null>(null)
 const buildId = ref<string | null>(null)
+const AGENT_VERSION_UPDATED_EVENT = 'iotistica:agent-version-updated'
+
+function handleAgentVersionUpdated(event: Event) {
+  const version = (event as CustomEvent<{ version?: string }>).detail?.version
+  if (version) agentVersion.value = version
+}
 
 const username = computed(() => {
   return currentUser.value?.username || 'User'
@@ -62,6 +68,7 @@ function handleUserMenu({
 }
 
 onMounted(async () => {
+  window.addEventListener(AGENT_VERSION_UPDATED_EVENT, handleAgentVersionUpdated)
   fetchProStatus()
   fetchDockerStatus()
 
@@ -72,6 +79,10 @@ onMounted(async () => {
   } catch {
     // Version is optional
   }
+})
+
+onUnmounted(() => {
+  window.removeEventListener(AGENT_VERSION_UPDATED_EVENT, handleAgentVersionUpdated)
 })
 </script>
 

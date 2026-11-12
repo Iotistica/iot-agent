@@ -2815,7 +2815,7 @@ export const getSettings = async (): Promise<Record<string, any>> => {
 			uuid: agent?.uuid ?? null,
 			name: agent?.name ?? null,
 			type: agent?.type ?? null,
-			version: agent?.agentVersion ?? null,
+			version: agentUpdater?.getCurrentVersion() ?? agent?.agentVersion ?? null,
 			buildId: process.env.BUILD_ID ?? null,
 			provisioned: agentInfo.provisioned ?? false,
 			tenantId: agentInfo.tenantId ?? null,

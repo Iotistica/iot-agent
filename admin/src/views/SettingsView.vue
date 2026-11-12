@@ -510,6 +510,10 @@ async function checkForUpdate(force = false) {
   updateChecking.value = true
   try {
     updateInfo.value = await updateApi.check(force)
+    if (settings.value.agent) settings.value.agent.version = updateInfo.value.currentVersion
+    window.dispatchEvent(new CustomEvent('iotistica:agent-version-updated', {
+      detail: { version: updateInfo.value.currentVersion },
+    }))
   } catch (e: unknown) {
     message.error((e as any)?.response?.data?.message ?? (e as any)?.message ?? 'Update check failed')
   } finally { updateChecking.value = false }
