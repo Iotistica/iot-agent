@@ -205,7 +205,23 @@ export class AgentFirewall {
 		];
 	}
 
-	
+	/**
+   * System firewall rules (always applied)
+   */
+
+	async getSystemRules(): Promise<Rule[]> {
+		const modeIsActive =
+			this.config.mode === 'on' ||
+			(this.config.mode === 'auto' && await this.shouldEnableFirewall());
+		const isActive = this.config.enabled && this.initialized && modeIsActive;
+
+		return [
+			...this.getBaseRules(),
+			...(isActive ? this.getDeviceApiRules() : []),
+			...(isActive ? this.getMqttRules() : []),
+			this.getFinalRule(isActive),
+		];
+	}
 	/**
 	 * Device API protection rules
 	 * Allow trusted LAN networks while blocking untrusted networks.

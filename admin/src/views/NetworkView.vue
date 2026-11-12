@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, watch } from 'vue'
+import { computed, ref, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { message, Modal } from 'ant-design-vue'
 import type { TableColumnType } from 'ant-design-vue'
@@ -17,6 +17,7 @@ import {
   networkApi,
   type FirewallRule,
   type FirewallResponse,
+  type SystemFirewallRule,
   type PortEntry,
   type ReservedPort,
   type FirewallRuleInput,
@@ -41,12 +42,27 @@ watch(activeTab, (tab) => {
 const firewallData = ref<FirewallResponse | null>(null)
 const firewallLoading = ref(false)
 
+type InboundRule = FirewallRule | SystemFirewallRule
+
+function isSystemRule(rule: InboundRule): rule is SystemFirewallRule {
+  return 'source' in rule && rule.source === 'system'
+}
+
+const inboundRules = computed<InboundRule[]>(() => {
+  const systemRules = firewallData.value?.systemRules ?? []
+  const userRules = firewallData.value?.rules ?? []
+  const regularSystemRules = systemRules.filter((rule) => !rule.isFinal)
+  const finalRules = systemRules.filter((rule) => rule.isFinal)
+
+  return [...regularSystemRules, ...userRules, ...finalRules]
+})
+
 const drawerOpen = ref(false)
 const editingRule = ref<FirewallRule | null>(null)
 const ruleForm = ref<FirewallRuleInput>({ port: '', protocol: 'tcp', action: 'ACCEPT', interface_name: '', description: '' })
 const saving = ref(false)
 
-const firewallColumns: TableColumnType<FirewallRule>[] = [
+const firewallColumns: TableColumnType<InboundRule>[] = [
   { title: 'Port', dataIndex: 'port', key: 'port', width: 120 },
   { title: 'Protocol', dataIndex: 'protocol', key: 'protocol', width: 100 },
   { title: 'Action', dataIndex: 'action', key: 'action', width: 110 },
@@ -57,7 +73,6 @@ const firewallColumns: TableColumnType<FirewallRule>[] = [
     dataIndex: 'created_at',
     key: 'created_at',
     width: 180,
-    customRender: ({ value }) => (value ? new Date(value).toLocaleString() : ''),
   },
   { title: 'Actions', key: 'actions', width: 100, fixed: 'right' },
 ]
@@ -210,7 +225,7 @@ onMounted(() => {
 
         <a-table
           :columns="firewallColumns"
-          :data-source="firewallData?.rules ?? []"
+          :data-source="inboundRules"
           :loading="firewallLoading"
           :pagination="false"
           row-key="id"
@@ -221,15 +236,18 @@ onMounted(() => {
               <a-tag>{{ (record as FirewallRule).protocol.toUpperCase() }}</a-tag>
             </template>
             <template v-else-if="column.key === 'action'">
-              <a-tag :color="(record as FirewallRule).action === 'ACCEPT' ? 'green' : (record as FirewallRule).action === 'REJECT' ? 'orange' : 'red'">
-                {{ (record as FirewallRule).action ?? 'ACCEPT' }}
+              <a-tag :color="(record as InboundRule).action === 'ACCEPT' ? 'green' : (record as InboundRule).action === 'REJECT' ? 'orange' : (record as InboundRule).action === 'DROP' ? 'red' : 'default'">
+                {{ (record as InboundRule).action }}
               </a-tag>
             </template>
             <template v-else-if="column.key === 'interface_name'">
-              {{ (record as FirewallRule).interface_name || '—' }}
+              {{ (record as InboundRule).interface_name || '—' }}
+            </template>
+            <template v-else-if="column.key === 'created_at'">
+              {{ isSystemRule(record as InboundRule) ? 'System' : new Date((record as FirewallRule).created_at).toLocaleString() }}
             </template>
             <template v-else-if="column.key === 'actions'">
-              <a-space>
+              <a-space v-if="!isSystemRule(record as InboundRule)">
                 <a-button type="text" size="small" @click="openEditRule(record as FirewallRule)">
                   <template #icon><EditOutlined /></template>
                 </a-button>

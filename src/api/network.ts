@@ -1,12 +1,79 @@
 import express from 'express';
 import type { Request, Response } from 'express';
 import { exec } from '../lib/fs-utils.js';
+import type { Rule } from '../lib/iptables.js';
 import { getFirewall, getDockerPortBindings, getCaptureEngine } from './actions.js';
 import type { CaptureFilter, CapturedPacket } from '../network/capture.js';
 import { requireRole } from './middleware/roles.js';
 import { getDecoderRegistry, type PacketMeta } from '../network/decoders/index.js';
 
 export const networkRouter = express.Router();
+
+export type SystemFirewallRuleAction = 'ACCEPT' | 'REJECT' | 'DROP' | 'RETURN';
+
+export interface SystemFirewallRule {
+	id: string;
+	source: 'system';
+	port: string;
+	protocol: string;
+	action: SystemFirewallRuleAction;
+	interface_name: string | null;
+	description: string;
+	created_at: null;
+	isFinal: boolean;
+}
+
+const SYSTEM_FIREWALL_ACTIONS: readonly SystemFirewallRuleAction[] = [
+	'ACCEPT',
+	'REJECT',
+	'DROP',
+	'RETURN',
+];
+
+function isSystemFirewallRuleAction(action: string | undefined): action is SystemFirewallRuleAction {
+	return SYSTEM_FIREWALL_ACTIONS.some((allowedAction) => allowedAction === action);
+}
+
+export function normalizeSystemFirewallRules(rules: Rule[]): SystemFirewallRule[] {
+	return rules.map((rule, index) => {
+		const matches = rule.matches ?? [];
+		const port = matches
+			.map((match) => match.match(/--dports?\s+([^\s]+)/)?.[1])
+			.find((value): value is string => Boolean(value)) ?? 'Any';
+		const interfaceName = matches
+			.map((match) => match.match(/(?:^|\s)-i\s+([^\s]+)/)?.[1])
+			.find((value): value is string => Boolean(value)) ?? null;
+		const sourceSubnet = matches
+			.map((match) => match.match(/(?:^|\s)(?:-s|--source)\s+([^\s]+)/)?.[1])
+			.find((value): value is string => Boolean(value));
+		const comment = rule.comment?.trim() || 'System firewall rule';
+		const descriptionDetails: string[] = [];
+
+		if (rule.family && !new RegExp(`IPv${rule.family}`, 'i').test(comment)) {
+			descriptionDetails.push(`IPv${rule.family}`);
+		}
+		if (sourceSubnet && !comment.includes(sourceSubnet)) {
+			descriptionDetails.push(`source ${sourceSubnet}`);
+		}
+		if (!isSystemFirewallRuleAction(rule.target)) {
+			throw new Error(`Unsupported system firewall target: ${rule.target ?? 'none'}`);
+		}
+
+		return {
+			id: `system-${index + 1}`,
+			source: 'system',
+			port,
+			protocol: String(rule.proto ?? 'ALL').toUpperCase(),
+			action: rule.target,
+			interface_name: interfaceName,
+			description: descriptionDetails.length
+				? `${comment} (${descriptionDetails.join(', ')})`
+				: comment,
+			created_at: null,
+			isFinal: index === rules.length - 1,
+		};
+	});
+}
 
 // ── Firewall ────────────────────────────────────────────────────────────────
 
@@ -17,6 +84,7 @@ networkRouter.get('/v1/network/firewall', async (_req: Request, res: Response) =
 			available: false,
 			status: null,
 			rules: [],
+			systemRules: [],
 			reservedPorts: [],
 		});
 	}
@@ -25,6 +93,7 @@ networkRouter.get('/v1/network/firewall', async (_req: Request, res: Response) =
 		available: fw.available,
 		status: fw.getStatus(),
 		rules: fw.getUserRules(),
+		systemRules: normalizeSystemFirewallRules(await fw.getSystemRules()),
 		reservedPorts: fw.getReservedPorts(),
 	});
 });

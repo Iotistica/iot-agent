@@ -12,6 +12,20 @@ export interface FirewallRule {
   action: FirewallRuleAction;
 }
 
+export type SystemFirewallRuleAction = FirewallRuleAction | 'RETURN';
+
+export interface SystemFirewallRule {
+  id: string
+  source: 'system'
+  port: string
+  protocol: string
+  action: SystemFirewallRuleAction
+  interface_name: string | null
+  description: string
+  created_at: null
+  isFinal: boolean
+}
+
 export interface ReservedPort {
   port: number
   service: string
@@ -29,6 +43,7 @@ export interface FirewallResponse {
   available: boolean
   status: FirewallStatus | null
   rules: FirewallRule[]
+  systemRules: SystemFirewallRule[]
   reservedPorts: ReservedPort[]
 }
 
