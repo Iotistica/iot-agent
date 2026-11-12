@@ -5,6 +5,7 @@ import type { TableColumnType } from 'ant-design-vue'
 import {
   PlayCircleOutlined,
   PauseCircleOutlined,
+  PauseOutlined,
   ClearOutlined,
   DownloadOutlined,
   SearchOutlined,
@@ -26,6 +27,7 @@ const loading = ref(false)
 const starting = ref(false)
 const stopping = ref(false)
 const switchingInterface = ref(false)
+const resumingDisplay = ref(false)
 const interfacesLoading = ref(false)
 const interfacesLoadError = ref(false)
 const networkInterfaces = ref<NetworkInterfaceInfo[]>([])
@@ -83,23 +85,26 @@ function cancelPacketFlush() {
 
 function flushPacketBatch() {
   packetFlushTimer = null
-  if (stopRequested.value || paused.value || pendingPackets.length === 0) {
+  if (stopRequested.value || pendingPackets.length === 0) {
     pendingPackets = []
     return
   }
+  if (paused.value) return
   packets.value = [...packets.value, ...pendingPackets].slice(-10_000)
   pendingPackets = []
-  if (autoScroll.value) {
-    nextTick(() => {
-      const el = tableContainer.value?.querySelector('.ant-table-body')
-      if (el) el.scrollTop = el.scrollHeight
-    })
-  }
+  if (autoScroll.value) scrollToLatestPacket()
 }
 
 // Auto-scroll
 const tableContainer = ref<HTMLElement | null>(null)
 const autoScroll = ref(true)
+
+function scrollToLatestPacket() {
+  nextTick(() => {
+    const el = tableContainer.value?.querySelector('.ant-table-body')
+    if (el) el.scrollTop = el.scrollHeight
+  })
+}
 
 // ── Computed ───────────────────────────────────────────────────────────────
 
@@ -252,15 +257,65 @@ async function loadInterfaces() {
   }
 }
 
-async function loadPackets() {
-  if (!available.value) return
+async function fetchRetainedPackets(): Promise<CapturePacket[]> {
+  const pageSize = 250
+  const firstPage = await networkApi.getCapturePackets({ offset: 0, limit: pageSize })
+  const pageCount = Math.ceil(Math.min(firstPage.total, 10_000) / pageSize)
+  const rest = await Promise.all(
+    Array.from({ length: Math.max(0, pageCount - 1) }, (_, index) =>
+      networkApi.getCapturePackets({ offset: (index + 1) * pageSize, limit: pageSize }),
+    ),
+  )
+  const byId = new Map<number, CapturePacket>()
+  for (const packet of [...firstPage.packets, ...rest.flatMap((page) => page.packets)]) {
+    byId.set(packet.id, packet)
+  }
+  return [...byId.values()].sort((left, right) => left.id - right.id).slice(-10_000)
+}
+
+async function loadPackets(allowStopped = false) {
+  if (!available.value || (stopRequested.value && !allowStopped)) return
   loading.value = true
   try {
-    const data = await networkApi.getCapturePackets({ limit: 10000 })
-    if (!stopRequested.value) packets.value = data.packets
+    const retained = await fetchRetainedPackets()
+    if (!stopRequested.value || allowStopped) packets.value = retained
   } finally {
     loading.value = false
   }
+}
+
+function pauseDisplay() {
+  if (!running.value || paused.value) return
+  paused.value = true
+  if (packetFlushTimer !== null) {
+    clearTimeout(packetFlushTimer)
+    packetFlushTimer = null
+  }
+}
+
+async function resumeDisplay() {
+  if (!paused.value || !running.value || resumingDisplay.value) return
+  resumingDisplay.value = true
+  try {
+    const retained = await fetchRetainedPackets()
+    if (stopRequested.value || stopping.value || !running.value) return
+
+    const byId = new Map(retained.map((packet) => [packet.id, packet]))
+    for (const packet of pendingPackets) byId.set(packet.id, packet)
+    packets.value = [...byId.values()].sort((left, right) => left.id - right.id).slice(-10_000)
+    cancelPacketFlush()
+    paused.value = false
+    if (autoScroll.value) scrollToLatestPacket()
+  } catch (err: any) {
+    message.error(err?.response?.data?.error || err?.message || 'Failed to refresh captured packets')
+  } finally {
+    resumingDisplay.value = false
+  }
+}
+
+function toggleDisplayPause() {
+  if (paused.value) void resumeDisplay()
+  else pauseDisplay()
 }
 
 async function startCapture() {
@@ -295,6 +350,7 @@ async function stopCapture() {
   disconnectWs()
   try {
     status.value = await networkApi.stopCapture()
+    await loadPackets(true)
     message.success('Capture stopped')
   } catch (err: any) {
     message.error(err?.response?.data?.error || err?.message || 'Failed to stop capture')
@@ -303,6 +359,8 @@ async function stopCapture() {
     if (status.value?.running) {
       stopRequested.value = false
       connectWs()
+    } else {
+      await loadPackets(true)
     }
   } finally {
     stopping.value = false
@@ -343,6 +401,7 @@ async function clearCapture() {
   try {
     await networkApi.clearCapture()
     packets.value = []
+    cancelPacketFlush()
     await loadStatus()
   } catch (err: any) {
     message.error(err?.message || 'Failed to clear capture')
@@ -386,9 +445,13 @@ function connectWs() {
   socket.onerror = () => { if (ws === socket) wsConnected.value = false }
   socket.onmessage = (ev) => {
     if (ws !== socket) return
-    if (paused.value || stopRequested.value || stopping.value) return
+    if (stopRequested.value || stopping.value) return
     try {
       pendingPackets.push(JSON.parse(ev.data) as CapturePacket)
+      if (paused.value) {
+        if (pendingPackets.length > 10_000) pendingPackets.shift()
+        return
+      }
       // Batch reactive table updates to avoid rendering on every incoming packet.
       if (packetFlushTimer === null) packetFlushTimer = setTimeout(flushPacketBatch, PACKET_FLUSH_MS)
     } catch { /* ignore malformed */ }
@@ -426,7 +489,10 @@ onUnmounted(() => {
 // Reconnect WS when capture starts externally
 watch(running, (val) => {
   if (val && !wsConnected.value && !stopping.value && !stopRequested.value) connectWs()
-  if (!val) disconnectWs()
+  if (!val) {
+    disconnectWs()
+    if (!stopping.value) void loadPackets(true)
+  }
 })
 </script>
 
@@ -545,7 +611,18 @@ watch(running, (val) => {
           Export PCAP
         </a-button>
 
-        <a-checkbox v-if="running" v-model:checked="paused">Pause display</a-checkbox>
+        <a-button
+          :type="paused ? 'primary' : 'default'"
+          :disabled="!running || starting || stopping || switchingInterface || resumingDisplay"
+          :loading="resumingDisplay"
+          @click="toggleDisplayPause"
+        >
+          <template #icon>
+            <PlayCircleOutlined v-if="paused" />
+            <PauseOutlined v-else />
+          </template>
+          {{ paused ? 'Resume' : 'Pause' }}
+        </a-button>
       </div>
     </div>
 
