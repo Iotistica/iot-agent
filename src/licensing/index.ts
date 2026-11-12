@@ -5,5 +5,5 @@ export { SqliteLicenseStore } from './store';
 export { verifyLicenseToken, signLicensePayload, LicenseTokenError } from './token';
 
 export { getLicensePublicKey, EMBEDDED_LICENSE_PUBLIC_KEY } from './public-key';
-export { getLicenseService, initLicensing } from './runtime';
+export { getLicenseService, initLicensing, isProLicensed } from './runtime';
 export { bootstrapLicense } from './bootstrap';

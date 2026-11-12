@@ -14,7 +14,7 @@ import { SocketConnection } from './socket.js';
 import { PublishStats } from './stats.js';
 import { HeartbeatManager } from './heartbeat.js';
 import { createHash } from 'crypto';
-import { isProLicensed } from '../../license-gate.js';
+import { isProLicensed } from '../../licensing/runtime.js';
 import { SchemaDriftDetector } from '../../schema-drift/index.js';
 import type { DriftAlertEvent } from '../../schema-drift/index.js';
 import { SchemaDriftModel } from '../../db/models/schema-drift.model.js';

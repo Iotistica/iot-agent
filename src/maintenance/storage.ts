@@ -11,7 +11,7 @@
  * already established in ../anomaly/storage.ts for anomaly_baselines.
  */
 
-import type { AgentDatabase as Database } from '../db-compat.js';
+import type { DatabaseSync as Database } from 'node:sqlite';
 
 export interface AssetRecord {
 	id: number;

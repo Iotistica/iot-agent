@@ -33,7 +33,7 @@ import type { DiscoveryRulesScheduler } from '../discovery/rules-scheduler.js';
 import type { AgentFirewall, FirewallMode } from '../network/firewall.js';
 import type { CaptureEngine } from '../network/capture.js';
 import type { DockerOptions } from 'dockerode';
-import { isProLicensed } from '../license-gate.js';
+import { isProLicensed } from '../licensing/runtime.js';
 
 type AgentInstance = {
 	getLifecycleState: () => string;

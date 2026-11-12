@@ -6,7 +6,7 @@
  * Uses the existing agent.sqlite database with dedicated tables.
  */
 
-import type { AgentDatabase as Database } from '../db-compat.js';
+import type { DatabaseSync as Database } from 'node:sqlite';
 import type { SQLInputValue } from 'node:sqlite';
 import type { AgentLogger } from '../shared/types.js';
 import type { CanonicalDeviceState, StatisticalBuffer } from './types.js';

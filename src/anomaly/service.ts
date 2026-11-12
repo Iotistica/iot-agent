@@ -5,7 +5,7 @@
  * Edge-appropriate anomaly detection for device data and system metrics
  */
 
-import type { AgentDatabase as Database } from '../db-compat.js';
+import type { DatabaseSync as Database } from 'node:sqlite';
 import type { AgentLogger, MqttPayload } from '../shared/types.js';
 import type {
 	DataPoint,

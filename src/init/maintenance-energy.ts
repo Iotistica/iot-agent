@@ -1,6 +1,6 @@
 import { LogComponents } from '../logging/types.js';
 import { DatabaseModel } from '../db/models/index.js';
-import { isProLicensed } from '../license-gate.js';
+import { isProLicensed } from '../licensing/runtime.js';
 import { MaintenanceEnergyService } from '../maintenance/index.js';
 import { CloudMqttClient } from '../mqtt/manager.js';
 import { agentTopic } from '../mqtt/topics.js';

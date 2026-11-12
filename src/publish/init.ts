@@ -13,7 +13,7 @@ import { getDatabase } from '../db/sqlite.js';
 import { CloudMqttClient } from '../mqtt/manager.js';
 import type { DictionaryManager } from '../mqtt/dictionary.js';
 import { EventEmitter } from 'events';
-import { isProLicensed } from '../license-gate.js';
+import { isProLicensed } from '../licensing/runtime.js';
 import { AzurePublishPlugin } from '../destinations/azure-plugin.js';
 import { AwsPublishPlugin } from '../destinations/aws-plugin.js';
 import { GcpPublishPlugin } from '../destinations/gcp-plugin.js';

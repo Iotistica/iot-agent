@@ -9,7 +9,7 @@ import type { AgentLogger } from '../logging/agent-logger';
 import type { AgentInfo } from '../core/types.js';
 import type { AgentInitContext } from './context.js';
 import { LogComponents } from '../logging/types';
-import { isProLicensed } from '../license-gate.js';
+import { isProLicensed } from '../licensing/runtime.js';
 import { JobsFeature } from '../jobs/index.js';
 import { ShellHandler } from '../shell/index.js';
 import { DiscoveryService } from '../discovery/service.js';

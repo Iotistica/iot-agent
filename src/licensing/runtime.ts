@@ -7,9 +7,15 @@ import { LicenseService } from './service';
 import { SqliteLicenseStore } from './store';
 
 let instance: LicenseService | undefined;
+const PRO_STATES = new Set(['trial', 'paid']);
 
 export function getLicenseService(): LicenseService | undefined {
 	return instance;
+}
+
+export function isProLicensed(): boolean {
+	if (process.env.PRO_FORCE === 'true') return true;
+	return PRO_STATES.has(instance?.getStatus().state ?? '');
 }
 
 function envEnabled(value: string | undefined, defaultValue: boolean): boolean {

@@ -31,7 +31,7 @@
  * says this is not.
  */
 
-import type { AgentDatabase as Database } from '../db-compat.js';
+import type { DatabaseSync as Database } from 'node:sqlite';
 import { createBuffer, addValue } from '../anomaly/buffer.js';
 import type { StatisticalBuffer } from '../anomaly/types.js';
 import type { IPublishClient, AgentLogger } from '../shared/types.js';
