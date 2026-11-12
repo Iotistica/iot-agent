@@ -671,7 +671,7 @@ watch(running, (val) => {
   min-width: 145px;
 }
 
-@media (max-width: 1200px) {
+@media (max-width: 1320px) {
   .capture-toolbar {
   margin-bottom: 12px;
   flex-wrap: wrap;
