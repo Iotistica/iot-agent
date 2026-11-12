@@ -2,6 +2,7 @@ import { EventEmitter } from 'events';
 import { spawn, type ChildProcess } from 'child_process';
 import { randomUUID } from 'crypto';
 import { exec } from '../lib/fs-utils.js';
+import { getNetworkInterfaces } from '../system/interfaces.js';
 import type { AgentLogger } from '../logging/agent-logger.js';
 import { LogComponents } from '../logging/types.js';
 import { TcpAssembler, type FlowId, type TcpStreamHandler } from './tcp-assembler.js';
@@ -62,6 +63,13 @@ export interface CaptureStartOptions {
 	iface?: string;
 }
 
+export class CaptureInterfaceError extends Error {
+	constructor(iface: string) {
+		super(`Network interface is not available: ${iface}`);
+		this.name = 'CaptureInterfaceError';
+	}
+}
+
 // ── Well-known port → application protocol ─────────────────────────────────
 
 const WELL_KNOWN_PORTS: Record<number, string> = {
@@ -83,8 +91,9 @@ const IP_PROTOCOL_NAMES: Record<number, string> = {
 export class CaptureEngine extends EventEmitter {
 	private logger: AgentLogger;
 	private _available = false;
-	private state: 'idle' | 'running' | 'stopping' = 'idle';
+	private state: 'idle' | 'starting' | 'running' | 'stopping' = 'idle';
 	private proc: ChildProcess | null = null;
+	private lifecycleQueue: Promise<void> = Promise.resolve();
 	private sessionId: string | null = null;
 	private startedAt: string | null = null;
 
@@ -139,24 +148,91 @@ export class CaptureEngine extends EventEmitter {
 		return this._available;
 	}
 
-	async start(options?: CaptureStartOptions): Promise<CaptureStatus> {
-		if (this.state === 'running') throw new Error('Capture already running');
+	start(options?: CaptureStartOptions): Promise<CaptureStatus> {
+		return this.enqueueLifecycle(() => this.startCapture(options));
+	}
+
+	stop(): Promise<CaptureStatus> {
+		return this.enqueueLifecycle(() => this.stopCapture());
+	}
+
+	switchInterface(options: CaptureStartOptions): Promise<CaptureStatus> {
+		return this.enqueueLifecycle(async () => {
+			if (this.state !== 'running') throw new Error('Capture is not running');
+
+			const previousIface = this.captureIface;
+			const previousFilter = this.captureFilter;
+			const nextIface = await this.validateInterface(options.iface);
+			if (nextIface === previousIface) return this.getStatus();
+
+			await this.stopCapture();
+			try {
+				return await this.startCapture({
+					...options,
+					iface: nextIface,
+					filter: previousFilter ?? undefined,
+					maxPackets: options.maxPackets ?? this.maxPackets,
+				}, true);
+			} catch (switchError) {
+				try {
+					await this.startCapture({
+						iface: previousIface,
+						filter: previousFilter ?? undefined,
+						maxPackets: this.maxPackets,
+					}, true);
+				} catch (restoreError) {
+					throw new AggregateError(
+						[switchError, restoreError],
+						'Interface switch failed and the previous capture could not be restarted'
+					);
+				}
+				throw switchError;
+			}
+		});
+	}
+
+	private enqueueLifecycle<T>(operation: () => Promise<T>): Promise<T> {
+		const result = this.lifecycleQueue.then(operation);
+		this.lifecycleQueue = result.then(() => undefined, () => undefined);
+		return result;
+	}
+
+	private async validateInterface(requested?: string): Promise<string> {
+		const iface = requested || 'any';
+		if (iface === 'any') return iface;
+		if (iface.startsWith('-') || /[\u0000-\u001f\u007f]/.test(iface)) {
+			throw new CaptureInterfaceError(iface);
+		}
+
+		const interfaces = await getNetworkInterfaces();
+		if (!interfaces.some((networkInterface) => networkInterface.name === iface)) {
+			throw new CaptureInterfaceError(iface);
+		}
+		return iface;
+	}
+
+	private async startCapture(
+		options?: CaptureStartOptions,
+		preservePackets = false,
+	): Promise<CaptureStatus> {
+		if (this.state !== 'idle') throw new Error('Capture already running');
 		if (!this._available) throw new Error('Capture not available');
 
-		this.maxPackets = options?.maxPackets ?? 10_000;
-		this.captureIface = options?.iface ?? 'any';
-		this.captureFilter = options?.filter ?? null;
+		const iface = await this.validateInterface(options?.iface);
+		this.maxPackets = options?.maxPackets ?? (preservePackets ? this.maxPackets : 10_000);
+		this.captureIface = iface;
+		this.captureFilter = options?.filter?.trim() || null;
+		if (!preservePackets) {
+			this.clear();
+			this.nextId = 1;
+		}
 
-		this.clear();
 		this.sessionId = randomUUID();
 		this.startedAt = new Date().toISOString();
-		this.state = 'running';
-		this.nextId = 1;
+		this.state = 'starting';
 		this.pcapBuf = Buffer.alloc(0);
 		this.pcapGlobalHeader = null;
-
 		this.initReassembly();
-
 		await this.resolveLocalIps();
 
 		const args = ['-i', this.captureIface, '-U', '-w', '-', '-s', '65535'];
@@ -166,31 +242,63 @@ export class CaptureEngine extends EventEmitter {
 			component: LogComponents.capture,
 		});
 
-		this.proc = spawn(this.tcpdumpPath, args);
-
-		this.proc.stdout?.on('data', (chunk: Buffer) => this.onData(chunk));
-		this.proc.stderr?.on('data', (data: Buffer) => {
+		const proc = this.spawnCaptureProcess(args);
+		this.proc = proc;
+		proc.stdout?.on('data', (chunk: Buffer) => this.onData(chunk));
+		proc.stderr?.on('data', (data: Buffer) => {
 			const msg = data.toString().trim();
-			if (msg) {
-				this.logger.infoSync(`tcpdump: ${msg}`, { component: LogComponents.capture });
-			}
+			if (msg) this.logger.infoSync(`tcpdump: ${msg}`, { component: LogComponents.capture });
 		});
-		this.proc.on('error', (err) => {
+		proc.on('error', (err) => {
 			this.logger.warnSync(`tcpdump process error: ${err.message}`, {
 				component: LogComponents.capture,
 			});
-			this.state = 'idle';
-			this.proc = null;
-			this.emit('status-change', this.getStatus());
+			if (this.proc === proc && this.state !== 'stopping') {
+				this.state = 'idle';
+				this.proc = null;
+				this.teardownReassembly();
+				this.emit('status-change', this.getStatus());
+			}
 		});
-		this.proc.on('close', (code) => {
+		proc.on('close', (code) => {
 			this.logger.infoSync(`tcpdump exited with code ${code}`, {
 				component: LogComponents.capture,
 			});
-			this.state = 'idle';
-			this.proc = null;
-			this.emit('status-change', this.getStatus());
+			if (this.proc === proc && this.state !== 'stopping') {
+				this.state = 'idle';
+				this.proc = null;
+				this.teardownReassembly();
+				this.emit('status-change', this.getStatus());
+			}
 		});
+
+		try {
+			await new Promise<void>((resolve, reject) => {
+				const onSpawn = () => {
+					if (this.proc !== proc || this.state !== 'starting') {
+						reject(new Error('Capture start was interrupted'));
+						return;
+					}
+					this.state = 'running';
+					resolve();
+				};
+				const onError = (error: Error) => reject(error);
+				const onEarlyClose = (code: number | null) => {
+					reject(new Error(`tcpdump exited before starting (code ${code ?? 'unknown'})`));
+				};
+				proc.once('spawn', onSpawn);
+				proc.once('error', onError);
+				proc.once('close', onEarlyClose);
+				proc.once('spawn', () => proc.off('close', onEarlyClose));
+			});
+		} catch (error) {
+			if (this.proc === proc) {
+				this.proc = null;
+				this.state = 'idle';
+				this.teardownReassembly();
+			}
+			throw error;
+		}
 
 		this.logger.infoSync('Packet capture started', {
 			component: LogComponents.capture,
@@ -198,20 +306,37 @@ export class CaptureEngine extends EventEmitter {
 			iface: this.captureIface,
 			filter: this.captureFilter,
 		});
-
 		this.emit('status-change', this.getStatus());
 		return this.getStatus();
 	}
 
-	stop(): CaptureStatus {
-		if (this.state !== 'running') return this.getStatus();
+	private spawnCaptureProcess(args: string[]): ChildProcess {
+		return spawn(this.tcpdumpPath, args);
+	}
+
+	private async stopCapture(): Promise<CaptureStatus> {
+		if (this.state === 'idle') return this.getStatus();
+
 		this.state = 'stopping';
-		if (this.proc) {
-			this.proc.stdout?.removeAllListeners('data');
-			this.proc.stderr?.removeAllListeners('data');
-			this.proc.kill('SIGKILL');
-			this.proc = null;
+		const proc = this.proc;
+		if (proc) {
+			proc.stdout?.removeAllListeners('data');
+			proc.stderr?.removeAllListeners('data');
+			await new Promise<void>((resolve) => {
+				let killTimer: ReturnType<typeof setTimeout>;
+				const onClose = () => {
+					clearTimeout(killTimer);
+					resolve();
+				};
+				proc.once('close', onClose);
+				killTimer = setTimeout(() => {
+					if (proc.exitCode === null && proc.signalCode === null) proc.kill('SIGKILL');
+				}, 5_000);
+				proc.kill('SIGINT');
+			});
 		}
+
+		if (this.proc === proc) this.proc = null;
 		this.pcapBuf = Buffer.alloc(0);
 		this.teardownReassembly();
 		this.state = 'idle';

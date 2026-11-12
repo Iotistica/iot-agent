@@ -14,6 +14,7 @@ import {
   type CapturePacket,
   type CaptureStatusData,
   type CapturePacketDetail,
+  type NetworkInterfaceInfo,
 } from '@/api/network'
 
 // ── State ──────────────────────────────────────────────────────────────────
@@ -24,6 +25,30 @@ const packets = ref<CapturePacket[]>([])
 const loading = ref(false)
 const starting = ref(false)
 const stopping = ref(false)
+const switchingInterface = ref(false)
+const interfacesLoading = ref(false)
+const interfacesLoadError = ref(false)
+const networkInterfaces = ref<NetworkInterfaceInfo[]>([])
+
+function readSelectedInterface(): string {
+  try {
+    return typeof window === 'undefined'
+      ? 'any'
+      : window.sessionStorage.getItem('iotistica.capture.interface') || 'any'
+  } catch {
+    return 'any'
+  }
+}
+
+function saveSelectedInterface(iface: string) {
+  try {
+    window.sessionStorage.setItem('iotistica.capture.interface', iface)
+  } catch {
+    // Keep selection in memory when session storage is unavailable.
+  }
+}
+
+const selectedInterface = ref(readSelectedInterface())
 
 // Filters (client-side)
 const filterDirection = ref<string | undefined>(undefined)
@@ -50,6 +75,10 @@ const autoScroll = ref(true)
 // ── Computed ───────────────────────────────────────────────────────────────
 
 const running = computed(() => status.value?.running ?? false)
+const selectedInterfaceUnavailable = computed(() =>
+  selectedInterface.value !== 'any' &&
+  !networkInterfaces.value.some((iface) => iface.name === selectedInterface.value),
+)
 
 const filteredPackets = computed(() => {
   let result = packets.value
@@ -147,6 +176,21 @@ function getProtocolColor(proto: string): string {
   return protocolColors[proto] ?? 'default'
 }
 
+function formatCaptureInterface(iface: string): string {
+  return iface === 'any' ? 'Any interface' : iface
+}
+
+function getInterfaceLabel(iface: NetworkInterfaceInfo): string {
+  const type = iface.type?.toLowerCase()
+  const typeLabel = type === 'wireless' || type === 'wifi'
+    ? 'Wi-Fi'
+    : type === 'wired' || type === 'ethernet'
+      ? 'Ethernet'
+      : iface.type ?? ''
+  const displayType = iface.virtual ? (typeLabel ? `Virtual ${typeLabel}` : 'Virtual') : typeLabel
+  return displayType ? `${iface.name} — ${displayType}` : iface.name
+}
+
 // ── Actions ────────────────────────────────────────────────────────────────
 
 async function loadStatus() {
@@ -154,8 +198,27 @@ async function loadStatus() {
     const data = await networkApi.getCaptureStatus()
     available.value = data.available
     status.value = data.status
+    if (data.status?.running) {
+      selectedInterface.value = data.status.iface || 'any'
+      saveSelectedInterface(selectedInterface.value)
+    }
   } catch {
     available.value = false
+    status.value = null
+  }
+}
+
+async function loadInterfaces() {
+  interfacesLoading.value = true
+  interfacesLoadError.value = false
+  try {
+    const interfaces = await networkApi.getInterfaces()
+    networkInterfaces.value = Array.from(new Map(interfaces.map((iface) => [iface.name, iface])).values())
+  } catch {
+    networkInterfaces.value = []
+    interfacesLoadError.value = true
+  } finally {
+    interfacesLoading.value = false
   }
 }
 
@@ -171,34 +234,69 @@ async function loadPackets() {
 }
 
 async function startCapture() {
+  if (starting.value || stopping.value || switchingInterface.value) return
   starting.value = true
   try {
-    const opts: { filter?: string } = {}
+    const opts: { filter?: string; iface: string } = { iface: selectedInterface.value }
     if (bpfFilter.value.trim()) opts.filter = bpfFilter.value.trim()
-    await networkApi.startCapture(opts)
+    const result = await networkApi.startCapture(opts)
+    status.value = result.status
+    selectedInterface.value = result.status.iface
+    saveSelectedInterface(selectedInterface.value)
     packets.value = []
     paused.value = false
-    await loadStatus()
     connectWs()
     message.success('Capture started')
   } catch (err: any) {
     message.error(err?.response?.data?.error || err?.message || 'Failed to start capture')
+    await loadStatus()
   } finally {
     starting.value = false
   }
 }
 
 async function stopCapture() {
+  if (starting.value || stopping.value || switchingInterface.value) return
   stopping.value = true
   try {
-    await networkApi.stopCapture()
+    status.value = await networkApi.stopCapture()
     disconnectWs()
-    await loadStatus()
     message.success('Capture stopped')
   } catch (err: any) {
     message.error(err?.message || 'Failed to stop capture')
+    await loadStatus()
   } finally {
     stopping.value = false
+  }
+}
+
+async function handleInterfaceChange(value: string) {
+  const nextInterface = value || 'any'
+  const previousInterface = selectedInterface.value
+  if (nextInterface === previousInterface || switchingInterface.value) return
+
+  if (!running.value) {
+    selectedInterface.value = nextInterface
+    saveSelectedInterface(nextInterface)
+    return
+  }
+
+  switchingInterface.value = true
+  try {
+    const result = await networkApi.switchCaptureInterface({
+      iface: nextInterface,
+      filter: bpfFilter.value.trim() || undefined,
+    })
+    status.value = result.status
+    selectedInterface.value = result.status.iface
+    saveSelectedInterface(selectedInterface.value)
+    message.success(`Capture switched to ${formatCaptureInterface(result.status.iface)}`)
+  } catch (err: any) {
+    message.error(err?.response?.data?.error || err?.message || 'Failed to switch capture interface')
+    await loadStatus()
+    selectedInterface.value = status.value?.running ? status.value.iface : previousInterface
+  } finally {
+    switchingInterface.value = false
   }
 }
 
@@ -277,7 +375,7 @@ function disconnectWs() {
 // ── Lifecycle ──────────────────────────────────────────────────────────────
 
 onMounted(async () => {
-  await loadStatus()
+  await Promise.all([loadStatus(), loadInterfaces()])
   if (running.value) {
     await loadPackets()
     connectWs()
@@ -308,7 +406,7 @@ watch(running, (val) => {
     <!-- Status bar -->
     <div v-if="status" class="status-bar">
       <a-tag :color="running ? 'green' : 'default'">
-        {{ running ? 'Running' : 'Stopped' }}
+        {{ running ? `Capturing · ${formatCaptureInterface(status.iface)}` : 'Stopped' }}
       </a-tag>
       <a-tag v-if="wsConnected" color="blue">Live</a-tag>
       <template v-if="status.counters.seen > 0">
@@ -321,13 +419,67 @@ watch(running, (val) => {
       </template>
     </div>
 
-    <!-- Controls -->
-    <div class="controls-bar">
-      <a-space>
+    <!-- Filters and actions -->
+    <div class="capture-toolbar">
+      <div class="capture-filters">
+        <a-select
+          :value="selectedInterface"
+          class="toolbar-interface"
+          :loading="interfacesLoading || switchingInterface"
+          :disabled="starting || stopping || switchingInterface"
+          :not-found-content="interfacesLoadError ? 'Could not load interfaces' : 'No interfaces found'"
+          @change="handleInterfaceChange"
+        >
+          <a-select-option value="any">Any interface (all)</a-select-option>
+          <a-select-option v-if="selectedInterfaceUnavailable" :value="selectedInterface">
+            {{ selectedInterface }} (unavailable)
+          </a-select-option>
+          <a-select-option v-for="iface in networkInterfaces" :key="iface.name" :value="iface.name">
+            {{ getInterfaceLabel(iface) }}
+          </a-select-option>
+        </a-select>
+
+        <a-input
+          v-model:value="bpfFilter"
+          class="toolbar-bpf"
+          placeholder="BPF filter"
+          :disabled="running || starting || stopping || switchingInterface"
+          @pressEnter="startCapture"
+        />
+
+        <a-select
+          v-model:value="filterDirection"
+          placeholder="Direction"
+          allow-clear
+          class="toolbar-direction"
+          :get-popup-container="(t: HTMLElement) => t.parentElement!"
+        >
+          <a-select-option value="inbound">Inbound</a-select-option>
+          <a-select-option value="outbound">Outbound</a-select-option>
+        </a-select>
+
+        <a-select
+          v-model:value="filterProtocol"
+          placeholder="Protocol"
+          allow-clear
+          class="toolbar-protocol"
+          :get-popup-container="(t: HTMLElement) => t.parentElement!"
+        >
+          <a-select-option v-for="p in uniqueProtocols" :key="p" :value="p">{{ p }}</a-select-option>
+        </a-select>
+
+        <a-input v-model:value="filterSearch" placeholder="Search..." allow-clear class="toolbar-search">
+          <template #prefix><SearchOutlined /></template>
+        </a-input>
+      </div>
+
+      <div class="capture-actions">
+        <a-checkbox v-model:checked="autoScroll">Auto-scroll</a-checkbox>
         <a-button
           v-if="!running"
           type="primary"
           :loading="starting"
+          :disabled="stopping || switchingInterface"
           @click="startCapture"
         >
           <template #icon><PlayCircleOutlined /></template>
@@ -337,13 +489,14 @@ watch(running, (val) => {
           v-else
           danger
           :loading="stopping"
+          :disabled="starting || switchingInterface"
           @click="stopCapture"
         >
           <template #icon><PauseCircleOutlined /></template>
           Stop
         </a-button>
 
-        <a-button :disabled="packets.length === 0" @click="clearCapture">
+        <a-button :disabled="packets.length === 0 || starting || stopping || switchingInterface" @click="clearCapture">
           <template #icon><ClearOutlined /></template>
           Clear
         </a-button>
@@ -354,49 +507,7 @@ watch(running, (val) => {
         </a-button>
 
         <a-checkbox v-if="running" v-model:checked="paused">Pause display</a-checkbox>
-        <a-checkbox v-model:checked="autoScroll">Auto-scroll</a-checkbox>
-      </a-space>
-
-      <a-input
-        v-model:value="bpfFilter"
-        placeholder="BPF filter (e.g. port 1883)"
-        style="width: 240px"
-        :disabled="running"
-        @pressEnter="startCapture"
-      />
-    </div>
-
-    <!-- Filters -->
-    <div class="filter-bar">
-      <a-select
-        v-model:value="filterDirection"
-        placeholder="Direction"
-        allow-clear
-        style="width: 130px"
-        :get-popup-container="(t: HTMLElement) => t.parentElement!"
-      >
-        <a-select-option value="inbound">Inbound</a-select-option>
-        <a-select-option value="outbound">Outbound</a-select-option>
-      </a-select>
-
-      <a-select
-        v-model:value="filterProtocol"
-        placeholder="Protocol"
-        allow-clear
-        style="width: 150px"
-        :get-popup-container="(t: HTMLElement) => t.parentElement!"
-      >
-        <a-select-option v-for="p in uniqueProtocols" :key="p" :value="p">{{ p }}</a-select-option>
-      </a-select>
-
-      <a-input
-        v-model:value="filterSearch"
-        placeholder="Search..."
-        style="width: 220px"
-        allow-clear
-      >
-        <template #prefix><SearchOutlined /></template>
-      </a-input>
+      </div>
     </div>
 
     <!-- Packet table -->

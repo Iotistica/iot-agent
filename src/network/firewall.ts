@@ -420,6 +420,7 @@ export class AgentFirewall {
 				{ component: LogComponents.firewall, mode }
 			);
 			if (rollbackError) {
+				this.initialized = false;
 				throw new AggregateError(
 					[error, rollbackError],
 					'Firewall mode application and rollback both failed'

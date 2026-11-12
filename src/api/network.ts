@@ -4,7 +4,7 @@ import { exec } from '../lib/fs-utils.js';
 import type { Rule } from '../lib/iptables.js';
 import { getNetworkInterfaces } from '../system/interfaces.js';
 import { getFirewall, getDockerPortBindings, getCaptureEngine, persistFirewallMode } from './actions.js';
-import type { CaptureFilter, CapturedPacket } from '../network/capture.js';
+import { CaptureInterfaceError, type CaptureFilter, type CapturedPacket, type CaptureStartOptions } from '../network/capture.js';
 import { requireRole } from './middleware/roles.js';
 import { getDecoderRegistry, type PacketMeta } from '../network/decoders/index.js';
 
@@ -360,25 +360,32 @@ networkRouter.post('/v1/network/capture/start', requireRole('admin'), async (req
 	}
 
 	try {
-		const status = await engine.start({
-			filter: req.body.filter,
-			maxPackets: req.body.maxPackets,
-			iface: req.body.iface,
-		});
+		const options: CaptureStartOptions = {
+			filter: req.body?.filter,
+			maxPackets: req.body?.maxPackets,
+			iface: req.body?.iface,
+		};
+		const status = req.body?.switchInterface === true
+			? await engine.switchInterface(options)
+			: await engine.start(options);
 		res.json({ sessionId: status.sessionId, status });
 	} catch (err) {
 		const msg = err instanceof Error ? err.message : 'Failed to start capture';
-		const code = msg.includes('already running') ? 409 : 500;
+		const code = err instanceof CaptureInterfaceError
+			? 400
+			: msg.includes('already running') || msg.includes('not running')
+				? 409
+				: 500;
 		res.status(code).json({ error: msg });
 	}
 });
 
-networkRouter.post('/v1/network/capture/stop', requireRole('admin'), (_req: Request, res: Response) => {
+networkRouter.post('/v1/network/capture/stop', requireRole('admin'), async (_req: Request, res: Response) => {
 	const engine = getCaptureEngine();
 	if (!engine?.available) {
 		return res.status(503).json({ error: 'Packet capture not available' });
 	}
-	res.json(engine.stop());
+	res.json(await engine.stop());
 });
 
 networkRouter.post('/v1/network/capture/clear', requireRole('admin'), (_req: Request, res: Response) => {

@@ -132,6 +132,11 @@ export interface CaptureStatusResponse {
   status: CaptureStatusData | null
 }
 
+export interface CaptureStartResponse {
+  sessionId: string | null
+  status: CaptureStatusData
+}
+
 export interface CapturePacketsResponse {
   packets: CapturePacket[]
   total: number
@@ -162,8 +167,11 @@ export const networkApi = {
   // Capture
   getCaptureStatus: () => client.get<CaptureStatusResponse>('/v1/network/capture/status').then((r) => r.data),
 
-  startCapture: (opts?: { filter?: string; maxPackets?: number }) =>
-    client.post('/v1/network/capture/start', opts ?? {}).then((r) => r.data),
+  startCapture: (opts?: { filter?: string; maxPackets?: number; iface?: string }) =>
+    client.post<CaptureStartResponse>('/v1/network/capture/start', opts ?? {}).then((r) => r.data),
+
+  switchCaptureInterface: (opts: { iface: string; filter?: string; maxPackets?: number }) =>
+    client.post<CaptureStartResponse>('/v1/network/capture/start', { ...opts, switchInterface: true }).then((r) => r.data),
 
   stopCapture: () => client.post('/v1/network/capture/stop').then((r) => r.data),
 

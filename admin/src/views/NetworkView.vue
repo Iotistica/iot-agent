@@ -145,6 +145,7 @@ async function applyFirewallMode(mode: 'on' | 'off') {
       firewallData.value = await networkApi.getFirewall()
       message.success(`Firewall turned ${mode.toUpperCase()}`)
     } catch {
+      firewallData.value = { ...firewallData.value!, systemRules: [] }
       message.error('Firewall mode changed, but its rules could not be refreshed')
     }
   } catch (err: any) {

@@ -184,4 +184,20 @@ describe('AgentFirewall', () => {
 		expect(applyRules).toHaveBeenCalledTimes(2);
 		expect(firewall.getStatus()).toMatchObject({ mode: 'on', enabled: true, initialized: true });
 	});
+
+	it('marks firewall state unverified when apply and rollback both fail', async () => {
+		const firewall = new AgentFirewall({
+			enabled: true,
+			mode: 'on',
+			deviceApiPort: 48484,
+		}, createLogger());
+		(firewall as unknown as { initialized: boolean }).initialized = true;
+		jest.spyOn(firewall as any, 'applyFirewallRules')
+			.mockRejectedValueOnce(new Error('IPv6 apply failed'))
+			.mockRejectedValueOnce(new Error('IPv6 rollback failed'));
+
+		await expect(firewall.updateMode('off')).rejects.toThrow('both failed');
+
+		expect(firewall.getStatus()).toMatchObject({ mode: 'on', initialized: false });
+	});
 });
