@@ -207,7 +207,10 @@ export class StateManager extends EventEmitter {
 	* Use this for state updates that should not trigger a reconciliation cycle,
 	* such as merging discovered metrics during initialization.
 	*/
-	public async updateTargetStateQuietly(state: AgentState): Promise<void> {
+	public async updateTargetStateQuietly(
+		state: AgentState,
+		options: { throwOnSaveError?: boolean } = {},
+	): Promise<void> {
 		this.logger?.debugSync('Updating target state quietly (no reconciliation)', {
 			component: LogComponents.stateReconciler,
 			operation: 'updateTargetStateQuietly',
@@ -216,6 +219,7 @@ export class StateManager extends EventEmitter {
 		});
 
 		// Update target state without triggering events or reconciliation
+		const previousTargetState = this.targetState;
 		this.targetState = cloneDeep(state);
 		
 		// Ensure config field exists
@@ -227,7 +231,13 @@ export class StateManager extends EventEmitter {
 		this.configManager.loadTarget(this.targetState.config);
 
 		// Persist to database only (no events, no reconciliation)
-		await this.saveTargetStateToDB();
+		try {
+			await this.saveTargetStateToDB(options.throwOnSaveError ?? false);
+		} catch (error) {
+			this.targetState = previousTargetState;
+			this.configManager.loadTarget(previousTargetState.config ?? {});
+			throw error;
+		}
 	}
 
 	/**
@@ -538,7 +548,7 @@ export class StateManager extends EventEmitter {
 	/**
 	* Save target state to database
 	*/
-	private async saveTargetStateToDB(): Promise<void> {
+	private async saveTargetStateToDB(throwOnError = false): Promise<void> {
 		try {
 			const stateHash = this.getStateHash(this.targetState);
 			// Skip if state hasn't changed
@@ -550,11 +560,10 @@ export class StateManager extends EventEmitter {
 				return;
 			}
 
-			this.lastSavedStateHash = stateHash;
-
 			const stateJson = JSON.stringify(this.targetState);
 
 			StateSnapshotModel.appendAndTrim('target', stateJson, stateHash, 2);
+			this.lastSavedStateHash = stateHash;
 
 		} catch (error) {
 			this.logger?.errorSync(
@@ -565,6 +574,7 @@ export class StateManager extends EventEmitter {
 					operation: 'saveTargetState',
 				}
 			);
+			if (throwOnError) throw error;
 		}
 	}
 

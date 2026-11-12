@@ -48,6 +48,8 @@ export interface FirewallStatus {
   mqttPort?: number
 }
 
+export type ManualFirewallMode = 'on' | 'off'
+
 export interface FirewallResponse {
   available: boolean
   status: FirewallStatus | null
@@ -144,6 +146,9 @@ export const networkApi = {
     client.get<{ interfaces: NetworkInterfaceInfo[] }>('/v1/network/interfaces').then((r) => r.data.interfaces),
 
   getFirewall: () => client.get<FirewallResponse>('/v1/network/firewall').then((r) => r.data),
+
+  updateFirewallMode: (mode: ManualFirewallMode) =>
+    client.put<{ status: FirewallStatus }>('/v1/network/firewall/mode', { mode }).then((r) => r.data.status),
 
   addRule: (rule: FirewallRuleInput) => client.post<FirewallRule>('/v1/network/firewall/rules', rule).then((r) => r.data),
 

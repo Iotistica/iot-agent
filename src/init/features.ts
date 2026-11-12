@@ -579,7 +579,6 @@ export class FeatureInitializer {
 			logger.debugSync('Firewall disabled by configuration', {
 				component: LogComponents.agent,
 			});
-			return;
 		}
 
 		const hasRoot = typeof process.getuid === 'function' && process.getuid!() === 0;
@@ -596,7 +595,7 @@ export class FeatureInitializer {
 
 		this.features.firewall = new AgentFirewall(
 			{
-				enabled: true,
+				enabled: firewallMode !== 'disabled',
 				mode: firewallMode as 'on' | 'off' | 'auto' | 'disabled',
 				deviceApiPort,
 				mqttPort,

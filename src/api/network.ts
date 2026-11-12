@@ -3,12 +3,19 @@ import type { Request, Response } from 'express';
 import { exec } from '../lib/fs-utils.js';
 import type { Rule } from '../lib/iptables.js';
 import { getNetworkInterfaces } from '../system/interfaces.js';
-import { getFirewall, getDockerPortBindings, getCaptureEngine } from './actions.js';
+import { getFirewall, getDockerPortBindings, getCaptureEngine, persistFirewallMode } from './actions.js';
 import type { CaptureFilter, CapturedPacket } from '../network/capture.js';
 import { requireRole } from './middleware/roles.js';
 import { getDecoderRegistry, type PacketMeta } from '../network/decoders/index.js';
 
 export const networkRouter = express.Router();
+let firewallModeUpdateQueue: Promise<void> = Promise.resolve();
+
+function enqueueFirewallModeUpdate<T>(operation: () => Promise<T>): Promise<T> {
+	const result = firewallModeUpdateQueue.then(operation);
+	firewallModeUpdateQueue = result.then(() => undefined, () => undefined);
+	return result;
+}
 
 export type SystemFirewallRuleAction = 'ACCEPT' | 'REJECT' | 'DROP' | 'RETURN';
 
@@ -102,6 +109,42 @@ networkRouter.get('/v1/network/firewall', async (_req: Request, res: Response) =
 		systemRules: normalizeSystemFirewallRules(await fw.getSystemRules()),
 		reservedPorts: fw.getReservedPorts(),
 	});
+});
+
+networkRouter.put('/v1/network/firewall/mode', requireRole('admin'), async (req: Request, res: Response) => {
+	const mode = req.body?.mode;
+	if (mode !== 'on' && mode !== 'off') {
+		return res.status(400).json({ error: 'mode must be "on" or "off"' });
+	}
+
+	const fw = getFirewall();
+	if (!fw) {
+		return res.status(503).json({ error: 'Firewall manager is not initialized' });
+	}
+
+	try {
+		const status = await enqueueFirewallModeUpdate(async () => {
+			const previousPersistedMode = await persistFirewallMode(mode);
+			try {
+				return await fw.updateMode(mode);
+			} catch (applyError) {
+				try {
+					await persistFirewallMode(previousPersistedMode);
+				} catch (persistError) {
+					throw new AggregateError(
+						[applyError, persistError],
+						'Firewall apply failed and the previous mode could not be restored in persistent settings'
+					);
+				}
+				throw applyError;
+			}
+		});
+		return res.json({ status });
+	} catch (error) {
+		return res.status(500).json({
+			error: error instanceof Error ? error.message : 'Failed to update firewall mode',
+		});
+	}
 });
 
 networkRouter.post('/v1/network/firewall/rules', requireRole('admin'), async (req: Request, res: Response) => {

@@ -30,7 +30,7 @@ import { TailscaleManager } from '../network/vpn/tailscale-manager';
 import type { TailscaleConfig, TailscaleStatus } from '../network/vpn/tailscale-manager';
 import type { DevicePublish } from '../publish/index.js';
 import type { DiscoveryRulesScheduler } from '../discovery/rules-scheduler.js';
-import type { AgentFirewall } from '../network/firewall.js';
+import type { AgentFirewall, FirewallMode } from '../network/firewall.js';
 import type { CaptureEngine } from '../network/capture.js';
 import type { DockerOptions } from 'dockerode';
 import { isProLicensed } from '../license-gate.js';
@@ -422,6 +422,27 @@ export function setConfigManager(cm: ConfigManager | undefined): void {
  */
 export function setStateManager(sm: StateManager | undefined): void {
 	stateManager = sm;
+}
+
+export async function persistFirewallMode(mode: FirewallMode | undefined): Promise<FirewallMode | undefined> {
+	if (!stateManager) throw new Error('State manager not initialized');
+
+	const targetState = stateManager.getTargetState();
+	const config = targetState.config ?? {};
+	const settings = { ...(config.settings ?? {}) };
+	const previousMode = settings.firewallMode as FirewallMode | undefined;
+
+	if (mode === undefined) {
+		delete settings.firewallMode;
+	} else {
+		settings.firewallMode = mode;
+	}
+
+	await stateManager.updateTargetStateQuietly(
+		{ ...targetState, config: { ...config, settings } },
+		{ throwOnSaveError: true },
+	);
+	return previousMode;
 }
 
 /**

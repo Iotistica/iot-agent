@@ -16,9 +16,19 @@ import { build, getDefaultRuleAdaptor, RuleAction, type Rule } from '../lib/ipta
 import { FirewallRuleModel, type FirewallRule } from '../db/models/firewall-rule.model';
 import { getLocalLanNetworks, type LocalLanNetworks } from './utils';
 
+export type FirewallMode = 'on' | 'off' | 'auto' | 'disabled';
+
+export interface FirewallStatus {
+	enabled: boolean;
+	initialized: boolean;
+	mode: FirewallMode;
+	deviceApiPort: number;
+	mqttPort?: number;
+}
+
 export interface FirewallConfig {
   enabled: boolean;
-  mode: 'on' | 'off' | 'auto' | 'disabled';
+  mode: FirewallMode;
   deviceApiPort: number;
   mqttPort?: number;
   allowedLanNetworks?: string[];
@@ -48,6 +58,7 @@ export class AgentFirewall {
 	private logger: AgentLogger;
 	private config: FirewallConfig;
 	private initialized: boolean = false;
+	private modeChangeQueue: Promise<void> = Promise.resolve();
 
 	constructor(config: FirewallConfig, logger: AgentLogger) {
 		this.config = {
@@ -348,15 +359,66 @@ export class AgentFirewall {
 	/**
    * Update firewall mode dynamically
    */
-	async updateMode(mode: 'on' | 'off' | 'auto'): Promise<void> {
+	async updateMode(mode: Exclude<FirewallMode, 'disabled'>): Promise<FirewallStatus> {
+		const operation = this.modeChangeQueue.then(() => this.applyModeChange(mode));
+		this.modeChangeQueue = operation.then(() => undefined, () => undefined);
+		return operation;
+	}
+
+	private async applyModeChange(mode: Exclude<FirewallMode, 'disabled'>): Promise<FirewallStatus> {
+		const previousMode = this.config.mode;
+		const wasEnabled = this.config.enabled;
+		const wasInitialized = this.initialized;
+
 		this.logger.debugSync('Updating firewall mode', {
 			component: LogComponents.firewall,
-			from: this.config.mode,
+			from: previousMode,
 			to: mode,
 		});
 
 		this.config.mode = mode;
-		await this.applyFirewallRules();
+		this.config.enabled = true;
+		try {
+			await this.applyFirewallRules();
+			this.initialized = true;
+			this.logger.infoSync('Firewall mode applied', {
+				component: LogComponents.firewall,
+				from: previousMode,
+				to: mode,
+			});
+			return this.getStatus();
+		} catch (error) {
+			this.config.mode = previousMode;
+			this.config.enabled = wasEnabled;
+			this.initialized = wasInitialized;
+
+			let rollbackError: unknown;
+			try {
+				if (wasInitialized) {
+					await this.applyFirewallRules();
+				} else {
+					this.initialized = true;
+					await this.stop({ throwOnError: true });
+				}
+			} catch (rollbackFailure) {
+				rollbackError = rollbackFailure;
+			} finally {
+				this.initialized = wasInitialized;
+			}
+
+			this.logger.errorSync(
+				'Failed to apply firewall mode; previous mode restored',
+				error instanceof Error ? error : new Error(String(error)),
+				{ component: LogComponents.firewall, mode }
+			);
+			if (rollbackError) {
+				throw new AggregateError(
+					[error, rollbackError],
+					'Firewall mode application and rollback both failed'
+				);
+			}
+			throw error;
+		}
 	}
 
 	/**
@@ -383,7 +445,7 @@ export class AgentFirewall {
 	/**
    * Stop firewall and remove all rules
    */
-	async stop(): Promise<void> {
+	async stop(options: { throwOnError?: boolean } = {}): Promise<void> {
 		if (!this.initialized) {
 			return;
 		}
@@ -439,6 +501,7 @@ export class AgentFirewall {
 					component: LogComponents.firewall,
 				}
 			);
+			if (options.throwOnError) throw error;
 		}
 	}
 
@@ -522,13 +585,7 @@ export class AgentFirewall {
 	/**
    * Get current firewall status
    */
-	getStatus(): {
-    enabled: boolean;
-    initialized: boolean;
-    mode: string;
-    deviceApiPort: number;
-    mqttPort?: number;
-    } {
+	getStatus(): FirewallStatus {
 		return {
 			enabled: this.config.enabled,
 			initialized: this.initialized,

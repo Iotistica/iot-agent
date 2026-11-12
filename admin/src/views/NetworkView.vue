@@ -42,6 +42,17 @@ watch(activeTab, (tab) => {
 
 const firewallData = ref<FirewallResponse | null>(null)
 const firewallLoading = ref(false)
+const firewallModeChanging = ref(false)
+
+const manualFirewallMode = computed(() => {
+  const mode = firewallData.value?.status?.mode
+  return mode === 'on' || mode === 'off'
+})
+
+const firewallIsActive = computed(() => {
+  const status = firewallData.value?.status
+  return !!status?.initialized && (status.mode === 'on' || status.mode === 'auto')
+})
 
 type InboundRule = FirewallRule | SystemFirewallRule
 
@@ -109,6 +120,59 @@ async function loadFirewall() {
   } finally {
     firewallLoading.value = false
   }
+}
+
+async function refreshFirewallAfterModeChange() {
+  try {
+    firewallData.value = await networkApi.getFirewall()
+  } catch {
+    firewallData.value = null
+    message.error('Could not refresh firewall status and rules')
+  }
+}
+
+async function applyFirewallMode(mode: 'on' | 'off') {
+  if (firewallModeChanging.value) return
+
+  firewallModeChanging.value = true
+  try {
+    const status = await networkApi.updateFirewallMode(mode)
+    if (firewallData.value) {
+      firewallData.value = { ...firewallData.value, available: status.enabled, status }
+    }
+    try {
+      firewallData.value = await networkApi.getFirewall()
+      message.success(`Firewall turned ${mode.toUpperCase()}`)
+    } catch {
+      message.error('Firewall mode changed, but its rules could not be refreshed')
+    }
+  } catch (err: any) {
+    message.error(err?.response?.data?.error || err?.message || 'Failed to change firewall mode')
+    await refreshFirewallAfterModeChange()
+  } finally {
+    firewallModeChanging.value = false
+  }
+}
+
+function handleFirewallSwitchChange(enabled: boolean) {
+  if (firewallModeChanging.value) return
+  if (enabled) {
+    void applyFirewallMode('on')
+    return
+  }
+
+  Modal.confirm({
+    title: 'Disable Firewall?',
+    content: 'Disabling the Iotistica firewall removes its managed network restrictions. Other system firewall rules may still apply. Do you want to continue?',
+    okText: 'Disable Firewall',
+    cancelText: 'Cancel',
+    okType: 'danger',
+    onOk: () => applyFirewallMode('off'),
+  })
+}
+
+function switchToManualFirewall() {
+  void applyFirewallMode('on')
 }
 
 async function loadNetworkInterfaces() {
@@ -229,20 +293,36 @@ onMounted(() => {
         <template #tab><SafetyCertificateOutlined /> Firewall</template>
 
         <a-alert
-          v-if="firewallData && !firewallData.available"
+          v-if="firewallData && !firewallData.status"
           message="Firewall management is not available in this deployment mode"
           type="info"
           show-icon
           style="margin-bottom: 16px"
         />
 
-        <template v-if="firewallData?.available && firewallData.status">
+        <template v-if="firewallData?.status">
           <div class="status-bar">
-            <a-tag :color="firewallData.status.mode === 'on' ? 'green' : firewallData.status.mode === 'off' ? 'red' : 'blue'">
-              Mode: {{ firewallData.status.mode }}
+            <a-switch
+              :checked="firewallData.status.mode === 'on'"
+              checked-children="ON"
+              un-checked-children="OFF"
+              :loading="firewallModeChanging"
+              :disabled="firewallModeChanging || !manualFirewallMode"
+              @change="handleFirewallSwitchChange"
+            />
+            <a-tag v-if="!manualFirewallMode" color="blue">
+              Mode: {{ firewallData.status.mode.toUpperCase() }}
             </a-tag>
-            <a-tag :color="firewallData.status.initialized ? 'green' : 'default'">
-              {{ firewallData.status.initialized ? 'Active' : 'Inactive' }}
+            <a-button
+              v-if="!manualFirewallMode"
+              size="small"
+              :disabled="firewallModeChanging"
+              @click="switchToManualFirewall"
+            >
+              Switch to manual (ON)
+            </a-button>
+            <a-tag :color="firewallIsActive ? 'green' : 'default'">
+              {{ firewallIsActive ? 'Active' : 'Inactive' }}
             </a-tag>
           </div>
         </template>
