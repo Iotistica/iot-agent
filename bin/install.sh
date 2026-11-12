@@ -35,19 +35,61 @@ set -e
 SCRIPT_VERSION="AGENT_VERSION_PLACEHOLDER"
 BUILD_ID="BUILD_ID_PLACEHOLDER"
 
-echo "--------------------------------------------------------------------------------"
-echo "|                                                                              |"
-echo "|     ___       _   _     _   _                                               |"
-echo "|    |_ _|___  | |_(_)___| |_(_) ___ __ _                                     |"
-echo "|     | |/ _ \ | __| / __| __| |/ __/ _\` |                                    |"
-echo "|     | | (_) || |_| \__ \ |_| | (_| (_| |                                    |"
-echo "|    |___\___/  \__|_|___/\__|_|\___\__,_|                                     |"
-echo "|                                                                              |"
-echo "|     Agent Installer v${SCRIPT_VERSION} (commit ${BUILD_ID%-*} - ${BUILD_ID##*-})"
-echo "|                                                                              |"
-echo "--------------------------------------------------------------------------------"
-echo ""
-
+# Detailed installer logs are root-only; never enable shell xtrace or log credentials.
+if [ "$(id -u)" -ne 0 ]; then
+    printf 'Error: Run this installer as root (sudo).\n' >&2
+    exit 1
+fi
+umask 077
+INSTALL_LOG_DIR="/var/log/iotistica-installer"
+mkdir -p "$INSTALL_LOG_DIR"
+chmod 700 "$INSTALL_LOG_DIR"
+INSTALL_LOG="$INSTALL_LOG_DIR/install-$(date -u +%Y%m%dT%H%M%SZ)-$$.log"
+: > "$INSTALL_LOG"
+chmod 600 "$INSTALL_LOG"
+# Preserve the caller's stdout for concise progress messages. All normal command
+# output and errors are recorded in the detailed log instead.
+exec 3>&1
+exec >> "$INSTALL_LOG" 2>&1
+INSTALL_COMPLETED=no
+installer_message() {
+    printf '%s\n' "$*" >&3
+    printf '[%s] %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*"
+}
+installer_step() {
+    installer_message "  $*"
+}
+installer_exit() {
+    result=$?
+    trap - EXIT
+    if [ "$result" -ne 0 ]; then
+        installer_message "Installation failed. See the diagnostic log: $INSTALL_LOG"
+    elif [ "$INSTALL_COMPLETED" != yes ]; then
+        installer_message "Installation ended before completion. See: $INSTALL_LOG"
+    fi
+}
+trap 'installer_exit' EXIT
+printf '[%s] Installer started: version=%s build=%s uid=%s\n' \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$SCRIPT_VERSION" "$BUILD_ID" "$(id -u)"
+# Keep the original branded banner visible while retaining full details in the log.
+# stdout/stderr for installation commands are redirected to the diagnostic log;
+# descriptor 3 is the original console output.
+{
+    echo "--------------------------------------------------------------------------------"
+    echo "|                                                                              |"
+    echo "|     ___       _   _     _   _                                               |"
+    echo "|    |_ _|___  | |_(_)___| |_(_) ___ __ _                                     |"
+    echo "|     | |/ _ \ | __| / __| __| |/ __/ _\` |                                    |"
+    echo "|     | | (_) || |_| \__ \ |_| | (_| (_| |                                    |"
+    echo "|    |___\___/  \__|_|___/\__|_|\___\__,_|                                     |"
+    echo "|                                                                              |"
+    echo "|     Agent Installer v${SCRIPT_VERSION} (commit ${BUILD_ID%-*} - ${BUILD_ID##*-})"
+    echo "|                                                                              |"
+    echo "--------------------------------------------------------------------------------"
+    echo ""
+} >&3
+printf 'Installer banner displayed (version=%s, build=%s)\n' "$SCRIPT_VERSION" "$BUILD_ID"
+installer_message "Installation log: $INSTALL_LOG"
 
 # Ensuree common binary locations are in PATH — sudo sh strips user profile
 export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH"
@@ -87,6 +129,7 @@ case "$ARCH" in
 esac
 
 echo "Detected OS: $OS $OS_VERSION ($ARCH_NAME)"
+installer_step "Checking system requirements ($OS $OS_VERSION, $ARCH_NAME)..."
 
 # Systemd service name - single source of truth
 SERVICE_NAME="iotistica-agent"
@@ -187,7 +230,7 @@ install_docker_if_needed() {
 install_mosquitto_if_needed() {
     if ! command -v setfacl >/dev/null 2>&1; then
         echo "Installing ACL utilities..."
-        apt-get install -y -qq --no-install-recommends acl > /dev/null || {
+        apt-get install -y -qq --no-install-recommends acl || {
             echo "✗ Error: Failed to install ACL utilities"
             exit 1
         }
@@ -197,7 +240,7 @@ install_mosquitto_if_needed() {
         echo "✓ Mosquitto is already installed ($(mosquitto -h 2>&1 | head -1))"
     else
         echo "Installing Mosquitto..."
-        apt-get install -y -qq --no-install-recommends mosquitto mosquitto-clients > /dev/null || {
+        apt-get install -y -qq --no-install-recommends mosquitto mosquitto-clients || {
             echo "✗ Error: Failed to install Mosquitto"
             exit 1
         }
@@ -550,38 +593,52 @@ echo ""
 
     # Install system dependencies
     echo "Installing system dependencies..."
+    installer_step "Installing system dependencies..."
     
     # Clean up package cache and fix broken dependencies
-    apt-get clean > /dev/null 2>&1 || true
-    dpkg --configure -a > /dev/null 2>&1 || true
+    apt-get clean || true
+    dpkg --configure -a || true
 
     # Update package lists
-    apt-get update -qq > /dev/null || {
+    apt-get update -qq || {
         echo "Warning: apt-get update failed, continuing anyway..."
     }
 
     # Install essential dependencies first (these should always work)
     apt-get install -y -qq --no-install-recommends \
-        curl wget git build-essential python3 make g++ > /dev/null 2>&1 || {
+        curl wget git build-essential python3 make g++ || {
         echo "✗ Error: Failed to install essential build tools"
         exit 1
     }
 
     # Install database and utilities (skip if fails due to architecture issues)
     apt-get install -y -qq --no-install-recommends \
-        sqlite3 libsqlite3-dev jq procps > /dev/null 2>&1 || {
+        sqlite3 libsqlite3-dev jq procps || {
         echo "Warning: Some database packages failed to install, continuing..."
     }
 
     # Install networking tools
     apt-get install -y -qq --no-install-recommends \
-        iproute2 iptables net-tools iputils-ping > /dev/null 2>&1 || {
+        iproute2 iptables net-tools iputils-ping || {
         echo "Warning: Some network tools failed to install"
     }
 
+    # Packet capture is an advertised Network > Capture feature. Treat tcpdump
+    # as required, independently of the best-effort network-tools group above.
+    if ! command -v tcpdump >/dev/null 2>&1; then
+        echo "Installing tcpdump for Network > Capture..."
+        apt-get install -y -qq --no-install-recommends tcpdump
+    fi
+    if ! command -v tcpdump >/dev/null 2>&1; then
+        echo "ERROR: tcpdump is unavailable after installation"
+        exit 1
+    fi
+    echo "tcpdump: $(tcpdump --version 2>&1 | head -n 1)"
     echo "✓ System dependencies installed"
+    installer_step "System dependencies ready (including tcpdump)."
 
     # Install Docker (required for agent functionality)
+    installer_step "Checking Docker and Node.js..."
     echo ""
     install_docker_if_needed "no"
 
@@ -593,16 +650,16 @@ echo ""
     if [ -z "$NODE_BIN" ]; then
         echo ""
         echo "Installing Node.js 24..."
-        curl -fsSL https://deb.nodesource.com/setup_24.x 2>/dev/null | bash - > /dev/null 2>&1
-        apt-get install -y -qq nodejs > /dev/null 2>&1
+        curl -fsSL https://deb.nodesource.com/setup_24.x | bash -
+        apt-get install -y -qq nodejs
         echo "✓ Node.js installed successfully"
     else
         NODE_MAJOR_VERSION=$("$NODE_BIN" -v | cut -d'v' -f2 | cut -d'.' -f1)
         if [ "$NODE_MAJOR_VERSION" -lt 22 ]; then
             echo ""
             echo "Upgrading Node.js from v${NODE_MAJOR_VERSION} to 24..."
-            curl -fsSL https://deb.nodesource.com/setup_24.x 2>/dev/null | bash - > /dev/null 2>&1
-            apt-get install -y -qq nodejs > /dev/null 2>&1
+            curl -fsSL https://deb.nodesource.com/setup_24.x | bash -
+            apt-get install -y -qq nodejs
             echo "✓ Node.js upgraded successfully"
         else
             echo "✓ Node.js $("$NODE_BIN" --version) already installed"
@@ -630,6 +687,7 @@ echo ""
     MQTT_CREDENTIALS_PRESERVED="no"
     MANAGE_LOCAL_MOSQUITTO="no"
 
+    installer_step "Configuring MQTT broker..."
     if should_manage_mosquitto; then
         MANAGE_LOCAL_MOSQUITTO="yes"
         configure_mosquitto_file_auth
@@ -710,6 +768,7 @@ echo ""
             ;;
     esac
 
+    installer_step "Installing agent files..."
     if [ "$USE_LOCAL_REPO" = "yes" ]; then
         echo "Using repository sources from: $AGENT_DIR"
         
@@ -892,7 +951,7 @@ echo ""
         # and will not load on aarch64. Unconditional — no detection needed.
         if [ "$ARCH" = "aarch64" ] && ! (cd /opt/iotistic/agent && node -e "require('better-sqlite3');require('node-pty')" > /dev/null 2>&1); then
             echo ""
-            apt-get install -y -qq --no-install-recommends build-essential python3 libsqlite3-dev > /dev/null || {
+            apt-get install -y -qq --no-install-recommends build-essential python3 libsqlite3-dev || {
                 echo "✗ Error: Failed to install build tools for native module compilation"
                 exit 1
             }
@@ -1153,6 +1212,7 @@ EOFJOURNALD
 
     
     # Start (or restart) service
+    installer_step "Starting agent service..."
     systemctl daemon-reload
     echo ""
     echo "Starting agent service..."
@@ -1211,6 +1271,9 @@ EOFJOURNALD
     # command line. Skipped when IOTISTICA_INSTALL_CLI=no.
     # ============================================================================
     INSTALL_CLI="${IOTISTICA_INSTALL_CLI:-yes}"
+    if [ "$INSTALL_CLI" != "no" ] && [ "$INSTALL_CLI" != "false" ] && [ "$INSTALL_CLI" != "0" ]; then
+        installer_step "Installing command-line tools..."
+    fi
     if [ "$INSTALL_CLI" = "no" ] || [ "$INSTALL_CLI" = "false" ] || [ "$INSTALL_CLI" = "0" ]; then
         echo ""
         echo "Skipping CLI installation (IOTISTICA_INSTALL_CLI=$INSTALL_CLI)"
@@ -1254,9 +1317,47 @@ EOFJOURNALD
 
         if [ -n "$CLI_INSTALLER" ] && [ -f "$CLI_INSTALLER" ]; then
             chmod +x "$CLI_INSTALLER"
-            sh "$CLI_INSTALLER" && echo "✓ iotctl CLI installed" || {
+            sh "$CLI_INSTALLER" && { CLI_INSTALL_STATUS=installed; echo "✓ iotctl CLI installed"; } || {
+                CLI_INSTALL_STATUS=failed
                 echo "Warning: CLI installation failed (non-fatal)"
                 echo "You can install it later: curl -sfL https://get.iotistica.com/agent-cli | sudo sh"
             }
         fi
     fi
+
+    # Final console summary is printed only after all installation stages.
+    if [ "$INSTALL_CLI" = "no" ] || [ "$INSTALL_CLI" = "false" ] || [ "$INSTALL_CLI" = "0" ]; then
+        CLI_INSTALL_STATUS=skipped
+    fi
+    if [ "${CLI_INSTALL_STATUS:-failed}" = failed ]; then
+        installer_message "Note: Optional iotctl CLI installation did not complete."
+    fi
+    INSTALL_COMPLETED=yes
+    installer_message ""
+    installer_message "Iotistica Edge installed successfully."
+    installer_message ""
+    installer_message "Admin UI: http://$(hostname -I | awk '{print $1}'):${DEVICE_API_PORT}/admin"
+    installer_message "Username: admin"
+    if [ -n "$INITIAL_ADMIN_PASSWORD" ]; then
+        installer_message "Password: supplied through INITIAL_ADMIN_PASSWORD"
+    else
+        installer_message "Initial password: generated on first start."
+        installer_message "Retrieve it with: sudo journalctl -u ${SERVICE_NAME} | grep 'Password:'"
+    fi
+    installer_message "You will be asked to change the password on first login."
+    if [ "$MANAGE_LOCAL_MOSQUITTO" = yes ]; then
+        installer_message ""
+        installer_message "MQTT broker: ${MQTT_BROKER_URL_VALUE}"
+        if [ "$MQTT_CREDENTIALS_PRESERVED" = yes ]; then
+            installer_message "MQTT credentials: existing credentials preserved."
+        else
+            installer_message "MQTT username: ${MQTT_USERNAME_VALUE}"
+            installer_message "MQTT password: configured during installation."
+        fi
+    fi
+    if [ -z "$IOTISTICA_API" ]; then
+        installer_message ""
+        installer_message "Standalone mode. Cloud Sync can be configured in the Admin UI."
+    fi
+    installer_message ""
+    installer_message "Diagnostic log: $INSTALL_LOG"

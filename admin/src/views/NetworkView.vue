@@ -406,6 +406,12 @@ onMounted(() => {
 </template>
 
 <style scoped>
+.interface-hint {
+  margin-top: 6px;
+  color: var(--text-secondary, rgba(255, 255, 255, 0.65));
+  font-size: 12px;
+}
+
 .status-bar {
   display: flex;
   align-items: center;
