@@ -701,7 +701,7 @@ echo ""
     if should_manage_mosquitto; then
         MANAGE_LOCAL_MOSQUITTO="yes"
         if [ "$EXISTING_INSTALL" = yes ] && [ -f /etc/mosquitto/conf.d/iotistica.conf ]; then
-            installer_step "Preserving existing Mosquitto configuration and credentials..."
+            installer_step "Preserving existing broker configuration..."
             if [ -f /etc/iotistic/agent.env ]; then
                 MQTT_BROKER_URL_VALUE=$(sed -n 's/^MQTT_BROKER_URL=//p' /etc/iotistic/agent.env | tail -n 1)
             fi
