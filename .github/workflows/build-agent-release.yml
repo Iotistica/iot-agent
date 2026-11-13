@@ -6,7 +6,7 @@ name: Agent Release
 #   git tag v1.0.531 && git push origin v1.0.531
 #
 # Manual re-run (e.g. to rebuild an existing version):
-#   GitHub Actions → Agent Release → Run workflow → enter version
+#   GitHub Actions → Agent Release → Run workflow → enter version.
 
 on:
   push:
