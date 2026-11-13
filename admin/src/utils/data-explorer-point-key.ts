@@ -24,6 +24,12 @@ export interface DataExplorerPointRow extends DataExplorerPointIdentity {
   destinationName: string
 }
 
+export function dataExplorerPointName(point: Pick<DataExplorerPointRow, 'protocol' | 'metric' | 'normalizedName' | 'rawPointName' | 'rawObjectName'>): string {
+  const rawName = point.rawPointName || point.rawObjectName
+  if (point.protocol === 'mqtt' && rawName) return rawName
+  return point.normalizedName || rawName || point.metric
+}
+
 export function dataExplorerPoints(events: ActivityEvent[], subscriptions: SubscriptionActivity[]): DataExplorerPointRow[] {
   const byKey = new Map<string, DataExplorerPointRow>()
   function add(row: Omit<DataExplorerPointRow, 'key' | 'legacyKey'>) {

@@ -97,7 +97,10 @@ jobs:
           fi
 
           promote() {
-            local source="$1" destination="$2" type="$3" file="/tmp/promotion/$(basename "$destination")"
+            local source="$1"
+            local destination="$2"
+            local type="$3"
+            local file="/tmp/promotion/$(basename "$destination")"
             az storage blob download --account-name "$ACCT" --container-name scripts \
               --name "$source" --file "$file" --auth-mode key \
               --overwrite --only-show-errors --output none

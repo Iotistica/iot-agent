@@ -2,7 +2,7 @@
 import { computed, onUnmounted, ref, watch } from 'vue'
 import { pipelineApi } from '@/api/pipeline'
 import { pointHistory, toHistorySamples, type HistorySample } from '@/utils/point-history'
-import type { DataExplorerPointRow } from '@/utils/data-explorer-point-key'
+import { dataExplorerPointName, type DataExplorerPointRow } from '@/utils/data-explorer-point-key'
 
 const props = defineProps<{ open: boolean; point: DataExplorerPointRow | null }>()
 const emit = defineEmits<{ 'update:open': [boolean] }>()
@@ -75,7 +75,7 @@ const chart = computed(() => {
 </script>
 
 <template>
-  <a-modal :open="open" :title="`History — ${point?.normalizedName || point?.rawPointName || point?.rawObjectName || point?.metric || ''}`" :footer="null" width="720px" destroy-on-close @cancel="emit('update:open', false)">
+  <a-modal :open="open" :title="`History — ${point ? dataExplorerPointName(point) : ''}`" :footer="null" width="720px" destroy-on-close @cancel="emit('update:open', false)">
     <p class="history-note">Recent published readings (up to the last hour) held in memory; history resets when the agent restarts. Boolean values are shown as 0 or 1.</p>
     <div v-if="loading" class="history-empty"><a-spin /></div>
     <a-alert v-else-if="error" type="error" :message="error" />

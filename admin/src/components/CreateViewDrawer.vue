@@ -4,6 +4,7 @@ import { message } from 'ant-design-vue'
 import { DeleteOutlined, EditOutlined } from '@ant-design/icons-vue'
 import { viewsApi, type SavedView } from '@/api/views'
 import { protocolColor, protocolLabel } from '@/utils/protocol'
+import { dataExplorerPointName } from '@/utils/data-explorer-point-key'
 import PointPickerModal from './PointPickerModal.vue'
 
 type PointRow = {
@@ -78,9 +79,11 @@ const displayPoints = computed<DisplayPoint[]>(() => {
   return selectedKeys.value.map(key => {
     const row = pointRowMap.value.get(key)
     if (row) {
-      const name = row.rawPointName && row.rawPointName !== row.metric
-        ? row.rawPointName
-        : row.normalizedName || row.metric
+      const name = row.protocol === 'mqtt'
+        ? dataExplorerPointName(row)
+        : row.rawPointName && row.rawPointName !== row.metric
+          ? row.rawPointName
+          : row.normalizedName || row.metric
       return {
         key,
         protocol: row.protocol,

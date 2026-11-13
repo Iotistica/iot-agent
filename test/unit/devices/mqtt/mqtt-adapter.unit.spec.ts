@@ -713,6 +713,67 @@ describe('MqttAdapter', () => {
       );
     });
 
+    it('should use the topic subtopic as the point name for scalar payloads', () => {
+      const config = {
+        ...mockConfig,
+        devices: [{
+          name: 'mqtt_factory_sim_004',
+          enabled: true,
+          baseTopic: 'mqtt_factory_sim_004',
+          subscriptionTopic: 'mqtt_factory_sim_004/#',
+          metric: 'mqtt_factory_sim_004',
+          autoMetrics: false,
+        }]
+      };
+
+      const adapter = new MqttAdapter(config, mockLogger, 'test-device-uuid');
+      const dataSpy = jest.fn();
+      adapter.on('data', dataSpy);
+
+      const device = config.devices[0];
+      (adapter as any).subscriptions.set(device.subscriptionTopic, device);
+      (adapter as any).handleMessage(
+        'mqtt_factory_sim_004/status',
+        Buffer.from('online'),
+        false
+      );
+
+      expect(dataSpy).toHaveBeenCalledTimes(1);
+      expect(dataSpy.mock.calls[0][0][0]).toEqual(
+        expect.objectContaining({ metric: 'mqtt_factory_sim_004', rawPointName: 'status', value: 'online' })
+      );
+    });
+
+    it('should fall back to the device name for scalar payloads published on the base topic', () => {
+      const config = {
+        ...mockConfig,
+        devices: [{
+          name: 'mqtt_factory_sim_004',
+          enabled: true,
+          baseTopic: 'mqtt_factory_sim_004',
+          subscriptionTopic: 'mqtt_factory_sim_004/#',
+          autoMetrics: false,
+        }]
+      };
+
+      const adapter = new MqttAdapter(config, mockLogger, 'test-device-uuid');
+      const dataSpy = jest.fn();
+      adapter.on('data', dataSpy);
+
+      const device = config.devices[0];
+      (adapter as any).subscriptions.set(device.baseTopic, device);
+      (adapter as any).handleMessage(
+        'mqtt_factory_sim_004',
+        Buffer.from('online'),
+        false
+      );
+
+      expect(dataSpy).toHaveBeenCalledTimes(1);
+      expect(dataSpy.mock.calls[0][0][0]).toEqual(
+        expect.objectContaining({ metric: 'mqtt_factory_sim_004', rawPointName: 'mqtt_factory_sim_004', value: 'online' })
+      );
+    });
+
     it('should leave unit undefined when no unit metadata is present', () => {
       const config = {
         ...mockConfig,

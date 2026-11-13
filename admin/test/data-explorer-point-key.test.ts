@@ -1,7 +1,7 @@
 import { strict as assert } from 'node:assert'
 import { test } from 'node:test'
 import {
-  dataExplorerPointKey, dataExplorerPoints, matchesDataExplorerView,
+  dataExplorerPointKey, dataExplorerPointName, dataExplorerPoints, matchesDataExplorerView,
   missingDataExplorerViewPointCount, normalizeDataExplorerPointKey, orderDataExplorerViewPoints,
 } from '../src/utils/data-explorer-point-key.ts'
 import type { ActivityEvent, SubscriptionActivity } from '../src/api/pipeline.ts'
@@ -22,6 +22,27 @@ test('falls back to the metric when no normalized name is available', () => {
   assert.equal(
     dataExplorerPointKey({ protocol: 'opcua', endpointName: 'AHU-7', metric: 'CC-Valve' }),
     JSON.stringify(['opcua', 'AHU-7', 'CC-Valve']),
+  )
+})
+
+test('displays the raw MQTT point name instead of its device-prefixed normalized name', () => {
+  assert.equal(
+    dataExplorerPointName({
+      protocol: 'mqtt',
+      metric: 'mqtt_factory_sim_004_status',
+      normalizedName: 'mqtt_factory_sim_004_status',
+      rawPointName: 'status',
+    }),
+    'status',
+  )
+  assert.equal(
+    dataExplorerPointName({
+      protocol: 'modbus',
+      metric: 'temperature',
+      normalizedName: 'boiler_temperature',
+      rawPointName: 'temperature',
+    }),
+    'boiler_temperature',
   )
 })
 

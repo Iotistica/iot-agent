@@ -13,7 +13,7 @@ import CreateViewDrawer from '@/components/CreateViewDrawer.vue'
 import PointDetailsDrawer from '@/components/data/PointDetailsDrawer.vue'
 import PointHistoryModal from '@/components/data/PointHistoryModal.vue'
 import { viewsApi, type SavedView as SavedViewType } from '@/api/views'
-import { dataExplorerPoints, matchesDataExplorerView, missingDataExplorerViewPointCount, normalizeDataExplorerPointKey, orderDataExplorerViewPoints, type DataExplorerPointRow } from '@/utils/data-explorer-point-key'
+import { dataExplorerPointName, dataExplorerPoints, matchesDataExplorerView, missingDataExplorerViewPointCount, normalizeDataExplorerPointKey, orderDataExplorerViewPoints, type DataExplorerPointRow } from '@/utils/data-explorer-point-key'
 import { mergePinnedDataExplorerPoints } from '@/utils/data-explorer-pins'
 import { restoreDataExplorerTabs } from '@/utils/data-explorer-tabs'
 
@@ -76,7 +76,7 @@ const deviceNames = computed(() => {
   return map
 })
 function friendlySource(name: string) { return deviceNames.value.get(name) || name }
-function pointName(row: PointRow) { return row.normalizedName || row.rawPointName || row.rawObjectName || row.metric }
+function pointName(row: PointRow) { return dataExplorerPointName(row) }
 function originalName(row: PointRow) { return row.rawPointName || row.rawObjectName || row.metric }
 function valueText(v: unknown) {
   if (v === null || v === undefined) return '—'
@@ -578,7 +578,7 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
           <template #bodyCell="{ column, record }">
             <template v-if="column.key === 'protocol'"><a-tag :color="protocolColor(record.protocol)">{{ protocolLabel(record.protocol) }}</a-tag></template>
             <template v-else-if="column.key === 'source'">{{ friendlySource(record.endpointName) }}</template>
-            <template v-else-if="column.key === 'point'"><div class="point-primary" data-testid="point-name" :title="pointName(record)">{{ pointName(record) }}</div><div v-if="record.normalizedName" class="point-secondary" :title="originalName(record)">Original: {{ originalName(record) }}</div></template>
+            <template v-else-if="column.key === 'point'"><div class="point-primary" data-testid="point-name" :title="pointName(record)">{{ pointName(record) }}</div><div v-if="record.normalizedName && originalName(record) !== pointName(record)" class="point-secondary" :title="originalName(record)">Original: {{ originalName(record) }}</div></template>
             <template v-else-if="column.key === 'value'"><a-tag v-if="record.quality === 'BAD' && record.value == null" color="red">No Value</a-tag><span v-else>{{ valueText(record.value) }}</span></template>
             <template v-else-if="column.key === 'unit'">{{ record.unit || '—' }}</template>
             <template v-else-if="column.key === 'quality'"><a-tag v-if="record.quality === 'BAD'" color="red">BAD</a-tag><a-tag v-else-if="isStale(record.timestamp)" color="orange">STALE</a-tag><a-tag v-else color="green">{{ record.quality || 'CURRENT' }}</a-tag></template>

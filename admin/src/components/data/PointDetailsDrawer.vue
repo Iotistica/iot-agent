@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { protocolColor, protocolLabel } from '@/utils/protocol'
+import { dataExplorerPointName } from '@/utils/data-explorer-point-key'
 
 interface Point {
   protocol: string
@@ -27,7 +28,7 @@ const emit = defineEmits<{
 }>()
 
 function pointName(point: Point) {
-  return point.normalizedName || point.rawPointName || point.rawObjectName || point.metric
+  return dataExplorerPointName(point)
 }
 
 function originalName(point: Point) {
@@ -65,7 +66,7 @@ function close() {
   >
     <a-descriptions v-if="point" :column="2" size="small" bordered style="margin-bottom: 24px">
       <a-descriptions-item label="Point" :span="2">{{ pointName(point) }}</a-descriptions-item>
-      <a-descriptions-item label="Original name" :span="2">{{ originalName(point) }}</a-descriptions-item>
+      <a-descriptions-item v-if="originalName(point) !== pointName(point)" label="Original name" :span="2">{{ originalName(point) }}</a-descriptions-item>
       <a-descriptions-item label="Source" :span="2">{{ sourceName }}</a-descriptions-item>
       <a-descriptions-item label="Protocol">
         <a-tag :color="protocolColor(point.protocol)" style="margin: 0">{{ protocolLabel(point.protocol) }}</a-tag>

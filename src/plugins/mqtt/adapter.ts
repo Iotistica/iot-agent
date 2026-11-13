@@ -247,10 +247,21 @@ export class MqttAdapter extends BaseProtocolAdapter {
 
 	private extractSubTopic(fullTopic: string, device: MqttDevice): string {
 		const base = this.resolveBaseTopic(device);
+		if (fullTopic === base) {
+			return '';
+		}
 		if (fullTopic.startsWith(base + '/')) {
 			return fullTopic.substring(base.length + 1);
 		}
 		return fullTopic;
+	}
+
+	private rawPointNameFor(device: MqttDevice, topic: string, metric: string): string {
+		const subTopic = this.extractSubTopic(topic, device);
+		if ((!device.metric || device.metric === device.name) && subTopic && subTopic !== topic) {
+			return subTopic;
+		}
+		return metric;
 	}
 
 	/**
@@ -1000,6 +1011,7 @@ export class MqttAdapter extends BaseProtocolAdapter {
 		topic: string,
 		now: string,
 		retain: boolean,
+		rawPointName?: string,
 	): DeviceDataPoint {
 		const normalized = this.normalizeMetricValue(
 			rawValue,
@@ -1013,6 +1025,7 @@ export class MqttAdapter extends BaseProtocolAdapter {
 			deviceName: device.name,
 			...(deviceId && { deviceId }),
 			metric: metric || topic,
+			rawPointName: rawPointName || metric || topic,
 			value: normalized.value,
 			...(normalized.unit !== undefined && { unit: normalized.unit }),
 			timestamp: now,
@@ -1203,7 +1216,8 @@ export class MqttAdapter extends BaseProtocolAdapter {
 			// No hardcoded metadata key exclusions — all primitives are emitted.
 			if (points.length === 0) {
 				const subTopic = this.extractSubTopic(topic, device);
-				const singleMetric = device.metric || subTopic;
+				const singleMetric = device.metric || subTopic || device.name;
+				const singleRawPointName = this.rawPointNameFor(device, topic, singleMetric);
 				let singleType = device.dataType;
 				let singleSource: unknown = parsed;
 
@@ -1221,6 +1235,7 @@ export class MqttAdapter extends BaseProtocolAdapter {
 							topic,
 							payloadTimestamp,
 							true,
+							singleRawPointName,
 						),
 					);
 				} else if (
@@ -1257,6 +1272,7 @@ export class MqttAdapter extends BaseProtocolAdapter {
 										topic,
 										payloadTimestamp,
 										retain,
+										metricName,
 									),
 								);
 							}
@@ -1290,6 +1306,7 @@ export class MqttAdapter extends BaseProtocolAdapter {
 							topic,
 							payloadTimestamp,
 							retain,
+							singleRawPointName,
 						),
 					);
 				}
@@ -1314,9 +1331,11 @@ export class MqttAdapter extends BaseProtocolAdapter {
 			);
 
 			// Emit BAD quality data point
+			const metric = device.metric || topic;
 			const dataPoint: DeviceDataPoint = {
 				deviceName: device.name,
-				metric: device.metric || topic,
+				metric,
+				rawPointName: this.rawPointNameFor(device, topic, metric),
 				value: null,
 				...(device.unit !== undefined && { unit: device.unit }),
 				timestamp: new Date().toISOString(),
