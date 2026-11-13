@@ -104,7 +104,7 @@ fi
 # A service unit plus installed package identifies a previous systemd installation.
 if [ -f /etc/systemd/system/iotistica-agent.service ] && [ -f /opt/iotistic/agent/package.json ]; then
     EXISTING_INSTALL=yes
-    PREVIOUS_AGENT_VERSION="$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\\([^"]*\\)".*/\\1/p' /opt/iotistic/agent/package.json | head -n 1)"
+    PREVIOUS_AGENT_VERSION="$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' /opt/iotistic/agent/package.json | head -n 1)"
 else
     EXISTING_INSTALL=no
     PREVIOUS_AGENT_VERSION=""
