@@ -631,3 +631,53 @@ jobs:
           echo "| Docker         | \`iotistic/agent:${VERSION}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| SBOM           | \`agent/versions/${VERSION}/sbom/\` |" >> $GITHUB_STEP_SUMMARY
           echo "| Update manifest | \`agent/latest-version.json\` |" >> $GITHUB_STEP_SUMMARY
+
+  # ── Sync released package version back to main ───────────────────────────────
+  sync_version:
+    name: Sync released version to main
+    needs: [version, verify_ci, publish]
+    if: needs.verify_ci.outputs.promote_latest == 'true'
+    runs-on: [ubuntu-24.04]
+    permissions:
+      contents: write
+    env:
+      RELEASE_BRANCH: ${{ vars.RELEASE_BRANCH || 'main' }}
+      RELEASE_VERSION: ${{ needs.version.outputs.version }}
+      RELEASE_SHA: ${{ needs.verify_ci.outputs.sha }}
+
+    steps:
+      - name: Checkout release branch
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ env.RELEASE_BRANCH }}
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+
+      - name: Commit released version to branch
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Never overwrite changes pushed after the release tag.
+          if [ "$(git rev-parse HEAD)" != "$RELEASE_SHA" ]; then
+            echo "Release branch moved since tag; refusing version-sync push." >&2
+            exit 1
+          fi
+
+          npm version "$RELEASE_VERSION" --no-git-tag-version --allow-same-version
+          git add package.json package-lock.json
+
+          if git diff --cached --quiet; then
+            echo "Package version is already $RELEASE_VERSION; nothing to commit."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "chore: sync released version to $RELEASE_VERSION [skip ci]"
+          git push origin "HEAD:refs/heads/$RELEASE_BRANCH"
