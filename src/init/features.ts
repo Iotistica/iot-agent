@@ -20,7 +20,7 @@ import { DevicePublish } from '../publish/index.js';
 import type { AdapterManager } from '../plugins/index.js';
 import type { PipelineService } from '../features/pipeline/index.js';
 import { AdapterInitializer } from './adapters.js';
-import { AgentUpdater } from '../updater.js';
+import { AgentUpdater } from '../update/updater.js';
 import { createCommandFeature, type CommandFeature } from '../commands/index.js';
 import { AgentFirewall } from '../network/firewall.js';
 import { CaptureEngine } from '../network/capture.js';

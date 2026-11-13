@@ -23,7 +23,7 @@ import { getDatabasePath } from '../db/db-path';
 import { getDatabase } from '../db/sqlite';
 import { CloudMqttClient } from '../mqtt/manager';
 import { encodeIfUuid } from '../mqtt/codec';
-import type { AgentUpdater } from '../updater';
+import type { AgentUpdater } from '../update/updater';
 import type { DiscoveryService } from '../discovery/service';
 import type { OPCUABrowseRequest } from '../plugins/opcua/discovery';
 import { TailscaleManager } from '../network/vpn/tailscale-manager';
@@ -34,7 +34,7 @@ import type { AgentFirewall, FirewallMode } from '../network/firewall.js';
 import type { CaptureEngine } from '../network/capture.js';
 import type { DockerOptions } from 'dockerode';
 import { isProLicensed } from '../licensing/runtime.js';
-import { queueAgentUpdateRequest } from '../update-request.js';
+import { queueAgentUpdateRequest } from '../update/update-request.js';
 
 type AgentInstance = {
 	getLifecycleState: () => string;

@@ -1,7 +1,7 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { queueAgentUpdateRequest } from '../../../src/update-request';
+import { queueAgentUpdateRequest } from '../../../src/update/update-request';
 
 describe('queueAgentUpdateRequest', () => {
 	let directory: string;

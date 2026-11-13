@@ -20,7 +20,7 @@ import { type AgentLogger } from "./logging/agent-logger.js";
 import { LogComponents } from "./logging/types.js";
 import { CloudMqttClient } from "./mqtt";
 import { type AgentFirewall } from "./network/firewall.js";
-import { type AgentUpdater } from "./updater.js";
+import { type AgentUpdater } from "./update/updater.js";
 import { 
 	setMemoryLogger,
 	startMemoryMonitoring,
