@@ -66,6 +66,7 @@ const lastSync = ref('')
 const refreshing = ref(false)
 const now = ref(Date.now())
 const POLL_MS = 5000
+const UNKNOWN_SOURCE = '__unknown__'
 let timer: ReturnType<typeof setInterval> | undefined
 let busy = false
 let viewsLoaded = false
@@ -148,7 +149,7 @@ const sourceOptions = computed(() => {
   const options = new Map<string, string>()
   for (const point of points.value) {
     const source = sourceFor(point)
-    options.set(source?.uuid ?? '', dataExplorerSourceName(source))
+    options.set(source?.uuid ?? UNKNOWN_SOURCE, dataExplorerSourceName(source))
   }
   return [...options].sort((a, b) => a[1].localeCompare(b[1]))
     .map(([value, label]) => ({ value, label }))
@@ -188,7 +189,7 @@ const pointsMatchingFilters = computed(() => {
     return (!q || [sourceName(p), friendlyDevice(p.endpointName), p.metric, p.normalizedName, p.rawPointName, p.rawObjectName, p.destinationName]
       .some(v => (v || '').toLowerCase().includes(q)))
       && (!protocolFilter.value || p.protocol === protocolFilter.value)
-      && (sourceFilter.value === undefined || (sourceFor(p)?.uuid ?? '') === sourceFilter.value)
+      && (sourceFilter.value === undefined || (sourceFor(p)?.uuid ?? UNKNOWN_SOURCE) === sourceFilter.value)
       && (!qualityFilter.value || (qualityFilter.value === 'STALE' ? isStale(p.timestamp) : qualityFilter.value === 'BAD' ? p.quality === 'BAD' : p.quality !== 'BAD' && !isStale(p.timestamp)))
   })
 })

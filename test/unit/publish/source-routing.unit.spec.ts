@@ -1,4 +1,5 @@
 import { PublishManager } from '../../../src/publish/core/manager';
+import { activityMonitor } from '../../../src/publish/core/activity-monitor';
 
 function makeManager(): any {
 	const manager = Object.create(PublishManager.prototype);
@@ -8,6 +9,34 @@ function makeManager(): any {
 }
 
 describe('PublishManager source routing', () => {
+	it.each([false, true])('forwards source and device identity to activity monitoring (dataset: %s)', async (dataset) => {
+		const manager = makeManager();
+		const reading = {
+			deviceName: 'sensor', metric: 'temperature', value: 21,
+			endpoint_uuid: 'source-1', device_uuid: 'device-1',
+		};
+		manager.bindings = [{
+			publisher: { id: 1, name: 'test', type: 'noop' },
+			subscription: { id: 2, route_json: null },
+			plugin: {},
+			...(dataset && { datasetPointKeys: new Set([JSON.stringify(['sensor', 'temperature'])]) }),
+		}];
+		manager.resolvePayloadFormatForBinding = () => 'custom';
+		manager.getCompressedPayloadForFormat = async () => ({ payload: '{}' });
+		manager.sharedDatasetAccumulators = new Map([[2, {
+			features: new Map(), lastFlushedAt: Date.now(), samplingIntervalMs: 60000,
+		}]]);
+		const record = jest.spyOn(activityMonitor, 'record').mockImplementation(() => {});
+		try {
+			await manager.collectRouteEntries('topic', new Map(), new Map(), 'mqtt-pipe', [reading]);
+			expect(record).toHaveBeenCalledWith(expect.objectContaining({
+				endpointName: 'sensor', sourceEndpointUuid: 'source-1', deviceUuid: 'device-1',
+			}));
+		} finally {
+			record.mockRestore();
+		}
+	});
+
 	it('allows topic-less noop destinations', () => {
 		const manager = makeManager();
 
