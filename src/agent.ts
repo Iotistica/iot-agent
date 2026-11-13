@@ -689,7 +689,7 @@ export default class Agent {
 
 		const now = Date.now();
 
-		// Check all critical components
+		// Check all critical components.
 		for (const [component, operational] of Object.entries(checks)) {
 			if (!operational) {
 				const shouldLog =
