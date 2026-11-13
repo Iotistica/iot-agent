@@ -100,6 +100,16 @@ if [ "$(id -u)" -ne 0 ]; then
     exit 1
 fi
 
+# Capture installation state before this run changes any files.
+# A service unit plus installed package identifies a previous systemd installation.
+if [ -f /etc/systemd/system/iotistica-agent.service ] && [ -f /opt/iotistic/agent/package.json ]; then
+    EXISTING_INSTALL=yes
+    PREVIOUS_AGENT_VERSION="$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\\([^"]*\\)".*/\\1/p' /opt/iotistic/agent/package.json | head -n 1)"
+else
+    EXISTING_INSTALL=no
+    PREVIOUS_AGENT_VERSION=""
+fi
+
 # Detect OS
 if [ -f /etc/os-release ]; then
     . /etc/os-release
@@ -593,7 +603,7 @@ echo ""
 
     # Install system dependencies
     echo "Installing system dependencies..."
-    installer_step "Installing system dependencies..."
+    installer_step "Checking system dependencies..."
     
     # Clean up package cache and fix broken dependencies
     apt-get clean || true
@@ -690,7 +700,14 @@ echo ""
     installer_step "Configuring MQTT broker..."
     if should_manage_mosquitto; then
         MANAGE_LOCAL_MOSQUITTO="yes"
-        configure_mosquitto_file_auth
+        if [ "$EXISTING_INSTALL" = yes ] && [ -f /etc/mosquitto/conf.d/iotistica.conf ]; then
+            installer_step "Preserving existing Mosquitto configuration and credentials..."
+            if [ -f /etc/iotistic/agent.env ]; then
+                MQTT_BROKER_URL_VALUE=$(sed -n 's/^MQTT_BROKER_URL=//p' /etc/iotistic/agent.env | tail -n 1)
+            fi
+        else
+            configure_mosquitto_file_auth
+        fi
     else
         echo ""
         echo "Skipping local Mosquitto installation/configuration"
@@ -768,7 +785,7 @@ echo ""
             ;;
     esac
 
-    installer_step "Installing agent files..."
+    installer_step "Updating agent files..."
     if [ "$USE_LOCAL_REPO" = "yes" ]; then
         echo "Using repository sources from: $AGENT_DIR"
         
@@ -807,12 +824,13 @@ echo ""
             DOWNLOAD_URL="${DOWNLOAD_BASE_URL}/agent-latest${TARBALL_SUFFIX}.tar.gz"
         else
             # Use specific version with architecture suffix
-            DOWNLOAD_URL="${DOWNLOAD_BASE_URL}/versions/agent-${AGENT_VERSION}${TARBALL_SUFFIX}.tar.gz"
+            DOWNLOAD_URL="${DOWNLOAD_BASE_URL%/artifacts}/versions/agent-${AGENT_VERSION}${TARBALL_SUFFIX}.tar.gz"
         fi
         
         cd /tmp
         rm -rf iotistic-agent-download
         
+        DOWNLOAD_FAILED=0
         # Try to download with curl or wget
         if command -v curl > /dev/null 2>&1; then
             curl -fsSL -o agent.tar.gz "$DOWNLOAD_URL" || DOWNLOAD_FAILED=1
@@ -977,7 +995,7 @@ echo ""
     fi
 
     # Install root-owned updater assets. The agent itself receives no sudo privileges.
-    installer_step "Installing root-owned agent update service..."
+    installer_step "Configuring root-owned agent update service..."
     UPDATE_ASSET_DIR="/opt/iotistic/agent/bin"
     for update_asset in update.sh update-runner.sh systemd/update.service systemd/update.path; do
         if [ ! -f "$UPDATE_ASSET_DIR/$update_asset" ]; then
@@ -1013,7 +1031,31 @@ echo ""
     
     API_SECURITY_MODE_VALUE="${API_SECURITY_MODE:-LOCAL_NETWORK}"
 
-    cat > /etc/iotistic/agent.env << EOF
+    # Existing configuration is authoritative. Never regenerate credentials, cloud
+    # settings, ports, or custom keys on a repeat installation.
+    if [ -f /etc/iotistic/agent.env ]; then
+        installer_step "Preserving existing agent environment configuration..."
+        ENV_FILE=/etc/iotistic/agent.env
+        ENV_BACKUP="/etc/iotistic/agent.env.bak.$(date -u +%Y%m%dT%H%M%SZ)"
+        cp -p "$ENV_FILE" "$ENV_BACKUP"
+        ENV_TMP=$(mktemp /etc/iotistic/.agent.env.XXXXXX)
+        # Update only release metadata, retaining all other lines byte-for-byte.
+        awk -v version="$AGENT_VERSION" -v build="$BUILD_ID" '
+            BEGIN { seen_version=0; seen_build=0 }
+            /^AGENT_VERSION=/ { if (!seen_version++) print "AGENT_VERSION=" version; next }
+            /^BUILD_ID=/ { if (!seen_build++) print "BUILD_ID=" build; next }
+            { print }
+            END {
+                if (!seen_version) print "AGENT_VERSION=" version
+                if (!seen_build) print "BUILD_ID=" build
+            }
+        ' "$ENV_FILE" > "$ENV_TMP"
+        chown --reference="$ENV_FILE" "$ENV_TMP"
+        chmod --reference="$ENV_FILE" "$ENV_TMP"
+        mv -f "$ENV_TMP" "$ENV_FILE"
+    else
+        installer_step "Creating first-install agent environment configuration..."
+        cat > /etc/iotistic/agent.env << EOF
 AGENT_VERSION=${AGENT_VERSION}
 BUILD_ID=${BUILD_ID}
 DEVICE_API_PORT=${DEVICE_API_PORT}
@@ -1026,68 +1068,70 @@ STATE_FILE=/var/lib/iotistic/agent/target-state.json
 DATABASE_PATH=/var/lib/iotistic/agent/agent.sqlite
 EOF
 
-    # Run in standalone mode by default — provisioning is done via the web admin UI.
-    # Only skip STANDALONE when IOTISTICA_API is explicitly provided (cloud/fleet deployments).
-    if [ -z "$IOTISTICA_API" ]; then
-        echo "STANDALONE=true" >> /etc/iotistic/agent.env
-    fi
+        # Run in standalone mode by default — provisioning is done via the web admin UI.
+        # Only skip STANDALONE when IOTISTICA_API is explicitly provided (cloud/fleet deployments).
+        if [ -z "$IOTISTICA_API" ]; then
+            echo "STANDALONE=true" >> /etc/iotistic/agent.env
+        fi
 
-    if [ -n "$MQTT_BROKER_URL_VALUE" ]; then
-        echo "MQTT_BROKER_URL=${MQTT_BROKER_URL_VALUE}" >> /etc/iotistic/agent.env
-    fi
+        if [ -n "$MQTT_BROKER_URL_VALUE" ]; then
+            echo "MQTT_BROKER_URL=${MQTT_BROKER_URL_VALUE}" >> /etc/iotistic/agent.env
+        fi
 
-    if [ -n "$MQTT_AUTH_DIR_VALUE" ]; then
-        echo "MQTT_AUTH_DIR=${MQTT_AUTH_DIR_VALUE}" >> /etc/iotistic/agent.env
-    fi
+        if [ -n "$MQTT_AUTH_DIR_VALUE" ]; then
+            echo "MQTT_AUTH_DIR=${MQTT_AUTH_DIR_VALUE}" >> /etc/iotistic/agent.env
+        fi
 
-    if [ -n "$MQTT_USERNAME_VALUE" ]; then
-        echo "MQTT_USERNAME=${MQTT_USERNAME_VALUE}" >> /etc/iotistic/agent.env
-    fi
+        if [ -n "$MQTT_USERNAME_VALUE" ]; then
+            echo "MQTT_USERNAME=${MQTT_USERNAME_VALUE}" >> /etc/iotistic/agent.env
+        fi
 
-    if [ -n "$MQTT_PASSWORD_VALUE" ]; then
-        echo "MQTT_PASSWORD=${MQTT_PASSWORD_VALUE}" >> /etc/iotistic/agent.env
-    fi
+        if [ -n "$MQTT_PASSWORD_VALUE" ]; then
+            echo "MQTT_PASSWORD=${MQTT_PASSWORD_VALUE}" >> /etc/iotistic/agent.env
+        fi
 
-    # Write CI mode flag if set (for testing environments)
-    if [ "$CI" = "true" ]; then
-        echo "CI=true" >> /etc/iotistic/agent.env
-        echo "SYSTEMD_READY_MODE=ci" >> /etc/iotistic/agent.env
-    fi
+        # Write CI mode flag if set (for testing environments)
+        if [ "$CI" = "true" ]; then
+            echo "CI=true" >> /etc/iotistic/agent.env
+            echo "SYSTEMD_READY_MODE=ci" >> /etc/iotistic/agent.env
+        fi
 
-    if [ -n "$PROVISIONING_KEY" ]; then
-        echo "PROVISIONING_KEY=${PROVISIONING_KEY}" >> /etc/iotistic/agent.env
-    fi
+        if [ -n "$PROVISIONING_KEY" ]; then
+            echo "PROVISIONING_KEY=${PROVISIONING_KEY}" >> /etc/iotistic/agent.env
+        fi
 
-    if [ -n "$LICENSE_KEY" ]; then
-        echo "LICENSE_KEY=${LICENSE_KEY}" >> /etc/iotistic/agent.env
-    fi
+        if [ -n "$LICENSE_KEY" ]; then
+            echo "LICENSE_KEY=${LICENSE_KEY}" >> /etc/iotistic/agent.env
+        fi
 
-    if [ -n "$LICENSE_AUTO_TRIAL" ]; then
-        echo "LICENSE_AUTO_TRIAL=${LICENSE_AUTO_TRIAL}" >> /etc/iotistic/agent.env
-    fi
+        if [ -n "$LICENSE_AUTO_TRIAL" ]; then
+            echo "LICENSE_AUTO_TRIAL=${LICENSE_AUTO_TRIAL}" >> /etc/iotistic/agent.env
+        fi
 
-    echo "LICENSE_API=${LICENSE_API:-http://10.0.0.60:3003}" >> /etc/iotistic/agent.env
+        echo "LICENSE_API=${LICENSE_API:-http://10.0.0.60:3003}" >> /etc/iotistic/agent.env
 
-    # Ed25519 public key for license token verification (always set)
-    printf '%s\n' 'LICENSE_PUBLIC_KEY=-----BEGIN PUBLIC KEY-----\\nMCowBQYDK2VwAyEAqUK8n/0qodJaN73GiNZLFjdNc/pvYoxLl52koUWhAqM=\\n-----END PUBLIC KEY-----' >> /etc/iotistic/agent.env
+        # Ed25519 public key for license token verification (always set)
+        printf '%s\n' 'LICENSE_PUBLIC_KEY=-----BEGIN PUBLIC KEY-----\\nMCowBQYDK2VwAyEAqUK8n/0qodJaN73GiNZLFjdNc/pvYoxLl52koUWhAqM=\\n-----END PUBLIC KEY-----' >> /etc/iotistic/agent.env
 
-    # Enable all features (pro features gated by license check)
-    echo "PRO_FORCE=true" >> /etc/iotistic/agent.env
+        # Enable all features (pro features gated by license check)
+        echo "PRO_FORCE=true" >> /etc/iotistic/agent.env
 
-    if [ -n "$INITIAL_ADMIN_PASSWORD" ]; then
-        echo "INITIAL_ADMIN_PASSWORD=${INITIAL_ADMIN_PASSWORD}" >> /etc/iotistic/agent.env
-    fi
+        if [ "$EXISTING_INSTALL" = no ] && [ -n "${INITIAL_ADMIN_PASSWORD:-}" ]; then
+            echo "INITIAL_ADMIN_PASSWORD=${INITIAL_ADMIN_PASSWORD}" >> /etc/iotistic/agent.env
+        fi
 
-    if [ -n "$IOTISTICA_API" ]; then
-        echo "IOTISTICA_API=${IOTISTICA_API}" >> /etc/iotistic/agent.env
-    fi
+        if [ -n "$IOTISTICA_API" ]; then
+            echo "IOTISTICA_API=${IOTISTICA_API}" >> /etc/iotistic/agent.env
+        fi
 
-    if [ -n "$MQTT_USE_TLS" ]; then
-        echo "MQTT_USE_TLS=${MQTT_USE_TLS}" >> /etc/iotistic/agent.env
-    fi
+        if [ -n "$MQTT_USE_TLS" ]; then
+            echo "MQTT_USE_TLS=${MQTT_USE_TLS}" >> /etc/iotistic/agent.env
+        fi
 
-    if [ -n "$AGENT_SHELL_HMAC_KEY" ]; then
-        echo "AGENT_SHELL_HMAC_KEY=${AGENT_SHELL_HMAC_KEY}" >> /etc/iotistic/agent.env
+        if [ -n "$AGENT_SHELL_HMAC_KEY" ]; then
+            echo "AGENT_SHELL_HMAC_KEY=${AGENT_SHELL_HMAC_KEY}" >> /etc/iotistic/agent.env
+        fi
+
     fi
 
     # Set permissions
@@ -1244,38 +1288,11 @@ EOFJOURNALD
         echo ""
         echo "✓ Agent service is running"
         echo ""
-        echo "====================================="
-        echo "Installation complete!"
-        echo "====================================="
-        echo ""
-        echo "Agent is running as systemd service '${SERVICE_NAME}'"
-        echo "Admin UI:   http://$(hostname -I | awk '{print $1}'):${DEVICE_API_PORT}/admin"
-        echo ""
-        echo "Admin login — username: admin"
-        if [ -n "$INITIAL_ADMIN_PASSWORD" ]; then
-            echo "  Password:  (set via INITIAL_ADMIN_PASSWORD)"
+        if [ "$EXISTING_INSTALL" = yes ]; then
+            echo "Agent service restarted successfully (existing installation)."
         else
-            echo "  The initial password was generated on first start."
-            echo "  Retrieve it with:  journalctl -u ${SERVICE_NAME} | grep 'Password:'"
+            echo "Agent service started successfully (first installation)."
         fi
-        echo "  You will be required to change it on first login."
-        echo ""
-        if [ -z "$IOTISTICA_API" ]; then
-        echo "Running in standalone mode."
-        echo "  To connect to Iotistica Cloud, go to Settings → Cloud Sync in the admin UI."
-        echo ""
-        fi
-        if [ "$MANAGE_LOCAL_MOSQUITTO" = "yes" ]; then
-            echo "Local MQTT broker: ${MQTT_BROKER_URL_VALUE}"
-            if [ "$MQTT_CREDENTIALS_PRESERVED" = "yes" ]; then
-                echo "  Credentials: preserved from previous installation"
-            else
-                echo "  Username: ${MQTT_USERNAME_VALUE}"
-                echo "  Password: $(mask_password "$MQTT_PASSWORD_VALUE")"
-            fi
-            echo ""
-        fi
-        echo ""
     else
         echo ""
         echo "✗ Error: Agent service failed to start"
@@ -1291,7 +1308,7 @@ EOFJOURNALD
     # ============================================================================
     INSTALL_CLI="${IOTISTICA_INSTALL_CLI:-yes}"
     if [ "$INSTALL_CLI" != "no" ] && [ "$INSTALL_CLI" != "false" ] && [ "$INSTALL_CLI" != "0" ]; then
-        installer_step "Installing command-line tools..."
+        installer_step "Checking command-line tools..."
     fi
     if [ "$INSTALL_CLI" = "no" ] || [ "$INSTALL_CLI" = "false" ] || [ "$INSTALL_CLI" = "0" ]; then
         echo ""
@@ -1353,30 +1370,36 @@ EOFJOURNALD
     fi
     INSTALL_COMPLETED=yes
     installer_message ""
-    installer_message "Iotistica Edge installed successfully."
-    installer_message ""
-    installer_message "Admin UI: http://$(hostname -I | awk '{print $1}'):${DEVICE_API_PORT}/admin"
-    installer_message "Username: admin"
-    if [ -n "$INITIAL_ADMIN_PASSWORD" ]; then
-        installer_message "Password: supplied through INITIAL_ADMIN_PASSWORD"
+    if [ "$EXISTING_INSTALL" = yes ]; then
+        installer_message "Iotistica Edge update completed successfully."
+        installer_message "Agent version: ${PREVIOUS_AGENT_VERSION:-unknown} -> ${AGENT_VERSION}"
+        installer_message "Systemd service: ${SERVICE_NAME} (running)"
+        installer_message "Admin UI: http://$(hostname -I | awk '{print $1}'):${DEVICE_API_PORT}/admin"
+        installer_message "Existing admin credentials and application data are not reset by the installer."
     else
-        installer_message "Initial password: generated on first start."
-        installer_message "Retrieve it with: sudo journalctl -u ${SERVICE_NAME} | grep 'Password:'"
-    fi
-    installer_message "You will be asked to change the password on first login."
-    if [ "$MANAGE_LOCAL_MOSQUITTO" = yes ]; then
-        installer_message ""
-        installer_message "MQTT broker: ${MQTT_BROKER_URL_VALUE}"
-        if [ "$MQTT_CREDENTIALS_PRESERVED" = yes ]; then
-            installer_message "MQTT credentials: existing credentials preserved."
+        installer_message "Iotistica Edge installed successfully."
+        installer_message "Agent version: ${AGENT_VERSION}"
+        installer_message "Admin UI: http://$(hostname -I | awk '{print $1}'):${DEVICE_API_PORT}/admin"
+        installer_message "Username: admin"
+        if [ -n "${INITIAL_ADMIN_PASSWORD:-}" ]; then
+            installer_message "Password: supplied through INITIAL_ADMIN_PASSWORD"
         else
-            installer_message "MQTT username: ${MQTT_USERNAME_VALUE}"
-            installer_message "MQTT password: configured during installation."
+            installer_message "Initial password: generated on first start."
+            installer_message "Retrieve it with: sudo journalctl -u ${SERVICE_NAME} | grep 'Password:'"
         fi
-    fi
-    if [ -z "$IOTISTICA_API" ]; then
-        installer_message ""
-        installer_message "Standalone mode. Cloud Sync can be configured in the Admin UI."
+        installer_message "You will be asked to change the password on first login."
+        if [ "$MANAGE_LOCAL_MOSQUITTO" = yes ]; then
+            installer_message "MQTT broker: ${MQTT_BROKER_URL_VALUE}"
+            if [ "$MQTT_CREDENTIALS_PRESERVED" = yes ]; then
+                installer_message "MQTT credentials: existing credentials preserved."
+            else
+                installer_message "MQTT username: ${MQTT_USERNAME_VALUE}"
+                installer_message "MQTT password: configured during installation."
+            fi
+        fi
+        if [ -z "$IOTISTICA_API" ]; then
+            installer_message "Standalone mode. Cloud Sync can be configured in the Admin UI."
+        fi
     fi
     installer_message ""
     installer_message "Diagnostic log: $INSTALL_LOG"
