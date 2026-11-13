@@ -54,7 +54,7 @@ EOF
   "deployment_type": "systemd"
 }
 EOF
-        echo "Γ¥î Update status written: FAILURE"
+        echo "Update status written: FAILURE"
     fi
     chown iotistic:iotistic "$STATUS_FILE"
     chmod 0644 "$STATUS_FILE"
@@ -92,17 +92,17 @@ echo "Architecture: $DETECTED_ARCH ($TARBALL_SUFFIX)"
 # Determine download URL
 if [ "$TARGET_VERSION" = "latest" ]; then
     # Use latest version with architecture suffix
-    DOWNLOAD_URL="https://iotistic.blob.core.windows.net/scripts/agent/agent-latest${TARBALL_SUFFIX}.tar.gz"
+    DOWNLOAD_URL="https://get.iotistica.com/agent/artifacts/agent-latest${TARBALL_SUFFIX}.tar.gz"
     echo "Target version: latest"
 else
     # Use specific version with architecture suffix
-    DOWNLOAD_URL="https://iotistic.blob.core.windows.net/scripts/agent/versions/agent-${TARGET_VERSION}${TARBALL_SUFFIX}.tar.gz"
+    DOWNLOAD_URL="https://get.iotistica.com/agent/versions/agent-${TARGET_VERSION}${TARBALL_SUFFIX}.tar.gz"
     echo "Target version: $TARGET_VERSION"
 fi
 
 # Check if update needed
 if [ "$CURRENT_VERSION" = "$TARGET_VERSION" ] && [ "$FORCE" != "true" ]; then
-    echo "Γ£à Already on target version!"
+    echo "Already on target version!"
     exit 0
 fi
 
@@ -113,16 +113,16 @@ TIMESTAMP=$(date +%Y%m%d-%H%M%S)
 
 # Backup current installation
 echo ""
-echo "≡ƒÆ╛ Backing up current installation..."
+echo "Backing up current installation..."
 if [ -d /opt/iotistic/agent ]; then
     tar -czf "$BACKUP_DIR/agent-backup-${CURRENT_VERSION}-${TIMESTAMP}.tar.gz" \
         -C /opt/iotistic agent
-    echo "Γ£ô Backup saved to $BACKUP_DIR/agent-backup-${CURRENT_VERSION}-${TIMESTAMP}.tar.gz"
+    echo "Backup saved to $BACKUP_DIR/agent-backup-${CURRENT_VERSION}-${TIMESTAMP}.tar.gz"
 fi
 
 # Download new tarball
 echo ""
-echo "≡ƒôÑ Downloading agent tarball..."
+echo "Downloading agent tarball..."
 cd /tmp
 rm -rf iotistic-agent-update agent-update.tar.gz agent-update.tar.gz.sha256
 
@@ -183,13 +183,13 @@ tar -xzf agent-update.tar.gz -C iotistic-agent-update || {
 
 # Verify extraction
 if [ ! -f iotistic-agent-update/package.json ]; then
-    echo "Γ¥î Tarball extraction failed - package.json not found"
+    echo "Tarball extraction failed - package.json not found"
     exit 1
 fi
 
 # Extract actual version from downloaded package.json
 EXTRACTED_VERSION=$(grep -o '"version"[[:space:]]*:[[:space:]]*"[^"]*"' iotistic-agent-update/package.json | sed 's/.*"\([^"]*\)".*/\1/' || echo "unknown")
-echo "Γ£ô Downloaded version: $EXTRACTED_VERSION"
+echo "Downloaded version: $EXTRACTED_VERSION"
 
 # Stop agent service
 if [ "$TARGET_VERSION" != "latest" ] && [ "$EXTRACTED_VERSION" != "$TARGET_VERSION" ]; then
@@ -198,12 +198,12 @@ if [ "$TARGET_VERSION" != "latest" ] && [ "$EXTRACTED_VERSION" != "$TARGET_VERSI
 fi
 
 echo ""
-echo "≡ƒ¢æ Stopping agent service..."
+echo "Stopping agent service..."
 systemctl stop "$SERVICE_NAME"
 
 # Replace installation files
 echo ""
-echo "≡ƒôª Installing new version..."
+echo "Installing new version..."
 
 # Clean up existing installation (except config and data)
 rm -rf /opt/iotistic/agent/node_modules
@@ -212,11 +212,11 @@ rm -f /opt/iotistic/agent/package*.json
 
 # Copy new files
 cp -r iotistic-agent-update/* /opt/iotistic/agent/ || {
-    echo "Γ¥î Failed to copy agent files"
+    echo "Failed to copy agent files"
     
     # Attempt rollback
     if [ -f "$BACKUP_DIR/agent-backup-${CURRENT_VERSION}-${TIMESTAMP}.tar.gz" ]; then
-        echo "ΓÅ«∩╕Å  Rolling back to previous version..."
+        echo "Rolling back to previous version..."
         tar -xzf "$BACKUP_DIR/agent-backup-${CURRENT_VERSION}-${TIMESTAMP}.tar.gz" -C /opt/iotistic
     fi
     
@@ -224,7 +224,7 @@ cp -r iotistic-agent-update/* /opt/iotistic/agent/ || {
     exit 1
 }
 
-echo "Γ£ô Files installed"
+echo "Files installed"
 
 # Start agent service
 if [ -f /opt/iotistic/agent/bin/update.sh ]; then
@@ -242,11 +242,11 @@ if [ -f /opt/iotistic/agent/bin/systemd/update.service ] && [ -f /opt/iotistic/a
 fi
 
 echo ""
-echo "Γû╢∩╕Å  Starting agent service..."
+echo "Starting agent service..."
 systemctl start "$SERVICE_NAME"
 
 # Wait for service to stabilize
-echo "ΓÅ│ Waiting for service to start (15 seconds)..."
+echo "Waiting for service to start (15 seconds)..."
 sleep 15
 
 # Verify service is running with new version
@@ -258,23 +258,23 @@ if systemctl is-active --quiet "$SERVICE_NAME"; then
     fi
     
     echo ""
-    echo "Γ£à Agent updated successfully!"
+    echo "Agent updated successfully!"
     echo "   Old version: $CURRENT_VERSION"
     echo "   New version: $NEW_VERSION"
     echo ""
-    echo "≡ƒôï Recent logs:"
+    echo "Recent logs:"
     journalctl -u "$SERVICE_NAME" -n 20 --no-pager
     
     # Cleanup old backups (keep last 3)
     echo ""
-    echo "≡ƒº╣ Cleaning up old backups..."
+    echo "Cleaning up old backups..."
     find "$BACKUP_DIR" -name "agent-backup-*" -type f | sort -r | tail -n +4 | xargs -r rm -f 2>/dev/null || true
     
     echo ""
-    echo "Γ£à Update complete!"
+    echo "Update complete!"
     
 else
-    echo "Γ¥î Service failed to start, attempting rollback..."
+    echo "Service failed to start, attempting rollback..."
     
     # Stop failed service
     systemctl stop "$SERVICE_NAME"
@@ -291,13 +291,13 @@ else
         sleep 10
         
         if systemctl is-active --quiet "$SERVICE_NAME"; then
-            echo "ΓÜá∩╕Å  Rollback complete, agent restored to version $CURRENT_VERSION"
+            echo "Rollback complete, agent restored to version $CURRENT_VERSION"
         else
-            echo "Γ¥î CRITICAL: Service failed to start after rollback"
+            echo "CRITICAL: Service failed to start after rollback"
             echo "   Manual intervention required: systemctl status $SERVICE_NAME"
         fi
     else
-        echo "Γ¥î CRITICAL: No backup found for rollback"
+        echo "CRITICAL: No backup found for rollback"
         echo "   Manual intervention required: systemctl status $SERVICE_NAME"
     fi
     
