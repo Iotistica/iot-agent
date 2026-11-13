@@ -1,0 +1,183 @@
+name: Publish Agent Release
+
+on:
+  release:
+    types: [published]
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
+concurrency:
+  group: agent-release-publish
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    name: Promote release and publish Web Admin notes
+    # Do not promote prereleases.
+    if: github.event.release.prerelease == false
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TAG: ${{ github.event.release.tag_name }}
+      RELEASE_BRANCH: ${{ vars.RELEASE_BRANCH || 'main' }}
+      ACCT: ${{ secrets.AZURE_STORAGE_ACCOUNT }}
+    steps:
+      - name: Validate release and check promotion order
+        id: gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Unexpected release tag: $TAG" >&2
+            exit 1
+          fi
+          VERSION="${TAG#v}"
+          RELEASE=$(gh api "repos/${GH_REPO}/releases/tags/${TAG}")
+          if [ "$(jq -r '.draft' <<< "$RELEASE")" != "false" ] ||
+             [ "$(jq -r '.prerelease' <<< "$RELEASE")" != "false" ]; then
+            echo "Release must be published and not a prerelease." >&2
+            exit 1
+          fi
+          NOTES=$(jq -r '.body // ""' <<< "$RELEASE")
+          if [ -z "$(printf '%s' "$NOTES" | tr -d '[:space:]')" ]; then
+            echo "Release notes are empty. Edit the release notes before publishing." >&2
+            exit 1
+          fi
+          printf '%s\n' "$NOTES" > /tmp/release-notes.md
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_PASSWORD }}
+
+      - name: Promote Docker latest
+        env:
+          VERSION: ${{ steps.gate.outputs.version }}
+        run: |
+          set -euo pipefail
+          docker buildx imagetools create \
+            --tag iotistic/agent:latest "iotistic/agent:${VERSION}"
+
+      - name: Azure login
+        uses: azure/login@93381592711f247e165c389ebb30b596c84cdc48 # v3.0.0
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Promote immutable artifacts to latest
+        shell: bash
+        env:
+          VERSION: ${{ steps.gate.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/promotion
+
+          # Prevent older releases from replacing the current latest.
+          if az storage blob exists --account-name "$ACCT" --container-name scripts \
+             --name agent/latest-version.json --auth-mode key --query exists -o tsv | grep -qx true; then
+            az storage blob download --account-name "$ACCT" --container-name scripts \
+              --name agent/latest-version.json --file /tmp/promotion/current.json \
+              --auth-mode key --overwrite --only-show-errors --output none
+            CURRENT=$(jq -r '.version // ""' /tmp/promotion/current.json)
+            if [[ "$CURRENT" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] &&
+               [ "$CURRENT" != "$VERSION" ] &&
+               [ "$(printf '%s\n%s\n' "$VERSION" "$CURRENT" | sort -V | tail -n1)" = "$CURRENT" ]; then
+              echo "Refusing to downgrade latest from $CURRENT to $VERSION" >&2
+              exit 1
+            fi
+          fi
+
+          promote() {
+            local source="$1" destination="$2" type="$3" file="/tmp/promotion/$(basename "$destination")"
+            az storage blob download --account-name "$ACCT" --container-name scripts \
+              --name "$source" --file "$file" --auth-mode key \
+              --overwrite --only-show-errors --output none
+            az storage blob upload --account-name "$ACCT" --container-name scripts \
+              --name "$destination" --file "$file" --auth-mode key \
+              --overwrite true --only-show-errors --output none --content-type "$type" \
+              --content-cache-control "no-cache"
+          }
+
+          for ARCH in x86_64 arm64; do
+            promote "agent/versions/agent-${VERSION}-${ARCH}.tar.gz" \
+              "agent/agent-latest-${ARCH}.tar.gz" application/gzip
+            promote "agent/versions/agent-${VERSION}-${ARCH}.tar.gz.sha256" \
+              "agent/agent-latest-${ARCH}.tar.gz.sha256" text/plain
+          done
+
+          promote "agent/versions/agent-${VERSION}-x86_64.tar.gz" \
+            "agent/agent-latest.tar.gz" application/gzip
+
+          for ARCH in amd64 arm64; do
+            promote "agent/versions/iotistica-agent_${VERSION}_${ARCH}.deb" \
+              "agent/iotistica-agent-latest-${ARCH}.deb" application/vnd.debian.binary-package
+          done
+
+          promote "agent/versions/install-${VERSION}.sh" "agent/install.sh" text/x-shellscript
+          # The versioned installer checksum is in the GitHub Release assets.
+          gh release download "$TAG" --pattern install.sh.sha256 --dir /tmp/promotion --clobber
+          az storage blob upload --account-name "$ACCT" --container-name scripts \
+            --name agent/install.sh.sha256 --file /tmp/promotion/install.sh.sha256 \
+            --auth-mode key --overwrite true --only-show-errors --output none \
+            --content-type text/plain --content-cache-control "no-cache"
+
+          for ITEM in agent-source agent-artifacts-x86_64 agent-artifacts-arm64 install-script; do
+            promote "agent/versions/${VERSION}/sbom/${ITEM}.cyclonedx.json" \
+              "agent/sbom/${ITEM}.cyclonedx.json" application/json
+          done
+
+          jq -n --arg version "$VERSION" \
+            --arg releasedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            '{version:$version,releasedAt:$releasedAt,baseUrl:"https://get.iotistica.com/agent/sbom",
+              files:[
+                {id:"agent-source",label:"Agent — source",file:"agent-source.cyclonedx.json",description:"Source dependencies"},
+                {id:"agent-artifacts-x86_64",label:"Agent — x86_64 build",file:"agent-artifacts-x86_64.cyclonedx.json",description:"Built x86_64 release"},
+                {id:"agent-artifacts-arm64",label:"Agent — arm64 build",file:"agent-artifacts-arm64.cyclonedx.json",description:"Built arm64 release"},
+                {id:"install-script",label:"Install script",file:"install-script.cyclonedx.json",description:"Installer scan"}
+              ]}' > /tmp/promotion/sbom-latest.json
+          az storage blob upload --account-name "$ACCT" --container-name scripts \
+            --name agent/sbom/sbom-latest.json --file /tmp/promotion/sbom-latest.json \
+            --auth-mode key --overwrite true --only-show-errors --output none \
+            --content-type application/json --content-cache-control "no-cache"
+
+          # Publish manifest LAST so clients see the new version only after assets exist.
+          jq -n --rawfile notes /tmp/release-notes.md \
+            --arg version "$VERSION" --arg releaseDate "$(date -u +%Y-%m-%d)" \
+            '{version:$version,releaseDate:$releaseDate,notes:$notes}' \
+            > /tmp/promotion/latest-version.json
+          az storage blob upload --account-name "$ACCT" --container-name scripts \
+            --name agent/latest-version.json --file /tmp/promotion/latest-version.json \
+            --auth-mode key --overwrite true --only-show-errors --output none \
+            --content-type application/json --content-cache-control "no-cache"
+
+      - name: Sync published version to main
+        env:
+          VERSION: ${{ steps.gate.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone "https://x-access-token:${GH_TOKEN}@github.com/${GH_REPO}.git" /tmp/release-repo
+          cd /tmp/release-repo
+          git fetch origin "$TAG" "$RELEASE_BRANCH"
+          TAG_SHA=$(git rev-parse "refs/tags/${TAG}^{commit}")
+          BRANCH_SHA=$(git rev-parse "origin/${RELEASE_BRANCH}^{commit}")
+          if [ "$TAG_SHA" != "$BRANCH_SHA" ]; then
+            echo "Branch moved since tag; skipping version sync to avoid overwriting changes."
+            exit 0
+          fi
+          npm version "$VERSION" --no-git-tag-version --allow-same-version
+          git add package.json package-lock.json
+          if git diff --cached --quiet; then exit 0; fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "chore: sync released version to $VERSION [skip ci]"
+          git push origin "HEAD:refs/heads/${RELEASE_BRANCH}"

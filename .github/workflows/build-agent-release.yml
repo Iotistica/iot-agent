@@ -1,4 +1,4 @@
-name: Agent Release
+name: Agent Release (Draft)
 
 # Push a version tag to build, package, and release the agent in one shot.
 # Requires successful CI for the exact tagged commit before any build or publish.
@@ -262,18 +262,6 @@ jobs:
             --name "agent/versions/agent-${VERSION}-${ARCH}.tar.gz.sha256" \
             --file "/tmp/artifacts/agent-${VERSION}-${ARCH}.tar.gz.sha256" \
             --overwrite true --auth-mode key --only-show-errors --output none --content-type text/plain
-          if [ "${{ needs.verify_ci.outputs.promote_latest }}" = "true" ]; then
-          az storage blob upload --account-name "$ACCT" --container-name scripts \
-            --name "agent/agent-latest-${ARCH}.tar.gz" \
-            --file "/tmp/artifacts/agent-${VERSION}-${ARCH}.tar.gz" \
-            --overwrite true --auth-mode key --only-show-errors --output none --content-type application/gzip
-          az storage blob upload --account-name "$ACCT" --container-name scripts \
-            --name "agent/agent-latest-${ARCH}.tar.gz.sha256" \
-            --file "/tmp/artifacts/agent-${VERSION}-${ARCH}.tar.gz.sha256" \
-            --overwrite true --auth-mode key --only-show-errors --output none --content-type text/plain
-
-          fi
-
           # .deb — versioned + rolling latest
           az storage blob upload --account-name "$ACCT" --container-name scripts \
             --name "agent/versions/${DEB}" \
@@ -284,31 +272,8 @@ jobs:
             --name "agent/versions/${DEB}.sha256" \
             --file "/tmp/artifacts/${DEB}.sha256" \
             --overwrite true --auth-mode key --only-show-errors --output none --content-type text/plain
-          if [ "${{ needs.verify_ci.outputs.promote_latest }}" = "true" ]; then
-          az storage blob upload --account-name "$ACCT" --container-name scripts \
-            --name "agent/iotistica-agent-latest-${DEB_ARCH}.deb" \
-            --file "/tmp/artifacts/${DEB}" \
-            --overwrite true --auth-mode key --only-show-errors --output none \
-            --content-type "application/vnd.debian.binary-package"
-
-          fi
-
           # x86_64-only: generic latest tarball, install.sh, versioned install snapshot
           if [ "$ARCH" = "x86_64" ]; then
-            if [ "${{ needs.verify_ci.outputs.promote_latest }}" = "true" ]; then
-            az storage blob upload --account-name "$ACCT" --container-name scripts \
-              --name "agent/agent-latest.tar.gz" \
-              --file "/tmp/artifacts/agent-${VERSION}-x86_64.tar.gz" \
-              --overwrite true --auth-mode key --only-show-errors --output none --content-type application/gzip
-            az storage blob upload --account-name "$ACCT" --container-name scripts \
-              --name "agent/install.sh" \
-              --file "/tmp/artifacts/install.sh" \
-              --overwrite true --auth-mode key --only-show-errors --output none --content-type text/x-shellscript
-            az storage blob upload --account-name "$ACCT" --container-name scripts \
-              --name "agent/install.sh.sha256" \
-              --file "/tmp/artifacts/install.sh.sha256" \
-              --overwrite true --auth-mode key --only-show-errors --output none --content-type text/plain
-            fi
             az storage blob upload --account-name "$ACCT" --container-name scripts \
               --name "agent/versions/install-${VERSION}.sh" \
               --file "/tmp/artifacts/install.sh" \
@@ -427,7 +392,7 @@ jobs:
 
   # ── SBOM + GitHub Release ───────────────────────────────────────────────────
   publish:
-    name: SBOM & GitHub Release
+    name: SBOM & Draft GitHub Release
     needs: [version, verify_ci, package, docker]
     runs-on: [ubuntu-24.04]
     permissions:
@@ -484,63 +449,7 @@ jobs:
               --name "agent/versions/${VERSION}/sbom/${f}.cyclonedx.json" \
               --file "/tmp/sbom/${f}.cyclonedx.json" \
               --overwrite true --auth-mode key --only-show-errors --output none --content-type application/json
-            if [ "${{ needs.verify_ci.outputs.promote_latest }}" = "true" ]; then
-            az storage blob upload --account-name "$ACCT" --container-name scripts \
-              --name "agent/sbom/${f}.cyclonedx.json" \
-              --file "/tmp/sbom/${f}.cyclonedx.json" \
-              --overwrite true --auth-mode key --only-show-errors --output none --content-type application/json
-            fi
           done
-
-          if [ "${{ needs.verify_ci.outputs.promote_latest }}" = "true" ]; then
-          cat > /tmp/sbom/sbom-latest.json << EOF
-          {
-            "version": "${VERSION}",
-            "releasedAt": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-            "baseUrl": "https://get.iotistica.com/agent/sbom",
-            "files": [
-              { "id": "agent-source",           "label": "Agent — source",       "file": "agent-source.cyclonedx.json",           "description": "All npm dependencies declared in package.json, generated from source." },
-              { "id": "agent-artifacts-x86_64", "label": "Agent — x86_64 build", "file": "agent-artifacts-x86_64.cyclonedx.json", "description": "Filesystem scan of the built x86_64 release tarball — includes bundled binaries." },
-              { "id": "agent-artifacts-arm64",  "label": "Agent — arm64 build",  "file": "agent-artifacts-arm64.cyclonedx.json",  "description": "Filesystem scan of the built arm64 release tarball — includes bundled binaries." },
-              { "id": "install-script",         "label": "Install script",        "file": "install-script.cyclonedx.json",         "description": "Scan of install.sh and any bundled tooling." }
-            ]
-          }
-          EOF
-          az storage blob upload --account-name "$ACCT" --container-name scripts \
-            --name "agent/sbom/sbom-latest.json" \
-            --file "/tmp/sbom/sbom-latest.json" \
-            --overwrite true --auth-mode key --only-show-errors --output none \
-            --content-type application/json \
-            --content-cache-control "no-cache"
-          fi
-
-      - name: Upload update manifest
-        if: needs.verify_ci.outputs.promote_latest == 'true'
-        run: |
-          set -euo pipefail
-          VERSION="${{ needs.version.outputs.version }}"
-          ACCT=${{ secrets.AZURE_STORAGE_ACCOUNT }}
-
-          PREV_TAG=$(git describe --tags --abbrev=0 "${{ needs.version.outputs.tag }}^" 2>/dev/null || echo "")
-          if [ -n "$PREV_TAG" ]; then
-            NOTES=$(git log "${PREV_TAG}..${{ needs.version.outputs.tag }}" --pretty=format:"%s" --no-merges --max-count=10 | paste -sd '; ' -)
-          else
-            NOTES=""
-          fi
-
-          jq -n \
-            --arg version "$VERSION" \
-            --arg releaseDate "$(date -u +%Y-%m-%d)" \
-            --arg notes "$NOTES" \
-            '{version: $version, releaseDate: $releaseDate, notes: $notes}' \
-            > /tmp/latest-version.json
-
-          az storage blob upload --account-name "$ACCT" --container-name scripts \
-            --name "agent/latest-version.json" \
-            --file "/tmp/latest-version.json" \
-            --overwrite true --auth-mode key --only-show-errors --output none \
-            --content-type application/json \
-            --content-cache-control "no-cache"
 
       - name: Create GitHub Release
         run: |
@@ -605,12 +514,17 @@ jobs:
             /tmp/artifacts/install.sh.sha256
           )
 
-          if gh release view "$TAG" > /dev/null 2>&1; then
-            echo "Release $TAG already exists — updating notes and re-uploading assets"
-            gh release edit "$TAG" --title "Agent v${VERSION}" --notes-file /tmp/release-notes.md
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            IS_DRAFT=$(gh release view "$TAG" --json isDraft --jq '.isDraft')
+            if [ "$IS_DRAFT" != "true" ]; then
+              echo "Release $TAG is already published; refusing to overwrite assets." >&2
+              exit 1
+            fi
+            echo "Draft exists — preserving manually edited notes."
             gh release upload "$TAG" "${ASSETS[@]}" --clobber
           else
-            gh release create "$TAG" --title "Agent v${VERSION}" --notes-file /tmp/release-notes.md "${ASSETS[@]}"
+            gh release create "$TAG" --draft --verify-tag \
+              --title "Agent v${VERSION}" --notes-file /tmp/release-notes.md "${ASSETS[@]}"
           fi
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -630,54 +544,5 @@ jobs:
           echo "| install.sh     | \`agent/versions/install-${VERSION}.sh\` |" >> $GITHUB_STEP_SUMMARY
           echo "| Docker         | \`iotistic/agent:${VERSION}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| SBOM           | \`agent/versions/${VERSION}/sbom/\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| Update manifest | \`agent/latest-version.json\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Release status | Draft — publish manually to promote |" >> $GITHUB_STEP_SUMMARY
 
-  # ── Sync released package version back to main ───────────────────────────────
-  sync_version:
-    name: Sync released version to main
-    needs: [version, verify_ci, publish]
-    if: needs.verify_ci.outputs.promote_latest == 'true'
-    runs-on: [ubuntu-24.04]
-    permissions:
-      contents: write
-    env:
-      RELEASE_BRANCH: ${{ vars.RELEASE_BRANCH || 'main' }}
-      RELEASE_VERSION: ${{ needs.version.outputs.version }}
-      RELEASE_SHA: ${{ needs.verify_ci.outputs.sha }}
-
-    steps:
-      - name: Checkout release branch
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-        with:
-          ref: ${{ env.RELEASE_BRANCH }}
-          fetch-depth: 0
-          persist-credentials: true
-
-      - name: Set up Node.js
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
-        with:
-          node-version: '24'
-
-      - name: Commit released version to branch
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          # Never overwrite changes pushed after the release tag.
-          if [ "$(git rev-parse HEAD)" != "$RELEASE_SHA" ]; then
-            echo "Release branch moved since tag; refusing version-sync push." >&2
-            exit 1
-          fi
-
-          npm version "$RELEASE_VERSION" --no-git-tag-version --allow-same-version
-          git add package.json package-lock.json
-
-          if git diff --cached --quiet; then
-            echo "Package version is already $RELEASE_VERSION; nothing to commit."
-            exit 0
-          fi
-
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit -m "chore: sync released version to $RELEASE_VERSION [skip ci]"
-          git push origin "HEAD:refs/heads/$RELEASE_BRANCH"

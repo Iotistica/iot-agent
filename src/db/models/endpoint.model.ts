@@ -260,16 +260,7 @@ export class EndpointModel {
    * Update endpoint (by name - legacy method)
    */
 	static async update(name: string, updates: Partial<Endpoint>): Promise<Endpoint | null> {
-		const updateData = {
-			...this.serializeEndpoint(updates),
-			updated_at: new Date().toISOString(),
-		};
-
-		const columns = Object.keys(updateData);
-		const values = [...Object.values(updateData), name];
-		this.getDb()
-			.prepare(`UPDATE ${this.table} SET ${columns.map((c) => `"${c}" = ?`).join(', ')} WHERE name = ?`)
-			.run(...values);
+		this.updateEndpointRow('name', name, updates);
 
 		return await this.getByName(name);
 	}
@@ -283,16 +274,7 @@ export class EndpointModel {
 			console.warn('[WARN] updateByUuid called with undefined/empty uuid');
 			return null;
 		}
-		const updateData = {
-			...this.serializeEndpoint(updates),
-			updated_at: new Date().toISOString(),
-		};
-
-		const columns = Object.keys(updateData);
-		const values = [...Object.values(updateData), uuid];
-		this.getDb()
-			.prepare(`UPDATE ${this.table} SET ${columns.map((c) => `"${c}" = ?`).join(', ')} WHERE uuid = ?`)
-			.run(...values);
+		this.updateEndpointRow('uuid', uuid, updates);
 
 		return await this.getByUuid(uuid);
 	}
@@ -302,18 +284,34 @@ export class EndpointModel {
    * Uses fingerprint for lookup, preserves UUID and other stable fields
    */
 	static async updateByFingerprint(fingerprint: string, updates: Partial<Endpoint>): Promise<Endpoint | null> {
-		const updateData = {
-			...this.serializeEndpoint(updates),
-			updated_at: new Date().toISOString(),
-		};
-
-		const columns = Object.keys(updateData);
-		const values = [...Object.values(updateData), fingerprint];
-		this.getDb()
-			.prepare(`UPDATE ${this.table} SET ${columns.map((c) => `"${c}" = ?`).join(', ')} WHERE fingerprint = ?`)
-			.run(...values);
+		this.updateEndpointRow('fingerprint', fingerprint, updates);
 
 		return await this.getByFingerprint(fingerprint);
+	}
+
+	private static updateEndpointRow(
+		lookupColumn: 'name' | 'uuid' | 'fingerprint',
+		lookupValue: string,
+		updates: Partial<Endpoint>,
+	): void {
+		const db = this.getDb();
+		const now = new Date().toISOString();
+		const updateData = { ...this.serializeEndpoint(updates), updated_at: now };
+		const columns = Object.keys(updateData);
+		const values = [...Object.values(updateData), lookupValue];
+
+		transact(db, () => {
+			const existing = db
+				.prepare(`SELECT id, enabled FROM ${this.table} WHERE "${lookupColumn}" = ? LIMIT 1`)
+				.get(lookupValue) as { id: number; enabled: number | boolean } | undefined;
+			db.prepare(`UPDATE ${this.table} SET ${columns.map((c) => `"${c}" = ?`).join(', ')} WHERE "${lookupColumn}" = ?`)
+				.run(...values);
+
+			if (existing && typeof updates.enabled === 'boolean' && Boolean(existing.enabled) !== updates.enabled) {
+				db.prepare('UPDATE devices SET enabled = ?, updated_at = ? WHERE endpoint_id = ?')
+					.run(updates.enabled ? 1 : 0, now, existing.id);
+			}
+		});
 	}
 
 	/**
