@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
-import { confirmDeviceResolution, previewDeviceResolution, type DeviceResolutionCandidate } from '../../../src/discovery/device-resolution';
+import { confirmDeviceResolution, previewDeviceResolution, resolveConfirmedDevicePoints, type DeviceResolutionCandidate } from '../../../src/discovery/device-resolution';
 
 const candidate = (candidateId: string, keys: Array<[string, string]>, pointAddresses = [candidateId]): DeviceResolutionCandidate => ({
 	candidateId, name: candidateId, keys: keys.map(([kind, value]) => ({ kind, value })), pointAddresses, reasons: [],
@@ -25,6 +25,16 @@ test('conflicting identifier and path matches require review', () => {
 		{ sourceUuid: 'source', deviceUuid: 'a', keys: [{ kind: 'external', value: 'asset' }] },
 		{ sourceUuid: 'source', deviceUuid: 'b', keys: [{ kind: 'path', value: 'site/pump' }] },
 	]);
+	assert.equal(preview[0].status, 'conflict');
+	assert.equal(preview[0].deviceUuid, undefined);
+});
+
+test('a known path with a changed external identifier requires review', () => {
+	const preview = previewDeviceResolution('source', [
+		candidate('pump', [['external-identifier:AssetId', 'new'], ['path', 'site/pump']]),
+	], [{ sourceUuid: 'source', deviceUuid: 'old-device', keys: [
+		{ kind: 'external-identifier:AssetId', value: 'old' }, { kind: 'path', value: 'site/pump' },
+	] }]);
 	assert.equal(preview[0].status, 'conflict');
 	assert.equal(preview[0].deviceUuid, undefined);
 });
@@ -78,4 +88,16 @@ test('confirmation rejects stale, duplicate, or conflicting selections', () => {
 	assert.throws(() => confirmDeviceResolution('source', candidates, [], ['missing']), /no longer exists/);
 	assert.throws(() => confirmDeviceResolution('source', candidates, [], ['one', 'one']), /more than once/);
 	assert.throws(() => confirmDeviceResolution('', candidates, [], []), /source UUID/);
+});
+
+test('only unambiguous confirmed candidates assign points; suggestions and conflicts remain source-only', () => {
+	const previews = previewDeviceResolution('source', [
+		candidate('matched', [['path', 'known']], ['p1']),
+		candidate('new', [['path', 'new']], ['p2']),
+		candidate('conflict-a', [['external', 'duplicate']], ['p3']),
+		candidate('conflict-b', [['external', 'duplicate']], ['p4']),
+	], [{ sourceUuid: 'source', deviceUuid: 'device', keys: [{ kind: 'path', value: 'known' }] }]);
+	const result = resolveConfirmedDevicePoints(['p1', 'p2', 'p3', 'p4', 'p5'], previews);
+	assert.deepEqual([...result.assignments], [['p1', 'device']]);
+	assert.deepEqual(result.unassignedPointAddresses, ['p2', 'p3', 'p4', 'p5']);
 });

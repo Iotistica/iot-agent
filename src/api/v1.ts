@@ -32,6 +32,8 @@ import { requireRole, parseCookie, SESSION_COOKIE } from './middleware/roles.js'
 import { AppMarketplaceModel } from '../db/models/app-marketplace.model.js';
 import type { MarketplaceImage } from '../containers/types.js';
 import { MarketplaceCategoriesModel } from '../db/models/marketplace-categories.model.js';
+import { DeviceCandidateStrategySchema } from '../discovery/device-candidates.js';
+import { OPCUAConnectionSchema } from '../plugins/opcua/types.js';
 
 export const router = express.Router();
 
@@ -852,6 +854,21 @@ router.post('/v1/discover/opcua/browse', requireRole('operator'), async (req: Re
 			password,
 			nodeId,
 			identifierValidation: validation?.success ? validation.data : undefined,
+		});
+
+		router.post('/v1/discover/opcua/device-preview', requireRole('operator'), async (req: Request, res: Response, next: NextFunction) => {
+			try {
+				const connection = OPCUAConnectionSchema.safeParse(req.body?.connection);
+				const strategy = DeviceCandidateStrategySchema.safeParse(req.body?.strategy);
+				const sourceUuid = req.body?.sourceUuid;
+				if (!connection.success || !strategy.success || (sourceUuid !== undefined && (typeof sourceUuid !== 'string' || !sourceUuid.trim()))) {
+					return res.status(400).json({ error: 'Invalid OPC UA connection, discovery strategy or source UUID' });
+				}
+				const preview = await actions.previewOPCUADevices(connection.data, strategy.data, sourceUuid);
+				return res.status(200).json(preview);
+			} catch (error) {
+				next(error);
+			}
 		});
 
 		return res.status(200).json({

@@ -37,6 +37,11 @@ export interface ConfirmedDeviceResolution {
 	pointAddresses: string[];
 }
 
+export interface ResolvedDevicePoints {
+	assignments: Map<string, string>;
+	unassignedPointAddresses: string[];
+}
+
 function keyOf(key: DeviceResolutionKey): string {
 	return JSON.stringify([key.kind, key.value]);
 }
@@ -52,8 +57,10 @@ export function previewDeviceResolution(
 	confirmed: ConfirmedDeviceIdentity[],
 ): DeviceResolutionPreview[] {
 	const byKey = new Map<string, Set<string>>();
+	const byDevice = new Map<string, ConfirmedDeviceIdentity>();
 	for (const device of confirmed) {
 		if (device.sourceUuid !== sourceUuid) continue;
+		byDevice.set(device.deviceUuid, device);
 		for (const key of device.keys) {
 			const encoded = keyOf(key);
 			const owners = byKey.get(encoded) ?? new Set<string>();
@@ -94,6 +101,16 @@ export function previewDeviceResolution(
 		for (const match of matches) addOwner(matchedDevices, match, index);
 		if (matches.size > 1) conflicts.push('Identity evidence matches different confirmed devices');
 		const deviceUuid = matches.size === 1 ? [...matches][0] : undefined;
+		if (deviceUuid) {
+			const previous = byDevice.get(deviceUuid);
+			for (const key of candidate.keys) {
+				if (key.kind !== 'external-identifier' && !key.kind.startsWith('external-identifier:')) continue;
+				const oldValues = previous?.keys.filter(item => item.kind === key.kind) ?? [];
+				if (oldValues.length && !oldValues.some(item => item.value === key.value)) {
+					conflicts.push('External identifier differs from the confirmed device');
+				}
+			}
+		}
 		return {
 			candidate,
 			status: conflicts.length ? 'conflict' : deviceUuid ? 'matched' : 'new',
@@ -112,6 +129,31 @@ export function previewDeviceResolution(
 		}
 	}
 	return previews;
+}
+
+/** Only unambiguous matches to confirmed devices may own points. */
+export function resolveConfirmedDevicePoints(
+	pointAddresses: string[],
+	previews: DeviceResolutionPreview[],
+): ResolvedDevicePoints {
+	const known = new Set(pointAddresses);
+	if (known.size !== pointAddresses.length || pointAddresses.some(address => !address.trim())) {
+		throw new Error('Point addresses must be non-empty and unique');
+	}
+	const assignments = new Map<string, string>();
+	for (const item of previews) {
+		if (item.status !== 'matched') continue;
+		if (!item.deviceUuid) throw new Error('Matched candidate is missing its confirmed device UUID');
+		for (const point of item.candidate.pointAddresses) {
+			if (!known.has(point)) throw new Error(`Candidate references unknown point "${point}"`);
+			if (assignments.has(point)) throw new Error(`Point "${point}" has multiple confirmed devices`);
+			assignments.set(point, item.deviceUuid);
+		}
+	}
+	return {
+		assignments,
+		unassignedPointAddresses: pointAddresses.filter(address => !assignments.has(address)),
+	};
 }
 
 /**

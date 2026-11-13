@@ -13,6 +13,7 @@ import { BACnetDiscovery } from '../plugins/bacnet/discovery';
 import type { ConfigManager } from '../core/config.js';
 import { DiscoveryOptionsBuilder } from './options.js';
 import { DiscoveryStore } from './db.js';
+import type { DiscoverySnapshot } from './device-candidates.js';
 
 export type DiscoveryTrigger = 'first_boot' | 'manual' | 'scheduled' | 'config-change';
 export type DiscoveryProtocol = 'modbus' | 'opcua' | 'can' | 'snmp' | 'mqtt' | 'bacnet';
@@ -110,6 +111,13 @@ export class DiscoveryService extends EventEmitter {
 		}
 
 		return plugin.browseAddressSpace(request);
+	}
+
+	async snapshotOPCUAAddressSpace(request: OPCUABrowseRequest, identifierPath?: string): Promise<DiscoverySnapshot> {
+		const plugin = this.plugins.get('opcua');
+		if (!(plugin instanceof OPCUADiscovery)) throw new Error('OPC-UA discovery plugin is not initialized');
+		if (!(await plugin.isAvailable())) throw new Error('OPC-UA discovery plugin is not available on this platform');
+		return plugin.snapshotAddressSpace(request, identifierPath);
 	}
 
 	public cleanup(): void {

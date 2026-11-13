@@ -37,6 +37,9 @@ import type { CaptureEngine } from '../network/capture.js';
 import type { DockerOptions } from 'dockerode';
 import { isProLicensed } from '../licensing/runtime.js';
 import { queueAgentUpdateRequest } from '../update/update-request.js';
+import { generateDeviceCandidates, type DeviceCandidateStrategy } from '../discovery/device-candidates.js';
+import { DeviceResolutionStore } from '../discovery/device-resolution-store.js';
+import { previewDeviceResolution, resolveConfirmedDevicePoints } from '../discovery/device-resolution.js';
 
 type AgentInstance = {
 	getLifecycleState: () => string;
@@ -2583,6 +2586,28 @@ export async function browseOPCUAAddressSpace(options: OPCUABrowseRequest) {
 	}
 
 	return discoveryService.browseOPCUAAddressSpace(options);
+}
+
+export async function previewOPCUADevices(options: OPCUABrowseRequest, strategy: DeviceCandidateStrategy, sourceUuid?: string) {
+	if (!discoveryService) throw new Error('DiscoveryService not initialized');
+	if (sourceUuid) {
+		const source = await EndpointModel.getByUuid(sourceUuid);
+		if (source?.protocol !== 'opcua') {
+			throw Object.assign(new Error('OPC UA source not found'), { statusCode: 404 });
+		}
+		if (source.connection.endpointUrl !== options.endpointUrl) {
+			throw Object.assign(new Error('Save the changed OPC UA endpoint URL before previewing existing device identities'), { statusCode: 409 });
+		}
+	}
+	const snapshot = await discoveryService.snapshotOPCUAAddressSpace(
+		options, strategy.type === 'identifier' ? strategy.identifierPath : undefined,
+	);
+	const { candidates } = generateDeviceCandidates(snapshot, strategy);
+	const previews = sourceUuid
+		? new DeviceResolutionStore(getDatabase()).preview(sourceUuid, candidates)
+		: previewDeviceResolution('unsaved-source', candidates, []);
+	const points = resolveConfirmedDevicePoints(snapshot.points.map(point => point.address), previews);
+	return { candidates: previews, unassignedPointAddresses: points.unassignedPointAddresses, pointCount: snapshot.points.length };
 }
 
 /**

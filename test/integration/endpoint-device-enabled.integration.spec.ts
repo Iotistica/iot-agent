@@ -157,4 +157,42 @@ describe('Endpoint device enabled state (integration)', () => {
 			actions.setDiscoveryService(undefined);
 		}
 	});
+
+	it('previews OPC UA device candidates without creating devices and reconciles existing source evidence', async () => {
+		const actions: typeof import('../../src/api/actions') = require('../../src/api/actions');
+		const { DeviceResolutionStore } = require('../../src/discovery/device-resolution-store');
+		const sqlite = require('../../src/db/sqlite');
+		const endpoint = await EndpointModel.create({
+			uuid: '7c0e0a77-594c-49cc-a4d2-8d0b32e080e6',
+			name: 'preview-source', protocol: 'opcua', enabled: false, poll_interval: 5000,
+			connection: { endpointUrl: 'opc.tcp://localhost:4851' },
+		});
+		const snapshot = {
+			objects: [
+				{ address: 'root', parentAddress: null, name: 'Site', browsePath: ['Site'] },
+				{ address: 'pump', parentAddress: 'root', name: 'Pump', browsePath: ['Site', 'Pump'], identifiers: { AssetId: 'A1' } },
+			],
+			points: [{ address: 'temp', parentAddress: 'pump', name: 'Temperature' }],
+		};
+		const snapshotOPCUAAddressSpace = jest.fn().mockResolvedValue(snapshot);
+		actions.setDiscoveryService({ snapshotOPCUAAddressSpace } as unknown as Parameters<typeof actions.setDiscoveryService>[0]);
+		try {
+			const connection = { endpointUrl: 'opc.tcp://localhost:4851' };
+			const strategy = { type: 'identifier' as const, identifierPath: 'AssetId' };
+			await expect(actions.previewOPCUADevices({ endpointUrl: 'opc.tcp://localhost:4852' }, strategy, endpoint.uuid))
+				.rejects.toMatchObject({ statusCode: 409 });
+			expect(snapshotOPCUAAddressSpace).not.toHaveBeenCalled();
+			const preview = await actions.previewOPCUADevices(connection, strategy, endpoint.uuid);
+			expect(preview.candidates[0].status).toBe('new');
+			expect(preview.unassignedPointAddresses).toEqual(['temp']);
+			expect(await ProtocolDevicesModel.getByEndpointId(endpoint.id!)).toHaveLength(0);
+			new DeviceResolutionStore(sqlite.getDatabase()).confirm(endpoint.uuid, [preview.candidates[0].candidate], [preview.candidates[0].candidate.candidateId]);
+			const after = await actions.previewOPCUADevices(connection, strategy, endpoint.uuid);
+			expect(after.candidates[0].status).toBe('matched');
+			expect(after.unassignedPointAddresses).toEqual([]);
+			expect(snapshotOPCUAAddressSpace).toHaveBeenCalledWith(connection, 'AssetId');
+		} finally {
+			actions.setDiscoveryService(undefined);
+		}
+	});
 });

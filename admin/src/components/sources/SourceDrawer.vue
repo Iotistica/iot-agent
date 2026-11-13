@@ -261,5 +261,6 @@ function close() {
     />
   </a-modal>
   <OPCUABrowser v-if="form.protocol === 'opcua'" v-model:open="opcuaBrowserOpen"
-    :connection="form.connection" :identification="identification" @select="identification = $event" />
+    :connection="form.connection" :identification="identification" :source-uuid="editing?.uuid"
+    @select="identification = $event" />
 </template>

@@ -15,6 +15,9 @@ import type { ConfigManager } from '../../core/config.js';
 import { browseHierarchicalReferences, identifyDevices } from './device-identification.js';
 import { OPCUADeviceIdentificationSchema, type OPCUADeviceIdentification } from './device-identification-config.js';
 import { toDeviceUuid } from '../../db/models/device.model.js';
+import { collectOpcuaDeviceSnapshot } from './device-snapshot.js';
+import type { DiscoverySnapshot } from '../../discovery/device-candidates.js';
+import type { ClientSession } from 'node-opcua-client';
 
 export interface OPCUADiscoveryOptions {
   discoveryUrls?: string[]; // e.g., ['opc.tcp://localhost:4840']
@@ -309,14 +312,12 @@ export class OPCUADiscovery extends BaseDiscovery {
 		return createHash('sha256').update(`opcua:${applicationUri}`).digest('hex').substring(0, 32);
 	}
 
-	async browseAddressSpace(request: OPCUABrowseRequest): Promise<OPCUABrowseTreeNode[]> {
+	private async withBrowseSession<T>(request: OPCUABrowseRequest, callback: (session: ClientSession) => Promise<T>): Promise<T> {
 		if (!request.endpointUrl || typeof request.endpointUrl !== 'string') {
 			throw new Error('endpointUrl is required for OPC UA browse');
 		}
 
-		const maxDepth = Math.min(Math.max(request.maxDepth ?? 6, 1), 20);
-
-		const { OPCUAClient, AttributeIds, MessageSecurityMode, SecurityPolicy, UserTokenType } = await import('node-opcua-client');
+		const { OPCUAClient, MessageSecurityMode, SecurityPolicy, UserTokenType } = await import('node-opcua-client');
 		const { getDefaultCertificateManager } = await import('node-opcua-certificate-manager');
 
 		const certificateManager = getDefaultCertificateManager('PKI');
@@ -337,8 +338,7 @@ export class OPCUADiscovery extends BaseDiscovery {
 			},
 		});
 
-		let session: any;
-		const visited = new Set<string>();
+		let session: ClientSession | undefined;
 
 		try {
 			await client.connect(request.endpointUrl);
@@ -353,7 +353,25 @@ export class OPCUADiscovery extends BaseDiscovery {
 			} else {
 				session = await client.createSession();
 			}
+			return await callback(session);
+		} finally {
+			if (session) {
+				await session.close().catch(() => {});
+			}
+			await client.disconnect().catch(() => {});
+		}
+	}
 
+	async snapshotAddressSpace(request: OPCUABrowseRequest, identifierPath?: string): Promise<DiscoverySnapshot> {
+		return this.withBrowseSession(request, session => collectOpcuaDeviceSnapshot(session, identifierPath));
+	}
+
+	async browseAddressSpace(request: OPCUABrowseRequest): Promise<OPCUABrowseTreeNode[]> {
+		const maxDepth = Math.min(Math.max(request.maxDepth ?? 6, 1), 20);
+		const { AttributeIds } = await import('node-opcua-client');
+		const visited = new Set<string>();
+
+		return this.withBrowseSession(request, async session => {
 			if (request.identifierValidation) {
 				await identifyDevices(session, request.identifierValidation);
 				return [];
@@ -443,12 +461,7 @@ export class OPCUADiscovery extends BaseDiscovery {
 
 			const rootNodeId = 'ns=0;i=85';
 			return await browseRecursive(rootNodeId, 0);
-		} finally {
-			if (session) {
-				await session.close().catch(() => {});
-			}
-			await client.disconnect().catch(() => {});
-		}
+		});
 	}
 
 	/**

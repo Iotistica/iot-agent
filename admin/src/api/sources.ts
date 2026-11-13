@@ -36,6 +36,24 @@ export interface OPCUABrowseNode {
   valueStatus?: string
 }
 
+export type DeviceCandidateStrategy =
+  | { type: 'identifier'; identifierPath: string }
+  | { type: 'device-model' }
+  | { type: 'hierarchy'; scopeAddress: string; deviceDepth: number }
+  | { type: 'tag-pattern'; template: string }
+  | { type: 'manual'; mappings: Array<{ id: string; name: string; pointAddresses: string[] }> }
+
+export interface DeviceDiscoveryPreview {
+  candidates: Array<{
+    candidate: { candidateId: string; name: string; pointAddresses: string[]; reasons: string[] }
+    status: 'new' | 'matched' | 'conflict'
+    deviceUuid?: string
+    conflicts: string[]
+  }>
+  unassignedPointAddresses: string[]
+  pointCount: number
+}
+
 export const sourcesApi = {
   getAll(protocol?: string): Promise<Endpoint[]> {
     return client
@@ -50,6 +68,11 @@ export const sourcesApi = {
   browseOpcua(connection: Record<string, unknown>, nodeId: string): Promise<OPCUABrowseNode[]> {
     return client.post<{ nodes: OPCUABrowseNode[] }>('/v1/discover/opcua/browse', { ...connection, nodeId }, { timeout: 60_000 })
       .then(r => r.data.nodes)
+  },
+
+  previewOpcuaDevices(connection: Record<string, unknown>, strategy: DeviceCandidateStrategy, sourceUuid?: string): Promise<DeviceDiscoveryPreview> {
+    return client.post<DeviceDiscoveryPreview>('/v1/discover/opcua/device-preview', { connection, strategy, sourceUuid }, { timeout: 120_000 })
+      .then(r => r.data)
   },
 
   create(data: EndpointCreateData): Promise<Endpoint> {
