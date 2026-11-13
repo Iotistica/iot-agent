@@ -32,8 +32,8 @@
  */
 
 import type { DatabaseSync as Database } from 'node:sqlite';
-import { createBuffer, addValue } from '../anomaly/buffer.js';
-import type { StatisticalBuffer } from '../anomaly/types.js';
+import { createBuffer, addValue } from '../analytics/anomaly/buffer.js';
+import type { StatisticalBuffer } from '../analytics/anomaly/types.js';
 import type { IPublishClient, AgentLogger } from '../shared/types.js';
 import { MaintenanceEnergyStorageService, type RecommendationPublishModule } from './storage.js';
 import { DebounceTracker } from './debounce.js';

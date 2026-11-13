@@ -13,7 +13,7 @@ import {
 } from './types.js';
 import type { AgentLogger } from '../shared/types.js';
 
-const LOG_COMPONENT = 'JobEngine';
+const LOG_COMPONENT = 'Jobs';
 
 export class JobEngine {
 	private static readonly MAX_LOG_LINES = 1000;

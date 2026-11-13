@@ -5,7 +5,7 @@
  * Edge-appropriate anomaly detection for IoT device data and system metrics
  */
 
-import type { AgentLogger } from '../shared/types.js';
+import type { AgentLogger } from '../../shared/types.js';
 
 /**
  * Protocol types for data sources

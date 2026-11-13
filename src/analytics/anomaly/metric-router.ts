@@ -1,4 +1,4 @@
-import type { AgentLogger } from '../shared/types.js';
+import type { AgentLogger } from '../../shared/types.js';
 import { normalizeDeviceState } from './device-state.js';
 import type {
 	CanonicalDeviceState,

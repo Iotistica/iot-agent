@@ -8,7 +8,7 @@
 
 import type { DatabaseSync as Database } from 'node:sqlite';
 import type { SQLInputValue } from 'node:sqlite';
-import type { AgentLogger } from '../shared/types.js';
+import type { AgentLogger } from '../../shared/types.js';
 import type { CanonicalDeviceState, StatisticalBuffer } from './types.js';
 import { getMedian, getMAD } from './buffer.js';
 

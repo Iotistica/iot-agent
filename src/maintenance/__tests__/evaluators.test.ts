@@ -1,6 +1,6 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { createBuffer, addValue } from '../../anomaly/buffer.js';
+import { createBuffer, addValue } from '../../analytics/anomaly/buffer.js';
 import {
 	evaluateCumulativeRuntime,
 	evaluateCycleCount,

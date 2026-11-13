@@ -5,7 +5,7 @@
  * Automatically injects anomalies into metrics for testing detection.
  */
 
-import type { AgentLogger } from '../shared/types.js';
+import type { AgentLogger } from '../../shared/types.js';
 import type { AnomalyBaselineRecord } from './storage.js';
 import type {
 	AnomalySimulationService,

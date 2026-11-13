@@ -1,4 +1,4 @@
-import type { AgentLogger } from '../shared/types.js';
+import type { AgentLogger } from '../../shared/types.js';
 import { getDetector } from './detectors.js';
 import { detectWithFusion } from './fusion.js';
 import type {

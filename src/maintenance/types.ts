@@ -1,4 +1,4 @@
-import type { StatisticalBuffer } from '../anomaly/types.js';
+import type { StatisticalBuffer } from '../analytics/anomaly/types.js';
 
 // ── Rule configs (v1) — typed shapes, not free-form JSON logic. Mirrors
 // docs/preventive-maintenance-energy-plan.md "Rule types (v1)" in iot-agent. ──

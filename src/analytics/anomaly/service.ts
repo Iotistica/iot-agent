@@ -6,7 +6,7 @@
  */
 
 import type { DatabaseSync as Database } from 'node:sqlite';
-import type { AgentLogger, MqttPayload } from '../shared/types.js';
+import type { AgentLogger, MqttPayload } from '../../shared/types.js';
 import type {
 	DataPoint,
 	AnomalyConfig,

@@ -1,4 +1,4 @@
-import type { StatisticalBuffer } from '../anomaly/types.js';
+import type { StatisticalBuffer } from '../analytics/anomaly/types.js';
 
 export interface Sample {
 	value: number;

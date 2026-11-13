@@ -1,6 +1,6 @@
 import { LogComponents } from '../logging/types.js';
 import { isProLicensed } from '../licensing/runtime.js';
-import { SimulationOrchestrator, loadSimulationConfig } from '../anomaly/index.js';
+import { SimulationOrchestrator, loadSimulationConfig } from '../analytics/anomaly/index.js';
 import type { AgentInitContext } from './context.js';
 
 export async function initSimulationMode(ctx: AgentInitContext): Promise<void> {

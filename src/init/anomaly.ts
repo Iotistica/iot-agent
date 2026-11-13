@@ -1,12 +1,12 @@
 import { LogComponents } from '../logging/types.js';
 import { DatabaseModel } from '../db/models/index.js';
 import { isProLicensed } from '../licensing/runtime.js';
-import { AnomalyDetectionService, loadConfigFromTargetState } from '../anomaly/index.js';
+import { AnomalyDetectionService, loadConfigFromTargetState } from '../analytics/anomaly/index.js';
 import { CloudMqttClient } from '../mqtt/manager.js';
 import { agentTopic } from '../mqtt/topics.js';
 import { PublishDestinationsModel } from '../db/models/publish-destinations.model.js';
 import { createExternalMqttClientFromDestination } from '../publish/plugins/mqtt.js';
-import { IncidentCorrelator } from '../anomaly/incident-correlator.js';
+import { IncidentCorrelator } from '../analytics/anomaly/incident-correlator.js';
 import type { AnomalyEventPayload } from '../db/models/anomaly-event.model.js';
 import type { AgentInitContext } from './context.js';
 

@@ -1,8 +1,8 @@
 import crypto from 'node:crypto';
-import { AnomalyEventModel } from '../db/models/anomaly-event.model.js';
-import { AnomalyIncidentModel } from '../db/models/anomaly-incident.model.js';
-import { AnomalyAlertModel } from '../db/models/anomaly-alert.model.js';
-import type { AnomalyEventPayload } from '../db/models/anomaly-event.model.js';
+import { AnomalyEventModel } from '../../db/models/anomaly-event.model.js';
+import { AnomalyIncidentModel } from '../../db/models/anomaly-incident.model.js';
+import { AnomalyAlertModel } from '../../db/models/anomaly-alert.model.js';
+import type { AnomalyEventPayload } from '../../db/models/anomaly-event.model.js';
 
 export type { AnomalyEventPayload };
 
