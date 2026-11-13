@@ -7,10 +7,13 @@
 
 import type { AgentLogger } from '../../logging/agent-logger';
 import { createHash } from 'crypto';
+import { inspect } from 'util';
 import { LogComponents } from '../../logging/types';
 import { BaseDiscovery } from '../base';
 import { type DiscoveredDevice } from '../types';
 import type { ConfigManager } from '../../core/config.js';
+import { browseHierarchicalReferences, identifyDevices, OPCUADeviceIdentificationSchema, type OPCUADeviceIdentification } from './device-identification.js';
+import { toDeviceUuid } from '../../db/models/device.model.js';
 
 export interface OPCUADiscoveryOptions {
   discoveryUrls?: string[]; // e.g., ['opc.tcp://localhost:4840']
@@ -20,11 +23,14 @@ export interface OPCUADiscoveryOptions {
   certificateTrustMode?: 'strict' | 'trust-on-first-use';
   username?: string;
   password?: string;
+  deviceIdentification?: OPCUADeviceIdentification;
 }
 
 export interface OPCUABrowseRequest {
 	endpointUrl: string;
 	maxDepth?: number;
+	nodeId?: string;
+	identifierValidation?: OPCUADeviceIdentification;
 	securityMode?: 'None' | 'Sign' | 'SignAndEncrypt';
 	securityPolicy?: 'None' | 'Basic128Rsa15' | 'Basic256' | 'Basic256Sha256' | 'Aes128_Sha256_RsaOaep' | 'Aes256_Sha256_RsaPss';
 	certificateTrustMode?: 'strict' | 'trust-on-first-use';
@@ -39,6 +45,9 @@ export interface OPCUABrowseTreeNode {
 	dataType: string | null;
 	writable: boolean;
 	children: OPCUABrowseTreeNode[];
+	typeDefinition?: string;
+	value?: unknown;
+	valueStatus?: string;
 }
 
 // Real unit symbols (°C, kPa, L/min, %, V, A...) are short and never contain
@@ -333,6 +342,47 @@ export class OPCUADiscovery extends BaseDiscovery {
 				session = await client.createSession();
 			}
 
+			if (request.identifierValidation) {
+				await identifyDevices(session, request.identifierValidation);
+				return [];
+			}
+
+			if (request.nodeId) {
+				const references = await browseHierarchicalReferences(session, request.nodeId);
+				const nodes: OPCUABrowseTreeNode[] = [];
+				for (const ref of references) {
+					if (ref.nodeId.serverIndex || ref.nodeId.namespaceUri) continue;
+					const childNodeId = ref.nodeId.toString();
+					const [dataTypeResult, accessLevelResult, userAccessLevelResult, valueResult] = await session.read([
+						{ nodeId: childNodeId, attributeId: AttributeIds.DataType },
+						{ nodeId: childNodeId, attributeId: AttributeIds.AccessLevel },
+						{ nodeId: childNodeId, attributeId: AttributeIds.UserAccessLevel },
+						{ nodeId: childNodeId, attributeId: AttributeIds.Value },
+					]);
+					const accessLevel = Number(accessLevelResult?.value?.value ?? 0);
+					const userAccessLevel = Number(userAccessLevelResult?.value?.value ?? accessLevel);
+					const rawValue = valueResult?.value?.value;
+					let value: unknown;
+					if (valueResult?.statusCode?.isGood() && rawValue !== undefined) {
+						value = rawValue === null || ['string', 'number', 'boolean'].includes(typeof rawValue)
+							? rawValue
+							: inspect(rawValue, { depth: 2, maxArrayLength: 20, maxStringLength: 200 });
+					}
+					nodes.push({
+						nodeId: childNodeId,
+						browseName: ref.browseName?.name || childNodeId,
+						nodeClass: this.mapNodeClass(ref.nodeClass),
+						dataType: this.mapDataTypeName(dataTypeResult?.value?.value),
+						writable: ref.nodeClass === 2 && (((accessLevel | userAccessLevel) & 0x02) !== 0),
+						typeDefinition: ref.typeDefinition?.toString(),
+						...(value !== undefined && { value }),
+						valueStatus: valueResult?.statusCode?.name,
+						children: [],
+					});
+				}
+				return nodes;
+			}
+
 			const browseRecursive = async (nodeId: string, depth: number): Promise<OPCUABrowseTreeNode[]> => {
 				if (depth > maxDepth || visited.has(nodeId)) {
 					return [];
@@ -397,6 +447,9 @@ export class OPCUADiscovery extends BaseDiscovery {
 
 		// Get discovery targets from endpoints (those with endpointUrl but no dataPoints)
 		let discoveryTargets = this.configManager?.getDiscoveryTargets?.('opcua') || [];
+		if (options?.deviceIdentification && options.discoveryUrls?.length) {
+			discoveryTargets = [];
+		}
 
 		// Fallback: allow explicit URL probing when no DB targets exist yet.
 		if (discoveryTargets.length === 0) {
@@ -415,6 +468,7 @@ export class OPCUADiscovery extends BaseDiscovery {
 					certificateTrustMode: options?.certificateTrustMode,
 					username: options?.username,
 					password: options?.password,
+					deviceIdentification: options?.deviceIdentification,
 				},
 				dataPoints: []
 			}));
@@ -458,6 +512,7 @@ export class OPCUADiscovery extends BaseDiscovery {
 			const url = endpoint.connection?.endpointUrl;
 			if (!url) continue;
 
+			let disconnectClient: (() => Promise<void>) | undefined;
 			try {
 				const { OPCUAClient, AttributeIds, MessageSecurityMode, SecurityPolicy, UserTokenType } = await import('node-opcua-client');
 				const { getDefaultCertificateManager } = await import('node-opcua-certificate-manager');
@@ -478,6 +533,7 @@ export class OPCUADiscovery extends BaseDiscovery {
 						maxDelay: 1000
 					}
 				});
+				disconnectClient = () => client.disconnect();
 
 				await client.connect(url);
 				const endpoints = await client.getEndpoints();
@@ -494,6 +550,20 @@ export class OPCUADiscovery extends BaseDiscovery {
 				let subscriptionsSupported = false;
 
 				try {
+					const configuredIdentification = endpoint.connection?.deviceIdentification;
+					const identifiedDevices = configuredIdentification
+						? await identifyDevices(session, OPCUADeviceIdentificationSchema.parse(configuredIdentification))
+						: undefined;
+					const sourceUuid = endpoint.uuid ?? this.configManager?.getTargetConfig().endpoints?.find(
+						(candidate: any) => candidate.protocol === 'opcua' && candidate.connection?.endpointUrl === url,
+					)?.uuid;
+					if (identifiedDevices && !sourceUuid) {
+						throw new Error('Configured device identification requires a stable source UUID');
+					}
+					const identifierNodeIds = new Set(
+						identifiedDevices ? [...identifiedDevices.values()].map(item => item.identifierNodeId) : [],
+					);
+					const visitedDevices = new Set<string>();
 					// Recursive tree browsing function
 					const browseRecursive = async (
 						nodeId: string,
@@ -513,18 +583,23 @@ export class OPCUADiscovery extends BaseDiscovery {
 						}
 						
 						try {
-							const browseResult = await session.browse(nodeId);
-							const refs = browseResult.references || [];
+							const refs = identifiedDevices
+								? await browseHierarchicalReferences(session, nodeId)
+								: (await session.browse(nodeId)).references || [];
 
 							// Pre-scan: look for a DeviceUUID variable in this folder to stamp on siblings
-							let folderDeviceUuid: string | undefined = inheritedDeviceUuid;
+							const configuredDevice = identifiedDevices?.get(nodeId);
+							if (configuredDevice) visitedDevices.add(nodeId);
+							let folderDeviceUuid: string | undefined = configuredDevice
+								? toDeviceUuid(`${sourceUuid}\0${configuredDevice.identifier}`)
+								: inheritedDeviceUuid;
 							// The folder that directly owns the DeviceUUID marker IS the device —
 							// its own browseName (last segment of pathSegments, e.g. "FCU-11A") is
 							// the human-friendly name the device actually reports, as opposed to
 							// the technical endpoint-name+uuid-suffix fallback device.model.ts
 							// otherwise has to construct.
-							let folderDeviceName: string | undefined = inheritedDeviceName;
-							for (const ref of refs) {
+							let folderDeviceName: string | undefined = configuredDevice?.name ?? inheritedDeviceName;
+							for (const ref of identifiedDevices ? [] : refs) {
 								if (ref.browseName?.name === 'DeviceUUID') {
 									try {
 										const val = await session.read({
@@ -583,7 +658,7 @@ export class OPCUADiscovery extends BaseDiscovery {
 								}
 
 								// Skip the DeviceUUID node itself — it's metadata, not a device reading
-								if (nodeName === 'DeviceUUID') {
+								if ((!identifiedDevices && nodeName === 'DeviceUUID') || identifierNodeIds.has(childNodeId)) {
 									continue;
 								}
 								
@@ -658,6 +733,7 @@ export class OPCUADiscovery extends BaseDiscovery {
 										await browseRecursive(childNodeId, currentPath, depth + 1, maxDepth, folderDeviceUuid, folderDeviceName);
 									}
 								} catch (readError) {
+									if (identifiedDevices) throw readError;
 									// If we can't read NodeClass, skip this node
 									this.logger?.debugSync(`Skipping node (cannot read NodeClass): ${currentPath.join('/')}`, {
 										component: LogComponents.discovery + "] [" + this.protocol as any,
@@ -667,6 +743,7 @@ export class OPCUADiscovery extends BaseDiscovery {
 								}
 							}
 						} catch (browseError) {
+							if (identifiedDevices) throw browseError;
 							this.logger?.debugSync(`Failed to browse node: ${pathSegments.join('/')}`, {
 								component: LogComponents.discovery + "] [" + this.protocol as any,
 								error: browseError instanceof Error ? browseError.message : String(browseError),
@@ -678,7 +755,11 @@ export class OPCUADiscovery extends BaseDiscovery {
 					// Start recursive browsing from Objects folder
 					const ObjectsNodeId = 'ns=0;i=85'; // Standard Objects folder
 					await browseRecursive(ObjectsNodeId, [], 0);
+					if (identifiedDevices && visitedDevices.size !== identifiedDevices.size) {
+						throw new Error('Some identified devices could not be reached within the discovery depth limit');
+					}
 				} catch (browseError) {
+					if (endpoint.connection?.deviceIdentification) throw browseError;
 					this.logger?.warnSync('Failed to browse OPC UA tree recursively, using default node', {
 						component: LogComponents.discovery + "] [" + this.protocol as any,
 						error: browseError instanceof Error ? browseError.message : String(browseError)
@@ -722,8 +803,6 @@ export class OPCUADiscovery extends BaseDiscovery {
 					});
 				}
 				
-				await client.disconnect();
-
 				if (endpoints.length > 0) {
 					const preferredEndpoint = this.selectPreferredEndpoint(endpoints) || endpoints[0];
 					
@@ -762,6 +841,7 @@ export class OPCUADiscovery extends BaseDiscovery {
 							useSubscription: subscriptionsSupported,
 							...(endpoint.connection?.username && { username: endpoint.connection.username }),
 							...(endpoint.connection?.password && { password: endpoint.connection.password }),
+							...(endpoint.connection?.deviceIdentification && { deviceIdentification: endpoint.connection.deviceIdentification }),
 							...(certThumbprint ? { expectedServerThumbprint: certThumbprint } : {})
 						},
 						dataPoints: dataPoints.length > 0 ? dataPoints : [{
@@ -788,10 +868,22 @@ export class OPCUADiscovery extends BaseDiscovery {
 						phase: 'discovery'
 					});
 				}
-			} catch (_error) {
-				this.logger?.debugSync(`No OPC-UA server at ${url}`, {
-					component: LogComponents.discovery + "] [" + this.protocol as any
+			} catch (error) {
+				this.logger?.warnSync(`OPC-UA discovery failed at ${url}`, {
+					component: LogComponents.discovery + "] [" + this.protocol as any,
+					error: error instanceof Error ? error.message : String(error),
 				});
+			} finally {
+				if (disconnectClient) {
+					try {
+						await disconnectClient();
+					} catch (error) {
+						this.logger?.warnSync(`Failed to disconnect OPC-UA discovery client at ${url}`, {
+							component: LogComponents.discovery + "] [" + this.protocol as any,
+							error: error instanceof Error ? error.message : String(error),
+						});
+					}
+				}
 			}
 		}
 

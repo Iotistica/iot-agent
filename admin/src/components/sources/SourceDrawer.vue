@@ -3,10 +3,11 @@ import { ref, watch } from 'vue'
 import { message } from 'ant-design-vue'
 import type { FormInstance } from 'ant-design-vue'
 import type { Endpoint, EndpointCreateData } from '@/types'
-import { sourcesApi, type SourceTestResult } from '@/api/sources'
-import { EditOutlined } from '@ant-design/icons-vue'
+import { sourcesApi, type OPCUADeviceIdentification, type SourceTestResult } from '@/api/sources'
+import { EditOutlined, FolderOpenOutlined } from '@ant-design/icons-vue'
 import SourceConnectionFields from './SourceConnectionFields.vue'
 import ModbusRegisterMapEditor from './ModbusRegisterMapEditor.vue'
+import OPCUABrowser from './OPCUABrowser.vue'
 
 const props = defineProps<{
   open: boolean
@@ -26,6 +27,8 @@ const saving = ref(false)
 const testing = ref(false)
 const testResult = ref<SourceTestResult | null>(null)
 const registerMapOpen = ref(false)
+const opcuaBrowserOpen = ref(false)
+const identification = ref<OPCUADeviceIdentification | null>(null)
 
 function connectionWithDefaults(protocol: string, connection: Record<string, unknown> = {}) {
   return protocol === 'modbus' && connection.type == null ? { ...connection, type: 'tcp' } : { ...connection }
@@ -42,7 +45,10 @@ const form = ref<EndpointCreateData>({
 watch(
   () => props.open,
   (open) => {
-    if (!open) return
+    if (!open) {
+      opcuaBrowserOpen.value = false
+      return
+    }
     testResult.value = null
     if (props.editing) {
       form.value = {
@@ -65,12 +71,15 @@ watch(
     } else {
       form.value = { name: '', protocol: 'modbus', connection: { type: 'tcp' }, poll_interval: 5000, enabled: true }
     }
+    identification.value = form.value.protocol === 'opcua' && form.value.connection.deviceIdentification
+      ? { ...(form.value.connection.deviceIdentification as OPCUADeviceIdentification) } : null
   },
 )
 
 function onProtocolChange() {
   form.value.connection = connectionWithDefaults(form.value.protocol)
   form.value.data_points = undefined
+  identification.value = null
   testResult.value = null
 }
 
@@ -94,6 +103,14 @@ async function submit() {
   await formRef.value?.validate()
   saving.value = true
   try {
+    if (form.value.protocol === 'opcua') {
+      if (identification.value) {
+        form.value.connection = { ...form.value.connection, deviceIdentification: identification.value }
+      } else {
+        const { deviceIdentification: _deviceIdentification, ...connection } = form.value.connection
+        form.value.connection = connection
+      }
+    }
     if (props.editing) {
       await sourcesApi.replace(props.editing.uuid, form.value)
       message.success('Source updated')
@@ -108,6 +125,13 @@ async function submit() {
     message.error(e?.message ?? 'Save failed')
   } finally {
     saving.value = false
+  }
+}
+
+function updateIdentifier(field: 'identifierProperty' | 'identifierPath', value: string) {
+  identification.value = {
+    rootNodeId: '', scopeNodeId: '', deviceTypeNodeId: '', identifierProperty: '', identifierPath: '',
+    ...identification.value, [field]: value,
   }
 }
 
@@ -152,6 +176,28 @@ function close() {
         :model-value="form.connection"
         @update:model-value="form.connection = $event"
       />
+
+      <template v-if="form.protocol === 'opcua'">
+        <a-button block :disabled="!form.connection.endpointUrl" @click="opcuaBrowserOpen = true">
+          Browse OPC UA
+          <template #icon><FolderOpenOutlined /></template>
+        </a-button>
+        <a-divider orientation="left" orientation-margin="0">Device Identification</a-divider>
+        <p style="color: var(--text-tertiary)">Select a device root and identifier in the browser, or enter the identifier property and relative path.</p>
+        <p v-if="editing" style="color: var(--text-tertiary)">Changes apply on the next discovery of this source.</p>
+        <a-form-item label="Device Identifier Property">
+          <a-input :value="identification?.identifierProperty ?? ''" placeholder="e.g. DeviceUUID"
+            @update:value="updateIdentifier('identifierProperty', $event)" />
+        </a-form-item>
+        <a-form-item label="Device Identifier Path" extra="Relative to the selected device root, including the property name.">
+          <a-input :value="identification?.identifierPath ?? ''" placeholder="e.g. Identification/DeviceUUID"
+            @update:value="updateIdentifier('identifierPath', $event)" />
+        </a-form-item>
+        <div v-if="identification" style="margin-bottom: 12px; color: var(--text-tertiary)">
+          Device root: {{ identification.rootNodeId || 'Not selected' }}
+          <a-button type="link" size="small" @click="identification = null">Clear</a-button>
+        </div>
+      </template>
 
       <a-divider orientation="left" orientation-margin="0">Options</a-divider>
 
@@ -214,4 +260,6 @@ function close() {
       @update:model-value="form.data_points = $event"
     />
   </a-modal>
+  <OPCUABrowser v-if="form.protocol === 'opcua'" v-model:open="opcuaBrowserOpen"
+    :connection="form.connection" @select="identification = $event" />
 </template>

@@ -1531,6 +1531,28 @@ async function withModbusFingerprint(
 	return { ...metadata, fingerprint: generateModbusFingerprint(busId, slaveId) };
 }
 
+async function validateOpcuaIdentification(protocol: string, connection: Record<string, any>): Promise<void> {
+	if (protocol !== 'opcua' || connection.deviceIdentification === undefined) return;
+	const { OPCUAConnectionSchema } = await import('../plugins/opcua/types.js');
+	const parsed = OPCUAConnectionSchema.safeParse(connection);
+	if (!parsed.success) {
+		throw Object.assign(new Error(`Invalid OPC UA identification configuration: ${parsed.error.message}`), { statusCode: 400 });
+	}
+	try {
+		await browseOPCUAAddressSpace({
+			endpointUrl: parsed.data.endpointUrl,
+			securityMode: parsed.data.securityMode,
+			securityPolicy: parsed.data.securityPolicy,
+			certificateTrustMode: parsed.data.certificateTrustMode,
+			username: parsed.data.username,
+			password: parsed.data.password,
+			identifierValidation: parsed.data.deviceIdentification,
+		});
+	} catch (error) {
+		throw Object.assign(new Error(`OPC UA device identification validation failed: ${error instanceof Error ? error.message : String(error)}`), { statusCode: 400 });
+	}
+}
+
 /**
  * Add a new endpoint via target state (persists across cloud sync cycles)
  * Used by: POST /v1/endpoints
@@ -1549,6 +1571,7 @@ export const addEndpoint = async (body: {
 	if (!body.name) throw new Error('name is required');
 	if (!body.protocol) throw new Error('protocol is required');
 	if (!body.connection) throw new Error('connection is required');
+	await validateOpcuaIdentification(body.protocol, body.connection);
 
 	const uuid = randomUUID();
 
@@ -1751,6 +1774,7 @@ export const replaceEndpoint = async (
 	if (connectionConflict) {
 		throw Object.assign(new Error(`${body.name} is already configured as "${connectionConflict.name}"`), { statusCode: 409 });
 	}
+	await validateOpcuaIdentification(body.protocol, body.connection);
 
 	let mqttAuth: Record<string, any> | undefined;
 	const resolvedConnection = { ...body.connection };

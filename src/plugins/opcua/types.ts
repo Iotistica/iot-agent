@@ -7,6 +7,7 @@
  */
 
 import { z } from 'zod';
+import { OPCUADeviceIdentificationSchema } from './device-identification.js';
 
 /**
  * OPC-UA Security Mode
@@ -41,6 +42,7 @@ export type OPCUACertificateTrustMode = z.infer<typeof OPCUACertificateTrustMode
 export const OPCUAConnectionSchema = z.object({
 	/** OPC-UA endpoint URL (e.g., opc.tcp://10.0.0.60:4840) */
 	endpointUrl: z.string().url(),
+	deviceIdentification: OPCUADeviceIdentificationSchema.optional(),
   
 	/** Username for authentication (optional) */
 	username: z.string().optional(),

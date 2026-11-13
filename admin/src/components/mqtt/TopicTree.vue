@@ -7,6 +7,7 @@ const props = defineProps<{
   selectedTopic: string | null
   depth?: number
   collapsed?: Set<string>
+  lazy?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -44,7 +45,7 @@ const sorted = computed(() =>
 )
 
 function hasChildren(node: TopicNode) {
-  return Object.keys(node.children).length > 0
+  return Object.keys(node.children).length > 0 || (!!props.lazy && !!node.expandable)
 }
 
 function typeColor(t: string) {
@@ -68,7 +69,7 @@ function fmtCount(n: number) {
     >
       <!-- Leaf topic (has messages) -->
       <div
-        v-if="node.count > 0 || !hasChildren(node)"
+        v-if="lazy || node.count > 0 || !hasChildren(node)"
         class="topic-row"
         :class="{ selected: selectedTopic === node.fullTopic }"
         @click="emit('select', node)"
@@ -84,7 +85,8 @@ function fmtCount(n: number) {
           <span v-else class="leaf-icon" :style="{ background: typeColor(node.messageType) }" />
         </span>
         <span class="topic-name">{{ node.name }}</span>
-        <span v-if="node.count > 0" class="topic-count">{{ fmtCount(node.count) }}</span>
+        <span v-if="!lazy && node.count > 0" class="topic-count">{{ fmtCount(node.count) }}</span>
+        <span v-if="node.loading" class="topic-count">Loading…</span>
         <span v-if="node.retain" class="topic-retain" title="Retained">R</span>
       </div>
 
@@ -108,6 +110,7 @@ function fmtCount(n: number) {
         :selected-topic="selectedTopic"
         :depth="(depth ?? 0) + 1"
         :collapsed="collapsedSet"
+        :lazy="lazy"
         @select="emit('select', $event)"
         @toggle="toggle($event)"
       />

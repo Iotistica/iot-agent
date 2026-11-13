@@ -19,6 +19,8 @@ export interface TopicNode {
   qos: number
   schema?: JSONSchema
   children: Record<string, TopicNode>
+  expandable?: boolean
+  loading?: boolean
 }
 
 export interface BrokerMetrics {

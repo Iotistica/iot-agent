@@ -824,7 +824,7 @@ router.post('/v1/discover', requireRole('operator'), async (req: Request, res: R
  */
 router.post('/v1/discover/opcua/browse', requireRole('operator'), async (req: Request, res: Response, next: NextFunction) => {
 	try {
-		const { endpointUrl, maxDepth, securityMode, securityPolicy, certificateTrustMode, username, password } = req.body ?? {};
+		const { endpointUrl, maxDepth, securityMode, securityPolicy, certificateTrustMode, username, password, nodeId, identifierValidation } = req.body ?? {};
 
 		if (!endpointUrl || typeof endpointUrl !== 'string') {
 			return res.status(400).json({ error: 'Missing or invalid endpointUrl' });
@@ -834,6 +834,12 @@ router.post('/v1/discover/opcua/browse', requireRole('operator'), async (req: Re
 		if (parsedMaxDepth !== undefined && (!Number.isInteger(parsedMaxDepth) || parsedMaxDepth < 1 || parsedMaxDepth > 20)) {
 			return res.status(400).json({ error: 'maxDepth must be an integer between 1 and 20' });
 		}
+		if (nodeId !== undefined && (typeof nodeId !== 'string' || !nodeId.trim())) {
+			return res.status(400).json({ error: 'nodeId must be a non-empty string' });
+		}
+		const { OPCUADeviceIdentificationSchema } = await import('../plugins/opcua/device-identification.js');
+		const validation = identifierValidation === undefined ? undefined : OPCUADeviceIdentificationSchema.safeParse(identifierValidation);
+		if (validation && !validation.success) return res.status(400).json({ error: 'Invalid device identification configuration' });
 
 		const nodes = await actions.browseOPCUAAddressSpace({
 			endpointUrl,
@@ -843,6 +849,8 @@ router.post('/v1/discover/opcua/browse', requireRole('operator'), async (req: Re
 			certificateTrustMode,
 			username,
 			password,
+			nodeId,
+			identifierValidation: validation?.success ? validation.data : undefined,
 		});
 
 		return res.status(200).json({
@@ -2067,6 +2075,7 @@ router.post('/v1/endpoints', requireRole('operator'), async (req: Request, res: 
 		const endpoint = await actions.addEndpoint(req.body);
 		return res.status(201).json({ endpoint });
 	} catch (error: any) {
+		if (error?.statusCode === 400) return res.status(400).json({ error: error.message });
 		if (error?.statusCode === 404) return res.status(404).json({ error: error.message });
 		next(error);
 	}
@@ -2096,6 +2105,7 @@ router.put('/v1/endpoints/:uuid', requireRole('operator'), async (req: Request, 
 		const result = await actions.replaceEndpoint(req.params.uuid, req.body);
 		return res.status(200).json({ endpoint: result });
 	} catch (error: any) {
+		if (error?.statusCode === 400) return res.status(400).json({ error: error.message });
 		if (error?.statusCode === 404) return res.status(404).json({ error: error.message });
 		if (error?.statusCode === 409) return res.status(409).json({ error: error.message });
 		next(error);

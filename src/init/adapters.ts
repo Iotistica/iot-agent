@@ -367,6 +367,7 @@ export class AdapterInitializer {
 									certificateTrustMode: data.connection?.certificateTrustMode,
 									username: data.connection?.username,
 									password: data.connection?.password,
+									deviceIdentification: data.connection?.deviceIdentification,
 								},
 							},
 						}
