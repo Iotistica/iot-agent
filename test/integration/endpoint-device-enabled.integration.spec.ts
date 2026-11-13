@@ -68,4 +68,56 @@ describe('Endpoint device enabled state (integration)', () => {
 		devices = await ProtocolDevicesModel.getByEndpointId(endpoint.id!);
 		expect(devices.every((device) => device.enabled)).toBe(true);
 	});
+
+	it('renames a source by UUID and rejects conflicts without changing target configuration', async () => {
+		const actions: typeof import('../../src/api/actions') = require('../../src/api/actions');
+		const endpoint = await EndpointModel.create({
+			uuid: '7c0e0a77-594c-49cc-a4d2-8d0b32e080e8',
+			name: 'original-source',
+			protocol: 'opcua',
+			enabled: true,
+			poll_interval: 5000,
+			connection: { endpointUrl: 'opc.tcp://localhost:4841' },
+			data_points: [{ device_uuid: 'rename-device', device_name: 'device', name: 'temperature' }],
+		});
+		const other = await EndpointModel.create({
+			uuid: '7c0e0a77-594c-49cc-a4d2-8d0b32e080e9',
+			name: 'other-source',
+			protocol: 'opcua',
+			enabled: true,
+			poll_interval: 5000,
+			connection: { endpointUrl: 'opc.tcp://localhost:4842' },
+		});
+		await ProtocolDevicesModel.syncFromEndpoint(endpoint);
+		const beforeDevices = await ProtocolDevicesModel.getByEndpointId(endpoint.id!);
+		let target: { apps: Record<string, unknown>; config: Record<string, unknown> } = { apps: {}, config: { endpoints: [] } };
+		const manager = {
+			getTargetState: () => target,
+			setTarget: jest.fn(async (state: typeof target) => { target = state; }),
+		};
+		actions.setStateManager(manager as unknown as Parameters<typeof actions.setStateManager>[0]);
+		try {
+			const body = {
+				name: 'renamed-source', protocol: 'opcua', enabled: true,
+				connection: endpoint.connection, data_points: endpoint.data_points,
+			};
+			await actions.replaceEndpoint(endpoint.uuid!, body);
+			const saved = await EndpointModel.getByUuid(endpoint.uuid!);
+			expect(saved).toMatchObject({ id: endpoint.id, uuid: endpoint.uuid, name: 'renamed-source', data_points: endpoint.data_points });
+			expect(await ProtocolDevicesModel.getByEndpointId(endpoint.id!)).toHaveLength(beforeDevices.length);
+			expect((target.config.endpoints as Array<{ uuid: string; name: string }>).find(e => e.uuid === endpoint.uuid)?.name).toBe('renamed-source');
+			expect((target.config.endpoints as Array<{ uuid: string; name: string }>).find(e => e.uuid === other.uuid)?.name).toBe(other.name);
+
+			const writes = manager.setTarget.mock.calls.length;
+			await expect(actions.replaceEndpoint(endpoint.uuid!, { ...body, name: other.name }))
+				.rejects.toMatchObject({ statusCode: 409 });
+			await expect(actions.replaceEndpoint(endpoint.uuid!, { ...body, connection: other.connection }))
+				.rejects.toMatchObject({ statusCode: 409 });
+			expect(manager.setTarget).toHaveBeenCalledTimes(writes);
+			expect((await EndpointModel.getByUuid(endpoint.uuid!))?.name).toBe('renamed-source');
+			expect((await EndpointModel.getByUuid(other.uuid!))?.name).toBe(other.name);
+		} finally {
+			actions.setStateManager(undefined);
+		}
+	});
 });

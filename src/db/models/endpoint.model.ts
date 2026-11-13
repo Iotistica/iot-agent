@@ -176,10 +176,10 @@ export class EndpointModel {
 	 * confirmed duplicate-connection bug; extend the switch if another
 	 * protocol needs the same protection.
 	 */
-	static async findDuplicateConnection(protocol: string, connection: Record<string, any>): Promise<Endpoint | null> {
+	static async findDuplicateConnection(protocol: string, connection: Record<string, any>, excludeUuid?: string): Promise<Endpoint | null> {
 		if (protocol !== 'opcua' || !connection?.endpointUrl) return null;
 		const candidates = await this.getAll(protocol);
-		return candidates.find((e) => e.enabled && e.connection?.endpointUrl === connection.endpointUrl) ?? null;
+		return candidates.find((e) => (!excludeUuid || e.uuid !== excludeUuid) && e.enabled && e.connection?.endpointUrl === connection.endpointUrl) ?? null;
 	}
 
 	/**

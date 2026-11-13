@@ -17,7 +17,7 @@ import type { StateManager } from '../core/state';
 import { LogComponents } from '../logging/types';
 import type { HealthReport } from '../health/arbiter';
 import { MessageBufferModel } from '../db/models/buffer.model';
-import { MlDatasetModel, PublishDestinationsModel, PublishSubscriptionsModel } from '../db/models/index.js';
+import { EndpointModel, MlDatasetModel, ProtocolDevicesModel, PublishDestinationsModel, PublishSubscriptionsModel } from '../db/models/index.js';
 import { generateModbusFingerprint } from '../plugins/modbus/discovery.js';
 import { getDatabasePath } from '../db/db-path';
 import { getDatabase } from '../db/sqlite';
@@ -477,7 +477,6 @@ async function applyConfigUpdate(mutator: (config: Record<string, any>) => void)
 		// calling setTarget here would cause ConfigManager to unregister — and delete —
 		// every endpoint that was discovered but not yet in the target state.
 		try {
-			const { EndpointModel } = await import('../db/models/endpoint.model.js');
 			const dbEndpoints = await EndpointModel.getAll();
 			const targetById = new Map<string, any>(
 				(nextConfig.endpoints || []).map((e: any) => [e.uuid ?? e.id, e])
@@ -1741,9 +1740,17 @@ export const replaceEndpoint = async (
 ) => {
 	if (!configManager && !stateManager) throw new Error('Config manager not initialized');
 
-	const { EndpointModel } = await import('../db/models/endpoint.model.js');
 	const existing = await EndpointModel.getByUuid(uuid);
 	if (!existing) throw Object.assign(new Error(`Endpoint not found: ${uuid}`), { statusCode: 404 });
+
+	const nameConflict = await EndpointModel.getByName(body.name);
+	if (nameConflict && nameConflict.uuid !== uuid) {
+		throw Object.assign(new Error(`A source named "${body.name}" already exists`), { statusCode: 409 });
+	}
+	const connectionConflict = await EndpointModel.findDuplicateConnection(body.protocol, body.connection, uuid);
+	if (connectionConflict) {
+		throw Object.assign(new Error(`${body.name} is already configured as "${connectionConflict.name}"`), { statusCode: 409 });
+	}
 
 	let mqttAuth: Record<string, any> | undefined;
 	const resolvedConnection = { ...body.connection };
@@ -1787,7 +1794,7 @@ export const replaceEndpoint = async (
 		}
 	});
 
-	const savedEndpoint = await EndpointModel.upsert({
+	const savedEndpoint = await EndpointModel.updateByUuid(uuid, {
 		uuid,
 		fingerprint: body.fingerprint,
 		name: body.name,
@@ -1798,12 +1805,12 @@ export const replaceEndpoint = async (
 		data_points: resolvedDataPoints.length > 0 ? resolvedDataPoints : undefined,
 		metadata: resolvedMetadata,
 	});
+	if (!savedEndpoint) throw Object.assign(new Error(`Endpoint not found: ${uuid}`), { statusCode: 404 });
 
 	// See addEndpoint() — keeps the devices table (and friendly-name resolution
 	// in the Live/Dashboard views) in step with a register-map edit too.
 	if (savedEndpoint) {
 		try {
-			const { ProtocolDevicesModel } = await import('../db/models/index.js');
 			await ProtocolDevicesModel.syncFromEndpoint(savedEndpoint);
 		} catch {
 			// Non-fatal: device rows will be synced on the next discovery or poll cycle.

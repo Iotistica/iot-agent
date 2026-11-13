@@ -34,6 +34,7 @@ export interface DeviceDataPoint {
 	protocol?: string; // Protocol context for enum namespacing (modbus, snmp, opcua, mqtt, bacnet)
 	nodeType?: "metric" | "metadata"; // Node classification (OPC UA only)
 	resolvedDisplayName?: string; // Human-readable name resolved from the protocol server (e.g. OPC-UA DisplayName, SNMP sysName, BACnet objectName, or metadata.displayName config override). Used by AdapterManager as the base of the final unique display name instead of the raw config name.
+	deviceDisplayName?: string; // Display-only; never used as a device or point identity.
 	// The true, unsanitized protocol-level object/point name, when the adapter captured
 	// one separately from the sanitized identifier used as `metric` (BACnet: obj.objectName,
 	// OPC-UA: the raw browseName, MQTT: the topic leaf or payload field). Display-only:

@@ -78,6 +78,7 @@ import {
 import { OPCUADeviceClient, type OPCUASession } from './client.js';
 import { OpcuaStartupDiagnostics } from './diagnostics.js';
 import { looksLikeEngineeringUnit, normalizeForUnitNameCompare } from './discovery.js';
+import { resolveDeviceDisplayNames } from './device-display.js';
 
 /**
  * Resolves a candidate unit from a node's raw Description-attribute text,
@@ -176,6 +177,7 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 	// on the parent device folder (e.g. simulator profile "displayName" field).
 	// Takes precedence over resolvedDeviceNames when present.
 	private resolvedNodeDisplayNames: Map<string, string> = new Map();
+	private deviceDisplayNames = new Map<string, Map<string, string>>();
   
 	// Subscription splitting (many PLCs struggle with 200+ monitored items)
 	private readonly MAX_MONITORED_ITEMS_PER_SUBSCRIPTION = 100; // Split subscriptions beyond this
@@ -890,6 +892,7 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 					...(qualityCode && { qualityCode }),  // Only include if quality != GOOD
 					protocol: 'opcua',  // For enum namespacing
 					nodeType: 'metric', // Always 'metric' at this point (metadata filtered)
+					...(this.deviceDisplayNames.get(owningDeviceName)?.get(dp.nodeId) && { deviceDisplayName: this.deviceDisplayNames.get(owningDeviceName)?.get(dp.nodeId) }),
 					...(dp.device_uuid && { device_uuid: dp.device_uuid }),
 					...((this.resolvedNodeDisplayNames.has(dp.nodeId) || this.resolvedDeviceNames.has(owningDeviceName)) && {
 						resolvedDisplayName: this.resolvedNodeDisplayNames.get(dp.nodeId) ?? this.resolvedDeviceNames.get(owningDeviceName),
@@ -1377,6 +1380,16 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 				}
 			}
 
+			const displayNames = await resolveDeviceDisplayNames(session, validDataPoints.filter(dp => !dp.device_name?.trim()).map(dp => dp.nodeId), this.logger);
+			for (const dp of validDataPoints) {
+				const owner = nodeIdToDevice.get(dp.nodeId)?.name ?? device.name;
+				if (!this.deviceDisplayNames.has(owner)) this.deviceDisplayNames.set(owner, new Map());
+				const names = this.deviceDisplayNames.get(owner)!;
+				names.delete(dp.nodeId);
+				const name = displayNames.get(dp.nodeId);
+				if (name) names.set(dp.nodeId, name);
+			}
+
 			// Read per-node DisplayNames from parent device folder nodes.
 			// Allows OPC-UA servers (e.g. simulator profiles with a "displayName" field) to
 			// advertise human-readable names per device group. These override the raw endpoint
@@ -1740,6 +1753,7 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 			for (const dp of deviceConfig.dataPoints) {
 				this.resolvedNodeDisplayNames.delete(dp.nodeId);
 			}
+			this.deviceDisplayNames.delete(deviceName);
 		}
 
 		if (group.memberDeviceNames.size > 0) {
@@ -1876,6 +1890,7 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 					qualityCode,
 					nodeType: 'metric',
 					protocol: 'opcua',
+					...(this.deviceDisplayNames.get(deviceName)?.get(dp.nodeId) && { deviceDisplayName: this.deviceDisplayNames.get(deviceName)?.get(dp.nodeId) }),
 					...(dp.device_uuid && { device_uuid: dp.device_uuid }),
 					...((this.resolvedNodeDisplayNames.has(dp.nodeId) || this.resolvedDeviceNames.has(deviceName)) && {
 						resolvedDisplayName: this.resolvedNodeDisplayNames.get(dp.nodeId) ?? this.resolvedDeviceNames.get(deviceName),
@@ -1908,6 +1923,7 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 				quality: 'GOOD' as const,
 				nodeType: 'metric',
 				protocol: 'opcua',
+				...(this.deviceDisplayNames.get(deviceName)?.get(dp.nodeId) && { deviceDisplayName: this.deviceDisplayNames.get(deviceName)?.get(dp.nodeId) }),
 				...(dp.device_uuid && { device_uuid: dp.device_uuid }),
 				...((this.resolvedNodeDisplayNames.has(dp.nodeId) || this.resolvedDeviceNames.has(deviceName)) && {
 					resolvedDisplayName: this.resolvedNodeDisplayNames.get(dp.nodeId) ?? this.resolvedDeviceNames.get(deviceName),

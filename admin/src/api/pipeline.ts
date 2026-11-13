@@ -10,6 +10,7 @@ export interface SubscriptionActivity {
   endpointName: string
   sourceEndpointUuid?: string
   deviceUuid?: string
+  deviceDisplayName?: string
   lastMetric: string
   lastValue: unknown
   lastUnit?: string
@@ -37,6 +38,7 @@ export interface ActivityEvent {
   protocol: string
   sourceEndpointUuid?: string
   deviceUuid?: string
+  deviceDisplayName?: string
   metric: string
   value: unknown
   unit?: string

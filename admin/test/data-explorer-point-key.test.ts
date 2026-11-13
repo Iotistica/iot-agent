@@ -62,14 +62,14 @@ test('uses the point-identity endpoint instead of the display source when availa
 test('matches saved catalog and legacy keys for events and subscription snapshots', () => {
   const event: ActivityEvent = {
     id: 1, timestamp: '2026-11-06T19:00:00Z', protocol: 'opcua', endpointName: 'AHU-7',
-    sourceEndpointUuid: 'source-1', deviceUuid: 'device-1',
+    sourceEndpointUuid: 'source-1', deviceUuid: 'device-1', deviceDisplayName: 'plc-001',
     pointIdentityEndpointName: 'opcua-pipe', metric: 'CC-Valve', normalizedName: 'ahu_7_cc_valve',
     value: 1, subscriptionId: 1, destinationId: 1, destinationName: 'MQTT', pointCount: 1,
   }
   const snapshot: SubscriptionActivity = {
     key: 'subscription', subscriptionId: 1, destinationId: 1, destinationName: 'MQTT',
     destinationType: 'mqtt', protocol: 'opcua', endpointName: 'AHU-7',
-    sourceEndpointUuid: 'source-1', deviceUuid: 'device-1',
+    sourceEndpointUuid: 'source-1', deviceUuid: 'device-1', deviceDisplayName: 'plc-001',
     pointIdentityEndpointName: 'opcua-pipe', lastMetric: 'CC-Valve', normalizedName: 'ahu_7_cc_valve',
     lastValue: 2, pointCount: 1, totalBatches: 1, lastPublishTime: '2026-11-06T19:01:00Z',
   }
@@ -83,6 +83,7 @@ test('matches saved catalog and legacy keys for events and subscription snapshot
     assert.equal(points[0].legacyKey, legacyKey)
     assert.equal(points[0].sourceEndpointUuid, 'source-1')
     assert.equal(points[0].deviceUuid, 'device-1')
+    assert.equal(points[0].deviceDisplayName, 'plc-001')
     for (const savedKey of [catalogKey, legacyKey, JSON.stringify(['opcua', 'opcua-pipe', 'ahu_7_cc_valve', 'old-id'])]) {
       const keys = new Set([normalizeDataExplorerPointKey(savedKey), unrelatedKey])
       assert.deepEqual(points.filter(point => matchesDataExplorerView(point, keys)), points)

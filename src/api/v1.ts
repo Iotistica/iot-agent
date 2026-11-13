@@ -2097,6 +2097,7 @@ router.put('/v1/endpoints/:uuid', requireRole('operator'), async (req: Request, 
 		return res.status(200).json({ endpoint: result });
 	} catch (error: any) {
 		if (error?.statusCode === 404) return res.status(404).json({ error: error.message });
+		if (error?.statusCode === 409) return res.status(409).json({ error: error.message });
 		next(error);
 	}
 });

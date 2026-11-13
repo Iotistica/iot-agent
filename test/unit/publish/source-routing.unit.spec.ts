@@ -14,6 +14,7 @@ describe('PublishManager source routing', () => {
 		const reading = {
 			deviceName: 'sensor', metric: 'temperature', value: 21,
 			endpoint_uuid: 'source-1', device_uuid: 'device-1',
+			deviceDisplayName: 'plc-001',
 		};
 		manager.bindings = [{
 			publisher: { id: 1, name: 'test', type: 'noop' },
@@ -30,7 +31,7 @@ describe('PublishManager source routing', () => {
 		try {
 			await manager.collectRouteEntries('topic', new Map(), new Map(), 'mqtt-pipe', [reading]);
 			expect(record).toHaveBeenCalledWith(expect.objectContaining({
-				endpointName: 'sensor', sourceEndpointUuid: 'source-1', deviceUuid: 'device-1',
+				endpointName: 'sensor', sourceEndpointUuid: 'source-1', deviceUuid: 'device-1', deviceDisplayName: 'plc-001',
 			}));
 		} finally {
 			record.mockRestore();

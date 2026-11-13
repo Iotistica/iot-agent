@@ -48,6 +48,20 @@ describe('SocketServer', () => {
     expect(server.getClientCount()).toBe(0);
   });
 
+  it('preserves display-only device names in single and batched readings', () => {
+    const server = new SocketServer(config, mockLogger);
+    const point = {
+      deviceName: 'source-uuid', deviceDisplayName: 'plc-001',
+      metric: 'temperature', value: 25, timestamp: '2026-01-01T00:00:00Z', quality: 'GOOD' as const,
+    };
+    const format = Reflect.get(server, 'formatAsJson').bind(server);
+    expect(JSON.parse(format([point]))).toEqual(expect.objectContaining({ deviceName: 'source-uuid', deviceDisplayName: 'plc-001' }));
+    expect(JSON.parse(format([point, point])).readings).toEqual([
+      expect.objectContaining({ deviceDisplayName: 'plc-001' }),
+      expect.objectContaining({ deviceDisplayName: 'plc-001' }),
+    ]);
+  });
+
   it('should not send data when not started', () => {
     const server = new SocketServer(config, mockLogger);
     const dataPoints = [{

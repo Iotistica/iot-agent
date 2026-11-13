@@ -914,6 +914,7 @@ export class SocketServer {
 			...(point.resolvedDisplayName && {
 				resolvedDisplayName: point.resolvedDisplayName,
 			}),
+			...(point.deviceDisplayName && { deviceDisplayName: point.deviceDisplayName }),
 			metric: point.metric,
 			value: point.value,
 			unit: point.unit,

@@ -82,6 +82,7 @@ const deviceNames = computed(() => {
   return map
 })
 function friendlyDevice(name: string) { return deviceNames.value.get(name) || name }
+function deviceName(row: PointRow) { return row.deviceDisplayName || friendlyDevice(row.endpointName) }
 const sourceLookup = computed(() => dataExplorerSourceLookup(sources.value, devices.value))
 function sourceFor(row: PointRow) { return sourceLookup.value(row) }
 function sourceName(row: PointRow) { return dataExplorerSourceName(sourceFor(row)) }
@@ -164,7 +165,7 @@ function columnSort(a: PointRow, b: PointRow): number {
   const desc = tableSortOrder.value === 'descend' ? -1 : 1
   if (!field) return Date.parse(b.timestamp) - Date.parse(a.timestamp)
   if (field === 'source') return desc * sourceName(a).localeCompare(sourceName(b))
-  if (field === 'device') return desc * friendlyDevice(a.endpointName).localeCompare(friendlyDevice(b.endpointName))
+  if (field === 'device') return desc * deviceName(a).localeCompare(deviceName(b))
   if (field === 'point') return desc * pointName(a).localeCompare(pointName(b))
   if (field === 'value') {
     const na = typeof a.value === 'number' ? a.value : parseFloat(String(a.value ?? ''))
@@ -186,7 +187,7 @@ const pointsMatchingFilters = computed(() => {
   source = mergePinnedDataExplorerPoints(source, pinnedKeys.value, pinnedPointCache.value)
   const q = search.value.trim().toLowerCase()
   return source.filter(p => {
-    return (!q || [sourceName(p), friendlyDevice(p.endpointName), p.metric, p.normalizedName, p.rawPointName, p.rawObjectName, p.destinationName]
+    return (!q || [sourceName(p), deviceName(p), p.metric, p.normalizedName, p.rawPointName, p.rawObjectName, p.destinationName]
       .some(v => (v || '').toLowerCase().includes(q)))
       && (!protocolFilter.value || p.protocol === protocolFilter.value)
       && (sourceFilter.value === undefined || (sourceFor(p)?.uuid ?? UNKNOWN_SOURCE) === sourceFilter.value)
@@ -199,7 +200,7 @@ const filteredPoints = computed(() => {
     (viewMode.value !== 'favorites' || favorites.value.includes(favKey(p)))
     && (!activeSavedView.value || matchesDataExplorerView(p, activeViewIds.value)))
   if (viewMode.value === 'favorites') {
-    return filtered.sort((a, b) => friendlyDevice(a.endpointName).localeCompare(friendlyDevice(b.endpointName)) || pointName(a).localeCompare(pointName(b)))
+    return filtered.sort((a, b) => deviceName(a).localeCompare(deviceName(b)) || pointName(a).localeCompare(pointName(b)))
   }
   if (activeSavedView.value && !tableSortField.value) {
     return orderDataExplorerViewPoints(filtered, activeSavedView.value.pointKeys)
@@ -351,7 +352,7 @@ function formatInterval(secs: number): string {
 function downloadCsv(rows: PointRow[], filename: string) {
   const quote = (v: unknown) => '"' + String(v ?? '').replace(/"/g, '""') + '"'
   const data = rows.map(p => [
-    protocolLabel(p.protocol), sourceName(p), friendlyDevice(p.endpointName), pointName(p), originalName(p),
+    protocolLabel(p.protocol), sourceName(p), deviceName(p), pointName(p), originalName(p),
     valueText(p.value), p.unit || '', p.quality || '', p.timestamp, p.destinationName
   ])
   const header = ['Protocol','Source','Device','Point','Original','Value','Unit','Quality','Timestamp','Destination']
@@ -604,7 +605,7 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
           <template #bodyCell="{ column, record }">
             <template v-if="column.key === 'protocol'"><a-tag :color="protocolColor(record.protocol)">{{ protocolLabel(record.protocol) }}</a-tag></template>
             <template v-else-if="column.key === 'source'">{{ sourceName(record) }}</template>
-            <template v-else-if="column.key === 'device'">{{ friendlyDevice(record.endpointName) }}</template>
+            <template v-else-if="column.key === 'device'">{{ deviceName(record) }}</template>
             <template v-else-if="column.key === 'point'"><div class="point-primary" data-testid="point-name" :title="pointName(record)">{{ pointName(record) }}</div><div v-if="record.normalizedName && originalName(record) !== pointName(record)" class="point-secondary" :title="originalName(record)">Original: {{ originalName(record) }}</div></template>
             <template v-else-if="column.key === 'value'"><a-tag v-if="record.quality === 'BAD' && record.value == null" color="red">No Value</a-tag><span v-else>{{ valueText(record.value) }}</span></template>
             <template v-else-if="column.key === 'unit'">{{ record.unit || '—' }}</template>
@@ -627,7 +628,7 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
       :open="drawerOpen"
       :point="selected"
       :source-name="selected ? sourceName(selected) : ''"
-      :device-name="selected ? friendlyDevice(selected.endpointName) : ''"
+      :device-name="selected ? deviceName(selected) : ''"
       :now="now"
       @update:open="drawerOpen = $event"
     />
