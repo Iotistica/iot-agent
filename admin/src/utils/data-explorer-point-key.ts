@@ -15,6 +15,8 @@ export function dataExplorerPointKey(point: DataExplorerPointIdentity): string {
 export interface DataExplorerPointRow extends DataExplorerPointIdentity {
   key: string
   legacyKey?: string
+  sourceEndpointUuid?: string
+  deviceUuid?: string
   rawPointName?: string
   rawObjectName?: string
   value: unknown
@@ -43,6 +45,7 @@ export function dataExplorerPoints(events: ActivityEvent[], subscriptions: Subsc
   for (const e of events) {
     add({
       protocol: e.protocol, endpointName: e.endpointName, pointIdentityEndpointName: e.pointIdentityEndpointName,
+      sourceEndpointUuid: e.sourceEndpointUuid, deviceUuid: e.deviceUuid,
       metric: e.metric, normalizedName: e.normalizedName, rawPointName: e.rawPointName,
       rawObjectName: e.rawObjectName, value: e.value, quality: e.quality,
       unit: e.unit, timestamp: e.timestamp, destinationName: e.destinationName,
@@ -52,12 +55,58 @@ export function dataExplorerPoints(events: ActivityEvent[], subscriptions: Subsc
     if (!s.lastMetric || !s.lastPublishTime) continue
     add({
       protocol: s.protocol, endpointName: s.endpointName, pointIdentityEndpointName: s.pointIdentityEndpointName,
+      sourceEndpointUuid: s.sourceEndpointUuid, deviceUuid: s.deviceUuid,
       metric: s.lastMetric, normalizedName: s.normalizedName, rawPointName: s.rawPointName,
       rawObjectName: s.rawObjectName, value: s.lastValue, quality: s.lastQuality,
       unit: s.lastUnit, timestamp: s.lastPublishTime, destinationName: s.destinationName,
     })
   }
   return [...byKey.values()].sort((a, b) => Date.parse(b.timestamp) - Date.parse(a.timestamp))
+}
+
+interface ExplorerSource {
+  id?: number
+  uuid: string
+  name: string
+  protocol: string
+  metadata?: Record<string, unknown>
+}
+
+interface ExplorerDevice {
+  uuid: string
+  endpoint_id: number
+  name: string
+  protocol: string
+  metadata?: Record<string, unknown>
+}
+
+export function dataExplorerSourceLookup(sources: ExplorerSource[], devices: ExplorerDevice[]) {
+  const byUuid = new Map(sources.map(source => [source.uuid, source]))
+  const byId = new Map(sources.filter(source => source.id !== undefined).map(source => [source.id, source]))
+  const byDeviceUuid = new Map(devices.map(device => [device.uuid, byId.get(device.endpoint_id)]))
+  const byName = new Map<string, ExplorerSource | null>()
+  for (const device of devices) {
+    const source = byId.get(device.endpoint_id)
+    if (!source) continue
+    const friendly = typeof device.metadata?.objectName === 'string' ? device.metadata.objectName : device.name
+    for (const name of new Set([device.name, friendly, `${friendly}-${device.uuid.slice(0, 8)}`])) {
+      const key = JSON.stringify([device.protocol, name])
+      const existing = byName.get(key)
+      byName.set(key, existing === undefined || existing?.uuid === source.uuid ? source : null)
+    }
+  }
+  return (point: Pick<DataExplorerPointRow, 'protocol' | 'endpointName' | 'sourceEndpointUuid' | 'deviceUuid'>): ExplorerSource | undefined => {
+    const source = point.sourceEndpointUuid
+      ? byUuid.get(point.sourceEndpointUuid)
+      : point.deviceUuid
+        ? byDeviceUuid.get(point.deviceUuid)
+        : byName.get(JSON.stringify([point.protocol, point.endpointName]))
+    return source && source.protocol === point.protocol ? source : undefined
+  }
+}
+
+export function dataExplorerSourceName(source: ExplorerSource | undefined): string {
+  return (typeof source?.metadata?.objectName === 'string' && source.metadata.objectName) || source?.name || 'Unknown'
 }
 
 export function normalizeDataExplorerPointKey(key: string): string {

@@ -16,6 +16,8 @@ export interface SubscriptionActivity {
 	destinationType: string;
 	protocol: string;
 	endpointName: string;
+	sourceEndpointUuid?: string;
+	deviceUuid?: string;
 	lastMetric: string;
 	lastValue: unknown;
 	lastUnit?: string;
@@ -49,6 +51,8 @@ export interface ActivityEvent {
 	timestamp: string;
 	endpointName: string;
 	protocol: string;
+	sourceEndpointUuid?: string;
+	deviceUuid?: string;
 	metric: string;
 	value: unknown;
 	unit?: string;
@@ -93,6 +97,8 @@ interface RecordParams {
 	destinationType: string;
 	protocol: string;
 	endpointName: string;
+	sourceEndpointUuid?: string;
+	deviceUuid?: string;
 	metric: string;
 	value: unknown;
 	unit?: string;
@@ -187,6 +193,8 @@ class ActivityMonitor {
 			destinationType: params.destinationType,
 			protocol: params.protocol,
 			endpointName: params.endpointName,
+			sourceEndpointUuid: params.sourceEndpointUuid,
+			deviceUuid: params.deviceUuid,
 			lastMetric: params.metric,
 			lastValue: params.value,
 			lastUnit: params.unit,
@@ -222,6 +230,8 @@ class ActivityMonitor {
 			timestamp: now,
 			endpointName: params.endpointName,
 			protocol: params.protocol,
+			sourceEndpointUuid: params.sourceEndpointUuid,
+			deviceUuid: params.deviceUuid,
 			metric: params.metric,
 			value: params.value,
 			unit: params.unit,

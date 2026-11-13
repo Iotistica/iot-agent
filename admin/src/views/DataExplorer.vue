@@ -13,18 +13,22 @@ import CreateViewDrawer from '@/components/CreateViewDrawer.vue'
 import PointDetailsDrawer from '@/components/data/PointDetailsDrawer.vue'
 import PointHistoryModal from '@/components/data/PointHistoryModal.vue'
 import { viewsApi, type SavedView as SavedViewType } from '@/api/views'
-import { dataExplorerPointName, dataExplorerPoints, matchesDataExplorerView, missingDataExplorerViewPointCount, normalizeDataExplorerPointKey, orderDataExplorerViewPoints, type DataExplorerPointRow } from '@/utils/data-explorer-point-key'
+import { sourcesApi } from '@/api/sources'
+import type { Endpoint } from '@/types'
+import { dataExplorerPointName, dataExplorerPoints, dataExplorerSourceLookup, dataExplorerSourceName, matchesDataExplorerView, missingDataExplorerViewPointCount, normalizeDataExplorerPointKey, orderDataExplorerViewPoints, type DataExplorerPointRow } from '@/utils/data-explorer-point-key'
 import { mergePinnedDataExplorerPoints } from '@/utils/data-explorer-pins'
 import { restoreDataExplorerTabs } from '@/utils/data-explorer-tabs'
 
 type PointRow = DataExplorerPointRow
-type DeviceRecord = { uuid: string; name: string; protocol: string; metadata?: Record<string, unknown> }
+type DeviceRecord = { uuid: string; endpoint_id: number; name: string; protocol: string; metadata?: Record<string, unknown> }
 const subscriptions = ref<SubscriptionActivity[]>([])
 const latestReadings = ref<ActivityEvent[]>([])
 const devices = ref<DeviceRecord[]>([])
+const sources = ref<Endpoint[]>([])
 const observedPointCount = ref(0)
 const loading = ref(true)
 const error = ref('')
+const metadataError = ref('')
 const search = ref('')
 const protocolFilter = ref<string | undefined>(undefined)
 const sourceFilter = ref<string | undefined>(undefined)
@@ -65,6 +69,7 @@ const POLL_MS = 5000
 let timer: ReturnType<typeof setInterval> | undefined
 let busy = false
 let viewsLoaded = false
+let nextMetadataRefresh = 0
 
 const deviceNames = computed(() => {
   const map = new Map<string, string>()
@@ -75,7 +80,10 @@ const deviceNames = computed(() => {
   }
   return map
 })
-function friendlySource(name: string) { return deviceNames.value.get(name) || name }
+function friendlyDevice(name: string) { return deviceNames.value.get(name) || name }
+const sourceLookup = computed(() => dataExplorerSourceLookup(sources.value, devices.value))
+function sourceFor(row: PointRow) { return sourceLookup.value(row) }
+function sourceName(row: PointRow) { return dataExplorerSourceName(sourceFor(row)) }
 function pointName(row: PointRow) { return dataExplorerPointName(row) }
 function originalName(row: PointRow) { return row.rawPointName || row.rawObjectName || row.metric }
 function valueText(v: unknown) {
@@ -136,9 +144,15 @@ watch([points, pinnedKeys], () => {
   }
   persistPinned()
 })
-const sourceOptions = computed(() => [...new Set(points.value.map(p => p.endpointName))]
-  .sort((a, b) => friendlySource(a).localeCompare(friendlySource(b)))
-  .map(v => ({ value: v, label: friendlySource(v) })))
+const sourceOptions = computed(() => {
+  const options = new Map<string, string>()
+  for (const point of points.value) {
+    const source = sourceFor(point)
+    options.set(source?.uuid ?? '', dataExplorerSourceName(source))
+  }
+  return [...options].sort((a, b) => a[1].localeCompare(b[1]))
+    .map(([value, label]) => ({ value, label }))
+})
 const protocolOptions = computed(() => [...new Set([
   ...points.value.map(p => p.protocol),
   ...devices.value.map(d => d.protocol),
@@ -148,7 +162,8 @@ function columnSort(a: PointRow, b: PointRow): number {
   const field = tableSortField.value
   const desc = tableSortOrder.value === 'descend' ? -1 : 1
   if (!field) return Date.parse(b.timestamp) - Date.parse(a.timestamp)
-  if (field === 'source') return desc * friendlySource(a.endpointName).localeCompare(friendlySource(b.endpointName))
+  if (field === 'source') return desc * sourceName(a).localeCompare(sourceName(b))
+  if (field === 'device') return desc * friendlyDevice(a.endpointName).localeCompare(friendlyDevice(b.endpointName))
   if (field === 'point') return desc * pointName(a).localeCompare(pointName(b))
   if (field === 'value') {
     const na = typeof a.value === 'number' ? a.value : parseFloat(String(a.value ?? ''))
@@ -170,10 +185,10 @@ const pointsMatchingFilters = computed(() => {
   source = mergePinnedDataExplorerPoints(source, pinnedKeys.value, pinnedPointCache.value)
   const q = search.value.trim().toLowerCase()
   return source.filter(p => {
-    return (!q || [friendlySource(p.endpointName), p.metric, p.normalizedName, p.rawPointName, p.rawObjectName, p.destinationName]
+    return (!q || [sourceName(p), friendlyDevice(p.endpointName), p.metric, p.normalizedName, p.rawPointName, p.rawObjectName, p.destinationName]
       .some(v => (v || '').toLowerCase().includes(q)))
       && (!protocolFilter.value || p.protocol === protocolFilter.value)
-      && (!sourceFilter.value || p.endpointName === sourceFilter.value)
+      && (sourceFilter.value === undefined || (sourceFor(p)?.uuid ?? '') === sourceFilter.value)
       && (!qualityFilter.value || (qualityFilter.value === 'STALE' ? isStale(p.timestamp) : qualityFilter.value === 'BAD' ? p.quality === 'BAD' : p.quality !== 'BAD' && !isStale(p.timestamp)))
   })
 })
@@ -183,7 +198,7 @@ const filteredPoints = computed(() => {
     (viewMode.value !== 'favorites' || favorites.value.includes(favKey(p)))
     && (!activeSavedView.value || matchesDataExplorerView(p, activeViewIds.value)))
   if (viewMode.value === 'favorites') {
-    return filtered.sort((a, b) => friendlySource(a.endpointName).localeCompare(friendlySource(b.endpointName)) || pointName(a).localeCompare(pointName(b)))
+    return filtered.sort((a, b) => friendlyDevice(a.endpointName).localeCompare(friendlyDevice(b.endpointName)) || pointName(a).localeCompare(pointName(b)))
   }
   if (activeSavedView.value && !tableSortField.value) {
     return orderDataExplorerViewPoints(filtered, activeSavedView.value.pointKeys)
@@ -335,10 +350,10 @@ function formatInterval(secs: number): string {
 function downloadCsv(rows: PointRow[], filename: string) {
   const quote = (v: unknown) => '"' + String(v ?? '').replace(/"/g, '""') + '"'
   const data = rows.map(p => [
-    protocolLabel(p.protocol), friendlySource(p.endpointName), pointName(p), originalName(p),
+    protocolLabel(p.protocol), sourceName(p), friendlyDevice(p.endpointName), pointName(p), originalName(p),
     valueText(p.value), p.unit || '', p.quality || '', p.timestamp, p.destinationName
   ])
-  const header = ['Protocol','Source','Point','Original','Value','Unit','Quality','Timestamp','Destination']
+  const header = ['Protocol','Source','Device','Point','Original','Value','Unit','Quality','Timestamp','Destination']
   const csv = '\uFEFF' + [header, ...data].map(r => r.map(quote).join(',')).join('\r\n')
   const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }))
   const link = document.createElement('a')
@@ -360,6 +375,7 @@ const columns = computed<TableColumnType<PointRow>[]>(() => {
   cols.push(
     { title: 'Protocol', key: 'protocol', width: 105 },
     { title: 'Source', key: 'source', width: 180, ellipsis: true, sorter: true, sortOrder: sortOrderFor('source') },
+    { title: 'Device', key: 'device', width: 180, ellipsis: true, sorter: true, sortOrder: sortOrderFor('device') },
     { title: 'Point', key: 'point', width: 320, ellipsis: true, sorter: true, sortOrder: sortOrderFor('point') },
     { title: 'Latest Value', key: 'value', width: 135, sorter: true, sortOrder: sortOrderFor('value') },
     { title: 'Unit', key: 'unit', width: 115, ellipsis: true },
@@ -391,18 +407,27 @@ function onTableChange(_pagination: unknown, _filters: unknown, sorter: { field?
   tableSortField.value = sorter.order ? key : null
   tableSortOrder.value = sorter.order ?? null
 }
-async function loadDevices() {
+async function loadSourceMetadata() {
   try {
-    const { data } = await client.get<{ devices: DeviceRecord[] }>('/v1/devices')
-    devices.value = data.devices || []
-  } catch { /**\\*** friendly names are optional **\\***/ }
+    const [deviceResponse, endpointRows] = await Promise.all([
+      client.get<{ devices: DeviceRecord[] }>('/v1/devices'),
+      sourcesApi.getAll(),
+    ])
+    devices.value = deviceResponse.data.devices
+    sources.value = endpointRows
+    metadataError.value = ''
+  } catch {
+    metadataError.value = 'Unable to refresh source and device names. Showing the last available names.'
+  }
 }
 async function poll() {
   if (busy) return
   busy = true
   refreshing.value = true
   try {
-    const [subs, readings, overview] = await Promise.all([pipelineApi.getSubscriptions(), pipelineApi.getPoints(), pipelineApi.getOverview()])
+    const refreshMetadata = Date.now() >= nextMetadataRefresh
+    if (refreshMetadata) nextMetadataRefresh = Date.now() + 30000
+    const [subs, readings, overview] = await Promise.all([pipelineApi.getSubscriptions(), pipelineApi.getPoints(), pipelineApi.getOverview(), refreshMetadata ? loadSourceMetadata() : Promise.resolve()])
     subscriptions.value = subs
     latestReadings.value = readings
     observedPointCount.value = overview.activePoints
@@ -451,7 +476,6 @@ onMounted(async () => {
       if (favorites.value.includes(k) && v && typeof v === 'object') favPointCache.value.set(k, v as PointRow)
     }
   } catch { /* ignore invalid cache */ }
-  loadDevices()
   loadDatasets()
   await loadViews()
   if (viewsLoaded) {
@@ -479,6 +503,7 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
         <p>Search, inspect and export the latest readings across your connected sources.</p>
       </div>
       <a-alert v-if="error"  type="warning" show-icon :message="error" style="margin-bottom: 14px" />
+      <a-alert v-if="metadataError" type="warning" show-icon :message="metadataError" style="margin-bottom: 14px" />
       <a-row :gutter="12" class="stats">
         <a-col :xs="12" :md="6"><a-card size="small" class="metric-card" data-testid="stat-observed-points"><div class="metric-inner"><span class="metric-icon icon-points"><BarChartOutlined /></span><a-statistic title="Observed points" :value="observedPointCount" /></div></a-card></a-col>
         <a-col :xs="12" :md="6"><a-card size="small" class="metric-card" data-testid="stat-subscriptions"><div class="metric-inner"><span class="metric-icon icon-subscriptions"><WifiOutlined /></span><a-statistic title="Active subscriptions" :value="subscriptions.length" /></div></a-card></a-col>
@@ -487,7 +512,7 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
       </a-row>
       <a-card size="small" class="browser-card">
         <div class="filters">
-          <a-input v-model:value="search" data-testid="data-search" placeholder="Search source, point, destination…" allow-clear class="search" />
+          <a-input v-model:value="search" data-testid="data-search" placeholder="Search source, device, point, destination…" allow-clear class="search" />
           <a-select v-model:value="protocolFilter" :options="protocolOptions" placeholder="All protocols" allow-clear class="filter" />
           <a-select v-model:value="sourceFilter" :options="sourceOptions" show-search option-filter-prop="label" placeholder="All sources" allow-clear class="filter" />
           <a-select v-model:value="qualityFilter" placeholder="All states" allow-clear class="filter">
@@ -574,10 +599,11 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
         </template>
 
         <!-- Points table -->
-        <a-table v-else :columns="columns" :data-source="filteredPoints" :loading="loading" row-key="key" :row-selection="rowSelection" :customRow="(record: PointRow) => ({ onClick: (e: MouseEvent) => { if (!(e.target as HTMLElement).closest('.ant-checkbox-wrapper')) openPointDrawer(record) }, style: 'cursor: pointer' })" size="small" :pagination="{ pageSize, showSizeChanger: true, pageSizeOptions: ['10', '20', '50'], onShowSizeChange: (_: number, size: number) => { pageSize = size } }" :scroll="{ x: 1390 }" table-layout="fixed" @change="onTableChange">
+        <a-table v-else :columns="columns" :data-source="filteredPoints" :loading="loading" row-key="key" :row-selection="rowSelection" :customRow="(record: PointRow) => ({ onClick: (e: MouseEvent) => { if (!(e.target as HTMLElement).closest('.ant-checkbox-wrapper')) openPointDrawer(record) }, style: 'cursor: pointer' })" size="small" :pagination="{ pageSize, showSizeChanger: true, pageSizeOptions: ['10', '20', '50'], onShowSizeChange: (_: number, size: number) => { pageSize = size } }" :scroll="{ x: 1570 }" table-layout="fixed" @change="onTableChange">
           <template #bodyCell="{ column, record }">
             <template v-if="column.key === 'protocol'"><a-tag :color="protocolColor(record.protocol)">{{ protocolLabel(record.protocol) }}</a-tag></template>
-            <template v-else-if="column.key === 'source'">{{ friendlySource(record.endpointName) }}</template>
+            <template v-else-if="column.key === 'source'">{{ sourceName(record) }}</template>
+            <template v-else-if="column.key === 'device'">{{ friendlyDevice(record.endpointName) }}</template>
             <template v-else-if="column.key === 'point'"><div class="point-primary" data-testid="point-name" :title="pointName(record)">{{ pointName(record) }}</div><div v-if="record.normalizedName && originalName(record) !== pointName(record)" class="point-secondary" :title="originalName(record)">Original: {{ originalName(record) }}</div></template>
             <template v-else-if="column.key === 'value'"><a-tag v-if="record.quality === 'BAD' && record.value == null" color="red">No Value</a-tag><span v-else>{{ valueText(record.value) }}</span></template>
             <template v-else-if="column.key === 'unit'">{{ record.unit || '—' }}</template>
@@ -599,7 +625,8 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
     <PointDetailsDrawer
       :open="drawerOpen"
       :point="selected"
-      :source-name="selected ? friendlySource(selected.endpointName) : ''"
+      :source-name="selected ? sourceName(selected) : ''"
+      :device-name="selected ? friendlyDevice(selected.endpointName) : ''"
       :now="now"
       @update:open="drawerOpen = $event"
     />

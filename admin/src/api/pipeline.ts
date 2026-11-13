@@ -8,6 +8,8 @@ export interface SubscriptionActivity {
   destinationType: string
   protocol: string
   endpointName: string
+  sourceEndpointUuid?: string
+  deviceUuid?: string
   lastMetric: string
   lastValue: unknown
   lastUnit?: string
@@ -33,6 +35,8 @@ export interface ActivityEvent {
   timestamp: string
   endpointName: string
   protocol: string
+  sourceEndpointUuid?: string
+  deviceUuid?: string
   metric: string
   value: unknown
   unit?: string

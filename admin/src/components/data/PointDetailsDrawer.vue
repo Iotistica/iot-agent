@@ -20,6 +20,7 @@ defineProps<{
   open: boolean
   point: Point | null
   sourceName: string
+  deviceName: string
   now: number
 }>()
 
@@ -68,6 +69,7 @@ function close() {
       <a-descriptions-item label="Point" :span="2">{{ pointName(point) }}</a-descriptions-item>
       <a-descriptions-item v-if="originalName(point) !== pointName(point)" label="Original name" :span="2">{{ originalName(point) }}</a-descriptions-item>
       <a-descriptions-item label="Source" :span="2">{{ sourceName }}</a-descriptions-item>
+      <a-descriptions-item label="Device" :span="2">{{ deviceName }}</a-descriptions-item>
       <a-descriptions-item label="Protocol">
         <a-tag :color="protocolColor(point.protocol)" style="margin: 0">{{ protocolLabel(point.protocol) }}</a-tag>
       </a-descriptions-item>

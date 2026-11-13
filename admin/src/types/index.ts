@@ -64,6 +64,7 @@ export interface EndpointHealth {
 }
 
 export interface Endpoint {
+  id?: number
   uuid: string
   name: string
   protocol: EndpointProtocol | string
