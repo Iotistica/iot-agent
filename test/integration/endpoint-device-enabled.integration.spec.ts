@@ -120,4 +120,41 @@ describe('Endpoint device enabled state (integration)', () => {
 			actions.setStateManager(undefined);
 		}
 	});
+
+	it('validates and persists OPC UA identification before creating a source', async () => {
+		const actions: typeof import('../../src/api/actions') = require('../../src/api/actions');
+		let target: { apps: Record<string, unknown>; config: Record<string, unknown> } = { apps: {}, config: { endpoints: [] } };
+		const manager = {
+			getTargetState: () => target,
+			setTarget: jest.fn(async (state: typeof target) => { target = state; }),
+		};
+		const browseOPCUAAddressSpace = jest.fn().mockResolvedValue([]);
+		actions.setStateManager(manager as unknown as Parameters<typeof actions.setStateManager>[0]);
+		actions.setDiscoveryService({ browseOPCUAAddressSpace } as unknown as Parameters<typeof actions.setDiscoveryService>[0]);
+		const deviceIdentification = {
+			rootNodeId: 'ns=2;i=1', scopeNodeId: 'ns=0;i=85', deviceTypeNodeId: 'ns=0;i=61',
+			identifierProperty: 'AssetId', identifierPath: 'Identification/AssetId',
+		};
+		try {
+			const body = {
+				name: 'identified-source', protocol: 'opcua',
+				connection: { endpointUrl: 'opc.tcp://localhost:4850', deviceIdentification },
+			};
+			const saved = await actions.addEndpoint(body);
+			expect(browseOPCUAAddressSpace).toHaveBeenCalledWith(expect.objectContaining({ identifierValidation: deviceIdentification }));
+			expect((await EndpointModel.getByUuid(saved.uuid))?.connection.deviceIdentification).toEqual(deviceIdentification);
+			const targetSource = (target.config.endpoints as Array<{ uuid: string; connection: Record<string, unknown> }>).find(item => item.uuid === saved.uuid);
+			expect(targetSource?.connection.deviceIdentification).toEqual(deviceIdentification);
+
+			browseOPCUAAddressSpace.mockRejectedValueOnce(new Error('Duplicate device identifier'));
+			const writes = manager.setTarget.mock.calls.length;
+			await expect(actions.addEndpoint({ ...body, name: 'invalid-source' }))
+				.rejects.toMatchObject({ statusCode: 400, message: expect.stringContaining('Duplicate device identifier') });
+			expect(manager.setTarget).toHaveBeenCalledTimes(writes);
+			expect(await EndpointModel.getByName('invalid-source')).toBeNull();
+		} finally {
+			actions.setStateManager(undefined);
+			actions.setDiscoveryService(undefined);
+		}
+	});
 });

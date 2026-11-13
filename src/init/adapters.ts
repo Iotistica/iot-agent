@@ -365,6 +365,7 @@ export class AdapterInitializer {
 									securityMode: data.connection?.securityMode,
 									securityPolicy: data.connection?.securityPolicy,
 									certificateTrustMode: data.connection?.certificateTrustMode,
+									expectedServerThumbprint: data.connection?.expectedServerThumbprint,
 									username: data.connection?.username,
 									password: data.connection?.password,
 									deviceIdentification: data.connection?.deviceIdentification,

@@ -5,7 +5,7 @@ import TopicTree from '@/components/mqtt/TopicTree.vue'
 import type { TopicNode } from '@/api/mqtt'
 import { sourcesApi, type OPCUABrowseNode, type OPCUADeviceIdentification } from '@/api/sources'
 
-const props = defineProps<{ open: boolean; connection: Record<string, unknown> }>()
+const props = defineProps<{ open: boolean; connection: Record<string, unknown>; identification: OPCUADeviceIdentification | null }>()
 const emit = defineEmits<{
   'update:open': [value: boolean]
   select: [value: OPCUADeviceIdentification]
@@ -111,7 +111,9 @@ function selectRoot() {
   root.value = entry
   emit('select', {
     rootNodeId: entry.node.nodeId, scopeNodeId: entry.parentId,
-    deviceTypeNodeId: entry.node.typeDefinition, identifierProperty: '', identifierPath: '',
+    deviceTypeNodeId: entry.node.typeDefinition,
+    identifierProperty: props.identification?.identifierProperty ?? '',
+    identifierPath: props.identification?.identifierPath ?? '',
   })
 }
 

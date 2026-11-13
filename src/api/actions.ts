@@ -18,6 +18,8 @@ import { LogComponents } from '../logging/types';
 import type { HealthReport } from '../health/arbiter';
 import { MessageBufferModel } from '../db/models/buffer.model';
 import { EndpointModel, MlDatasetModel, ProtocolDevicesModel, PublishDestinationsModel, PublishSubscriptionsModel } from '../db/models/index.js';
+import { DuplicateEndpointConnectionError } from '../db/models/endpoint.model.js';
+import { OPCUAConnectionSchema } from '../plugins/opcua/types.js';
 import { generateModbusFingerprint } from '../plugins/modbus/discovery.js';
 import { getDatabasePath } from '../db/db-path';
 import { getDatabase } from '../db/sqlite';
@@ -1533,7 +1535,6 @@ async function withModbusFingerprint(
 
 async function validateOpcuaIdentification(protocol: string, connection: Record<string, any>): Promise<void> {
 	if (protocol !== 'opcua' || connection.deviceIdentification === undefined) return;
-	const { OPCUAConnectionSchema } = await import('../plugins/opcua/types.js');
 	const parsed = OPCUAConnectionSchema.safeParse(connection);
 	if (!parsed.success) {
 		throw Object.assign(new Error(`Invalid OPC UA identification configuration: ${parsed.error.message}`), { statusCode: 400 });
@@ -1544,6 +1545,7 @@ async function validateOpcuaIdentification(protocol: string, connection: Record<
 			securityMode: parsed.data.securityMode,
 			securityPolicy: parsed.data.securityPolicy,
 			certificateTrustMode: parsed.data.certificateTrustMode,
+			expectedServerThumbprint: parsed.data.expectedServerThumbprint,
 			username: parsed.data.username,
 			password: parsed.data.password,
 			identifierValidation: parsed.data.deviceIdentification,
@@ -1637,7 +1639,6 @@ export const addEndpoint = async (body: {
 	// endpoint immediately. applyConfigUpdate only updates target state; the reconciler
 	// that syncs target state → DB runs asynchronously and would otherwise leave the
 	// table empty until the next reconciliation cycle.
-	const { EndpointModel, DuplicateEndpointConnectionError } = await import('../db/models/endpoint.model.js');
 	let savedEndpoint;
 	try {
 		savedEndpoint = await EndpointModel.upsert({
@@ -1667,7 +1668,6 @@ export const addEndpoint = async (body: {
 	// which a manually-added source (e.g. via the register-map editor) never runs.
 	if (savedEndpoint) {
 		try {
-			const { ProtocolDevicesModel } = await import('../db/models/index.js');
 			await ProtocolDevicesModel.syncFromEndpoint(savedEndpoint);
 		} catch {
 			// Non-fatal: device rows will be created on the next discovery or poll cycle.

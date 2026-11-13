@@ -824,7 +824,7 @@ router.post('/v1/discover', requireRole('operator'), async (req: Request, res: R
  */
 router.post('/v1/discover/opcua/browse', requireRole('operator'), async (req: Request, res: Response, next: NextFunction) => {
 	try {
-		const { endpointUrl, maxDepth, securityMode, securityPolicy, certificateTrustMode, username, password, nodeId, identifierValidation } = req.body ?? {};
+		const { endpointUrl, maxDepth, securityMode, securityPolicy, certificateTrustMode, expectedServerThumbprint, username, password, nodeId, identifierValidation } = req.body ?? {};
 
 		if (!endpointUrl || typeof endpointUrl !== 'string') {
 			return res.status(400).json({ error: 'Missing or invalid endpointUrl' });
@@ -837,7 +837,7 @@ router.post('/v1/discover/opcua/browse', requireRole('operator'), async (req: Re
 		if (nodeId !== undefined && (typeof nodeId !== 'string' || !nodeId.trim())) {
 			return res.status(400).json({ error: 'nodeId must be a non-empty string' });
 		}
-		const { OPCUADeviceIdentificationSchema } = await import('../plugins/opcua/device-identification.js');
+		const { OPCUADeviceIdentificationSchema } = await import('../plugins/opcua/device-identification-config.js');
 		const validation = identifierValidation === undefined ? undefined : OPCUADeviceIdentificationSchema.safeParse(identifierValidation);
 		if (validation && !validation.success) return res.status(400).json({ error: 'Invalid device identification configuration' });
 
@@ -847,6 +847,7 @@ router.post('/v1/discover/opcua/browse', requireRole('operator'), async (req: Re
 			securityMode,
 			securityPolicy,
 			certificateTrustMode,
+			expectedServerThumbprint,
 			username,
 			password,
 			nodeId,

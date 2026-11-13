@@ -12,7 +12,8 @@ import { LogComponents } from '../../logging/types';
 import { BaseDiscovery } from '../base';
 import { type DiscoveredDevice } from '../types';
 import type { ConfigManager } from '../../core/config.js';
-import { browseHierarchicalReferences, identifyDevices, OPCUADeviceIdentificationSchema, type OPCUADeviceIdentification } from './device-identification.js';
+import { browseHierarchicalReferences, identifyDevices } from './device-identification.js';
+import { OPCUADeviceIdentificationSchema, type OPCUADeviceIdentification } from './device-identification-config.js';
 import { toDeviceUuid } from '../../db/models/device.model.js';
 
 export interface OPCUADiscoveryOptions {
@@ -21,6 +22,7 @@ export interface OPCUADiscoveryOptions {
   securityMode?: 'None' | 'Sign' | 'SignAndEncrypt';
   securityPolicy?: 'None' | 'Basic128Rsa15' | 'Basic256' | 'Basic256Sha256' | 'Aes128_Sha256_RsaOaep' | 'Aes256_Sha256_RsaPss';
   certificateTrustMode?: 'strict' | 'trust-on-first-use';
+  expectedServerThumbprint?: string;
   username?: string;
   password?: string;
   deviceIdentification?: OPCUADeviceIdentification;
@@ -34,6 +36,7 @@ export interface OPCUABrowseRequest {
 	securityMode?: 'None' | 'Sign' | 'SignAndEncrypt';
 	securityPolicy?: 'None' | 'Basic128Rsa15' | 'Basic256' | 'Basic256Sha256' | 'Aes128_Sha256_RsaOaep' | 'Aes256_Sha256_RsaPss';
 	certificateTrustMode?: 'strict' | 'trust-on-first-use';
+	expectedServerThumbprint?: string;
 	username?: string;
 	password?: string;
 }
@@ -254,6 +257,14 @@ export class OPCUADiscovery extends BaseDiscovery {
 		return createHash('sha1').update(certificate).digest('hex');
 	}
 
+	private verifyServerThumbprint(expected: string | undefined, certificate: Buffer | Buffer[] | undefined): void {
+		if (!expected) return;
+		const actual = this.calculateThumbprint(Array.isArray(certificate) ? certificate[0] : certificate);
+		if (!actual || actual !== expected.toLowerCase()) {
+			throw new Error('OPC UA server certificate does not match the configured thumbprint');
+		}
+	}
+
 	/**
 	 * Probes whether this server actually supports OPC-UA subscriptions, by
 	 * creating a real (throwaway) one and seeing whether the server accepts
@@ -331,6 +342,7 @@ export class OPCUADiscovery extends BaseDiscovery {
 
 		try {
 			await client.connect(request.endpointUrl);
+			this.verifyServerThumbprint(request.expectedServerThumbprint, client.serverCertificate);
 
 			if (request.username && request.password) {
 				session = await client.createSession({
@@ -466,6 +478,7 @@ export class OPCUADiscovery extends BaseDiscovery {
 					securityMode: options?.securityMode,
 					securityPolicy: options?.securityPolicy,
 					certificateTrustMode: options?.certificateTrustMode,
+					expectedServerThumbprint: options?.expectedServerThumbprint,
 					username: options?.username,
 					password: options?.password,
 					deviceIdentification: options?.deviceIdentification,
@@ -536,6 +549,7 @@ export class OPCUADiscovery extends BaseDiscovery {
 				disconnectClient = () => client.disconnect();
 
 				await client.connect(url);
+				this.verifyServerThumbprint(endpoint.connection?.expectedServerThumbprint, client.serverCertificate);
 				const endpoints = await client.getEndpoints();
 
 				// Create session to browse the node tree

@@ -1,14 +1,5 @@
 import { AttributeIds, BrowseDirection, NodeClass, type ClientSession, type ReferenceDescription } from 'node-opcua-client';
-import { z } from 'zod';
-
-export const OPCUADeviceIdentificationSchema = z.object({
-	rootNodeId: z.string().trim().min(1),
-	scopeNodeId: z.string().trim().min(1),
-	deviceTypeNodeId: z.string().trim().min(1),
-	identifierProperty: z.string().trim().min(1),
-	identifierPath: z.string().trim().min(1),
-}).strict();
-export type OPCUADeviceIdentification = z.infer<typeof OPCUADeviceIdentificationSchema>;
+import type { OPCUADeviceIdentification } from './device-identification-config.js';
 
 export interface IdentifiedDevice {
 	identifier: string;
@@ -54,6 +45,7 @@ export async function identifyDevices(
 		for (const ref of await browseHierarchicalReferences(session, nodeId)) {
 			if (ref.nodeClass !== NodeClass.Object || ref.nodeId.serverIndex || ref.nodeId.namespaceUri) continue;
 			const childId = ref.nodeId.toString();
+			if (ref.nodeId.namespace === 0 && childId !== config.rootNodeId) continue;
 			if (!visited.has(childId)) queue.push(childId);
 			if (ref.typeDefinition?.toString() !== config.deviceTypeNodeId) continue;
 
