@@ -215,6 +215,7 @@ async function save() {
   <PointPickerModal
     v-model:open="pickerOpen"
     :selected-keys="selectedKeys"
+    :replace-selection-on-source-select="isEdit"
     @confirm="(keys: string[]) => selectedKeys = keys"
   />
 </template>

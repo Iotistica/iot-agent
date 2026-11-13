@@ -10,9 +10,11 @@ const props = withDefaults(defineProps<{
   open: boolean
   selectedKeys?: string[]
   mode?: 'multi' | 'single'
+  replaceSelectionOnSourceSelect?: boolean
 }>(), {
   selectedKeys: () => [],
   mode: 'multi',
+  replaceSelectionOnSourceSelect: false,
 })
 
 const emit = defineEmits<{
@@ -172,6 +174,17 @@ function toggleGroup(points: PointCatalogEntry[], allChecked: boolean) {
   checkedKeys.value = new Set(s)
 }
 
+function toggleSource(points: PointCatalogEntry[], allChecked: boolean) {
+  const next = new Set(checkedKeys.value)
+  if (allChecked) {
+    for (const p of points) next.delete(p.pointKey)
+  } else {
+    if (props.replaceSelectionOnSourceSelect) next.clear()
+    for (const p of points) next.add(p.pointKey)
+  }
+  checkedKeys.value = next
+}
+
 function onConfirm() {
   emit('confirm', [...checkedKeys.value])
   emit('update:open', false)
@@ -237,7 +250,7 @@ function selectSinglePoint(pt: PointCatalogEntry) {
                     :checked="source.allChecked"
                     :indeterminate="source.someChecked && !source.allChecked"
                     @click.stop
-                    @change="toggleGroup(source.points, source.allChecked)"
+                    @change="toggleSource(source.points, source.allChecked)"
                   />
                   <RightOutlined :class="['expand-icon', { expanded: expandedSources.has(source.key) }]" />
                   <span class="source-name">{{ source.endpointName }}</span>
