@@ -315,6 +315,7 @@ export class DeviceModel {
 		const endpointId = endpoint.id;
 		const protocol = endpoint.protocol;
 		const lastSeenAt = endpoint.lastSeenAt ?? null;
+		const existingDevices = await this.getByEndpointId(endpointId);
 
 		if (protocol === 'modbus') {
 			const slaveId = endpoint.connection?.slaveId;
@@ -325,7 +326,7 @@ export class DeviceModel {
 				endpoint_id: endpointId,
 				name: endpoint.name,
 				protocol,
-				enabled: endpoint.enabled,
+				enabled: existingDevices.find(device => device.identifier === String(slaveId))?.enabled ?? endpoint.enabled,
 				identifier: String(slaveId),
 				metadata: { slaveId },
 				lastSeenAt,
@@ -334,14 +335,15 @@ export class DeviceModel {
 		} else if (protocol === 'opcua') {
 			const dataPoints: any[] = endpoint.data_points || [];
 
-			// Collect distinct device_uuid values (undefined → '__default__'), along
+			// Collect distinct device_uuid values (missing identifiers use null), along
 			// with a representative friendly name if the server exposed one (the
 			// browseName of the folder that owns the DeviceUUID marker — see
 			// discovery.ts's folderDeviceName — e.g. "FCU-11A", not every server
 			// provides this).
-			const seen = new Map<string, { nodeCount: number; deviceName?: string }>();
+			const seen = new Map<string | null, { nodeCount: number; deviceName?: string }>();
 			for (const dp of dataPoints) {
-				const key = dp.device_uuid || '__default__';
+				const key = typeof dp.device_uuid === 'string' && dp.device_uuid.trim()
+					? dp.device_uuid : null;
 				const existing = seen.get(key);
 				seen.set(key, {
 					nodeCount: (existing?.nodeCount ?? 0) + 1,
@@ -356,19 +358,17 @@ export class DeviceModel {
 					endpoint_id: endpointId,
 					name: endpoint.name,
 					protocol,
-					enabled: endpoint.enabled,
+					enabled: existingDevices.find(device => device.identifier == null)?.enabled ?? endpoint.enabled,
 					identifier: null,
 					lastSeenAt,
 				});
 				return;
 			}
 
-			const hasIdentifiedDevices = [...seen.keys()].some(k => k !== '__default__');
-
-			const upsertedUuids: string[] = [];
+			const hasIdentifiedDevices = [...seen.keys()].some(k => k !== null);
 
 			for (const [deviceUuid, { nodeCount, deviceName }] of seen) {
-				const isDefault = deviceUuid === '__default__';
+				const isDefault = deviceUuid === null;
 
 				// Skip the catch-all default group when there are real identified devices.
 				// Stray untagged nodes are an artefact of servers that only partially expose
@@ -387,33 +387,22 @@ export class DeviceModel {
 				// doesn't have this friendly name available at live-read time — devices
 				// still correlate correctly via the uuid/identifier columns, just the
 				// display strings differ between this table and raw telemetry.
-				const uuidSuffix = isDefault ? '' : deviceNameSuffixFor(endpoint.name, deviceUuid);
+				const uuidSuffix = deviceUuid === null ? '' : deviceNameSuffixFor(endpoint.name, deviceUuid);
 				const devName = isDefault
 					? endpoint.name
 					: (deviceName || (uuidSuffix ? `${endpoint.name}-${uuidSuffix}` : endpoint.name));
 
-				const devUuid = isDefault ? (endpoint.uuid || randomUUID()) : toDeviceUuid(deviceUuid);
+				const devUuid = deviceUuid === null ? (endpoint.uuid || randomUUID()) : toDeviceUuid(deviceUuid);
 				await this.upsertDevice({
 					uuid: devUuid,
 					endpoint_id: endpointId,
 					name: devName,
 					protocol,
-					enabled: endpoint.enabled,
-					identifier: isDefault ? null : deviceUuid,
+					enabled: existingDevices.find(device => device.identifier === deviceUuid)?.enabled ?? endpoint.enabled,
+					identifier: deviceUuid,
 					metadata: { nodeCount },
 					lastSeenAt,
 				});
-				upsertedUuids.push(devUuid);
-			}
-
-			// Prune stale device rows for this endpoint that no longer match any
-			// device_uuid group — e.g. the placeholder created when the endpoint
-			// had 0 data_points (before discovery populated them).
-			const existing = await this.getByEndpointId(endpointId);
-			for (const dev of existing) {
-				if (!upsertedUuids.includes(dev.uuid)) {
-					await this.deleteByUuid(dev.uuid);
-				}
 			}
 
 		} else {
@@ -430,7 +419,7 @@ export class DeviceModel {
 				endpoint_id: endpointId,
 				name: endpoint.name,
 				protocol,
-				enabled: endpoint.enabled,
+				enabled: existingDevices.find(device => device.identifier == null)?.enabled ?? endpoint.enabled,
 				identifier: null,
 				metadata: objectName ? { objectName } : undefined,
 				lastSeenAt,

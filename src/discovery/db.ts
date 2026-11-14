@@ -5,12 +5,121 @@ import { EndpointModel, DuplicateEndpointConnectionError, type Endpoint } from '
 import { ProtocolDevicesModel } from '../db/models/index.js';
 import type { DiscoveredDevice } from '../plugins/types.js';
 import type { ConfigManager } from '../core/config.js';
+import { normalizeModbusRegisters } from '../plugins/modbus/types.js';
+import { BACnetObjectType, BACnetProperty } from '../plugins/bacnet/types.js';
+import { coerceNodeId } from 'node-opcua-client';
 
 // A device must be absent from this many *consecutive* prune-eligible scans before
 // its endpoint is disabled. Protects against a single corrupted/dropped discovery
 // response (e.g. a misattributed BACnet I-Am under heavy broadcast load) evicting a
 // still-valid endpoint out from under a device that's actually still there.
 const PRUNE_MISS_THRESHOLD = 2;
+const bacnetObjectTypes = new Set<string>(Object.values(BACnetObjectType));
+
+function discoveryPointKey(protocol: string, point: Record<string, any>): string | undefined {
+	if (!point || typeof point !== 'object') return undefined;
+	if (protocol === 'opcua' && typeof point.nodeId === 'string') {
+		const match = /^(?:ns=(\d+);)?([isgb])=([\s\S]+)$/.exec(point.nodeId);
+		if (!match || (match[2] === 'i' && !/^\d+$/.test(match[3])) ||
+			(match[2] === 'g' && !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(match[3])) ||
+			(match[2] === 'b' && (!/^[A-Za-z0-9+/]+={0,2}$/.test(match[3]) ||
+				Buffer.from(match[3], 'base64').toString('base64').replace(/=+$/, '') !== match[3].replace(/=+$/, '')))) {
+			return undefined;
+		}
+		try {
+			return JSON.stringify([coerceNodeId(point.nodeId).toString()]);
+		} catch {
+			return undefined;
+		}
+	}
+	if (protocol === 'mqtt' && typeof point.fullTopic === 'string' && point.fullTopic && !/[+#\0]/.test(point.fullTopic)) {
+		return JSON.stringify([point.fullTopic]);
+	}
+	if (protocol === 'bacnet' && typeof point.objectType === 'string' && bacnetObjectTypes.has(point.objectType) &&
+		Number.isInteger(point.objectInstance) && point.objectInstance >= 0 && point.objectInstance <= 4194303 &&
+		(point.propertyId === undefined || (Number.isInteger(point.propertyId) && point.propertyId >= 0 && point.propertyId <= 4194303))) {
+		return JSON.stringify([point.objectType, point.objectInstance, point.propertyId ?? BACnetProperty.PRESENT_VALUE]);
+	}
+	if (protocol === 'modbus' && Number.isInteger(point.address) && point.address >= 0 && point.address <= 65535 &&
+		(typeof point.functionCode === 'number' || typeof point.type === 'string')) {
+		const functionCode = normalizeModbusRegisters([point])[0].functionCode;
+		if (point.type !== undefined && point.functionCode !== undefined &&
+			(typeof point.type !== 'string' || normalizeModbusRegisters([{ type: point.type }])[0].functionCode !== point.functionCode)) {
+			return undefined;
+		}
+		if (Number.isInteger(functionCode) && functionCode >= 1 && functionCode <= 4) {
+			return JSON.stringify([functionCode, point.address]);
+		}
+	}
+	return undefined;
+}
+
+function mergeDiscoveredPoints(
+	protocol: string,
+	existing: any[],
+	discovered: any[],
+	onDeviceConflict?: (address: string, existingIdentifier: string, discoveredIdentifier: string) => void
+): { points: any[]; ambiguous: boolean } {
+	if (protocol === 'opcua') {
+		discovered = discovered.map(point => {
+			if (typeof point.device_uuid === 'string' && point.device_uuid.trim()) return point;
+			const cleaned = { ...point };
+			delete cleaned.device_uuid;
+			return cleaned;
+		});
+	}
+	if (existing.length === 0) return { points: discovered, ambiguous: false };
+	const points = existing.map(point => ({ ...point }));
+	const indexes = new Map<string, number>();
+	for (const [index, point] of existing.entries()) {
+		const key = discoveryPointKey(protocol, point);
+		if (!key || indexes.has(key)) return { points: existing, ambiguous: true };
+		indexes.set(key, index);
+	}
+	const seen = new Set<string>();
+	for (const point of discovered) {
+		const key = discoveryPointKey(protocol, point);
+		if (!key || seen.has(key)) return { points: existing, ambiguous: true };
+		seen.add(key);
+		const index = indexes.get(key);
+		if (index === undefined) {
+			indexes.set(key, points.length);
+			points.push(point);
+		} else {
+			const update = { ...point };
+			if (protocol === 'opcua' && !(typeof update.device_uuid === 'string' && update.device_uuid.trim())) {
+				delete update.device_uuid;
+				delete update.device_name;
+			}
+			const previous = points[index];
+			// Keep the original address and configured fields; refresh only observed metadata.
+			const merged = { ...previous };
+			if (protocol === 'opcua' && typeof update.browseName === 'string' && update.browseName.trim()) {
+				merged.browseName = update.browseName;
+			} else if (protocol === 'bacnet' && typeof update.objectName === 'string' && update.objectName.trim() &&
+				update.objectName !== `${update.objectType}_${update.objectInstance}`) {
+				merged.objectName = update.objectName;
+			} else if (protocol === 'mqtt' && Array.isArray(update.sampleFields) && update.sampleFields.length > 0 &&
+				update.sampleFields.every((field: unknown) => typeof field === 'string')) {
+				merged.sampleFields = update.sampleFields;
+			}
+			if (protocol === 'opcua' && typeof update.device_uuid === 'string' && update.device_uuid.trim()) {
+				const previousUuid = typeof previous.device_uuid === 'string' && previous.device_uuid.trim()
+					? previous.device_uuid : undefined;
+				if (previousUuid && previousUuid !== update.device_uuid) {
+					onDeviceConflict?.(previous.nodeId, previousUuid, update.device_uuid);
+				}
+				if (!previousUuid) merged.device_uuid = update.device_uuid;
+				if ((!previousUuid || previousUuid === update.device_uuid) && !previous.device_name &&
+					typeof update.device_name === 'string' && update.device_name.trim()) {
+					merged.device_name = update.device_name;
+				}
+			}
+			points[index] = merged;
+		}
+	}
+	return { points, ambiguous: false };
+}
 
 export class DiscoveryStore {
 	constructor(
@@ -103,17 +212,39 @@ export class DiscoveryStore {
 						});
 					}
 
-					const deviceConnectionKeys = Object.keys(device.connection || {});
-					const existingConnectionSubset = Object.fromEntries(
-						deviceConnectionKeys.map((k) => [k, (existing.connection as any)?.[k]])
+					// Discovery connection values include probe settings and defaults, not
+					// authorization to modify an existing endpoint's configuration.
+					const changedConnectionFields = Object.keys(device.connection || {}).filter(key =>
+						JSON.stringify(existing.connection?.[key]) !== JSON.stringify(device.connection[key])
 					);
-					const configChanged = JSON.stringify(existingConnectionSubset) !== JSON.stringify(device.connection);
+					if (changedConnectionFields.length > 0) {
+						this.logger?.debugSync('Preserving configured connection during rediscovery', {
+							component: LogComponents.discovery, traceId,
+							endpointName: existing.name, endpointUuid: existing.uuid, fields: changedConnectionFields,
+						});
+					}
 					const fingerprintChanged = existing.metadata?.fingerprint !== device.fingerprint;
 					const existingProfile = existing.metadata?.profile || 'Generic';
 					const newProfile = device.metadata?.profile || 'Generic';
 					const profileChanged = existingProfile !== newProfile;
-					// Don't overwrite existing populated data_points with an empty validation result
-					const wouldClearDataPoints = (existing.data_points?.length ?? 0) > 0 && (device.dataPoints?.length ?? 0) === 0;
+					// Discovery is not authoritative for deletions: a successful scan can
+					// still omit points due to timeouts or protocol-specific scan limits.
+					const merged = mergeDiscoveredPoints(
+						device.protocol, existing.data_points || [], device.dataPoints || [],
+						(pointAddress, existingIdentifier, discoveredIdentifier) => {
+							this.logger?.warnSync('OPC UA device association conflict; preserving existing association', {
+								component: LogComponents.discovery, traceId,
+								endpointName: existing.name, endpointUuid: existing.uuid,
+								pointAddress, existingIdentifier, discoveredIdentifier,
+							});
+						}
+					);
+					const dataPoints = merged.points;
+					if (merged.ambiguous) {
+						this.logger?.warnSync('Discovery points could not be matched safely; preserving the configured point list', {
+							component: LogComponents.discovery, traceId, deviceName: existing.name, protocol: device.protocol,
+						});
+					}
 					// Structural identity only — excludes presentValue (BACnet) and other live
 					// readings, which fluctuate on every scan and would otherwise make this
 					// comparison true on every single discovery run, forcing an unnecessary
@@ -122,8 +253,8 @@ export class DiscoveryStore {
 					// present-value drift, 2026-10-05).
 					const stripVolatile = (points?: any[]) =>
 						(points || []).map(({ presentValue: _pv, ...rest }) => rest);
-					const dataPointsChanged = !wouldClearDataPoints &&
-						JSON.stringify(stripVolatile(existing.data_points)) !== JSON.stringify(stripVolatile(device.dataPoints));
+					const dataPointsChanged =
+						JSON.stringify(stripVolatile(existing.data_points)) !== JSON.stringify(stripVolatile(dataPoints));
 					const validationChanged = device.validated && !existing.metadata?.validated;
 					// One-way ratchet: a rule with auto_enable on turns an already-known
 					// device on if it wasn't already — a rule WITHOUT auto_enable never
@@ -160,17 +291,7 @@ export class DiscoveryStore {
 						});
 
 						await EndpointModel.update(existing.name, {
-							data_points: device.dataPoints || [],
-							// Merge fresh discovery-derived connection fields (security mode/
-							// policy/trust mode/credentials — this rule's discovery run is
-							// authoritative for these) on top of the existing connection,
-							// preserving any other manually-set fields (connectionTimeout etc.)
-							// discovery doesn't know about. Without this, a device discovered
-							// once with a broken/stale connection (e.g. wrong certificateTrustMode)
-							// stays broken forever — this "already exists" branch previously
-							// never touched `connection` at all, so re-running discovery could
-							// never actually fix it.
-							connection: { ...existing.connection, ...device.connection },
+							data_points: dataPoints,
 							enabled: shouldRatchetEnable ? true : existing.enabled,
 							metadata: {
 								...existing.metadata,
@@ -229,7 +350,7 @@ export class DiscoveryStore {
 								endpoint: {
 									...existing,
 									enabled: true,
-									data_points: device.dataPoints || [],
+									data_points: dataPoints,
 									metadata: { ...existing.metadata, profile: device.metadata?.profile }
 								},
 								isBatchDiscovery: !!traceId,
@@ -260,52 +381,25 @@ export class DiscoveryStore {
 							}
 						}
 
-						if (configChanged || shouldRatchetEnable) {
-							// Actually persist the merged connection — this branch previously
-							// only logged oldConnection/newConnection for debugging and bumped
-							// lastSeenAt, never writing the change. That meant a device whose
-							// data/profile hadn't changed but whose connection HAD (e.g. fixing
-							// certificateTrustMode/credentials on a discovery rule) could never
-							// be corrected by re-running discovery, no matter how many times.
-							// Safe to merge unconditionally here: `existing` was matched by
-							// fingerprint/name/endpointUrl above, so this is confirmed to be the
-							// same server — even an endpointUrl change reflects that server
-							// genuinely being found at a new address, which is exactly what
-							// should be persisted.
+						if (shouldRatchetEnable) {
 							await EndpointModel.update(existing.name, {
-								connection: { ...existing.connection, ...device.connection },
-								enabled: shouldRatchetEnable ? true : existing.enabled,
+								enabled: true,
 								lastSeenAt: new Date()
 							});
-							if (configChanged) {
-								this.logger?.debugSync(`Device "${device.name}" moved/reconfigured — connection updated`, {
-									component: LogComponents.discovery,
-									traceId,
-									oldConnection: existing.connection,
-									newConnection: device.connection
-								});
-							}
-							if (shouldRatchetEnable) {
-								this.logger?.infoSync(`Device "${device.name}" auto-enabled by discovery rule`, {
-									component: LogComponents.discovery,
-									traceId,
-									protocol: device.protocol
-								});
-								// Same reload-trigger this branch's sibling above already does on
-								// enable — without it, an adapter restart would be the only way to
-								// pick up a device auto-enabled via this "connection changed"/
-								// "unchanged" path specifically (see init/adapters.ts's listener).
-								this.emit('endpoint-enabled', {
-									protocol: device.protocol,
-									endpoint: {
-										...existing,
-										enabled: true,
-										connection: { ...existing.connection, ...device.connection },
-										data_points: device.dataPoints || existing.data_points
-									},
-									isBatchDiscovery: !!traceId
-								});
-							}
+							this.logger?.infoSync(`Device "${device.name}" auto-enabled by discovery rule`, {
+								component: LogComponents.discovery,
+								traceId,
+								protocol: device.protocol
+							});
+							this.emit('endpoint-enabled', {
+								protocol: device.protocol,
+								endpoint: {
+									...existing,
+									enabled: true,
+									data_points: dataPoints
+								},
+								isBatchDiscovery: !!traceId
+							});
 						} else {
 							await EndpointModel.updateLastSeen(device.fingerprint);
 						}
@@ -329,7 +423,7 @@ export class DiscoveryStore {
 						skippedDevices.push({
 							name: device.name,
 							protocol: device.protocol,
-							reason: configChanged ? 'moved' : (fingerprintChanged ? 'fingerprint_changed' : 'already_exists')
+							reason: fingerprintChanged ? 'fingerprint_changed' : 'already_exists'
 						});
 						continue;
 					}
@@ -377,7 +471,7 @@ export class DiscoveryStore {
 					enabled: endpointEnabled,
 					poll_interval: 5000,
 					connection: device.connection,
-					data_points: device.dataPoints || [],
+					data_points: mergeDiscoveredPoints(device.protocol, [], device.dataPoints || []).points,
 					lastSeenAt: new Date(),
 					metadata: {
 						...device.metadata,

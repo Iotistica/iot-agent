@@ -1,0 +1,330 @@
+diff --git a/docs/phase2c-point-identity-integration-design.md b/docs/phase2c-point-identity-integration-design.md
+index b7fac95401279a128e15ff7b4edd65d9a43b1972..21662350e0199eab7c3bc102dffb5263242e105a 100644
+--- a/docs/phase2c-point-identity-integration-design.md
++++ b/docs/phase2c-point-identity-integration-design.md
+@@ -27,7 +27,11 @@ round trip can truncate at NUL. The service validates address version, size and
+ scope but **does not independently prove a key was produced by the canonicalizer**.
+ Any future verifier must check the resolved canonicalizer result, protocol
+ provenance, admission and all relevant identity evidence; a boolean alone is
+-not production evidence.
++not production evidence. Tests exercise a fixture-only admission token and
++reject noncanonical keys, ambiguous legacy selectors and unadmitted candidates,
++including caller-supplied `verified: true`. That fixture is not a production
++authorization policy. Neither a syntactically valid key nor caller assertions
++establish that a point is new or belongs to the source.
+ 
+ The service snapshots the complete persisted endpoint row before calling the
+ verifier and compares it under the transaction; it does not persist or log that
+@@ -37,9 +41,9 @@ tables on which a verifier might rely. Those facts are not automatically
+ rechecked against the verifier's snapshot. A production verifier and a
+ transactionally enforceable freshness/authorization contract remain blocking
+ requirements for any runtime integration.
+-Expected failures are returned as structured results and unexpected errors are
+-thrown; rate-limited operational diagnostics are not implemented and must be
+-designed with the future caller before rollout.
++Expected write conflicts are returned as structured results and unexpected
++errors are thrown; rate-limited operational diagnostics are not implemented and
++must be designed with the future caller before rollout.
+ 
+ **Verified:** the actual connection is checked for `foreign_keys` and writes
+ check `query_only`; neither pragma is changed by the service. An old comment in
+@@ -47,21 +51,36 @@ check `query_only`; neither pragma is changed by the service. An old comment in
+ the current actual-connection tests observe them enabled; no global behavior
+ has been changed. `BEGIN IMMEDIATE` serializes writers; an exact committed
+ owner is reused, a second same-version address is rejected, and an existing
+-other version blocks creation. The service retries only Node SQLite errors
++other version blocks creation. During write transactions the service retries only Node SQLite errors
+ with `code = ERR_SQLITE_ERROR` and primary `errcode = 5` (busy), at most three
+-times with short asynchronous delays; other errors are surfaced. Each SQLite
++times with short asynchronous delays; preliminary reads and verifier errors are
++not retried. Other errors are surfaced. Each SQLite
+ call can still block for the connection's full busy timeout. A winner already
+ committed after contention is reread under the lock. Commit/FK failures roll
+-back and do not return a UUID.
+-
+-**Limitation:** Node 22 does not expose a usable active-transaction indicator.
+-If called from an existing transaction, SQLite rejects the nested `BEGIN` and
+-the caller retains responsibility for its transaction; the verifier may have
+-already been called within that outer transaction. Callers must not use this
+-service from an existing transaction. A production integration must enforce
+-transaction ownership before invoking a verifier and resolve the evidence
+-freshness limitations above. No cross-process load or telemetry latency claim
+-is established by the fixture tests.
++back and do not return a UUID. Association updates still require verification,
++confirmed device evidence and compare-and-swap; when the current device and
++authorized provenance are unchanged, the identity row is not rewritten.
++
++**Read contention contract:** `resolveExistingIdentity` is synchronous and
++intentionally does not retry or translate SQLite busy errors. An original SQLite
++exception can propagate during the initial source read or the read transaction;
++the latter is rolled back. Callers must handle this exception; it is not a
++`busy` result. The integration tests exercise both lock locations using separate
++real SQLite connections. The bounded structured `busy` result described above
++applies to writes, not this synchronous read.
++
++**Transaction limitation:** `DatabaseSync.isTransaction` is available starting
++in Node 22.16.0. When present and true, this service rejects verified operations
++before invoking the verifier; it also rejects verifier reentrancy on the same
++connection. The current Node 22.14.0 has no such indicator. On that version,
++SQLite rejects a nested `BEGIN`, the caller retains its outer transaction, and
++the verifier may already have run inside it. Tests cover the current fallback
++and simulate the exposed indicator; they do not establish behavior on another
++Node binary. Callers must not use this service from an existing transaction.
++Production use is prohibited until transaction ownership can be enforced
++before verifier invocation and the evidence freshness limitations above are
++resolved. No cross-process load or telemetry latency claim is established by
++the fixture tests.
+ 
+ ## 1. Executive summary
+ 
+diff --git a/src/points/point-identity-catalog.ts b/src/points/point-identity-catalog.ts
+index c5cb10cfb35b85b1c5c5e6110e6eb2039096fcbc..0929f7b1a030dc5234fd701a4c3f632264f400e0 100644
+--- a/src/points/point-identity-catalog.ts
++++ b/src/points/point-identity-catalog.ts
+@@ -29,7 +29,7 @@ export type CatalogReason =
+ 	| 'invalid-input' | 'evidence-missing' | 'stale-configuration'
+ 	| 'identity-ambiguous' | 'address-conflict' | 'alias-conflict'
+ 	| 'association-conflict' | 'version-unreconciled'
+-	| 'foreign-keys-disabled' | 'read-only' | 'busy';
++	| 'foreign-keys-disabled' | 'read-only' | 'transaction-active' | 'reentrant-operation' | 'busy';
+ 
+ export type CatalogResult<T> =
+ 	| { status: 'resolved'; value: T }
+@@ -57,6 +57,7 @@ type AliasRow = { alias_kind: string; alias_key: string; evidence: string };
+ const protocols = new Set<string>(['opcua', 'mqtt', 'modbus', 'bacnet']);
+ const busyAttempts = 3;
+ const busyDelayMs = 10;
++const verifyingConnections = new WeakSet<DatabaseSync>();
+ 
+ function isProtocol(value: string): value is AddressProtocol {
+ 	return protocols.has(value);
+@@ -121,6 +122,18 @@ export class PointIdentityCatalog {
+ 		return this.db.prepare('PRAGMA foreign_keys').get()?.foreign_keys === 1;
+ 	}
+ 
++	private verify(request: CatalogEvidenceRequest): CatalogResult<true> {
++		if (this.db.isTransaction === true) return unresolved('transaction-active');
++		if (verifyingConnections.has(this.db)) return unresolved('reentrant-operation');
++		if (!this.verifier) return unresolved('evidence-missing');
++		verifyingConnections.add(this.db);
++		try {
++			return this.verifier.verify(Object.freeze(request)) === true ? resolved(true) : unresolved('evidence-missing');
++		} finally {
++			verifyingConnections.delete(this.db);
++		}
++	}
++
+ 	private source(scope: PointScope): CatalogResult<SourceRow> {
+ 		if (!validScope(scope)) return unresolved('invalid-input');
+ 		const rows = this.db.prepare('SELECT * FROM endpoints WHERE uuid = ? LIMIT 2')
+@@ -198,8 +211,10 @@ export class PointIdentityCatalog {
+ 		if (address.version !== CANONICAL_ADDRESS_VERSION) return unresolved('version-unreconciled');
+ 		const source = this.source(address);
+ 		if (source.status === 'unresolved') return source;
+-		if (this.verifier?.verify(Object.freeze({ operation: 'resolve', address, aliases, evidence })) !== true) return unresolved('evidence-missing');
++		const verification = this.verify({ operation: 'resolve', address, aliases, evidence });
++		if (verification.status === 'unresolved') return verification;
+ 		if (!this.foreignKeysEnabled()) return unresolved('foreign-keys-disabled');
++		if (this.db.isTransaction === true) return unresolved('transaction-active');
+ 		return transact(this.db, () => {
+ 			const current = this.source(address);
+ 			if (current.status === 'unresolved') return current;
+@@ -293,6 +308,9 @@ export class PointIdentityCatalog {
+ 				`).get(deviceUuid, source.id, scope.protocol);
+ 				if (!confirmed) return unresolved('association-conflict');
+ 			}
++			const current = this.db.prepare('SELECT association_source FROM point_identity WHERE point_uuid = ?')
++				.get(pointUuid) as { association_source: string | null };
++			if (point.value.deviceUuid === deviceUuid && current.association_source === associationSource) return point;
+ 			this.db.prepare(`
+ 				UPDATE point_identity SET device_uuid = ?, association_source = ?, updated_at = CURRENT_TIMESTAMP
+ 				WHERE point_uuid = ? AND endpoint_uuid = ? AND protocol = ?
+@@ -308,10 +326,12 @@ export class PointIdentityCatalog {
+ 		if (this.db.prepare('PRAGMA query_only').get()?.query_only === 1) return unresolved('read-only');
+ 		const before = this.source(scope);
+ 		if (before.status === 'unresolved') return before;
+-		if (this.verifier?.verify(Object.freeze(request)) !== true) return unresolved('evidence-missing');
++		const verification = this.verify(request);
++		if (verification.status === 'unresolved') return verification;
+ 		for (let attempt = 0; attempt < busyAttempts; attempt++) {
+ 			if (!this.foreignKeysEnabled()) return unresolved('foreign-keys-disabled');
+ 			if (this.db.prepare('PRAGMA query_only').get()?.query_only === 1) return unresolved('read-only');
++			if (this.db.isTransaction === true) return unresolved('transaction-active');
+ 			try {
+ 				return transact(this.db, () => {
+ 					const current = this.source(scope);
+diff --git a/test/integration/point-identity-catalog.integration.spec.ts b/test/integration/point-identity-catalog.integration.spec.ts
+index a49a7f95a46d0fdebd5fee74c8087f009d86ec2a..26f023f058d1001fd2f89108c7cce57246bc8c16 100644
+--- a/test/integration/point-identity-catalog.integration.spec.ts
++++ b/test/integration/point-identity-catalog.integration.spec.ts
+@@ -3,6 +3,7 @@ import os from 'os';
+ import path from 'path';
+ import { DatabaseSync } from 'node:sqlite';
+ import { runMigrations } from '../../src/db/migration-runner';
++import { canonicalizeAddress } from '../../src/points/canonical-address';
+ import {
+ 	PointIdentityCatalog,
+ 	type CatalogEvidenceVerifier,
+@@ -67,6 +68,29 @@ describe('isolated point identity catalog', () => {
+ 		expect(db.prepare('SELECT * FROM point_identity').all()).toEqual([]);
+ 	});
+ 
++	it('requires fixture admission in addition to a canonical key and rejects ambiguous candidates', async () => {
++		const input = { protocol: 'mqtt', topic: 'factory/line1', selector: { kind: 'whole' }, selectorSource: 'configured' } as const;
++		const canonical = canonicalizeAddress(input);
++		if (canonical.status !== 'resolved') throw new Error('Expected canonical fixture');
++		const ambiguous = canonicalizeAddress({ ...input, selector: 'motor.speed' });
++		expect(ambiguous).toMatchObject({ status: 'unresolved', reason: 'ambiguous-legacy-selector' });
++		const admission = Symbol('fixture-only admission');
++		const candidate = { ...address, key: canonical.addressKey };
++		const guarded = new PointIdentityCatalog(db, { verify: request =>
++			request.operation === 'create' && request.address.endpointUuid === 'source-1' &&
++			request.address.protocol === canonical.protocol && request.address.version === canonical.version &&
++			request.address.key === canonical.addressKey && request.evidence === admission,
++		});
++		expect(await guarded.createIdentityIfAbsent({ ...candidate, key: 'noncanonical' }, admission))
++			.toMatchObject({ status: 'unresolved', reason: 'evidence-missing' });
++		expect(await guarded.createIdentityIfAbsent(candidate, { verified: true, canonical: ambiguous }))
++			.toMatchObject({ status: 'unresolved', reason: 'evidence-missing' });
++		expect(await guarded.createIdentityIfAbsent(candidate, { verified: true, canonical }))
++			.toMatchObject({ status: 'unresolved', reason: 'evidence-missing' });
++		expect(db.prepare('SELECT * FROM point_identity').all()).toEqual([]);
++		expect(await guarded.createIdentityIfAbsent(candidate, admission)).toMatchObject({ status: 'resolved' });
++	});
++
+ 	it('atomically creates a nullable-device identity and preserves it after reopening', async () => {
+ 		const created = point(await catalog.createIdentityIfAbsent(address, 'fixture'));
+ 		expect(created).toEqual({ pointUuid: expect.any(String), endpointUuid: 'source-1', protocol: 'mqtt', deviceUuid: null });
+@@ -179,6 +203,42 @@ describe('isolated point identity catalog', () => {
+ 		expect(db.prepare('SELECT * FROM device_resolution_keys').all()).toEqual(evidence);
+ 	});
+ 
++	it('does not rewrite an unchanged authorized association, and still enforces compare-and-swap', async () => {
++		const created = point(await catalog.createIdentityIfAbsent(address, 'fixture'));
++		expect(await catalog.updateOptionalDeviceAssociation(created.pointUuid, address, 'device-1', null, 'confirmed', 'fixture'))
++			.toMatchObject({ status: 'resolved' });
++		db.prepare("UPDATE point_identity SET updated_at = '2000-01-01 00:00:00' WHERE point_uuid = ?").run(created.pointUuid);
++		db.exec(`
++			CREATE TEMP TABLE association_updates (marker INTEGER);
++			CREATE TEMP TRIGGER count_association_updates AFTER UPDATE ON point_identity BEGIN
++				INSERT INTO association_updates VALUES (1);
++			END;
++		`);
++		const before = db.prepare('SELECT * FROM point_identity WHERE point_uuid = ?').get(created.pointUuid);
++		expect(await catalog.updateOptionalDeviceAssociation(created.pointUuid, address, 'device-1', 'device-1', 'confirmed', 'fixture'))
++			.toMatchObject({ status: 'resolved', value: { deviceUuid: 'device-1' } });
++		expect(db.prepare('SELECT * FROM point_identity WHERE point_uuid = ?').get(created.pointUuid)).toEqual(before);
++		expect(db.prepare('SELECT * FROM association_updates').all()).toEqual([]);
++		expect(await catalog.updateOptionalDeviceAssociation(created.pointUuid, address, 'device-1', null, 'confirmed', 'fixture'))
++			.toMatchObject({ status: 'unresolved', reason: 'association-conflict' });
++		expect(await new PointIdentityCatalog(db, { verify: () => false })
++			.updateOptionalDeviceAssociation(created.pointUuid, address, 'device-1', 'device-1', 'confirmed', 'fixture'))
++			.toMatchObject({ status: 'unresolved', reason: 'evidence-missing' });
++		expect(db.prepare('SELECT * FROM association_updates').all()).toEqual([]);
++		expect(await catalog.updateOptionalDeviceAssociation(created.pointUuid, address, 'device-1', 'device-1', 'new-source', 'fixture'))
++			.toMatchObject({ status: 'resolved' });
++		expect(db.prepare('SELECT * FROM association_updates').all()).toHaveLength(1);
++		expect(db.prepare('SELECT association_source FROM point_identity WHERE point_uuid = ?').get(created.pointUuid))
++			.toMatchObject({ association_source: 'new-source' });
++		expect(await catalog.updateOptionalDeviceAssociation(created.pointUuid, address, null, 'device-1', 'new-source', 'fixture'))
++			.toMatchObject({ status: 'resolved', value: { deviceUuid: null } });
++		const cleared = db.prepare('SELECT * FROM point_identity WHERE point_uuid = ?').get(created.pointUuid);
++		expect(await catalog.updateOptionalDeviceAssociation(created.pointUuid, address, null, null, 'new-source', 'fixture'))
++			.toMatchObject({ status: 'resolved', value: { deviceUuid: null } });
++		expect(db.prepare('SELECT * FROM point_identity WHERE point_uuid = ?').get(created.pointUuid)).toEqual(cleared);
++		expect(db.prepare('SELECT * FROM association_updates').all()).toHaveLength(2);
++	});
++
+ 	it('fails closed with disabled foreign keys or query-only connections', async () => {
+ 		db.exec('PRAGMA foreign_keys = OFF');
+ 		expect(catalog.findByCanonicalAddress(address)).toMatchObject({ status: 'unresolved', reason: 'foreign-keys-disabled' });
+@@ -189,13 +249,57 @@ describe('isolated point identity catalog', () => {
+ 		expect(db.prepare('SELECT * FROM point_identity').all()).toEqual([]);
+ 	});
+ 
+-	it('rolls back both inserts on a real SQLite failure and preserves an outer transaction', async () => {
++	it('rolls back both inserts on a real SQLite failure', async () => {
+ 		db.exec("CREATE TRIGGER fail_address BEFORE INSERT ON point_identity_address BEGIN SELECT RAISE(ABORT, 'fixture failure'); END");
+ 		await expect(catalog.createIdentityIfAbsent(address, 'fixture')).rejects.toThrow('fixture failure');
+ 		expect(db.prepare('SELECT * FROM point_identity').all()).toEqual([]);
+-		db.exec('DROP TRIGGER fail_address; BEGIN');
+-		await expect(catalog.createIdentityIfAbsent(address, 'fixture')).rejects.toThrow(/transaction within a transaction/);
+-		db.exec('ROLLBACK');
++	});
++
++	it('preserves caller-owned transaction changes when a nested operation is rejected', async () => {
++		const supportsTransactionState = typeof db.isTransaction === 'boolean';
++		const verify = jest.fn(() => true);
++		const guarded = new PointIdentityCatalog(db, { verify });
++		db.exec("BEGIN; UPDATE endpoints SET name = 'Outer transaction' WHERE id = 1");
++		if (supportsTransactionState) {
++			expect(await guarded.createIdentityIfAbsent(address, 'fixture'))
++				.toMatchObject({ status: 'unresolved', reason: 'transaction-active' });
++			expect(verify).not.toHaveBeenCalled();
++		} else {
++			await expect(guarded.createIdentityIfAbsent(address, 'fixture')).rejects.toThrow(/transaction within a transaction/);
++			expect(verify).toHaveBeenCalledTimes(1);
++		}
++		expect(db.prepare('SELECT name FROM endpoints WHERE id = 1').get()).toMatchObject({ name: 'Outer transaction' });
++		db.exec('COMMIT');
++		expect(db.prepare('SELECT name FROM endpoints WHERE id = 1').get()).toMatchObject({ name: 'Outer transaction' });
++		expect(db.prepare('SELECT * FROM point_identity').all()).toEqual([]);
++	});
++
++	it('checks exposed transaction state before verifier calls and prevents verifier reentrancy', async () => {
++		const verify = jest.fn(() => true);
++		const guarded = new PointIdentityCatalog(db, { verify });
++		db.exec('BEGIN');
++		if (typeof db.isTransaction !== 'boolean') {
++			Object.defineProperty(db, 'isTransaction', { configurable: true, value: true });
++		}
++		try {
++			expect(await guarded.createIdentityIfAbsent(address, 'fixture'))
++				.toMatchObject({ status: 'unresolved', reason: 'transaction-active' });
++			expect(guarded.resolveExistingIdentity(address, [], 'fixture'))
++				.toMatchObject({ status: 'unresolved', reason: 'transaction-active' });
++			expect(verify).not.toHaveBeenCalled();
++		} finally {
++			db.exec('ROLLBACK');
++			if (Object.hasOwn(db, 'isTransaction')) Reflect.deleteProperty(db, 'isTransaction');
++		}
++		let recursive: ReturnType<PointIdentityCatalog['createIdentityIfAbsent']> | undefined;
++		const nested = new PointIdentityCatalog(db, { verify: () => {
++			recursive = guarded.createIdentityIfAbsent(address, 'fixture');
++			return false;
++		} });
++		expect(await nested.createIdentityIfAbsent(address, 'fixture'))
++			.toMatchObject({ status: 'unresolved', reason: 'evidence-missing' });
++		expect(await recursive).toMatchObject({ status: 'unresolved', reason: 'reentrant-operation' });
++		expect(verify).not.toHaveBeenCalled();
+ 		expect(db.prepare('SELECT * FROM point_identity').all()).toEqual([]);
+ 	});
+ 
+@@ -251,4 +355,27 @@ describe('isolated point identity catalog', () => {
+ 			other.close();
+ 		}
+ 	});
++
++	it('surfaces read contention before and after verification without leaving a transaction open', () => {
++		db.exec('PRAGMA journal_mode = DELETE');
++		const other = new DatabaseSync(dbPath);
++		other.exec('PRAGMA busy_timeout = 1; BEGIN EXCLUSIVE');
++		const verify = jest.fn(() => true);
++		const guarded = new PointIdentityCatalog(db, { verify });
++		try {
++			expect(() => guarded.resolveExistingIdentity(address, [], 'fixture')).toThrow(/database is locked/);
++			expect(verify).not.toHaveBeenCalled();
++			other.exec('ROLLBACK');
++			const locksDuringVerification = new PointIdentityCatalog(db, { verify: () => {
++				other.exec('BEGIN EXCLUSIVE');
++				return true;
++			} });
++			expect(() => locksDuringVerification.resolveExistingIdentity(address, [], 'fixture')).toThrow(/database is locked/);
++			other.exec('ROLLBACK');
++			db.exec('BEGIN; ROLLBACK');
++			expect(db.prepare('SELECT * FROM point_identity').all()).toEqual([]);
++		} finally {
++			other.close();
++		}
++	});
+ });

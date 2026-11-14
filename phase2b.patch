@@ -1,0 +1,630 @@
+diff --git a/docs/phase2-point-identity-design.md b/docs/phase2-point-identity-design.md
+index 473c731..0668c75 100644
+--- a/docs/phase2-point-identity-design.md
++++ b/docs/phase2-point-identity-design.md
+@@ -405,6 +405,34 @@ validated source configuration plus address provenance and returning
+ projection semantics, but no S7 adapter or speculative key is part of Phase 2.
+ Unknown protocols remain unresolved until their canonicalizer is reviewed.
+ 
++### Phase 2B standalone version 1 contract
++
++The standalone resolver in `src/points/canonical-address.ts` emits fixed-order
++JSON arrays and caps the UTF-8 encoded key at 8192 bytes. The endpoint UUID and
++protocol remain separate database scope columns. Provenance is not part of the
++key. Inputs require independently verified namespace bindings for OPC UA,
++an explicit assertion that the NodeId was verified with that array, explicit
++typed selectors and their source for MQTT, and an independently
++verified unique device-instance scope for BACnet. These assertions are caller
++evidence, not facts the resolver can establish by itself. Existing adapter
++configuration generally does not contain all of that evidence; legacy MQTT
++dot paths cannot be converted without disambiguation.
++
++Modbus single-point resolution reports that projections were not compared.
++Before using keys for a set of configurations, pass the **complete source
++inventory** to `canonicalizeModbusAddresses` with `complete: true`. Every overlapping configured
++range, including an apparently identical duplicate, is unresolved because
++equal decoding does not prove equal logical identity. A malformed candidate
++prevents the supplied inventory from being considered safe, and inventories
++over 1024 entries are rejected; splitting an inventory would miss conflicts.
++Decoder settings are not added to the address key. This conservative policy
++does not establish equivalence between projections or preserve continuity
++across reconfiguration.
++
++Neither resolver creates catalog rows. Before any future schema-version change
++can create identities, old and new addresses must be reconciled with explicit
++evidence; version numbers alone must not create parallel identities.
++
+ ## 6. Legacy reconciliation
+ 
+ **Proposed:** Migration creates empty tables only. A later, independently
+diff --git a/src/points/canonical-address.ts b/src/points/canonical-address.ts
+new file mode 100644
+index 0000000..d986dc1
+--- /dev/null
++++ b/src/points/canonical-address.ts
+@@ -0,0 +1,335 @@
++/**
++ * Version 1 keys are scoped externally by endpoint UUID and protocol. A future
++ * version must reconcile existing addresses before allowing new identities.
++ */
++export const CANONICAL_ADDRESS_VERSION = 1 as const;
++export const MAX_CANONICAL_ADDRESS_BYTES = 8192;
++
++export type AddressProtocol = 'opcua' | 'mqtt' | 'modbus' | 'bacnet';
++export type ModbusAddressSpace = 'coil' | 'discrete' | 'holding' | 'input';
++export type UnresolvedReason =
++	| 'unsupported-protocol'
++	| 'invalid-input'
++	| 'address-too-large'
++	| 'invalid-node-id'
++	| 'unsupported-expanded-node-id'
++	| 'namespace-evidence-required'
++	| 'invalid-namespace-array'
++	| 'ambiguous-namespace'
++	| 'namespace-index-unresolved'
++	| 'invalid-topic'
++	| 'invalid-selector'
++	| 'ambiguous-legacy-selector'
++	| 'invalid-unit-id'
++	| 'invalid-address'
++	| 'invalid-address-space'
++	| 'conflicting-address-space'
++	| 'invalid-projection'
++	| 'ambiguous-projection'
++	| 'inventory-incomplete'
++	| 'too-many-candidates'
++	| 'invalid-device-instance'
++	| 'ambiguous-network-scope'
++	| 'invalid-object-type'
++	| 'invalid-object-instance'
++	| 'invalid-property'
++	| 'unsupported-array-selector';
++
++export type MqttSelector =
++	| { kind: 'whole' }
++	| { kind: 'path'; tokens: readonly ({ kind: 'key'; key: string } | { kind: 'index'; index: number })[] };
++
++export interface OpcuaAddressInput {
++	protocol: 'opcua';
++	nodeId: string;
++	namespaceArray: { verified: true; uris: readonly string[] };
++	nodeIdVerifiedAgainstNamespaceArray: true;
++}
++export interface MqttAddressInput {
++	protocol: 'mqtt';
++	topic: string;
++	selector: MqttSelector;
++	selectorSource: 'configured' | 'observed';
++}
++export interface ModbusAddressInput {
++	protocol: 'modbus';
++	unitId: number;
++	address: number;
++	type?: ModbusAddressSpace;
++	functionCode?: 1 | 2 | 3 | 4;
++	projection: {
++		dataType: 'boolean' | 'int16' | 'uint16' | 'int32' | 'uint32' | 'float32' | 'string';
++		count: number;
++		byteOrder?: 'ABCD' | 'CDAB' | 'BADC' | 'DCBA';
++		endianness?: 'big' | 'little';
++		encoding?: 'ascii' | 'utf8' | 'utf-8' | 'latin1' | 'binary';
++		scale?: number;
++		offset?: number;
++	};
++}
++export interface BacnetAddressInput {
++	protocol: 'bacnet';
++	deviceInstance: number;
++	networkScope: { uniqueDeviceInstance: true; source: 'configured' | 'observed' };
++	objectType: string | number;
++	objectInstance: number;
++	propertyId?: number;
++	arraySelector?: { kind: 'whole' };
++}
++export type CanonicalAddressInput = OpcuaAddressInput | MqttAddressInput | ModbusAddressInput | BacnetAddressInput;
++
++export type AddressProvenance =
++	| { protocol: 'opcua'; namespaceUri: string; namespaceIndex: number; namespaceArrayVerified: true; nodeIdVerifiedAgainstNamespaceArray: true; identifierType: 'i' | 's' | 'g' | 'b' }
++	| { protocol: 'mqtt'; topic: string; selector: MqttSelector; selectorSource: 'configured' | 'observed' }
++	| { protocol: 'modbus'; unitId: number; addressSpace: ModbusAddressSpace; functionCode: number; dataType: string; count: number; projectionComparison: 'not-compared' | 'complete-inventory' }
++	| { protocol: 'bacnet'; deviceInstance: number; networkScope: 'configured' | 'observed'; objectType: number; objectInstance: number; propertyId: number; propertySource: 'configured' | 'default'; arraySelector: 'whole' };
++
++export type CanonicalAddressResult =
++	| { status: 'resolved'; protocol: AddressProtocol; version: typeof CANONICAL_ADDRESS_VERSION; addressKey: string; provenance: AddressProvenance }
++	| { status: 'unresolved'; protocol: string; reason: UnresolvedReason; details?: { conflictingCandidateIndexes?: number[]; invalidCandidateIndexes?: number[] } };
++
++type RecordValue = Record<string, unknown>;
++
++const OPCUA_NAMESPACE_ZERO = 'http://opcfoundation.org/UA/';
++const modbusSpaces = ['coil', 'discrete', 'holding', 'input'] as const;
++const modbusTypes = new Set(['boolean', 'int16', 'uint16', 'int32', 'uint32', 'float32', 'string']);
++const projectionFields = new Set(['dataType', 'count', 'byteOrder', 'endianness', 'encoding', 'scale', 'offset']);
++const bacnetTypes: Readonly<Record<string, number>> = {
++	'analog-input': 0, 'analog-output': 1, 'analog-value': 2,
++	'binary-input': 3, 'binary-output': 4, 'binary-value': 5,
++	'multi-state-input': 13, 'multi-state-output': 14, 'multi-state-value': 19,
++};
++const bacnetTypeNumbers = new Set(Object.values(bacnetTypes));
++const bacnetProperties = new Set([28, 77, 81, 85, 103, 111, 117]);
++
++function record(value: unknown): value is RecordValue {
++	return typeof value === 'object' && value !== null && !Array.isArray(value);
++}
++
++function integer(value: unknown, min: number, max: number): value is number {
++	return typeof value === 'number' && Number.isInteger(value) && value >= min && value <= max;
++}
++
++function validText(value: unknown, allowEmpty = false): value is string {
++	return typeof value === 'string' && (allowEmpty || value.length > 0) &&
++		Buffer.byteLength(value, 'utf8') <= MAX_CANONICAL_ADDRESS_BYTES &&
++		!/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/u.test(value);
++}
++
++function unresolved(protocol: string, reason: UnresolvedReason, details?: { conflictingCandidateIndexes?: number[]; invalidCandidateIndexes?: number[] }): CanonicalAddressResult {
++	return details ? { status: 'unresolved', protocol, reason, details } : { status: 'unresolved', protocol, reason };
++}
++
++function resolved(protocol: AddressProtocol, parts: readonly unknown[], provenance: AddressProvenance): CanonicalAddressResult {
++	const addressKey = JSON.stringify(parts);
++	if (Buffer.byteLength(addressKey, 'utf8') > MAX_CANONICAL_ADDRESS_BYTES) return unresolved(protocol, 'address-too-large');
++	return { status: 'resolved', protocol, version: CANONICAL_ADDRESS_VERSION, addressKey, provenance };
++}
++
++function opcua(input: RecordValue): CanonicalAddressResult {
++	const protocol = 'opcua';
++	if (typeof input.nodeId !== 'string') return unresolved(protocol, 'invalid-node-id');
++	if (Buffer.byteLength(input.nodeId, 'utf8') > MAX_CANONICAL_ADDRESS_BYTES) return unresolved(protocol, 'address-too-large');
++	if (/^(?:svr|nsu)=/.test(input.nodeId)) return unresolved(protocol, 'unsupported-expanded-node-id');
++	const match = /^(?:ns=(\d+);)?([isgb])=([\s\S]*)$/.exec(input.nodeId);
++	if (!match) return unresolved(protocol, 'invalid-node-id');
++	const namespaceIndex = Number(match[1] ?? '0');
++	if (!integer(namespaceIndex, 0, 65535)) return unresolved(protocol, 'invalid-node-id');
++	if (!record(input.namespaceArray) || input.namespaceArray.verified !== true ||
++		input.nodeIdVerifiedAgainstNamespaceArray !== true || !Array.isArray(input.namespaceArray.uris)) {
++		return unresolved(protocol, 'namespace-evidence-required');
++	}
++	const uris: unknown[] = input.namespaceArray.uris;
++	if (uris.length === 0 || uris.length > 65536 || uris[0] !== OPCUA_NAMESPACE_ZERO) {
++		return unresolved(protocol, 'invalid-namespace-array');
++	}
++	let totalBytes = 0;
++	const seen = new Set<string>();
++	for (const uri of uris) {
++		if (!validText(uri) || !/^[a-z][a-z0-9+.-]*:/i.test(uri) || !URL.canParse(uri) ||
++			[...uri].some((character) => character.charCodeAt(0) <= 32 || character.charCodeAt(0) === 127) ||
++			/%(?![0-9a-f]{2})/i.test(uri)) {
++			return unresolved(protocol, 'invalid-namespace-array');
++		}
++		totalBytes += Buffer.byteLength(uri, 'utf8');
++		if (totalBytes > 65536) return unresolved(protocol, 'address-too-large');
++		if (seen.has(uri)) return unresolved(protocol, 'ambiguous-namespace');
++		seen.add(uri);
++	}
++	const namespaceUri = uris[namespaceIndex];
++	if (typeof namespaceUri !== 'string') return unresolved(protocol, 'namespace-index-unresolved');
++	const identifier = match[3];
++	let value: number | string;
++	switch (match[2]) {
++		case 'i': {
++			if (!/^\d+$/.test(identifier)) return unresolved(protocol, 'invalid-node-id');
++			const numeric = Number(identifier);
++			if (!integer(numeric, 0, 4294967295) || (namespaceIndex === 0 && numeric === 0)) return unresolved(protocol, 'invalid-node-id');
++			value = numeric;
++			break;
++		}
++		case 's':
++			if (!validText(identifier, true)) return unresolved(protocol, 'invalid-node-id');
++			value = identifier;
++			break;
++		case 'g':
++			if (!/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(identifier)) return unresolved(protocol, 'invalid-node-id');
++			value = identifier.toLowerCase();
++			break;
++		case 'b': {
++			if (!/^[A-Za-z0-9+/]+={0,2}$/.test(identifier)) return unresolved(protocol, 'invalid-node-id');
++			const bytes = Buffer.from(identifier, 'base64');
++			const encoded = bytes.toString('base64');
++			if (encoded.replace(/=+$/, '') !== identifier.replace(/=+$/, '') ||
++				(identifier.includes('=') && identifier !== encoded)) return unresolved(protocol, 'invalid-node-id');
++			value = encoded;
++			break;
++		}
++		default: return unresolved(protocol, 'invalid-node-id');
++	}
++	const identifierType = match[2];
++	return resolved(protocol, [namespaceUri, identifierType, value],
++		{ protocol, namespaceUri, namespaceIndex, namespaceArrayVerified: true, nodeIdVerifiedAgainstNamespaceArray: true, identifierType });
++}
++
++function mqtt(input: RecordValue): CanonicalAddressResult {
++	const protocol = 'mqtt';
++	if (typeof input.topic === 'string' && Buffer.byteLength(input.topic, 'utf8') > MAX_CANONICAL_ADDRESS_BYTES) {
++		return unresolved(protocol, 'address-too-large');
++	}
++	if (!validText(input.topic) || /[+#\0]/.test(input.topic)) return unresolved(protocol, 'invalid-topic');
++	if (typeof input.selector === 'string' || typeof input.field === 'string') return unresolved(protocol, 'ambiguous-legacy-selector');
++	if (!record(input.selector) || (input.selectorSource !== 'configured' && input.selectorSource !== 'observed')) {
++		return unresolved(protocol, 'invalid-selector');
++	}
++	let selector: MqttSelector;
++	let selectorParts: readonly unknown[];
++	if (input.selector.kind === 'whole' && Object.keys(input.selector).length === 1) {
++		selector = { kind: 'whole' };
++		selectorParts = ['whole'];
++	} else if (input.selector.kind === 'path' && Array.isArray(input.selector.tokens) &&
++		input.selector.tokens.length > 0 && input.selector.tokens.length <= 64 && Object.keys(input.selector).length === 2) {
++		const tokens: Array<{ kind: 'key'; key: string } | { kind: 'index'; index: number }> = [];
++		const parts: Array<readonly [string, string | number]> = [];
++		for (const token of input.selector.tokens) {
++			if (!record(token)) return unresolved(protocol, 'invalid-selector');
++			if (token.kind === 'key' && Object.keys(token).length === 2 && validText(token.key, true)) {
++				tokens.push({ kind: 'key', key: token.key });
++				parts.push(['key', token.key]);
++			} else if (token.kind === 'index' && Object.keys(token).length === 2 && integer(token.index, 0, 4294967294)) {
++				tokens.push({ kind: 'index', index: token.index });
++				parts.push(['index', token.index]);
++			} else return unresolved(protocol, 'invalid-selector');
++		}
++		selector = { kind: 'path', tokens };
++		selectorParts = ['path', parts];
++	} else return unresolved(protocol, 'invalid-selector');
++	return resolved(protocol, [input.topic, selectorParts], { protocol, topic: input.topic, selector, selectorSource: input.selectorSource });
++}
++
++function modbus(input: RecordValue): CanonicalAddressResult {
++	const protocol = 'modbus';
++	if (!integer(input.unitId, 1, 247)) return unresolved(protocol, 'invalid-unit-id');
++	if (!integer(input.address, 0, 65535)) return unresolved(protocol, 'invalid-address');
++	const typeIndex = typeof input.type === 'string' ? modbusSpaces.indexOf(input.type.toLowerCase() as typeof modbusSpaces[number]) : -1;
++	if (input.type !== undefined && typeIndex < 0) return unresolved(protocol, 'invalid-address-space');
++	if (input.functionCode !== undefined && !integer(input.functionCode, 1, 4)) return unresolved(protocol, 'invalid-address-space');
++	if (input.type === undefined && input.functionCode === undefined) return unresolved(protocol, 'invalid-address-space');
++	if (input.type !== undefined && input.functionCode !== undefined && typeIndex + 1 !== input.functionCode) {
++		return unresolved(protocol, 'conflicting-address-space');
++	}
++	const functionCode = typeof input.functionCode === 'number' ? input.functionCode : typeIndex + 1;
++	const addressSpace = modbusSpaces[functionCode - 1];
++	if (!record(input.projection) || typeof input.projection.dataType !== 'string' ||
++		Object.keys(input.projection).some((field) => !projectionFields.has(field)) ||
++		!modbusTypes.has(input.projection.dataType) || !integer(input.projection.count, 1, 125) ||
++		input.address + input.projection.count > 65536 ||
++		((functionCode <= 2) !== (input.projection.dataType === 'boolean')) ||
++		(['int32', 'uint32', 'float32'].includes(input.projection.dataType) && input.projection.count < 2) ||
++		(input.projection.byteOrder !== undefined && (typeof input.projection.byteOrder !== 'string' || !['ABCD', 'CDAB', 'BADC', 'DCBA'].includes(input.projection.byteOrder))) ||
++		(input.projection.endianness !== undefined && (typeof input.projection.endianness !== 'string' || !['big', 'little'].includes(input.projection.endianness))) ||
++		(input.projection.encoding !== undefined && (typeof input.projection.encoding !== 'string' || !['ascii', 'utf8', 'utf-8', 'latin1', 'binary'].includes(input.projection.encoding))) ||
++		(input.projection.scale !== undefined && (typeof input.projection.scale !== 'number' || !Number.isFinite(input.projection.scale))) ||
++		(input.projection.offset !== undefined && (typeof input.projection.offset !== 'number' || !Number.isFinite(input.projection.offset)))) {
++		return unresolved(protocol, 'invalid-projection');
++	}
++	return resolved(protocol, [input.unitId, addressSpace, input.address], {
++		protocol, unitId: input.unitId, addressSpace, functionCode,
++		dataType: input.projection.dataType, count: input.projection.count, projectionComparison: 'not-compared',
++	});
++}
++
++/**
++ * Pass the complete same-source configuration to detect overlapping readings.
++ * Even identical overlapping projections are unresolved: equal decoding does
++ * not prove that two configured readings are the same logical point.
++ */
++export function canonicalizeModbusAddresses(inputs: readonly ModbusAddressInput[], inventory: { complete: true }): CanonicalAddressResult[] {
++	if (inventory?.complete !== true) return inputs.map(() => unresolved('modbus', 'inventory-incomplete'));
++	if (inputs.length > 1024) return inputs.map(() => unresolved('modbus', 'too-many-candidates'));
++	const results = inputs.map((input) => record(input) && input.protocol === 'modbus'
++		? canonicalizeAddress(input) : unresolved('modbus', 'invalid-input'));
++	const invalidCandidateIndexes = results.flatMap((result, index) => result.status === 'unresolved' ? [index] : []);
++	if (invalidCandidateIndexes.length > 0) {
++		return results.map((result) => result.status === 'resolved'
++			? unresolved('modbus', 'ambiguous-projection', { invalidCandidateIndexes }) : result);
++	}
++	const conflicts = new Map<number, number[]>();
++	for (let left = 0; left < inputs.length; left++) {
++		for (let right = left + 1; right < inputs.length; right++) {
++			const a = results[left];
++			const b = results[right];
++			if (a.status !== 'resolved' || b.status !== 'resolved' || a.provenance.protocol !== 'modbus' || b.provenance.protocol !== 'modbus') continue;
++			if (a.provenance.unitId === b.provenance.unitId && a.provenance.addressSpace === b.provenance.addressSpace &&
++				inputs[left].address < inputs[right].address + b.provenance.count &&
++				inputs[right].address < inputs[left].address + a.provenance.count) {
++				conflicts.set(left, [...(conflicts.get(left) ?? []), right]);
++				conflicts.set(right, [...(conflicts.get(right) ?? []), left]);
++			}
++		}
++	}
++	return results.map((result, index) => {
++		if (conflicts.has(index)) return unresolved('modbus', 'ambiguous-projection', { conflictingCandidateIndexes: conflicts.get(index) });
++		if (result.status === 'resolved' && result.provenance.protocol === 'modbus') {
++			return { ...result, provenance: { ...result.provenance, projectionComparison: 'complete-inventory' } };
++		}
++		return result;
++	});
++}
++
++function bacnet(input: RecordValue): CanonicalAddressResult {
++	const protocol = 'bacnet';
++	if (!integer(input.deviceInstance, 0, 4194303)) return unresolved(protocol, 'invalid-device-instance');
++	if (!record(input.networkScope) || input.networkScope.uniqueDeviceInstance !== true ||
++		(input.networkScope.source !== 'configured' && input.networkScope.source !== 'observed')) {
++		return unresolved(protocol, 'ambiguous-network-scope');
++	}
++	const objectType = typeof input.objectType === 'string' && Object.hasOwn(bacnetTypes, input.objectType)
++		? bacnetTypes[input.objectType] : input.objectType;
++	if (typeof objectType !== 'number' || !bacnetTypeNumbers.has(objectType)) return unresolved(protocol, 'invalid-object-type');
++	if (!integer(input.objectInstance, 0, 4194303)) return unresolved(protocol, 'invalid-object-instance');
++	const propertySource = Object.hasOwn(input, 'propertyId') ? 'configured' : 'default';
++	const propertyId = propertySource === 'default' ? 85 : input.propertyId;
++	if (typeof propertyId !== 'number' || !bacnetProperties.has(propertyId)) return unresolved(protocol, 'invalid-property');
++	if (Object.hasOwn(input, 'arraySelector') &&
++		(!record(input.arraySelector) || input.arraySelector.kind !== 'whole' || Object.keys(input.arraySelector).length !== 1)) {
++		return unresolved(protocol, 'unsupported-array-selector');
++	}
++	return resolved(protocol, [input.deviceInstance, objectType, input.objectInstance, propertyId, ['whole']], {
++		protocol, deviceInstance: input.deviceInstance, networkScope: input.networkScope.source,
++		objectType, objectInstance: input.objectInstance, propertyId, propertySource, arraySelector: 'whole',
++	});
++}
++
++export function canonicalizeAddress(input: CanonicalAddressInput): CanonicalAddressResult;
++export function canonicalizeAddress(input: unknown): CanonicalAddressResult;
++export function canonicalizeAddress(input: unknown): CanonicalAddressResult {
++	if (!record(input)) return unresolved('unknown', 'invalid-input');
++	switch (input.protocol) {
++		case 'opcua': return opcua(input);
++		case 'mqtt': return mqtt(input);
++		case 'modbus': return modbus(input);
++		case 'bacnet': return bacnet(input);
++		default: return unresolved('unknown', 'unsupported-protocol');
++	}
++}
+diff --git a/test/unit/points/canonical-address.unit.spec.ts b/test/unit/points/canonical-address.unit.spec.ts
+new file mode 100644
+index 0000000..5db20c5
+--- /dev/null
++++ b/test/unit/points/canonical-address.unit.spec.ts
+@@ -0,0 +1,244 @@
++import {
++	CANONICAL_ADDRESS_VERSION, MAX_CANONICAL_ADDRESS_BYTES,
++	canonicalizeAddress, canonicalizeModbusAddresses,
++	type BacnetAddressInput, type ModbusAddressInput, type MqttAddressInput, type OpcuaAddressInput,
++} from '../../../src/points/canonical-address';
++import { DatabaseSync } from 'node:sqlite';
++
++const namespaces = { verified: true as const, uris: ['http://opcfoundation.org/UA/', 'urn:other', 'urn:plant'] };
++const opcua: OpcuaAddressInput = {
++	protocol: 'opcua', nodeId: 'ns=2;s=Temperature', namespaceArray: namespaces, nodeIdVerifiedAgainstNamespaceArray: true,
++};
++const mqtt: MqttAddressInput = { protocol: 'mqtt', topic: 'factory/line1', selector: { kind: 'whole' }, selectorSource: 'observed' };
++const modbus: ModbusAddressInput = {
++	protocol: 'modbus', unitId: 1, address: 10, type: 'holding',
++	projection: { dataType: 'uint16', count: 1 },
++};
++const bacnet: BacnetAddressInput = {
++	protocol: 'bacnet', deviceInstance: 42, networkScope: { uniqueDeviceInstance: true, source: 'observed' },
++	objectType: 'analog-input', objectInstance: 7,
++};
++
++function key(input: unknown): string {
++	const result = canonicalizeAddress(input);
++	if (result.status !== 'resolved') throw new Error(`Unexpected unresolved address: ${result.reason}`);
++	return result.addressKey;
++}
++
++function expectReason(input: unknown, reason: string): void {
++	expect(canonicalizeAddress(input)).toMatchObject({ status: 'unresolved', reason });
++}
++
++describe('canonical address v1', () => {
++	it('uses deterministic fixed-order arrays and ignores display names and physical identifiers', () => {
++		const first = canonicalizeAddress(mqtt);
++		const reordered = canonicalizeAddress({
++			device_uuid: 'unrelated', endpointName: 'renamed', selectorSource: 'configured',
++			selector: { kind: 'whole' }, topic: 'factory/line1', protocol: 'mqtt', name: 'changed',
++		});
++		expect(first).toMatchObject({
++			status: 'resolved', protocol: 'mqtt', version: CANONICAL_ADDRESS_VERSION,
++			addressKey: '["factory/line1",["whole"]]',
++		});
++		expect(first.status).toBe('resolved');
++		expect(reordered.status).toBe('resolved');
++		if (first.status === 'resolved' && reordered.status === 'resolved') expect(reordered.addressKey).toBe(first.addressKey);
++		expect(CANONICAL_ADDRESS_VERSION).toBe(1);
++		expectReason({ protocol: 's7' }, 'unsupported-protocol');
++		expect(canonicalizeAddress({ protocol: 'secret-token', password: 'secret' }))
++			.toEqual({ status: 'unresolved', protocol: 'unknown', reason: 'unsupported-protocol' });
++		expectReason(null, 'invalid-input');
++	});
++
++	it('bounds input and serialized key sizes', () => {
++		expectReason({ ...mqtt, topic: 'x'.repeat(MAX_CANONICAL_ADDRESS_BYTES + 1) }, 'address-too-large');
++		expectReason({ ...mqtt, topic: '"'.repeat(5000) }, 'address-too-large');
++		expectReason({ ...mqtt, topic: '\ud800' }, 'invalid-topic');
++	});
++
++	it('stores generated keys as nonempty binary-exact SQLite text', () => {
++		const db = new DatabaseSync(':memory:');
++		try {
++			db.exec('CREATE TABLE addresses (address_key TEXT NOT NULL COLLATE BINARY UNIQUE)');
++			const insert = db.prepare('INSERT INTO addresses (address_key) VALUES (?)');
++			const keys = [key(mqtt), key({ ...mqtt, topic: 'Factory/line1' }), key(opcua), key(modbus), key(bacnet)];
++			for (const address of keys) insert.run(address);
++			expect(db.prepare('SELECT address_key FROM addresses ORDER BY rowid').all().map(row => row.address_key)).toEqual(keys);
++		} finally {
++			db.close();
++		}
++	});
++});
++
++describe('OPC UA', () => {
++	it.each([
++		['ns=2;i=00123', '["urn:plant","i",123]'],
++		['ns=2;s=Temperature', '["urn:plant","s","Temperature"]'],
++		['ns=2;g=ABCDEF12-1234-ABCD-9876-1234567890AB', '["urn:plant","g","abcdef12-1234-abcd-9876-1234567890ab"]'],
++		['ns=2;b=AQIDBA', '["urn:plant","b","AQIDBA=="]'],
++		['i=85', '["http://opcfoundation.org/UA/","i",85]'],
++	])('canonicalizes %s', (nodeId, expected) => {
++		expect(key({ ...opcua, nodeId })).toBe(expected);
++		expect(canonicalizeAddress({ ...opcua, nodeId })).toMatchObject({
++			status: 'resolved', provenance: { namespaceUri: nodeId === 'i=85' ? namespaces.uris[0] : 'urn:plant', namespaceArrayVerified: true },
++		});
++	});
++
++	it('survives namespace remapping without folding case or identifier types', () => {
++		const moved = { verified: true, uris: ['http://opcfoundation.org/UA/', 'urn:other', 'urn:new', 'urn:more', 'urn:plant'] };
++		expect(key({ ...opcua, nodeId: 'ns=4;s=Temperature', namespaceArray: moved })).toBe(key(opcua));
++		expect(key({ ...opcua, nodeId: 'ns=2;s=temperature' })).not.toBe(key(opcua));
++		expect(key({ ...opcua, nodeId: 'ns=2;i=123' })).not.toBe(key({ ...opcua, nodeId: 'ns=2;s=123' }));
++		expect(key({ ...opcua, nodeId: 'ns=2;s=A\0B' })).toBe('["urn:plant","s","A\\u0000B"]');
++	});
++
++	it.each([
++		[{ ...opcua, namespaceArray: undefined }, 'namespace-evidence-required'],
++		[{ ...opcua, nodeIdVerifiedAgainstNamespaceArray: false }, 'namespace-evidence-required'],
++		[{ ...opcua, namespaceArray: { verified: false, uris: namespaces.uris } }, 'namespace-evidence-required'],
++		[{ ...opcua, namespaceArray: { verified: true, uris: ['urn:wrong', 'urn:other', 'urn:plant'] } }, 'invalid-namespace-array'],
++		[{ ...opcua, namespaceArray: { verified: true, uris: ['http://opcfoundation.org/UA/', 'not a uri'] } }, 'invalid-namespace-array'],
++		[{ ...opcua, namespaceArray: { verified: true, uris: [...namespaces.uris, 'urn:plant'] } }, 'ambiguous-namespace'],
++		[{ ...opcua, nodeId: 'ns=4;i=1' }, 'namespace-index-unresolved'],
++		[{ ...opcua, nodeId: 'ns=65536;i=1' }, 'invalid-node-id'],
++		[{ ...opcua, nodeId: 'svr=1;ns=2;i=1' }, 'unsupported-expanded-node-id'],
++		[{ ...opcua, nodeId: 'nsu=urn:plant;i=1' }, 'unsupported-expanded-node-id'],
++		[{ ...opcua, nodeId: 'ns=2;i=123junk' }, 'invalid-node-id'],
++		[{ ...opcua, nodeId: 'ns=2;i=4294967296' }, 'invalid-node-id'],
++		[{ ...opcua, nodeId: 'i=0' }, 'invalid-node-id'],
++		[{ ...opcua, nodeId: 'ns=2;b=bad!' }, 'invalid-node-id'],
++		[{ ...opcua, nodeId: 'ns=2;b=A===' }, 'invalid-node-id'],
++		[{ ...opcua, nodeId: 'ns=2;g=not-a-guid' }, 'invalid-node-id'],
++	])('rejects invalid or unverified input: %s', (input, reason) => expectReason(input, reason));
++});
++
++describe('MQTT', () => {
++	it('distinguishes scalar, typed paths, literal dots, array indexes and topics', () => {
++		const cases: Array<[unknown, string]> = [
++			[mqtt, '["factory/line1",["whole"]]'],
++			[{ ...mqtt, selector: { kind: 'path', tokens: [{ kind: 'key', key: 'value' }] } }, '["factory/line1",["path",[["key","value"]]]]'],
++			[{ ...mqtt, selector: { kind: 'path', tokens: [{ kind: 'key', key: 'motor' }, { kind: 'key', key: 'speed' }] } }, '["factory/line1",["path",[["key","motor"],["key","speed"]]]]'],
++			[{ ...mqtt, selector: { kind: 'path', tokens: [{ kind: 'key', key: 'motor.speed' }] } }, '["factory/line1",["path",[["key","motor.speed"]]]]'],
++			[{ ...mqtt, selector: { kind: 'path', tokens: [{ kind: 'index', index: 0 }] } }, '["factory/line1",["path",[["index",0]]]]'],
++			[{ ...mqtt, selector: { kind: 'path', tokens: [{ kind: 'key', key: '0' }] } }, '["factory/line1",["path",[["key","0"]]]]'],
++			[{ ...mqtt, topic: 'factory/line2' }, '["factory/line2",["whole"]]'],
++		];
++		expect(cases.map(([input, expected]) => {
++			const actual = key(input);
++			expect(actual).toBe(expected);
++			return actual;
++		})).toHaveLength(new Set(cases.map(([, expected]) => expected)).size);
++	});
++
++	it.each([
++		[{ ...mqtt, topic: 'factory/+/value' }, 'invalid-topic'],
++		[{ ...mqtt, topic: 'factory/#' }, 'invalid-topic'],
++		[{ ...mqtt, topic: 'x\0y' }, 'invalid-topic'],
++		[{ ...mqtt, selector: 'motor.speed' }, 'ambiguous-legacy-selector'],
++		[{ ...mqtt, field: 'motor.speed' }, 'ambiguous-legacy-selector'],
++		[{ ...mqtt, selectorSource: undefined }, 'invalid-selector'],
++		[{ ...mqtt, selector: { kind: 'path', tokens: [] } }, 'invalid-selector'],
++		[{ ...mqtt, selector: { kind: 'path', tokens: [{ kind: 'index', index: -1 }] } }, 'invalid-selector'],
++		[{ ...mqtt, selector: { kind: 'path', tokens: [{ kind: 'key', key: 'x', index: 0 }] } }, 'invalid-selector'],
++		[{ ...mqtt, selector: { kind: 'whole', tokens: [] } }, 'invalid-selector'],
++	])('rejects unsafe topic or selector: %s', (input, reason) => expectReason(input, reason));
++});
++
++describe('Modbus', () => {
++	it.each([
++		[1, 'coil', 'boolean'],
++		[2, 'discrete', 'boolean'],
++		[3, 'holding', 'uint16'],
++		[4, 'input', 'uint16'],
++	] as const)('maps function %i to %s', (functionCode, space, dataType) => {
++		const input = { ...modbus, type: space, functionCode, projection: { dataType, count: 1 } };
++		expect(key(input)).toBe(JSON.stringify([1, space, 10]));
++		expect(canonicalizeAddress(input)).toMatchObject({ status: 'resolved', provenance: { functionCode, projectionComparison: 'not-compared' } });
++	});
++
++	it('keeps unit IDs and wire addresses distinct, with no 40001 conversion', () => {
++		expect(key({ ...modbus, unitId: 2 })).not.toBe(key(modbus));
++		expect(key({ ...modbus, address: 40001 })).toBe('[1,"holding",40001]');
++		expect(key({ ...modbus, address: 0 })).not.toBe(key({ ...modbus, address: 40001 }));
++	});
++
++	it.each([
++		[{ ...modbus, unitId: 0 }, 'invalid-unit-id'],
++		[{ ...modbus, unitId: 248 }, 'invalid-unit-id'],
++		[{ ...modbus, address: -1 }, 'invalid-address'],
++		[{ ...modbus, address: 65536 }, 'invalid-address'],
++		[{ ...modbus, address: 1.5 }, 'invalid-address'],
++		[{ ...modbus, functionCode: 4 }, 'conflicting-address-space'],
++		[{ ...modbus, type: 'unknown' }, 'invalid-address-space'],
++		[{ ...modbus, type: undefined }, 'invalid-address-space'],
++		[{ ...modbus, projection: { dataType: 'float32', count: 1 } }, 'invalid-projection'],
++		[{ ...modbus, projection: { dataType: 'uint16', count: 1, byteOrder: 'invalid' } }, 'invalid-projection'],
++		[{ ...modbus, projection: { dataType: 'uint16', count: 1, bit: 3 } }, 'invalid-projection'],
++		[{ ...modbus, projection: { dataType: 'uint16', count: 1, scale: Infinity } }, 'invalid-projection'],
++		[{ ...modbus, address: 65535, projection: { dataType: 'float32', count: 2 } }, 'invalid-projection'],
++	])('rejects invalid address or projection: %s', (input, reason) => expectReason(input, reason));
++
++	it('rejects both sides of overlapping or duplicate projections without affecting other scopes', () => {
++		const inputs: ModbusAddressInput[] = [
++			{ ...modbus, projection: { dataType: 'float32', count: 2 } },
++			{ ...modbus, address: 11 },
++			{ ...modbus, unitId: 2 },
++			{ ...modbus, type: 'input' },
++		];
++		const results = canonicalizeModbusAddresses(inputs, { complete: true });
++		expect(results[0]).toMatchObject({ status: 'unresolved', reason: 'ambiguous-projection', details: { conflictingCandidateIndexes: [1] } });
++		expect(results[1]).toMatchObject({ status: 'unresolved', reason: 'ambiguous-projection', details: { conflictingCandidateIndexes: [0] } });
++		expect(results[2]).toMatchObject({ status: 'resolved', provenance: { projectionComparison: 'complete-inventory' } });
++		expect(results[3]).toMatchObject({ status: 'resolved' });
++		expect(canonicalizeModbusAddresses([modbus, modbus], { complete: true })).toEqual([
++			expect.objectContaining({ reason: 'ambiguous-projection' }), expect.objectContaining({ reason: 'ambiguous-projection' }),
++		]);
++		expect(canonicalizeModbusAddresses([modbus, { ...modbus, projection: { dataType: 'int16', count: 1 } }], { complete: true }))
++			.toEqual([expect.objectContaining({ reason: 'ambiguous-projection' }), expect.objectContaining({ reason: 'ambiguous-projection' })]);
++	});
++
++	it('does not claim safe comparison if another supplied candidate is malformed', () => {
++		const results = canonicalizeModbusAddresses([modbus, { ...modbus, unitId: 0 }], { complete: true });
++		expect(results).toEqual([
++			expect.objectContaining({ status: 'unresolved', reason: 'ambiguous-projection', details: { invalidCandidateIndexes: [1] } }),
++			expect.objectContaining({ status: 'unresolved', reason: 'invalid-unit-id' }),
++		]);
++	});
++
++	it('rejects excessively large inventories rather than silently skipping comparisons', () => {
++		const results = canonicalizeModbusAddresses(Array.from({ length: 1025 }, () => modbus), { complete: true });
++		expect(results).toHaveLength(1025);
++		expect(results.every(result => result.status === 'unresolved' && result.reason === 'too-many-candidates')).toBe(true);
++	});
++
++	it('requires the caller to attest inventory completeness', () => {
++		expect(Reflect.apply(canonicalizeModbusAddresses, undefined, [[modbus], undefined]))
++			.toEqual([expect.objectContaining({ status: 'unresolved', reason: 'inventory-incomplete' })]);
++	});
++});
++
++describe('BACnet', () => {
++	it('normalizes supported object types and applies only an omitted present-value default', () => {
++		expect(key(bacnet)).toBe('[42,0,7,85,["whole"]]');
++		expect(key({ ...bacnet, objectType: 0, propertyId: 85, arraySelector: { kind: 'whole' } })).toBe(key(bacnet));
++		expect(canonicalizeAddress(bacnet)).toMatchObject({ status: 'resolved', provenance: { propertySource: 'default', networkScope: 'observed' } });
++		expect(canonicalizeAddress({ ...bacnet, propertyId: 85 })).toMatchObject({ status: 'resolved', provenance: { propertySource: 'configured' } });
++		const alternatives = [
++			{ ...bacnet, deviceInstance: 43 }, { ...bacnet, objectType: 'analog-value' },
++			{ ...bacnet, objectInstance: 8 }, { ...bacnet, propertyId: 28 },
++		];
++		expect(new Set([key(bacnet), ...alternatives.map(key)]).size).toBe(5);
++	});
++
++	it.each([
++		[{ ...bacnet, deviceInstance: -1 }, 'invalid-device-instance'],
++		[{ ...bacnet, deviceInstance: 4194304 }, 'invalid-device-instance'],
++		[{ ...bacnet, networkScope: undefined }, 'ambiguous-network-scope'],
++		[{ ...bacnet, networkScope: { uniqueDeviceInstance: false, source: 'observed' } }, 'ambiguous-network-scope'],
++		[{ ...bacnet, objectType: 'type-900' }, 'invalid-object-type'],
++		[{ ...bacnet, objectInstance: 1.5 }, 'invalid-object-instance'],
++		[{ ...bacnet, propertyId: undefined }, 'invalid-property'],
++		[{ ...bacnet, propertyId: 0 }, 'invalid-property'],
++		[{ ...bacnet, arraySelector: { kind: 'index', index: 0 } }, 'unsupported-array-selector'],
++	])('rejects invalid scope or object information: %s', (input, reason) => expectReason(input, reason));
++});

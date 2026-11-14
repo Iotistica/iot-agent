@@ -15,7 +15,7 @@ import type { AgentLogger } from '../../logging/agent-logger';
 import { createHash } from 'crypto';
 import { LogComponents } from '../../logging/types';
 import { BaseDiscovery } from '../base';
-import { type DiscoveredDevice, type ValidationResult } from '../types';
+import { withDiscoveryScanStatus, type DiscoveredDevice, type DiscoveryDeviceList, type ValidationResult } from '../types';
 import type { ConfigManager } from '../../core/config.js';
 
 /**
@@ -76,7 +76,7 @@ export class ModbusDiscovery extends BaseDiscovery {
    * Phase 1: Fast slave ID scanning
    * Opens connection ONCE, cycles through all slave IDs
    */
-	async discover(_options?: ModbusDiscoveryOptions): Promise<DiscoveredDevice[]> {
+	async discover(_options?: ModbusDiscoveryOptions): Promise<DiscoveryDeviceList> {
 
 		// Get discovery targets from endpoints (those with slaveRange or slaveId)
 		const discoveryTargets = this.configManager?.getDiscoveryTargets?.('modbus') || [];
@@ -85,7 +85,7 @@ export class ModbusDiscovery extends BaseDiscovery {
 			this.logger?.debugSync('No Modbus discovery targets configured (need slaveRange or slaveId)', {
 				component: LogComponents.discovery + "] [" + this.protocol as any
 			});
-			return [];
+			return withDiscoveryScanStatus([], { successful: false, complete: false, authoritative: false });
 		}
 
 		this.logger?.debugSync(`Starting Modbus discovery (${discoveryTargets.length} target(s))`, {
@@ -93,11 +93,19 @@ export class ModbusDiscovery extends BaseDiscovery {
 			targetCount: discoveryTargets.length
 		});
 
-		const allDiscovered: DiscoveredDevice[] = [];
+		const status = { successful: true, complete: true, authoritative: false };
+		const allDiscovered = withDiscoveryScanStatus([], status);
 
 		// Separate TCP and serial connections (TCP can be parallel, RTU must be sequential)
 		const tcpConnections = discoveryTargets.filter((t: any) => t.connection?.type === 'tcp');
 		const serialConnections = discoveryTargets.filter((t: any) => t.connection?.type === 'rtu');
+		if (tcpConnections.length + serialConnections.length !== discoveryTargets.length) {
+			status.successful = false;
+			status.complete = false;
+			this.logger?.warnSync('Modbus discovery skipped targets with unsupported connection types', {
+				component: LogComponents.discovery,
+			});
+		}
 
 		// Parallel TCP scanning (controlled concurrency to avoid overwhelming network)
 		if (tcpConnections.length > 0) {
@@ -148,7 +156,11 @@ export class ModbusDiscovery extends BaseDiscovery {
 					})
 				);
 
-				results.forEach(discovered => allDiscovered.push(...discovered));
+				results.forEach(discovered => {
+					allDiscovered.push(...discovered);
+					status.successful &&= discovered.scanStatus?.successful === true;
+					status.complete &&= discovered.scanStatus?.complete === true;
+				});
 			}
 		}
 
@@ -190,6 +202,8 @@ export class ModbusDiscovery extends BaseDiscovery {
 
 				const discovered = await this.discoverOnBus(connOptions, dataPoints, endpoint.name);
 				allDiscovered.push(...discovered);
+				status.successful &&= discovered.scanStatus?.successful === true;
+				status.complete &&= discovered.scanStatus?.complete === true;
 			}
 		}
 
@@ -212,7 +226,7 @@ export class ModbusDiscovery extends BaseDiscovery {
 		options: ModbusDiscoveryOptions,
 		dataPoints: DataPoint[],
 		connectionName?: string
-	): Promise<DiscoveredDevice[]> {
+	): Promise<DiscoveryDeviceList> {
     
 		if (dataPoints.length === 0) {
 			this.logger?.debugSync(`No data points in config`, {
@@ -224,7 +238,8 @@ export class ModbusDiscovery extends BaseDiscovery {
 			});
 		}
 
-		const discovered: DiscoveredDevice[] = [];
+		const status = { successful: true, complete: true, authoritative: false };
+		const discovered = withDiscoveryScanStatus([], status);
 
 		this.logger?.debugSync('Starting Modbus discovery on bus', {
 			component: LogComponents.discovery + "] [" + this.protocol as any,
@@ -243,7 +258,9 @@ export class ModbusDiscovery extends BaseDiscovery {
 			this.logger?.warnSync('No Modbus connection specified', {
 				component: LogComponents.discovery + "] [" + this.protocol as any
 			});
-			return [];
+			status.successful = false;
+			status.complete = false;
+			return discovered;
 		}
 
 		// CRITICAL: Open connection ONCE for all slave IDs (bus-scoped)
@@ -253,7 +270,9 @@ export class ModbusDiscovery extends BaseDiscovery {
 			this.logger?.warnSync('Failed to open Modbus connection', {
 				component: LogComponents.discovery + "] [" + this.protocol as any
 			});
-			return [];
+			status.successful = false;
+			status.complete = false;
+			return discovered;
 		}
 
 		try {
@@ -326,8 +345,11 @@ export class ModbusDiscovery extends BaseDiscovery {
 							method: deviceInfo.method,
 							connectionName
 						});
+					} else {
+						status.complete = false;
 					}
 				} catch (error) {
+					status.complete = false;
 					this.logger?.warnSync(`No response from slave ${slaveId} (offline or not configured)`, {
 						component: LogComponents.discovery + "] [" + this.protocol as any,
 						slaveId,

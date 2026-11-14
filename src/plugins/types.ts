@@ -148,7 +148,7 @@ export interface IProtocolAdapter {
 }
 
 export interface IDiscovery {
-	discover(options?: any): Promise<DiscoveredDevice[]>;
+	discover(options?: any): Promise<DiscoveryDeviceList>;
 	validate(device: DiscoveredDevice, timeout?: number): Promise<any>;
 	isAvailable(): Promise<boolean>;
 	generateFingerprint(...args: any[]): string;
@@ -215,11 +215,33 @@ export interface DiscoveredDevice {
 	uuid?: string;
 	connection: Record<string, any>;
 	dataPoints: any[];
+	/** Whether this endpoint's point inventory was fully observed; unknown when omitted. */
+	dataPointsComplete?: boolean;
 	confidence: "low" | "medium" | "high";
 	discoveredAt: string;
 	validated: boolean;
 	validationData?: ValidationResult;
 	metadata?: Record<string, any>;
+}
+
+export interface DiscoveryScanStatus {
+	/** Every requested scan operation ran without a fatal failure or interruption. */
+	successful: boolean;
+	/** The requested scan scope finished without known missing or sampled results. */
+	complete: boolean;
+	/** The scope covers every endpoint of this protocol eligible for pruning, not just selected targets. */
+	authoritative: boolean;
+}
+
+export type DiscoveryDeviceList = DiscoveredDevice[] & {
+	/** Legacy compatibility indicator; scanStatus is authoritative for protocol-level completeness. */
+	scanComplete?: boolean;
+	scanStatus?: DiscoveryScanStatus;
+};
+
+export function withDiscoveryScanStatus(devices: DiscoveredDevice[], status: DiscoveryScanStatus): DiscoveryDeviceList {
+	Object.defineProperty(devices, 'scanStatus', { value: status });
+	return devices;
 }
 
 export interface DiscoveryResult {

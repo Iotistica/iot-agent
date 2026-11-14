@@ -16,7 +16,9 @@ import type { AgentLogger } from "../../logging/agent-logger";
 import { createHash } from "crypto";
 import { LogComponents } from "../../logging/types";
 import {
+	withDiscoveryScanStatus,
 	type DiscoveredDevice,
+	type DiscoveryDeviceList,
 	type ValidationResult,
 } from "../types";
 
@@ -83,7 +85,7 @@ export class MqttDiscovery extends BaseDiscovery {
 	async discover(
 		options?: MqttDiscoveryOptions,
 		signal?: AbortSignal,
-	): Promise<DiscoveredDevice[]> {
+	): Promise<DiscoveryDeviceList> {
 		this.validatedTopics.clear();
 
 		const brokerUrl = options?.brokerUrl || process.env.MQTT_BROKER_URL;
@@ -101,7 +103,7 @@ export class MqttDiscovery extends BaseDiscovery {
 				component: (LogComponents.discovery + "] [" + this.protocol) as any,
 				hint: 'Provide explicit topics to validate (e.g., ["factory/#"])',
 			});
-			return [];
+			return withDiscoveryScanStatus([], { successful: false, complete: false, authoritative: false });
 		}
 
 		this.logger?.infoSync("Starting MQTT device discovery", {
@@ -176,6 +178,10 @@ export class MqttDiscovery extends BaseDiscovery {
 				});
 			});
 
+			let interrupted = false;
+			this.client.on("close", () => { interrupted = true; });
+			this.client.on("error", () => { interrupted = true; });
+
 			for (const topic of topics) {
 				await new Promise<void>((resolve, reject) => {
 					this.client!.subscribe(topic, { qos }, (err) => {
@@ -221,6 +227,12 @@ export class MqttDiscovery extends BaseDiscovery {
 				});
 			});
 
+			const successful = !signal?.aborted && !interrupted;
+			if (!successful) {
+				this.logger?.warnSync("MQTT discovery sampling was interrupted", {
+					component: (LogComponents.discovery + "] [" + this.protocol) as any,
+				});
+			}
 			this.cleanupClient();
 
 			const activeTopics = Array.from(this.validatedTopics.values()).filter(
@@ -265,7 +277,10 @@ export class MqttDiscovery extends BaseDiscovery {
 			}
 
 			const deviceGroups = this.groupTopicsIntoDevices(activeTopics, options?.topicPattern);
-			return this.convertGroupsToDevices(deviceGroups);
+			// A sampling window cannot enumerate inactive or non-retained topics.
+			return withDiscoveryScanStatus(this.convertGroupsToDevices(deviceGroups), {
+				successful, complete: false, authoritative: false,
+			});
 		} catch (error) {
 			this.logger?.errorSync("MQTT discovery failed", error as Error, {
 				component: (LogComponents.discovery + "] [" + this.protocol) as any,

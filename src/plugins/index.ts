@@ -6,7 +6,7 @@ import { EventEmitter } from "events";
 import { type AgentLogger } from "../logging/agent-logger.js";
 import { ModbusAdapter } from "./modbus/adapter.js";
 import { type ModbusAdapterConfig, normalizeModbusRegisters } from "./modbus/types.js";
-import { MqttAdapter } from "./mqtt/adapter.js";
+import { MqttAdapter, type MqttShadowOptions } from "./mqtt/adapter.js";
 import { type MqttAdapterConfig } from "./mqtt/types.js";
 import { SocketServer } from "../core/socket-server.js";
 import {
@@ -19,12 +19,13 @@ import {
 import { PluginLoader } from "./plugin-loader.js";
 import { EndpointOutputModel } from "../db/models/endpoint-outputs.model.js";
 import { deviceNameSuffixFor, toDeviceUuid } from "../db/models/device.model.js";
-import { EndpointModel } from "../db/models/endpoint.model.js";
+import { EndpointModel, type Endpoint } from "../db/models/endpoint.model.js";
 import { DeviceModel } from "../db/models/device.model.js";
 import { encodeIfUuid } from "../mqtt/codec.js";
 
 // Type-only import.
 import type { OPCUAAdapterConfig } from "./opcua/types.js";
+import type { OpcuaShadowOptions } from "./opcua/adapter.js";
 import { OPCUAConnectionSchema } from "./opcua/types.js";
 import { BACnetAdapter } from "./bacnet/adapter.js";
 import { type BACnetAdapterConfig } from "./bacnet/types.js";
@@ -195,6 +196,8 @@ export class AdapterManager extends EventEmitter {
 	private running = false;
 	private pluginsLoaded = false;
 	private readonly pluginLoader: PluginLoader;
+	private readonly opcuaShadow?: Omit<OpcuaShadowOptions, "sources">;
+	private readonly mqttShadow?: Omit<MqttShadowOptions, "sources">;
 	private readonly logger: {
 		info(m: string): void;
 		warn(m: string): void;
@@ -205,6 +208,7 @@ export class AdapterManager extends EventEmitter {
 	private enrichWithEndpointUuid(
 		dataPoints: DeviceDataPoint[],
 		endpointUuidByName: Map<string, string>,
+		shadow?: Omit<OpcuaShadowOptions, "sources">,
 	): DeviceDataPoint[] {
 		// Deliberately NOT also gated on endpointUuidByName.size === 0: a
 		// reading can carry its own source-provided device identity
@@ -228,13 +232,35 @@ export class AdapterManager extends EventEmitter {
 				return point;
 			}
 
-			return {
+			const clone = {
 				...point,
 				deviceName: resolved.deviceName,
 				sourceEndpointName: point.deviceName,
 				endpoint_uuid: resolved.endpoint_uuid,
 				device_uuid: resolved.device_uuid,
 			};
+			if (shadow) {
+				const shadowProtocol = point.protocol === "mqtt" ? "MQTT" : "OPC UA";
+				let ref: object | undefined;
+				try {
+					const correlation = shadow.registry.correlation(point);
+					if (correlation.status === "ok") {
+						ref = correlation.value;
+						const transferred = shadow.registry.transfer(point, clone);
+						if (transferred.status !== "ok") shadow.registry.drop(ref);
+					}
+				} catch {
+					if (ref) {
+						try {
+							shadow.registry.drop(ref);
+						} catch {
+							this.logger.warn(`${shadowProtocol} shadow evidence cleanup failed`);
+						}
+					}
+					this.logger.warn(`${shadowProtocol} shadow correlation transfer failed`);
+				}
+			}
+			return clone;
 		});
 	}
 
@@ -279,11 +305,12 @@ export class AdapterManager extends EventEmitter {
 		adapter: IProtocolAdapter,
 		socket: SocketServer,
 		uuidMap: Map<string, string>,
+		shadow?: Omit<OpcuaShadowOptions, "sources">,
 	): void {
 		const label = protocol.toUpperCase();
 		adapter.on("started", () => this.logger.info(`${label} adapter started`));
 		adapter.on("data", (dps: DeviceDataPoint[]) => {
-			socket.sendData(this.enrichWithEndpointUuid(dps, uuidMap), protocol);
+			socket.sendData(this.enrichWithEndpointUuid(dps, uuidMap, shadow), protocol);
 			// Stamp lastSeenAt for both endpoint and device tables, throttled per
 			// device name (see LAST_SEEN_THROTTLE_MS above) — health freshness
 			// doesn't need sub-second resolution, and each write is a synchronous
@@ -372,10 +399,14 @@ export class AdapterManager extends EventEmitter {
 		config: AdapterConfig,
 		agentLogger: AgentLogger,
 		deviceUuid: string,
+		opcuaShadow?: Omit<OpcuaShadowOptions, "sources">,
+		mqttShadow?: Omit<MqttShadowOptions, "sources">,
 	) {
 		super();
 		this.config = config;
 		this.deviceUuid = deviceUuid;
+		this.opcuaShadow = opcuaShadow;
+		this.mqttShadow = mqttShadow;
 		this.logger = {
 			info: (m) => agentLogger.infoSync(m, { component: "Adapters" }),
 			warn: (m) => agentLogger.warnSync(m, { component: "Adapters" }),
@@ -515,7 +546,7 @@ export class AdapterManager extends EventEmitter {
 			if (protocolGroups && protocolGroups.size > 0) {
 				for (const [groupName, endpoints] of protocolGroups) {
 					if (endpoints.length > 0) {
-						await this.startAdapterGroup(protocol, groupName, endpoints);
+						await this.startAdapterGroup(protocol, groupName, endpoints, allEndpoints);
 					}
 				}
 			} else if (this.config[protocol as keyof AdapterConfig] && 
@@ -534,6 +565,7 @@ export class AdapterManager extends EventEmitter {
 		protocol: string,
 		groupName: string,
 		endpoints: any[],
+		allEndpoints?: Endpoint[],
 	): Promise<void> {
 		try {
 			this.logger.info(`Starting ${protocol.toUpperCase()} adapter group: ${groupName}`);
@@ -543,13 +575,13 @@ export class AdapterManager extends EventEmitter {
 					await this.startModbusAdapterGroup(groupName, endpoints);
 					break;
 				case 'opcua':
-					await this.startOPCUAAdapterGroup(groupName, endpoints);
+					await this.startOPCUAAdapterGroup(groupName, endpoints, allEndpoints);
 					break;
 				case 'bacnet':
 					await this.startBACnetAdapterGroup(groupName, endpoints);
 					break;
 				case 'mqtt':
-					await this.startMQTTAdapterGroup(groupName, endpoints);
+					await this.startMQTTAdapterGroup(groupName, endpoints, allEndpoints);
 					break;
 				default:
 					this.logger.warn(`No group handler for protocol: ${protocol}`);
@@ -710,10 +742,11 @@ export class AdapterManager extends EventEmitter {
 			const uuidMap = this.buildUuidMap(opcuaDevices);
 			const socket = await this.createSocketServer("opcua");
 			const { OPCUAAdapter } = await import("./opcua/adapter.js");
-			const adapter = new OPCUAAdapter(opcuaDevices, this.logger);
+			const adapter = new OPCUAAdapter(opcuaDevices, this.logger,
+				this.opcuaShadow && { ...this.opcuaShadow, sources: [] });
 			this.adapters.set("opcua", adapter);
 			this.groupProtocol.set("opcua", "opcua");
-			this.wireAdapterEvents("opcua", adapter, socket, uuidMap);
+			this.wireAdapterEvents("opcua", adapter, socket, uuidMap, this.opcuaShadow);
 			await adapter.start();
 		} catch (error) {
 			const errorMessage =
@@ -723,8 +756,23 @@ export class AdapterManager extends EventEmitter {
 		}
 	}
 
+	private opcuaSourceBindings(
+		devices: OPCUAAdapterConfig['devices'], endpoints: Endpoint[], allEndpoints?: Endpoint[],
+	): OpcuaShadowOptions['sources'] {
+		if (!allEndpoints) return [];
+		return endpoints.flatMap((endpoint, index) => {
+			if (!allEndpoints.includes(endpoint) || endpoint.protocol !== "opcua" ||
+				typeof endpoint.id !== "number" || !Number.isSafeInteger(endpoint.id) ||
+				typeof endpoint.uuid !== "string" || !endpoint.uuid.trim() || endpoint.uuid !== endpoint.uuid.trim() ||
+				allEndpoints.filter(row => row.uuid === endpoint.uuid).length !== 1 ||
+				allEndpoints.filter(row => row.id === endpoint.id).length !== 1 ||
+				endpoints.filter(row => row.name === endpoint.name).length !== 1 || !devices[index]) return [];
+			return [{ configuration: devices[index], endpointUuid: endpoint.uuid }];
+		});
+	}
+
 	/** Start OPC UA adapter group for a specific groupName. */
-	private async startOPCUAAdapterGroup(groupName: string, endpoints: any[]): Promise<void> {
+	private async startOPCUAAdapterGroup(groupName: string, endpoints: Endpoint[], allEndpoints?: Endpoint[]): Promise<void> {
 		try {
 			const opcuaDevices = endpoints.map((d) => ({
 				uuid: d.uuid,
@@ -744,10 +792,12 @@ export class AdapterManager extends EventEmitter {
 			const uuidMap = this.buildUuidMap(endpoints);
 			const socket = await this.createSocketServer("opcua");
 			const { OPCUAAdapter } = await import("./opcua/adapter.js");
-			const adapter = new OPCUAAdapter(opcuaDevices, this.logger);
+			const sources = this.opcuaShadow ? this.opcuaSourceBindings(opcuaDevices, endpoints, allEndpoints) : [];
+			const adapter = new OPCUAAdapter(opcuaDevices, this.logger,
+				this.opcuaShadow && { ...this.opcuaShadow, sources });
 			this.adapters.set(groupName, adapter);
 			this.groupProtocol.set(groupName, "opcua");
-			this.wireAdapterEvents(groupName, adapter, socket, uuidMap);
+			this.wireAdapterEvents(groupName, adapter, socket, uuidMap, this.opcuaShadow);
 			await adapter.start();
 		} catch (error) {
 			const errorMessage = error instanceof Error ? error.message : String(error);
@@ -759,6 +809,12 @@ export class AdapterManager extends EventEmitter {
 	/** Start MQTT adapter, or hot-reload devices if already running. */
 	private async startMQTTAdapter(): Promise<void> {
 		try {
+			if (this.mqttShadow) {
+				for (const [group, protocol] of this.groupProtocol) {
+					const adapter = this.adapters.get(group);
+					if (protocol === "mqtt" && adapter instanceof MqttAdapter) adapter.invalidateShadowConfiguration();
+				}
+			}
 			let mqttConfig: MqttAdapterConfig;
 
 			if (this.config.mqtt?.config) {
@@ -896,6 +952,7 @@ export class AdapterManager extends EventEmitter {
 				mqttConfig,
 				this.logger,
 				this.deviceUuid,
+				this.mqttShadow && { ...this.mqttShadow, sources: [] },
 			);
 			this.adapters.set("mqtt", adapter);
 			this.groupProtocol.set("mqtt", "mqtt");
@@ -905,6 +962,7 @@ export class AdapterManager extends EventEmitter {
 				adapter,
 				socket,
 				this.mqttEndpointUuidByName,
+				this.mqttShadow,
 			);
 			await adapter.start();
 		} catch (error) {
@@ -916,7 +974,7 @@ export class AdapterManager extends EventEmitter {
 	}
 
 	/** Start MQTT adapter group for a specific groupName. */
-	private async startMQTTAdapterGroup(groupName: string, endpoints: any[]): Promise<void> {
+	private async startMQTTAdapterGroup(groupName: string, endpoints: Endpoint[], allEndpoints?: Endpoint[]): Promise<void> {
 		try {
 			const brokerUrl = process.env.MQTT_BROKER_URL;
 			if (!brokerUrl)
@@ -948,14 +1006,14 @@ export class AdapterManager extends EventEmitter {
 					jitterRatio: 0,
 				},
 				devices: endpoints.map((d) => {
-					const conn = d.connection as Record<string, any>;
+					const conn = d.connection;
 					const base: string = conn.baseTopic || conn.topic || '';
 					return {
 						name: d.name,
 						enabled: d.enabled,
 						baseTopic: base,
 						subscriptionTopic: base ? `${base}/#` : '#',
-						qos: (conn.qos || 1) as 0 | 1 | 2,
+						qos: conn.qos || 1,
 						dataType: conn.dataType || "json",
 						metric: conn.metric || d.name,
 						autoMetrics: Boolean(conn.autoMetrics ?? true),
@@ -965,11 +1023,28 @@ export class AdapterManager extends EventEmitter {
 
 			const uuidMap = this.buildUuidMap(endpoints);
 			const socket = await this.createSocketServer("mqtt");
-			const adapter = new MqttAdapter(mqttConfig, this.logger, this.deviceUuid);
+			const sources: MqttShadowOptions["sources"] = this.mqttShadow && allEndpoints
+				? endpoints.flatMap((endpoint, index) => {
+					if (!allEndpoints.includes(endpoint) || endpoint.protocol !== "mqtt" ||
+						typeof endpoint.id !== "number" || !Number.isSafeInteger(endpoint.id) ||
+						typeof endpoint.uuid !== "string" || !endpoint.uuid.trim() || endpoint.uuid !== endpoint.uuid.trim() ||
+						allEndpoints.filter(row => row.uuid === endpoint.uuid).length !== 1 ||
+						allEndpoints.filter(row => row.id === endpoint.id).length !== 1 ||
+						endpoints.filter(row => row.name === endpoint.name).length !== 1 || !mqttConfig.devices[index]) return [];
+					return [{ configuration: mqttConfig.devices[index], endpointUuid: endpoint.uuid }];
+				}) : [];
+			const activeFilters = this.mqttShadow && allEndpoints
+				? allEndpoints.filter(endpoint => endpoint.protocol === "mqtt" && endpoint.enabled).map(endpoint => {
+					const connection = endpoint.connection as Record<string, unknown> | undefined;
+					const base = connection?.baseTopic || connection?.topic;
+					return base ? `${base}/#` : "#";
+				}) : undefined;
+			const adapter = new MqttAdapter(mqttConfig, this.logger, this.deviceUuid,
+				this.mqttShadow && { ...this.mqttShadow, sources, activeFilters });
 			this.adapters.set(groupName, adapter);
 			this.groupProtocol.set(groupName, "mqtt");
 			(adapter as any)._socketServer = socket;
-			this.wireAdapterEvents(groupName, adapter, socket, uuidMap);
+			this.wireAdapterEvents(groupName, adapter, socket, uuidMap, this.mqttShadow);
 			await adapter.start();
 		} catch (error) {
 			const errorMessage = error instanceof Error ? error.message : String(error);
@@ -1062,7 +1137,7 @@ export class AdapterManager extends EventEmitter {
 			(this.config as any)[normalizedProtocol] = { enabled: true };
 			for (const [groupName, endpoints] of groups) {
 				if (endpoints.length > 0) {
-					await this.startAdapterGroup(normalizedProtocol, groupName, endpoints);
+					await this.startAdapterGroup(normalizedProtocol, groupName, endpoints, allEndpoints);
 				}
 			}
 		} else if (

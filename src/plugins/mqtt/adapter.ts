@@ -10,6 +10,23 @@ import { MqttBrokerClient } from "./client.js";
 import { convertUnit } from "../../units/convert-unit.js";
 import { getNormalizationHealthTracker } from "../../units/normalization-health-tracker.js";
 import { getUnitCatalog } from "../../units/catalog.js";
+import type { MqttSelector } from "../../points/canonical-address.js";
+import type { PrivateEvidenceRegistry } from "../../points/private-evidence-registry.js";
+import type { ObservationRef, SourceBindingRef } from "../../points/private-evidence-types.js";
+import type { PrivateShadowObserver } from "../../points/private-shadow-observer.js";
+
+export interface MqttShadowOptions {
+	registry: PrivateEvidenceRegistry;
+	observer: PrivateShadowObserver;
+	sources: Array<{ configuration: MqttDevice; endpointUuid: string }>;
+	activeFilters?: string[];
+}
+
+type MqttSelectorToken = Extract<MqttSelector, { kind: 'path' }>['tokens'][number];
+interface MqttTraversal {
+	tokens: MqttSelectorToken[];
+	valid: boolean;
+}
 
 // MQTT's own short-code canonical vocabulary (set by canonicalizeUnit()
 // below) translated to the shared catalog's canonical unit names
@@ -78,12 +95,18 @@ export class MqttAdapter extends BaseProtocolAdapter {
 	private brokerStatusTopic: string | null = null;
 	private deviceUuid: string | null = null;
 	private brokerClient: MqttBrokerClient;
+	private readonly shadow?: MqttShadowOptions;
+	private readonly shadowBindings = new WeakMap<MqttDevice, SourceBindingRef>();
+	private shadowErrorReported = false;
+	private shadowTransportReady = false;
+	private shadowConfigurationValid = true;
 	// Optional human-readable labels keyed by topic (resolve via subscriptions map at publish time)
 	private displayNamesByTopic = new Map<string, string>();
 
-	constructor(config: MqttAdapterConfig, logger: Logger, deviceUuid?: string) {
+	constructor(config: MqttAdapterConfig, logger: Logger, deviceUuid?: string, shadow?: MqttShadowOptions) {
 		super([], logger);
 		this.config = config;
+		this.shadow = shadow;
 		this.deviceUuid = deviceUuid?.trim() || null;
 		if (!this.deviceUuid || this.deviceUuid.toLowerCase() === "unknown") {
 			throw new Error(
@@ -93,6 +116,8 @@ export class MqttAdapter extends BaseProtocolAdapter {
 		const runtimeDeviceUuid = this.deviceUuid;
 		this.brokerClient = new MqttBrokerClient(this.config, this.logger, runtimeDeviceUuid, {
 			onConnect: (client, connack, firstConnect) => {
+				this.invalidateShadowTransport();
+				this.shadowTransportReady = true;
 				this.client = client;
 				this.connected = true;
 				this.setAllDeviceStatusesConnected(true);
@@ -136,12 +161,16 @@ export class MqttAdapter extends BaseProtocolAdapter {
 				this.emit("device-error", "mqtt-broker", err);
 			},
 			onOffline: () => {
+				this.shadowTransportReady = false;
+				this.invalidateShadowTransport();
 				this.connected = false;
 				this.setAllDeviceStatusesConnected(false);
 				this.logger.warn("MQTT broker offline");
 				this.emit("device-disconnected", "mqtt-broker");
 			},
 			onReconnect: (attempt, nextReconnectDelayMs) => {
+				this.shadowTransportReady = false;
+				this.invalidateShadowTransport();
 				this.reconnectAttemptCount = attempt;
 				this.logger.debug("MQTT reconnecting to broker", {
 					attempt,
@@ -149,6 +178,8 @@ export class MqttAdapter extends BaseProtocolAdapter {
 				});
 			},
 			onClose: () => {
+				this.shadowTransportReady = false;
+				this.invalidateShadowTransport();
 				this.connected = false;
 				this.setAllDeviceStatusesConnected(false);
 				this.logger.debug("MQTT connection closed");
@@ -204,6 +235,71 @@ export class MqttAdapter extends BaseProtocolAdapter {
 		}
 
 		this.initializeMqttDeviceStatuses();
+		if (shadow) {
+			for (const source of shadow.sources) {
+				if (!config.devices.includes(source.configuration) ||
+					shadow.sources.filter(item => item.configuration === source.configuration).length !== 1 ||
+					shadow.sources.filter(item => item.endpointUuid === source.endpointUuid).length !== 1) continue;
+				this.withShadow(() => {
+					const result = shadow.registry.register({
+						adapter: this, configuration: source.configuration, protocol: "mqtt",
+						claimedProtocol: "mqtt", claimedEndpointUuid: source.endpointUuid,
+					});
+					if (result.status === "ok") this.shadowBindings.set(source.configuration, result.value.ref);
+				});
+			}
+		}
+	}
+
+	private withShadow(action: () => void): void {
+		try {
+			action();
+		} catch {
+			if (!this.shadowErrorReported) {
+				this.shadowErrorReported = true;
+				this.logger.warn("MQTT shadow evidence failed; telemetry continues");
+			}
+		}
+	}
+
+	private invalidateShadowTransport(): void {
+		if (!this.shadow) return;
+		for (const source of this.shadow.sources) {
+			const ref = this.shadowBindings.get(source.configuration);
+			if (ref) this.withShadow(() => { this.shadow!.registry.replaceTransport(ref); });
+		}
+	}
+
+	public invalidateShadowConfiguration(): void {
+		if (!this.shadow || !this.shadowConfigurationValid) return;
+		this.shadowConfigurationValid = false;
+		this.withShadow(() => { this.shadow!.registry.disposeAdapter(this); });
+	}
+
+	private captureShadow(
+		device: MqttDevice, point: DeviceDataPoint, topic: string, selector: MqttSelector,
+		origin: "configured" | "automatic" | "fallback",
+	): void {
+		const binding = this.shadowBindings.get(device);
+		if (!this.shadow || !binding || !this.connected || !this.shadowTransportReady || !this.shadowConfigurationValid) return;
+		this.withShadow(() => {
+			if (!topic || topic.includes("+") || topic.includes("#") || topic.includes("\0")) return;
+			const matches = this.config.devices.filter(candidate =>
+				candidate.enabled && mqttPattern.matches(this.resolveSubscriptionTopic(candidate), topic));
+			if (matches.length !== 1 || matches[0] !== device ||
+				this.subscriptions.get(this.resolveSubscriptionTopic(device)) !== device) return;
+			if (this.shadow!.activeFilters &&
+				this.shadow!.activeFilters.filter(filter => mqttPattern.matches(filter, topic)).length !== 1) return;
+			this.shadow!.registry.observe(binding, this, device, point, { protocol: "mqtt", topic, selector, origin });
+		});
+	}
+
+	private dropShadowPoints(points: DeviceDataPoint[]): void {
+		if (!this.shadow) return;
+		for (const point of points) this.withShadow(() => {
+			const ref = this.shadow!.registry.correlation(point);
+			if (ref.status === "ok") this.shadow!.registry.drop(ref.value);
+		});
 	}
 
 	// Broker connectivity drives the source status; LWT can still override per device.
@@ -297,6 +393,8 @@ export class MqttAdapter extends BaseProtocolAdapter {
 	 * Stop the MQTT adapter
 	 */
 	async stop(): Promise<void> {
+		this.shadowTransportReady = false;
+		this.invalidateShadowConfiguration();
 		if (!this.running) {
 			return;
 		}
@@ -350,6 +448,7 @@ export class MqttAdapter extends BaseProtocolAdapter {
 	 * subscribeAllConfiguredDevices() reads config.devices.
 	 */
 	async updateDevices(newDevices: MqttDevice[]): Promise<void> {
+		this.invalidateShadowConfiguration();
 		const oldTopics = new Set(this.subscriptions.keys());
 		const newEnabledDevices = newDevices.filter((d) => d.enabled);
 		const newTopics = new Set(newEnabledDevices.map((d) => this.resolveSubscriptionTopic(d)));
@@ -666,6 +765,7 @@ export class MqttAdapter extends BaseProtocolAdapter {
 
 	private enqueueData(points: DeviceDataPoint[], topic: string): void {
 		if (this.emitQueue.length >= MqttAdapter.MAX_QUEUE_DEPTH) {
+			this.dropShadowPoints(points);
 			this.droppedMessageCount++;
 			if (this.droppedMessageCount % 100 === 1) {
 				this.logger.warn("Dropping MQTT messages due to bounded queue limit", {
@@ -685,6 +785,18 @@ export class MqttAdapter extends BaseProtocolAdapter {
 		const enriched = resolvedDisplayName
 			? points.map((p) => ({ ...p, resolvedDisplayName }))
 			: points;
+		if (this.shadow && enriched !== points) {
+			for (let i = 0; i < points.length; i++) this.withShadow(() => {
+				const ref = this.shadow!.registry.correlation(points[i]);
+				if (ref.status !== "ok") return;
+				let transferred = false;
+				try {
+					transferred = this.shadow!.registry.transfer(points[i], enriched[i]).status === "ok";
+				} finally {
+					if (!transferred) this.shadow!.registry.drop(ref.value);
+				}
+			});
+		}
 
 		this.emitQueue.push(enriched);
 		void this.processEmitQueue();
@@ -704,14 +816,40 @@ export class MqttAdapter extends BaseProtocolAdapter {
 				}
 
 				const listeners = this.listeners("data");
+				const refs: ObservationRef[] = [];
+				if (this.shadow && listeners.length) {
+					for (const point of points) this.withShadow(() => {
+						const ref = this.shadow!.registry.correlation(point);
+						if (ref.status !== "ok") return;
+						refs.push(ref.value);
+						this.shadow!.registry.markDispatched(point);
+					});
+				}
+				let dispatched = listeners.length > 0;
 				for (const listener of listeners) {
 					try {
 						await Promise.resolve(listener(points));
 					} catch (error) {
+						dispatched = false;
 						const errorMessage =
 							error instanceof Error ? error.message : String(error);
 						this.logger.error(`MQTT data listener failed: ${errorMessage}`);
 					}
+				}
+				if (this.shadow) {
+					if (!listeners.length) this.dropShadowPoints(points);
+					for (const ref of refs) this.withShadow(() => {
+						let accepted = false;
+						try {
+							const decision = this.shadow!.registry.inspect(ref);
+							if (dispatched && this.shadowConfigurationValid && decision.status === "candidate-observed" &&
+								decision.phase === "adapter-dispatched") {
+								accepted = this.shadow!.observer.submit(ref).status === "ok";
+							}
+						} finally {
+							if (!accepted) this.shadow!.registry.drop(ref);
+						}
+					});
 				}
 
 				await new Promise<void>((resolve) => setImmediate(resolve));
@@ -721,11 +859,27 @@ export class MqttAdapter extends BaseProtocolAdapter {
 		}
 	}
 
-	private getFieldFast(payload: any, path: string[]): any {
+	private getFieldFast(payload: any, path: string[], traversal?: MqttTraversal): any {
 		let value = payload;
 		for (const segment of path) {
 			if (value == null) {
+				if (traversal) traversal.valid = false;
 				return undefined;
+			}
+			if (traversal?.valid) {
+				if (typeof value !== "object" || !Object.prototype.hasOwnProperty.call(value, segment) ||
+					traversal.tokens.length >= 32) {
+					traversal.valid = false;
+				} else if (Array.isArray(value)) {
+					const index = Number(segment);
+					if (!Number.isSafeInteger(index) || index < 0 || index > 4294967294 || String(index) !== segment) {
+						traversal.valid = false;
+					} else {
+						traversal.tokens.push({ kind: "index", index });
+					}
+				} else {
+					traversal.tokens.push({ kind: "key", key: segment });
+				}
 			}
 			value = value[segment];
 		}
@@ -1096,6 +1250,7 @@ export class MqttAdapter extends BaseProtocolAdapter {
 			this.trackMessageActivity(device.name);
 		}
 
+		const points: DeviceDataPoint[] = [];
 		try {
 			const parsed = parsePayload(payload);
 			const now = new Date().toISOString();
@@ -1105,7 +1260,6 @@ export class MqttAdapter extends BaseProtocolAdapter {
 					? this.resolveTimestamp(this.getFieldFast(parsed, timestampPath), now)
 					: now;
 			const resolvedDeviceId = this.resolveMessageDeviceId(device, parsed);
-			const points: DeviceDataPoint[] = [];
 
 			const compiledDeviceMetrics = this.compiledMetrics.get(device.name);
 			if (compiledDeviceMetrics && compiledDeviceMetrics.length > 0) {
@@ -1115,7 +1269,8 @@ export class MqttAdapter extends BaseProtocolAdapter {
 					!Array.isArray(parsed)
 				) {
 					for (const metricConfig of compiledDeviceMetrics) {
-						const rawValue = this.getFieldFast(parsed, metricConfig.path);
+						const traversal: MqttTraversal | undefined = this.shadow ? { tokens: [], valid: true } : undefined;
+						const rawValue = this.getFieldFast(parsed, metricConfig.path, traversal);
 
 						if (rawValue === undefined) {
 							this.logger.debug(`MQTT metric field not found in payload`, {
@@ -1142,6 +1297,12 @@ export class MqttAdapter extends BaseProtocolAdapter {
 									retain,
 								),
 							);
+							if (traversal?.valid) {
+								const selector: MqttSelector = traversal.tokens.length
+									? { kind: "path", tokens: traversal.tokens }
+									: { kind: "whole" };
+								this.captureShadow(device, points[points.length - 1], topic, selector, "configured");
+							}
 						} catch (fieldError) {
 							this.logger.warn(
 								`Failed to coerce MQTT metric field '${metricConfig.field}'`,
@@ -1196,6 +1357,8 @@ export class MqttAdapter extends BaseProtocolAdapter {
 								retain,
 							),
 						);
+						this.captureShadow(device, points[points.length - 1], topic,
+							{ kind: "path", tokens: [{ kind: "key", key }] }, "automatic");
 					} catch (fieldError) {
 						this.logger.warn(
 							`Failed to coerce MQTT auto metric field '${key}'`,
@@ -1220,8 +1383,10 @@ export class MqttAdapter extends BaseProtocolAdapter {
 				const singleRawPointName = this.rawPointNameFor(device, topic, singleMetric);
 				let singleType = device.dataType;
 				let singleSource: unknown = parsed;
+				let singleSelector: MqttSelector | undefined = { kind: "whole" };
 
 				if (isBinaryPayload(parsed)) {
+					singleSelector = undefined;
 					points.push(
 						this.buildMetricPoint(
 							device,
@@ -1250,6 +1415,7 @@ export class MqttAdapter extends BaseProtocolAdapter {
 						(parsedObj.value === null || typeof parsedObj.value !== "object")
 					) {
 						singleSource = parsedObj.value;
+						singleSelector = { kind: "path", tokens: [{ kind: "key", key: "value" }] };
 					} else {
 						const primitiveEntries = Object.entries(parsedObj).filter(
 							([, value]) =>
@@ -1275,6 +1441,8 @@ export class MqttAdapter extends BaseProtocolAdapter {
 										metricName,
 									),
 								);
+								this.captureShadow(device, points[points.length - 1], topic,
+									{ kind: "path", tokens: [{ kind: "key", key: metricName }] }, "fallback");
 							}
 
 							this.logger.debug(
@@ -1288,6 +1456,7 @@ export class MqttAdapter extends BaseProtocolAdapter {
 						} else {
 							singleSource = JSON.stringify(parsedObj);
 							singleType = "json";
+							singleSelector = undefined;
 						}
 					}
 				}
@@ -1309,6 +1478,7 @@ export class MqttAdapter extends BaseProtocolAdapter {
 							singleRawPointName,
 						),
 					);
+					if (singleSelector) this.captureShadow(device, points[points.length - 1], topic, singleSelector, "fallback");
 				}
 			}
 
@@ -1325,6 +1495,7 @@ export class MqttAdapter extends BaseProtocolAdapter {
 				);
 			}
 		} catch (err) {
+			this.dropShadowPoints(points);
 			const errorMessage = err instanceof Error ? err.message : String(err);
 			this.logger.error(
 				`Failed to parse MQTT message from topic ${topic}: ${errorMessage}`,

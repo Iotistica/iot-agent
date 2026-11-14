@@ -24,6 +24,7 @@ export async function browseHierarchicalReferences(session: ClientSession, nodeI
 export async function identifyDevices(
 	session: ClientSession,
 	config: OPCUADeviceIdentification,
+	options: { allowMissingIdentifiers?: boolean; onMissingIdentifier?: (nodeId: string, reason: string, identifierNodeId?: string) => void } = {},
 ): Promise<Map<string, IdentifiedDevice>> {
 	const parts = config.identifierPath.split('/').map(part => part.trim());
 	if (!config.rootNodeId || !config.scopeNodeId || !config.deviceTypeNodeId ||
@@ -48,6 +49,7 @@ export async function identifyDevices(
 			if (ref.nodeId.namespace === 0 && childId !== config.rootNodeId) continue;
 			if (!visited.has(childId)) queue.push(childId);
 			if (ref.typeDefinition?.toString() !== config.deviceTypeNodeId) continue;
+			if (childId === config.rootNodeId) foundRoot = true;
 
 			let current = childId;
 			let identifierRef: ReferenceDescription | undefined;
@@ -63,19 +65,33 @@ export async function identifyDevices(
 				current = identifierRef.nodeId.toString();
 			}
 			if (!identifierRef) {
+				if (options.allowMissingIdentifiers) {
+					options.onMissingIdentifier?.(childId, 'identifier path not found');
+					continue;
+				}
 				if (childId === config.rootNodeId) throw new Error(`Identifier path not found under selected device ${childId}`);
 				continue;
 			}
 			if (identifierRef.nodeClass !== NodeClass.Variable) throw new Error(`Identifier path under ${childId} is not a variable`);
-			const value = await session.read({ nodeId: current, attributeId: AttributeIds.Value });
+			let value;
+			try {
+				value = await session.read({ nodeId: current, attributeId: AttributeIds.Value });
+			} catch (error) {
+				if (!options.allowMissingIdentifiers) throw error;
+				options.onMissingIdentifier?.(childId, error instanceof Error ? error.message : String(error), current);
+				continue;
+			}
 			const raw = value.value?.value;
 			const identifier = typeof raw === 'string' ? raw.trim() : typeof raw === 'number' && Number.isFinite(raw) ? String(raw) : '';
-			if (!value.statusCode.isGood() || !identifier) throw new Error(`Identifier under ${childId} is not a readable, non-empty scalar`);
+			if (!value.statusCode.isGood() || !identifier) {
+				if (!options.allowMissingIdentifiers) throw new Error(`Identifier under ${childId} is not a readable, non-empty scalar`);
+				options.onMissingIdentifier?.(childId, 'identifier is not a readable, non-empty scalar', current);
+				continue;
+			}
 			const previous = owners.get(identifier);
 			if (previous && previous !== childId) throw new Error(`Duplicate device identifier "${identifier}" within the selected scope`);
 			owners.set(identifier, childId);
 			results.set(childId, { identifier, identifierNodeId: current, name: ref.displayName?.text || ref.browseName.name || childId });
-			if (childId === config.rootNodeId) foundRoot = true;
 		}
 	}
 	if (!foundRoot) throw new Error('The selected device root was not found in the configured scope with its original type');

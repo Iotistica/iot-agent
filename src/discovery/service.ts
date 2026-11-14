@@ -191,14 +191,15 @@ export class DiscoveryService extends EventEmitter {
 		const startTime = Date.now();
 
 		const allDiscovered: DiscoveredDevice[] = [];
-		// Protocols that actually reached plugin.discover() this run (as opposed to
-		// being requested but skipped — unavailable, unconfigured, or errored out).
-		// Pruning must only ever touch these — never a protocol that wasn't truly scanned.
-		const actuallyScannedProtocols = new Set<string>();
+		// Pruning operates on all endpoints of a protocol, not just the scan targets.
+		const pruneEligibleProtocols = new Set<string>();
+		const pruneIneligibleProtocols = new Set<string>();
 
 		for (const protocol of selectedProtocols) {
 			const plugin = this.plugins.get(protocol);
 			if (!plugin) {
+				pruneEligibleProtocols.delete(protocol);
+				pruneIneligibleProtocols.add(protocol);
 				this.logger?.warnSync(`Unknown protocol: ${protocol}`, {
 					component: LogComponents.discovery,
 					traceId
@@ -207,6 +208,8 @@ export class DiscoveryService extends EventEmitter {
 			}
 
 			if (!(await plugin.isAvailable())) {
+				pruneEligibleProtocols.delete(protocol);
+				pruneIneligibleProtocols.add(protocol);
 				this.logger?.debugSync(`Plugin '${protocol}' not available on this platform`, {
 					component: LogComponents.discovery,
 					traceId
@@ -224,6 +227,8 @@ export class DiscoveryService extends EventEmitter {
 					: baseOptions;
 
 				if (pluginOptions === undefined) {
+					pruneEligibleProtocols.delete(protocol);
+					pruneIneligibleProtocols.add(protocol);
 					this.logger?.debugSync(`No configuration for ${protocol}, skipping discovery`, {
 						component: LogComponents.discovery,
 						protocol,
@@ -233,7 +238,19 @@ export class DiscoveryService extends EventEmitter {
 				}
 
 				const discovered = await plugin.discover(pluginOptions);
-				actuallyScannedProtocols.add(protocol);
+				const status = discovered.scanStatus;
+				if (status?.successful === true && status.complete === true && status.authoritative === true &&
+					!pruneIneligibleProtocols.has(protocol)) {
+					pruneEligibleProtocols.add(protocol);
+				} else {
+					pruneEligibleProtocols.delete(protocol);
+					pruneIneligibleProtocols.add(protocol);
+					if (options.prune) {
+						this.logger?.warnSync(`Discovery for ${protocol} is not verified as authoritative; excluding it from pruning`, {
+							component: LogComponents.discovery, traceId, protocol, scanStatus: status,
+						});
+					}
+				}
 
 				allDiscovered.push(...discovered);
 
@@ -311,7 +328,10 @@ export class DiscoveryService extends EventEmitter {
 									}
 								}
 							}
+
 						} catch (error) {
+							pruneEligibleProtocols.delete(protocol);
+							pruneIneligibleProtocols.add(protocol);
 							this.logger?.warnSync(`Validation failed for ${device.name}`, {
 								component: LogComponents.discovery,
 								traceId,
@@ -320,7 +340,20 @@ export class DiscoveryService extends EventEmitter {
 						}
 					}
 				}
+				// A known incomplete point result cannot authorize protocol-wide pruning,
+				// even when a plugin reports contradictory protocol-level status.
+				if (discovered.some(device => device.dataPointsComplete === false)) {
+					pruneEligibleProtocols.delete(protocol);
+					pruneIneligibleProtocols.add(protocol);
+					if (options.prune) {
+						this.logger?.warnSync(`Discovery for ${protocol} contains incomplete point results; excluding it from pruning`, {
+							component: LogComponents.discovery, traceId, protocol,
+						});
+					}
+				}
 			} catch (error) {
+				pruneEligibleProtocols.delete(protocol);
+				pruneIneligibleProtocols.add(protocol);
 				this.logger?.errorSync(
 					`Discovery failed for protocol ${protocol}`,
           error as Error,
@@ -346,7 +379,7 @@ export class DiscoveryService extends EventEmitter {
 			traceId,
 			options.skipDbWrites || false,
 			options.prune
-				? { protocols: Array.from(actuallyScannedProtocols), dryRun: options.pruneDryRun ?? false }
+				? { protocols: Array.from(pruneEligibleProtocols), dryRun: options.pruneDryRun ?? false }
 				: undefined,
 			options.autoEnableNew ?? false
 		);

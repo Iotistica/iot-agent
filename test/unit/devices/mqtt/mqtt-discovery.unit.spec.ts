@@ -478,6 +478,7 @@ describe('MqttDiscovery', () => {
       });
 
       expect(result).toEqual([]);
+      expect(result.scanStatus).toEqual({ successful: false, complete: false, authoritative: false });
       expect(mockLogger.warnSync).toHaveBeenCalledWith(
         expect.stringContaining('No topics provided'),
         expect.any(Object)
@@ -503,7 +504,8 @@ describe('MqttDiscovery', () => {
         fakeClient.emit('message', 'test/topic', Buffer.from('42'), { retain: false });
       }, 20);
 
-      await promise;
+      const result = await promise;
+      expect(result.scanStatus).toEqual({ successful: true, complete: false, authoritative: false });
 
       expect(mockFactory).toHaveBeenCalledWith(
         'mqtt://test:1883',
@@ -513,6 +515,18 @@ describe('MqttDiscovery', () => {
           reconnectPeriod: 0
         })
       );
+    });
+
+    it('reports an interrupted sampling window as unsuccessful', async () => {
+      const plugin = new MqttDiscovery(mockLogger, mockFactory);
+      setTimeout(() => fakeClient.emit('connect'), 10);
+      setTimeout(() => fakeClient.emit('close'), 20);
+      const result = await plugin.discover({
+        brokerUrl: 'mqtt://test:1883',
+        topics: ['test/topic'],
+        samplingDurationMs: 50,
+      });
+      expect(result.scanStatus).toEqual({ successful: false, complete: false, authoritative: false });
     });
 
     it('should pass authentication options to client', async () => {

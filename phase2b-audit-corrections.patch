@@ -1,0 +1,250 @@
+diff --git a/docs/phase2-point-identity-design.md b/docs/phase2-point-identity-design.md
+index 0668c75a9582e69ac5f208c31cce4c944d40a646..5613caa5e91dede04205683fdf999e812c571a96 100644
+--- a/docs/phase2-point-identity-design.md
++++ b/docs/phase2-point-identity-design.md
+@@ -418,16 +418,53 @@ evidence, not facts the resolver can establish by itself. Existing adapter
+ configuration generally does not contain all of that evidence; legacy MQTT
+ dot paths cannot be converted without disambiguation.
+ 
+-Modbus single-point resolution reports that projections were not compared.
+-Before using keys for a set of configurations, pass the **complete source
+-inventory** to `canonicalizeModbusAddresses` with `complete: true`. Every overlapping configured
+-range, including an apparently identical duplicate, is unresolved because
+-equal decoding does not prove equal logical identity. A malformed candidate
+-prevents the supplied inventory from being considered safe, and inventories
+-over 1024 entries are rejected; splitting an inventory would miss conflicts.
+-Decoder settings are not added to the address key. This conservative policy
+-does not establish equivalence between projections or preserve continuity
+-across reconfiguration.
++**Verified adapter compatibility and Phase 2C prerequisites:**
++
++- **OPC UA:** `collectOpcuaDeviceSnapshot` reads NamespaceArray at
++  `ns=0;i=2255` from a session and checks its status. A future caller must
++  obtain and validate the array from the *same trusted server and session*
++  that produced the NodeId, verify server identity, namespace zero and URI
++  uniqueness, and establish continuity across reconnects. Historical numeric
++  namespace indexes alone are insufficient. The resolver rejects library
++  ExpandedNodeId-style suffixes that are indistinguishable from local string
++  identifiers. It also rejects namespace-zero null NodeIds and OPC UA
++  String/ByteString identifiers outside the specification's control-character,
++  4096-character or 4096-byte limits, respectively. A string within the protocol limit
++  may still exceed the resolver's smaller overall UTF-8 key limit.
++- **MQTT:** `compileMetricPath` and `getFieldFast` use unescaped dot/bracket
++  paths and JavaScript property access. A numeric segment can mean an object
++  key or an array index depending on the payload. Phase 2C must obtain the
++  concrete published topic and a typed selector from the actual extraction
++  path and observed payload structure, not merely assert a selector from a
++  legacy name. Missing fields, payload-shape changes, wildcard expansion and
++  fallback value extraction require separate evidence.
++- **Modbus:** `inventory.complete: true` is a caller assertion, **not**
++  independently verified completeness. `AdapterManager.startModbusAdapter`
++  and `startModbusAdapterGroup` build effective configurations from endpoint
++  rows and `normalizeModbusRegisters`; the former can instead use explicit
++  application configuration. Phase 2C must identify the active configuration
++  source for the endpoint UUID, snapshot all configured points (including
++  disabled points) and relevant units/address spaces consistently, apply the
++  same normalization as that adapter path, and detect concurrent changes.
++  Discovery samples and a boolean alone are not authoritative. Individual
++  client reads use `[address, address + count)` wire addresses, including bits
++  in coils and discrete inputs; they do not convert 40001-style notation at
++  read time. Batch reads calculate their end from the last point rather than
++  the maximum end, so overlapping configurations can also truncate a batch.
++  Single-point resolution does not compare projections. In a complete
++  inventory, every overlapping range, including duplicates, is unresolved.
++  A malformed candidate invalidates the comparison and inventories over
++  1024 entries are rejected; splitting one would miss conflicts. Decoder
++  settings are not identity keys, and this policy does not prove continuity
++  across reconfiguration.
++- **BACnet:** The database adapter path filters nine object-type strings but
++  forwards truthy numeric property IDs without validating the seven-member
++  `BACnetProperty` schema enum. The installed bacstack encoder accepts IDs
++  through 4194303; the resolver accepts positive integral IDs in that range
++  without claiming that a particular server implements them. Explicit zero is
++  unresolved because the adapter substitutes present-value 85. Indexed
++  selectors are unsupported by the current adapter, and device-instance
++  uniqueness across the network remains caller-supplied evidence.
+ 
+ Neither resolver creates catalog rows. Before any future schema-version change
+ can create identities, old and new addresses must be reconciled with explicit
+diff --git a/src/points/canonical-address.ts b/src/points/canonical-address.ts
+index d986dc1b016b2536b05b75d4e6dc346153725163..160b59666da639fe62c7de0f4c4db772072ab444 100644
+--- a/src/points/canonical-address.ts
++++ b/src/points/canonical-address.ts
+@@ -100,7 +100,7 @@ const bacnetTypes: Readonly<Record<string, number>> = {
+ 	'multi-state-input': 13, 'multi-state-output': 14, 'multi-state-value': 19,
+ };
+ const bacnetTypeNumbers = new Set(Object.values(bacnetTypes));
+-const bacnetProperties = new Set([28, 77, 81, 85, 103, 111, 117]);
++const guidPattern = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
+ 
+ function record(value: unknown): value is RecordValue {
+ 	return typeof value === 'object' && value !== null && !Array.isArray(value);
+@@ -131,7 +131,8 @@ function opcua(input: RecordValue): CanonicalAddressResult {
+ 	if (typeof input.nodeId !== 'string') return unresolved(protocol, 'invalid-node-id');
+ 	if (Buffer.byteLength(input.nodeId, 'utf8') > MAX_CANONICAL_ADDRESS_BYTES) return unresolved(protocol, 'address-too-large');
+ 	if (/^(?:svr|nsu)=/.test(input.nodeId)) return unresolved(protocol, 'unsupported-expanded-node-id');
+-	const match = /^(?:ns=(\d+);)?([isgb])=([\s\S]*)$/.exec(input.nodeId);
++	const nodeId = guidPattern.test(input.nodeId) ? `g=${input.nodeId}` : input.nodeId;
++	const match = /^(?:ns=(\d+);)?([isgb])=([\s\S]*)$/.exec(nodeId);
+ 	if (!match) return unresolved(protocol, 'invalid-node-id');
+ 	const namespaceIndex = Number(match[1] ?? '0');
+ 	if (!integer(namespaceIndex, 0, 65535)) return unresolved(protocol, 'invalid-node-id');
+@@ -170,15 +171,29 @@ function opcua(input: RecordValue): CanonicalAddressResult {
+ 		}
+ 		case 's':
+ 			if (!validText(identifier, true)) return unresolved(protocol, 'invalid-node-id');
++			if (/;namespaceUri:|;serverIndex:\d+$/.test(identifier)) return unresolved(protocol, 'unsupported-expanded-node-id');
++			if ((namespaceIndex === 0 && identifier.length === 0) ||
++				Array.from(identifier).some((character) => {
++					const code = character.codePointAt(0);
++					return code !== undefined && (code <= 31 || (code >= 127 && code <= 159));
++				})) return unresolved(protocol, 'invalid-node-id');
++			if (Array.from(identifier).length > 4096) return unresolved(protocol, 'address-too-large');
+ 			value = identifier;
+ 			break;
+ 		case 'g':
+-			if (!/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(identifier)) return unresolved(protocol, 'invalid-node-id');
++			if (!guidPattern.test(identifier) ||
++				(namespaceIndex === 0 && identifier === '00000000-0000-0000-0000-000000000000')) return unresolved(protocol, 'invalid-node-id');
+ 			value = identifier.toLowerCase();
+ 			break;
+ 		case 'b': {
++			if (identifier === '') {
++				if (namespaceIndex === 0) return unresolved(protocol, 'invalid-node-id');
++				value = '';
++				break;
++			}
+ 			if (!/^[A-Za-z0-9+/]+={0,2}$/.test(identifier)) return unresolved(protocol, 'invalid-node-id');
+ 			const bytes = Buffer.from(identifier, 'base64');
++			if (bytes.length > 4096) return unresolved(protocol, 'address-too-large');
+ 			const encoded = bytes.toString('base64');
+ 			if (encoded.replace(/=+$/, '') !== identifier.replace(/=+$/, '') ||
+ 				(identifier.includes('=') && identifier !== encoded)) return unresolved(protocol, 'invalid-node-id');
+@@ -310,9 +325,9 @@ function bacnet(input: RecordValue): CanonicalAddressResult {
+ 	if (!integer(input.objectInstance, 0, 4194303)) return unresolved(protocol, 'invalid-object-instance');
+ 	const propertySource = Object.hasOwn(input, 'propertyId') ? 'configured' : 'default';
+ 	const propertyId = propertySource === 'default' ? 85 : input.propertyId;
+-	if (typeof propertyId !== 'number' || !bacnetProperties.has(propertyId)) return unresolved(protocol, 'invalid-property');
+-	if (Object.hasOwn(input, 'arraySelector') &&
+-		(!record(input.arraySelector) || input.arraySelector.kind !== 'whole' || Object.keys(input.arraySelector).length !== 1)) {
++	if (!integer(propertyId, 1, 4194303)) return unresolved(protocol, 'invalid-property');
++	if (Object.hasOwn(input, 'arrayIndex') || (Object.hasOwn(input, 'arraySelector') &&
++		(!record(input.arraySelector) || input.arraySelector.kind !== 'whole' || Object.keys(input.arraySelector).length !== 1))) {
+ 		return unresolved(protocol, 'unsupported-array-selector');
+ 	}
+ 	return resolved(protocol, [input.deviceInstance, objectType, input.objectInstance, propertyId, ['whole']], {
+diff --git a/test/unit/points/canonical-address.unit.spec.ts b/test/unit/points/canonical-address.unit.spec.ts
+index 5db20c523042650f99f187a5e9e809d8b83ebc94..d19ca66a7f6c9bcd80e88f52331517f041269206 100644
+--- a/test/unit/points/canonical-address.unit.spec.ts
++++ b/test/unit/points/canonical-address.unit.spec.ts
+@@ -4,6 +4,8 @@ import {
+ 	type BacnetAddressInput, type ModbusAddressInput, type MqttAddressInput, type OpcuaAddressInput,
+ } from '../../../src/points/canonical-address';
+ import { DatabaseSync } from 'node:sqlite';
++import { coerceNodeId, ExpandedNodeId, NodeId, NodeIdType } from 'node-opcua-nodeid';
++import { normalizeModbusRegisters } from '../../../src/plugins/modbus/types';
+ 
+ const namespaces = { verified: true as const, uris: ['http://opcfoundation.org/UA/', 'urn:other', 'urn:plant'] };
+ const opcua: OpcuaAddressInput = {
+@@ -89,7 +91,40 @@ describe('OPC UA', () => {
+ 		expect(key({ ...opcua, nodeId: 'ns=4;s=Temperature', namespaceArray: moved })).toBe(key(opcua));
+ 		expect(key({ ...opcua, nodeId: 'ns=2;s=temperature' })).not.toBe(key(opcua));
+ 		expect(key({ ...opcua, nodeId: 'ns=2;i=123' })).not.toBe(key({ ...opcua, nodeId: 'ns=2;s=123' }));
+-		expect(key({ ...opcua, nodeId: 'ns=2;s=A\0B' })).toBe('["urn:plant","s","A\\u0000B"]');
++	});
++
++	it('rejects ambiguous library ExpandedNodeId strings rather than conflating remote and local nodes', () => {
++		const remote = new ExpandedNodeId(NodeIdType.STRING, 'motor', 2, null, 1).toString();
++		const local = new NodeId(NodeIdType.STRING, 'motor;serverIndex:1', 2).toString();
++		expect(remote).toBe(local);
++		expectReason({ ...opcua, nodeId: remote }, 'unsupported-expanded-node-id');
++		expectReason({ ...opcua, nodeId: local }, 'unsupported-expanded-node-id');
++		expectReason({ ...opcua, nodeId: new ExpandedNodeId(NodeIdType.STRING, 'motor', 2, 'urn:remote', 0).toString() }, 'unsupported-expanded-node-id');
++		expect(key({ ...opcua, nodeId: 'ns=2;s=motor;section' })).toBe('["urn:plant","s","motor;section"]');
++	});
++
++	it('handles library GUID and empty opaque NodeId representations without accepting null NodeIds', () => {
++		const guid = 'ABCDEF12-1234-ABCD-9876-1234567890AB';
++		expect(coerceNodeId(guid).toString()).toBe(`ns=0;g=${guid}`);
++		expect(key({ ...opcua, nodeId: guid })).toBe(key({ ...opcua, nodeId: `ns=0;g=${guid}` }));
++		const empty = new NodeId(NodeIdType.BYTESTRING, Buffer.alloc(0), 2).toString();
++		expect(empty).toBe('ns=2;b=');
++		expect(key({ ...opcua, nodeId: empty })).toBe('["urn:plant","b",""]');
++		expect(key({ ...opcua, nodeId: 'ns=2;s=' })).toBe('["urn:plant","s",""]');
++		expect(key({ ...opcua, nodeId: 'ns=2;g=00000000-0000-0000-0000-000000000000' })).toBe('["urn:plant","g","00000000-0000-0000-0000-000000000000"]');
++		expectReason({ ...opcua, nodeId: 'ns=0;b=' }, 'invalid-node-id');
++		expectReason({ ...opcua, nodeId: 's=' }, 'invalid-node-id');
++		expectReason({ ...opcua, nodeId: 'g=00000000-0000-0000-0000-000000000000' }, 'invalid-node-id');
++	});
++
++	it('rejects forbidden NodeId control characters and oversized identifiers', () => {
++		expectReason({ ...opcua, nodeId: 'ns=2;s=A\0B' }, 'invalid-node-id');
++		expectReason({ ...opcua, nodeId: 'ns=2;s=A\u0085B' }, 'invalid-node-id');
++		expectReason({ ...opcua, nodeId: `ns=2;s=${'x'.repeat(4097)}` }, 'address-too-large');
++		expectReason({ ...opcua, nodeId: `ns=2;b=${Buffer.alloc(4097).toString('base64')}` }, 'address-too-large');
++		expect(key({ ...opcua, nodeId: `ns=2;s=${'x'.repeat(4096)}` })).toContain('x'.repeat(4096));
++		const opaque = Buffer.alloc(4096).toString('base64');
++		expect(key({ ...opcua, nodeId: `ns=2;b=${opaque}` })).toContain(opaque);
+ 	});
+ 
+ 	it.each([
+@@ -205,6 +240,29 @@ describe('Modbus', () => {
+ 		]);
+ 	});
+ 
++	it.each(['coil', 'discrete'] as const)('compares the full requested %s bit span', (type) => {
++		const first: ModbusAddressInput = { ...modbus, type, address: 20, projection: { dataType: 'boolean', count: 3 } };
++		const overlapping: ModbusAddressInput = { ...first, address: 22, projection: { dataType: 'boolean', count: 1 } };
++		const adjacent: ModbusAddressInput = { ...overlapping, address: 23 };
++		const results = canonicalizeModbusAddresses([first, overlapping, adjacent], { complete: true });
++		expect(results[0]).toMatchObject({ status: 'unresolved', reason: 'ambiguous-projection', details: { conflictingCandidateIndexes: [1] } });
++		expect(results[1]).toMatchObject({ status: 'unresolved', reason: 'ambiguous-projection', details: { conflictingCandidateIndexes: [0] } });
++		expect(results[2]).toMatchObject({ status: 'resolved' });
++	});
++
++	it.each(['int32', 'uint32', 'float32'] as const)('matches adapter normalization for %s register width', (dataType) => {
++		const [register] = normalizeModbusRegisters([{ address: 10, type: 'holding', dataType }]);
++		expect(register).toMatchObject({ address: 10, functionCode: 3, dataType, count: 2 });
++		const results = canonicalizeModbusAddresses([
++			{ ...modbus, functionCode: register.functionCode, projection: { dataType, count: register.count } },
++			{ ...modbus, address: 11 },
++			{ ...modbus, address: 12 },
++		], { complete: true });
++		expect(results[0]).toMatchObject({ status: 'unresolved', reason: 'ambiguous-projection' });
++		expect(results[1]).toMatchObject({ status: 'unresolved', reason: 'ambiguous-projection' });
++		expect(results[2]).toMatchObject({ status: 'resolved' });
++	});
++
+ 	it('rejects excessively large inventories rather than silently skipping comparisons', () => {
+ 		const results = canonicalizeModbusAddresses(Array.from({ length: 1025 }, () => modbus), { complete: true });
+ 		expect(results).toHaveLength(1025);
+@@ -230,6 +288,19 @@ describe('BACnet', () => {
+ 		expect(new Set([key(bacnet), ...alternatives.map(key)]).size).toBe(5);
+ 	});
+ 
++	it('supports numeric property identifiers actually encoded by the BACnet client', () => {
++		const readProperty = jest.requireActual<{
++			encode: (buffer: { buffer: Buffer; offset: number }, objectType: number, objectInstance: number, propertyId: number, arrayIndex: number) => void;
++			decode: (buffer: Buffer, offset: number, length: number) => { property: { id: number } };
++				}>('bacstack/lib/services/read-property');
++		for (const propertyId of [4, 512, 4194303]) {
++			const encoded = { buffer: Buffer.alloc(64), offset: 0 };
++			readProperty.encode(encoded, 0, 7, propertyId, 0xffffffff);
++			expect(readProperty.decode(encoded.buffer, 0, encoded.offset).property.id).toBe(propertyId);
++			expect(key({ ...bacnet, propertyId })).toBe(JSON.stringify([42, 0, 7, propertyId, ['whole']]));
++		}
++	});
++
+ 	it.each([
+ 		[{ ...bacnet, deviceInstance: -1 }, 'invalid-device-instance'],
+ 		[{ ...bacnet, deviceInstance: 4194304 }, 'invalid-device-instance'],
+@@ -239,6 +310,9 @@ describe('BACnet', () => {
+ 		[{ ...bacnet, objectInstance: 1.5 }, 'invalid-object-instance'],
+ 		[{ ...bacnet, propertyId: undefined }, 'invalid-property'],
+ 		[{ ...bacnet, propertyId: 0 }, 'invalid-property'],
++		[{ ...bacnet, propertyId: 4194304 }, 'invalid-property'],
++		[{ ...bacnet, propertyId: 4.5 }, 'invalid-property'],
+ 		[{ ...bacnet, arraySelector: { kind: 'index', index: 0 } }, 'unsupported-array-selector'],
++		[{ ...bacnet, arrayIndex: 0 }, 'unsupported-array-selector'],
+ 	])('rejects invalid scope or object information: %s', (input, reason) => expectReason(input, reason));
+ });

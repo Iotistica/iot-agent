@@ -22,7 +22,7 @@ import { lookup as dnsLookup } from 'dns/promises';
 import BACnet from 'bacstack';
 import { LogComponents } from '../../logging/types';
 import { BaseDiscovery } from '../base';
-import { type DiscoveredDevice, type ValidationResult } from '../types';
+import { withDiscoveryScanStatus, type DiscoveredDevice, type DiscoveryDeviceList, type ValidationResult } from '../types';
 
 import { pLimit } from '../../lib/p-limit.js';
 
@@ -484,8 +484,9 @@ export class BACnetDiscovery extends BaseDiscovery {
    *   - Sends Who-Is to broadcast address
    *   - May not work in Docker Desktop (use unicast instead)
    */
-	async discover(options?: BACnetDiscoveryOptions): Promise<DiscoveredDevice[]> {
+	async discover(options?: BACnetDiscoveryOptions): Promise<DiscoveryDeviceList> {
 		const discovered: DiscoveredDevice[] = [];
+		const status = { successful: true, complete: false, authoritative: false };
 
 		this.logger?.debugSync('Starting BACnet discovery', {
 			...this.logContext,
@@ -610,6 +611,7 @@ export class BACnetDiscovery extends BaseDiscovery {
 							});
 						}
 					} catch (err) {
+						status.successful = false;
 						this.logger?.errorSync('Failed to send Who-Is to target', err instanceof Error ? err : new Error(String(err)), {
 							...this.logContext,
 							target
@@ -642,6 +644,7 @@ export class BACnetDiscovery extends BaseDiscovery {
 						broadcast: broadcastAddress
 					});
 				} catch (whoIsError) {
+					status.successful = false;
 					this.logger?.errorSync('Failed to send Who-Is broadcast', whoIsError instanceof Error ? whoIsError : new Error(String(whoIsError)), {
 						...this.logContext
 					});
@@ -760,6 +763,7 @@ export class BACnetDiscovery extends BaseDiscovery {
 			}
 
 		} catch (error) {
+			status.successful = false;
 			const err = error instanceof Error ? error : new Error(String(error));
 			this.logger?.errorSync('BACnet discovery failed', err, {
 				...this.logContext
@@ -771,7 +775,8 @@ export class BACnetDiscovery extends BaseDiscovery {
 			deviceCount: discovered.length
 		});
 
-		return discovered;
+		// Timed UDP discovery cannot prove that every device responded.
+		return withDiscoveryScanStatus(discovered, status);
 	}
 
 	/**

@@ -15,7 +15,6 @@ module.exports = {
   moduleNameMapper: {
     '^(\\.{1,2}/.*)\\.js$': '$1',
     '^node-opcua-client$': '<rootDir>/__mocks__/node-opcua-client.js',
-    '^uuid$': '<rootDir>/__mocks__/uuid.js',
   },
   transformIgnorePatterns: [
     'node_modules/(?!uuid)'

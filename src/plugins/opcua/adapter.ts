@@ -67,6 +67,7 @@ import {
 	BrowsePath,
 	type BrowsePathResult,
 	ClientMonitoredItemGroup,
+	coerceNodeId,
 } from 'node-opcua-client';
 import { BaseProtocolAdapter, type GenericDeviceConfig } from '../base.js';
 import { type DeviceDataPoint, type Logger, type IProtocolAdapter as _IProtocolAdapter } from '../types.js';
@@ -79,6 +80,15 @@ import { OPCUADeviceClient, type OPCUASession } from './client.js';
 import { OpcuaStartupDiagnostics } from './diagnostics.js';
 import { looksLikeEngineeringUnit, normalizeForUnitNameCompare } from './discovery.js';
 import { resolveDeviceDisplayNames } from './device-display.js';
+import type { PrivateEvidenceRegistry } from '../../points/private-evidence-registry.js';
+import type { PrivateShadowObserver } from '../../points/private-shadow-observer.js';
+import type { ObservationRef, SourceBindingRef } from '../../points/private-evidence-types.js';
+
+export interface OpcuaShadowOptions {
+	registry: PrivateEvidenceRegistry;
+	observer: PrivateShadowObserver;
+	sources: readonly { configuration: OPCUADeviceConfig; endpointUuid: string }[];
+}
 
 /**
  * Resolves a candidate unit from a node's raw Description-attribute text,
@@ -139,6 +149,7 @@ interface OPCUAConnectionGroup {
 	client: OPCUADeviceClient;
 	session: OPCUASession;
 	tornDown: boolean;
+	ambiguousNodeIds: Set<string>;
 }
 
 /**
@@ -150,6 +161,9 @@ interface OPCUAConnectionGroup {
 export class OPCUAAdapter extends BaseProtocolAdapter  {
 	private clients: Map<string, OPCUADeviceClient> = new Map();
 	private sessions: Map<string, OPCUASession> = new Map();
+	private readonly shadowBindings = new WeakMap<OPCUADeviceConfig, SourceBindingRef>();
+	private readonly shadow?: OpcuaShadowOptions;
+	private shadowErrorReported = false;
 
 	// Guards against two independent reconnect paths (this adapter's own
 	// scheduleReconnect/attemptReconnect, and BaseProtocolAdapter's poll-failure
@@ -347,9 +361,93 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
    * @param devices - Array of OPC-UA device configurations
    * @param logger - Logger instance (optional, defaults to ConsoleLogger)
    */
-	constructor(devices: OPCUADeviceConfig[], logger?: Logger) {
+	constructor(devices: OPCUADeviceConfig[], logger?: Logger, shadow?: OpcuaShadowOptions) {
 		super(devices as GenericDeviceConfig[], logger || new ConsoleLogger('debug'));
 		this.diagnostics = new OpcuaStartupDiagnostics(this.logger);
+		this.shadow = shadow;
+		if (shadow) {
+			for (const source of shadow.sources) {
+				if (!devices.includes(source.configuration) ||
+					shadow.sources.filter(item => item.configuration === source.configuration).length !== 1 ||
+					shadow.sources.filter(item => item.endpointUuid === source.endpointUuid).length !== 1) continue;
+				this.withShadow(() => {
+					const result = shadow.registry.register({
+						adapter: this, configuration: source.configuration, protocol: 'opcua',
+						claimedProtocol: 'opcua', claimedEndpointUuid: source.endpointUuid,
+					});
+					if (result.status === 'ok') this.shadowBindings.set(source.configuration, result.value.ref);
+				});
+			}
+		}
+	}
+
+	private withShadow(action: () => void): void {
+		try {
+			action();
+		} catch {
+			if (!this.shadowErrorReported) {
+				this.shadowErrorReported = true;
+				this.logger.warn('OPC UA shadow evidence failed; telemetry continues');
+			}
+		}
+	}
+
+	private captureShadow(device: OPCUADeviceConfig, point: DeviceDataPoint, nodeId: string): ObservationRef | undefined {
+		const binding = this.shadowBindings.get(device);
+		if (!this.shadow || !binding) return undefined;
+		let ref: ObservationRef | undefined;
+		this.withShadow(() => {
+			const result = this.shadow!.registry.observe(binding, this, device, point, { protocol: 'opcua', nodeId });
+			if (result.status === 'ok') ref = result.value;
+		});
+		return ref;
+	}
+
+	private invalidateShadowTransport(session: OPCUASession): void {
+		if (!this.shadow) return;
+		for (const config of this.devices.values()) {
+			const device = config as OPCUADeviceConfig;
+			const ref = this.shadowBindings.get(device);
+			if (ref && this.sessions.get(device.name) === session) {
+				this.withShadow(() => { this.shadow!.registry.replaceTransport(ref); });
+			}
+		}
+	}
+
+	override emit(event: string | symbol, ...args: any[]): boolean {
+		if (event !== 'data' || !this.shadow || !Array.isArray(args[0])) return super.emit(event, ...args);
+		const points: DeviceDataPoint[] = args[0];
+		const refs: ObservationRef[] = [];
+		for (const point of points) {
+			this.withShadow(() => {
+				const result = this.shadow!.registry.correlation(point);
+				if (result.status !== 'ok') return;
+				refs.push(result.value);
+				this.shadow!.registry.markDispatched(point);
+			});
+		}
+		let dispatched = false;
+		try {
+			const result = super.emit(event, ...args);
+			dispatched = true;
+			return result;
+		} finally {
+			for (const ref of refs) {
+				this.withShadow(() => {
+					let accepted = false;
+					try {
+						if (dispatched) {
+							const decision = this.shadow!.registry.inspect(ref);
+							if (decision.status === 'candidate-observed' && decision.phase === 'adapter-dispatched') {
+								accepted = this.shadow!.observer.submit(ref).status === 'ok';
+							}
+						}
+					} finally {
+						if (!accepted) this.shadow!.registry.drop(ref);
+					}
+				});
+			}
+		}
 	}
   
 	/**
@@ -733,7 +831,8 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 		deviceName: string,
 		device: OPCUADeviceConfig,
 		sessionWrapper: OPCUASession,
-		nodeIdToDevice: Map<string, OPCUADeviceConfig>
+		nodeIdToDevice: Map<string, OPCUADeviceConfig>,
+		ambiguousNodeIds: Set<string>
 	): Promise<void> {
 		if (!sessionWrapper.session) {
 			throw new Error(`No active session for device: ${deviceName}`);
@@ -904,6 +1003,14 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 					...(dp.writable && { writable: true }),
 				};
 
+				const operationNodeId = itemsToMonitor[index]?.nodeId;
+				if (this.shadow && typeof operationNodeId === 'string' && operationNodeId === dp.nodeId &&
+					!ambiguousNodeIds.has(operationNodeId) && _monitoredItem === group.monitoredItems[index] &&
+					sessionWrapper.session === session && !sessionWrapper.reconnecting &&
+					this.sessions.get(owningDeviceName) === sessionWrapper &&
+					owningDevice.dataPoints.includes(dp)) {
+					this.captureShadow(owningDevice, dataPoint, operationNodeId);
+				}
 				if (pendingDataPoints.length === 0) {
 					setImmediate(flushPendingDataPoints);
 				}
@@ -1173,7 +1280,34 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 	private async connectGroup(groupKey: string): Promise<OPCUASession> {
 		const members = this.getConfiguredGroupMembers(groupKey);
 		const { device: compositeDevice, nodeIdToDevice } = this.buildCompositeDevice(members);
-		const sessionWrapper = await this.doConnectDevice(compositeDevice, nodeIdToDevice);
+		const ambiguousNodeIds = new Set<string>();
+		if (this.shadow) {
+			const owners = new Map<string, { member: OPCUADeviceConfig; nodeIds: string[]; conflict: boolean }>();
+			let invalidNodeId = false;
+			for (const member of members) {
+				for (const point of member.dataPoints) {
+					try {
+						const key = coerceNodeId(point.nodeId).toString();
+						const owner = owners.get(key);
+						if (owner) {
+							owner.nodeIds.push(point.nodeId);
+							if (owner.member !== member) owner.conflict = true;
+						} else owners.set(key, { member, nodeIds: [point.nodeId], conflict: false });
+					} catch {
+						invalidNodeId = true;
+					}
+					for (const owner of owners.values()) {
+						if (owner.conflict) for (const nodeId of owner.nodeIds) ambiguousNodeIds.add(nodeId);
+					}
+				}
+			}
+			if (invalidNodeId) {
+				for (const member of members) {
+					for (const point of member.dataPoints) ambiguousNodeIds.add(point.nodeId);
+				}
+			}
+		}
+		const sessionWrapper = await this.doConnectDevice(compositeDevice, nodeIdToDevice, ambiguousNodeIds, members);
 		const client = this.clients.get(compositeDevice.name)!;
 
 		const group: OPCUAConnectionGroup = {
@@ -1184,6 +1318,7 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 			client,
 			session: sessionWrapper,
 			tornDown: false,
+			ambiguousNodeIds,
 		};
 		this.groups.set(groupKey, group);
 
@@ -1221,7 +1356,10 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 		}
 	}
 
-	private async doConnectDevice(device: OPCUADeviceConfig, nodeIdToDevice: Map<string, OPCUADeviceConfig>): Promise<OPCUASession> {
+	private async doConnectDevice(
+		device: OPCUADeviceConfig, nodeIdToDevice: Map<string, OPCUADeviceConfig>,
+		ambiguousNodeIds: Set<string>, members: OPCUADeviceConfig[],
+	): Promise<OPCUASession> {
 		// TEMPORARY diagnostics — see diagnostics.ts.
 		this.diagnostics.recordConnectAttempt(device.name, device.connection.endpointUrl, device.connection.useSubscription);
 
@@ -1258,6 +1396,17 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 			}
 
 			const session = sessionWrapper.session;
+			if (this.shadow) {
+				session.on('session_repaired', () => {
+					for (const member of members) {
+						const current = this.sessions.get(member.name);
+						const ref = this.shadowBindings.get(member);
+						if (ref && (!current || current === sessionWrapper)) {
+							this.withShadow(() => { this.shadow!.registry.invalidateBinding(ref); });
+						}
+					}
+				});
+			}
 
 			// TEMPORARY diagnostics — see diagnostics.ts.
 			this.diagnostics.recordSessionEstablished(device.name, session.sessionId?.toString() ?? null);
@@ -1430,7 +1579,7 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 			// Create subscription if enabled (real-time streaming)
 			if (device.connection.useSubscription && validDataPoints.length > 0) {
 				try {
-					await this.createSubscription(device.name, device, sessionWrapper, nodeIdToDevice);
+					await this.createSubscription(device.name, device, sessionWrapper, nodeIdToDevice, ambiguousNodeIds);
 					this.logger.debug(`Subscription mode enabled for ${device.name} - using real-time streaming`);
 				} catch (error) {
 					this.logger.error(`Failed to create subscription for ${device.name}: ${error}`);
@@ -1544,6 +1693,7 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 		if (sessionWrapper.reconnecting) {
 			return;
 		}
+		this.invalidateShadowTransport(sessionWrapper);
     
 		sessionWrapper.reconnecting = true;
 		sessionWrapper.consecutiveFailures = Math.min(
@@ -1720,6 +1870,11 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
    * @param deviceName - Name of device to disconnect
    */
 	protected async disconnectDevice(deviceName: string): Promise<void> {
+		const configured = this.devices.get(deviceName) as OPCUADeviceConfig | undefined;
+		const binding = configured && this.shadowBindings.get(configured);
+		if (binding && this.shadow) {
+			this.withShadow(() => { this.shadow!.registry.invalidateBinding(binding); });
+		}
 		const groupKey = this.deviceGroupKey.get(deviceName);
 		const group = groupKey ? this.groups.get(groupKey) : undefined;
 
@@ -1816,6 +1971,7 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 		if (!sessionWrapper?.session) {
 			throw new Error(`No active session for device: ${deviceName}`);
 		}
+		const operationSession = sessionWrapper.session;
 
 		// If subscription is active, data comes via events - skip polling
 		if (sessionWrapper.subscription && device.connection.useSubscription) {
@@ -1937,6 +2093,28 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 		// Mark poll success so endpoint health reports lastSeen/connected/quality correctly.
 		this.recordPollResult(deviceName, goodValueCount > 0, Date.now() - readStartedAt, goodValueCount);
 
+		const groupKey = this.deviceGroupKey.get(deviceName);
+		const group = groupKey ? this.groups.get(groupKey) : undefined;
+		if (this.shadow && group?.session === sessionWrapper && !sessionWrapper.reconnecting &&
+			sessionWrapper.session === operationSession && this.sessions.get(deviceName) === sessionWrapper &&
+			dataValues.length === nodesToRead.length && results.length === nodesToRead.length) {
+			const pending: ObservationRef[] = [];
+			for (let i = 0; i < results.length; i++) {
+				const nodeId = nodesToRead[i].nodeId;
+				if (typeof nodeId !== 'string' || nodeId !== validDataPoints[i].nodeId ||
+					group.ambiguousNodeIds.has(nodeId)) continue;
+				const ref = this.captureShadow(device, results[i], nodeId);
+				if (ref) pending.push(ref);
+			}
+			if (pending.length) setImmediate(() => {
+				for (const ref of pending) this.withShadow(() => {
+					const decision = this.shadow!.registry.inspect(ref);
+					if (decision.status === 'candidate-observed' && decision.phase === 'constructed') {
+						this.shadow!.registry.drop(ref);
+					}
+				});
+			});
+		}
 		return results;
 	}
 
@@ -1951,6 +2129,7 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
    * Override stop to clean up sessions
    */
 	public async stop(): Promise<void> {
+		if (this.shadow) this.withShadow(() => { this.shadow!.registry.disposeAdapter(this); });
 		await super.stop();
 		this.clients.clear();
 		this.sessions.clear();

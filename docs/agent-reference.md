@@ -1237,6 +1237,26 @@ This standalone version is a simplified extraction that:
 - **SQLite persistence** - Discovered devices saved to database
 - **Rate limiting** - Prevents excessive scanning (min 1 hour between scheduled scans)
 
+Rediscovery preserves existing devices and configured points when they are absent
+from a scan. Newly observed points are merged when their protocol addresses can
+be matched safely; ambiguous lists are left unchanged and logged. Rediscovery
+updates observed protocol metadata but preserves configured point settings.
+Optional endpoint pruning requires a successful, complete, explicitly
+authoritative scan covering all endpoints of the protocol. Built-in scans are
+targeted or sampled and do not currently establish that coverage, so they cannot
+prune endpoints. Existing placeholder devices are retained for compatibility.
+Remove obsolete points or endpoints explicitly rather than relying on
+rediscovery to remove them.
+
+`scanStatus` describes protocol-level success, completeness within the requested
+scope, and authority over all endpoints. Legacy `scanComplete` is retained for
+compatibility but does not authorize pruning. `dataPointsComplete` describes an
+individual endpoint's point inventory; a known incomplete inventory also blocks
+pruning. Rediscovery does not overwrite existing connection settings, including
+addresses, credentials, security, and subscription options. Update those settings
+explicitly on the source; discovery rule parameters configure the scan, not
+permission to overwrite a source.
+
 ### Two-Phase Discovery Architecture
 
 **Phase 1 - Fast Discovery** (ping only):

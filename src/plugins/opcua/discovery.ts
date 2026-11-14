@@ -10,7 +10,7 @@ import { createHash } from 'crypto';
 import { inspect } from 'util';
 import { LogComponents } from '../../logging/types';
 import { BaseDiscovery } from '../base';
-import { type DiscoveredDevice } from '../types';
+import { withDiscoveryScanStatus, type DiscoveredDevice, type DiscoveryDeviceList } from '../types';
 import type { ConfigManager } from '../../core/config.js';
 import { browseHierarchicalReferences, identifyDevices } from './device-identification.js';
 import { OPCUADeviceIdentificationSchema, type OPCUADeviceIdentification } from './device-identification-config.js';
@@ -373,7 +373,14 @@ export class OPCUADiscovery extends BaseDiscovery {
 
 		return this.withBrowseSession(request, async session => {
 			if (request.identifierValidation) {
-				await identifyDevices(session, request.identifierValidation);
+				await identifyDevices(session, request.identifierValidation, {
+					allowMissingIdentifiers: true,
+					onMissingIdentifier: (nodeId, reason) => {
+						this.logger?.warnSync('OPC UA device identifier unavailable', {
+							component: LogComponents.discovery, endpointUrl: request.endpointUrl, nodeId, reason,
+						});
+					},
+				});
 				return [];
 			}
 
@@ -467,8 +474,10 @@ export class OPCUADiscovery extends BaseDiscovery {
 	/**
    * Phase 1: Fast endpoint enumeration
    */
-	async discover(options?: OPCUADiscoveryOptions): Promise<DiscoveredDevice[]> {
-		const discovered: DiscoveredDevice[] = [];
+	async discover(options?: OPCUADiscoveryOptions): Promise<DiscoveryDeviceList> {
+		const status = { successful: true, complete: true, authoritative: false };
+		const discovered = withDiscoveryScanStatus([], status);
+		Object.defineProperty(discovered, 'scanComplete', { value: false, writable: true });
 
 		// Get discovery targets from endpoints (those with endpointUrl but no dataPoints)
 		let discoveryTargets = this.configManager?.getDiscoveryTargets?.('opcua') || [];
@@ -524,7 +533,9 @@ export class OPCUADiscovery extends BaseDiscovery {
 				component: LogComponents.discovery + "] [" + this.protocol as any,
 				protocol: this.protocol
 			});
-			return [];
+			status.successful = false;
+			status.complete = false;
+			return discovered;
 		}
 
 		this.logger?.debugSync(`Starting OPC-UA discovery (${discoveryTargets.length} targets)`, {
@@ -536,7 +547,14 @@ export class OPCUADiscovery extends BaseDiscovery {
 
 		for (const endpoint of discoveryTargets) {
 			const url = endpoint.connection?.endpointUrl;
-			if (!url) continue;
+			if (!url) {
+				status.successful = false;
+				status.complete = false;
+				this.logger?.warnSync('OPC UA discovery target has no endpoint URL', {
+					component: LogComponents.discovery,
+				});
+				continue;
+			}
 
 			let disconnectClient: (() => Promise<void>) | undefined;
 			try {
@@ -574,22 +592,35 @@ export class OPCUADiscovery extends BaseDiscovery {
 					})
 					: await client.createSession();
 				const dataPoints: Array<{ nodeId: string; name: string; browseName?: string; device_uuid?: string; device_name?: string; writable?: boolean; unit?: string }> = [];
+				let dataPointsComplete = true;
 				let subscriptionsSupported = false;
 
 				try {
 					const configuredIdentification = endpoint.connection?.deviceIdentification;
+					const unidentifiedDevices = new Set<string>();
+					const unreadableIdentifierNodeIds = new Set<string>();
 					const identifiedDevices = configuredIdentification
-						? await identifyDevices(session, OPCUADeviceIdentificationSchema.parse(configuredIdentification))
+						? await identifyDevices(session, OPCUADeviceIdentificationSchema.parse(configuredIdentification), {
+							allowMissingIdentifiers: true,
+							onMissingIdentifier: (nodeId, reason, identifierNodeId) => {
+								unidentifiedDevices.add(nodeId);
+								if (identifierNodeId) unreadableIdentifierNodeIds.add(identifierNodeId);
+								this.logger?.warnSync('OPC UA device identifier unavailable', {
+									component: LogComponents.discovery, endpointUrl: url, nodeId, reason,
+								});
+							},
+						})
 						: undefined;
 					const sourceUuid = endpoint.uuid ?? this.configManager?.getTargetConfig().endpoints?.find(
 						(candidate: any) => candidate.protocol === 'opcua' && candidate.connection?.endpointUrl === url,
 					)?.uuid;
-					if (identifiedDevices && !sourceUuid) {
+					if (identifiedDevices?.size && !sourceUuid) {
 						throw new Error('Configured device identification requires a stable source UUID');
 					}
 					const identifierNodeIds = new Set(
 						identifiedDevices ? [...identifiedDevices.values()].map(item => item.identifierNodeId) : [],
 					);
+					for (const nodeId of unreadableIdentifierNodeIds) identifierNodeIds.add(nodeId);
 					const visitedDevices = new Set<string>();
 					// Recursive tree browsing function
 					const browseRecursive = async (
@@ -602,6 +633,8 @@ export class OPCUADiscovery extends BaseDiscovery {
 					): Promise<void> => {
 						// Protection against infinite loops
 						if (depth > maxDepth) {
+							status.complete = false;
+							dataPointsComplete = false;
 							this.logger?.warnSync(`Max depth ${maxDepth} reached, stopping recursion`, {
 								component: LogComponents.discovery + "] [" + this.protocol as any,
 								path: pathSegments.join('/')
@@ -610,34 +643,55 @@ export class OPCUADiscovery extends BaseDiscovery {
 						}
 						
 						try {
-							const refs = identifiedDevices
-								? await browseHierarchicalReferences(session, nodeId)
-								: (await session.browse(nodeId)).references || [];
+							let refs;
+							if (identifiedDevices) {
+								refs = await browseHierarchicalReferences(session, nodeId);
+							} else {
+								let result = await session.browse(nodeId);
+								refs = [];
+								for (;;) {
+									if (!result.statusCode.isGood()) throw new Error(`Browse failed for ${nodeId}: ${result.statusCode.name}`);
+									refs.push(...(result.references || []));
+									if (!result.continuationPoint) break;
+									result = await session.browseNext(result.continuationPoint, false);
+								}
+							}
 
 							// Pre-scan: look for a DeviceUUID variable in this folder to stamp on siblings
 							const configuredDevice = identifiedDevices?.get(nodeId);
 							if (configuredDevice) visitedDevices.add(nodeId);
 							let folderDeviceUuid: string | undefined = configuredDevice
 								? toDeviceUuid(`${sourceUuid}\0${configuredDevice.identifier}`)
-								: inheritedDeviceUuid;
+								: unidentifiedDevices.has(nodeId) ? undefined : inheritedDeviceUuid;
 							// The folder that directly owns the DeviceUUID marker IS the device —
 							// its own browseName (last segment of pathSegments, e.g. "FCU-11A") is
 							// the human-friendly name the device actually reports, as opposed to
 							// the technical endpoint-name+uuid-suffix fallback device.model.ts
 							// otherwise has to construct.
-							let folderDeviceName: string | undefined = configuredDevice?.name ?? inheritedDeviceName;
+							let folderDeviceName: string | undefined = configuredDevice?.name ?? (unidentifiedDevices.has(nodeId) ? undefined : inheritedDeviceName);
 							for (const ref of identifiedDevices ? [] : refs) {
 								if (ref.browseName?.name === 'DeviceUUID') {
+									folderDeviceUuid = undefined;
+									folderDeviceName = undefined;
 									try {
 										const val = await session.read({
 											nodeId: ref.nodeId.toString(),
 											attributeId: 13 // Value attribute
 										});
-										if (val.value?.value && typeof val.value.value === 'string') {
+										if (val.statusCode.isGood() && typeof val.value?.value === 'string' && val.value.value.trim()) {
 											folderDeviceUuid = val.value.value;
 											folderDeviceName = pathSegments[pathSegments.length - 1] || folderDeviceName;
+										} else {
+											this.logger?.warnSync('OPC UA DeviceUUID is missing or unreadable', {
+												component: LogComponents.discovery, endpointUrl: url, nodeId: ref.nodeId.toString(),
+											});
 										}
-									} catch (_) { /* ignore read errors */ }
+									} catch (error) {
+										this.logger?.warnSync('Failed to read OPC UA DeviceUUID', {
+											component: LogComponents.discovery, endpointUrl: url, nodeId: ref.nodeId.toString(),
+											error: error instanceof Error ? error.message : String(error),
+										});
+									}
 									break;
 								}
 							}
@@ -685,7 +739,7 @@ export class OPCUADiscovery extends BaseDiscovery {
 								}
 
 								// Skip the DeviceUUID node itself — it's metadata, not a device reading
-								if ((!identifiedDevices && nodeName === 'DeviceUUID') || identifierNodeIds.has(childNodeId)) {
+								if (nodeName === 'DeviceUUID' || identifierNodeIds.has(childNodeId)) {
 									continue;
 								}
 								
@@ -704,6 +758,7 @@ export class OPCUADiscovery extends BaseDiscovery {
 										{ nodeId: childNodeId, attributeId: AttributeIds.Description },
 									]);
 
+									if (!nodeClass.statusCode.isGood()) throw new Error(`NodeClass read failed: ${nodeClass.statusCode.name}`);
 									const actualNodeClass = nodeClass.value.value;
 
 									if (actualNodeClass === 2) {
@@ -761,8 +816,10 @@ export class OPCUADiscovery extends BaseDiscovery {
 									}
 								} catch (readError) {
 									if (identifiedDevices) throw readError;
+									status.complete = false;
+									dataPointsComplete = false;
 									// If we can't read NodeClass, skip this node
-									this.logger?.debugSync(`Skipping node (cannot read NodeClass): ${currentPath.join('/')}`, {
+									this.logger?.warnSync(`Skipping node (cannot read NodeClass): ${currentPath.join('/')}`, {
 										component: LogComponents.discovery + "] [" + this.protocol as any,
 										nodeId: childNodeId,
 										error: readError instanceof Error ? readError.message : String(readError)
@@ -771,7 +828,9 @@ export class OPCUADiscovery extends BaseDiscovery {
 							}
 						} catch (browseError) {
 							if (identifiedDevices) throw browseError;
-							this.logger?.debugSync(`Failed to browse node: ${pathSegments.join('/')}`, {
+							status.complete = false;
+							dataPointsComplete = false;
+							this.logger?.warnSync(`Failed to browse node: ${pathSegments.join('/')}`, {
 								component: LogComponents.discovery + "] [" + this.protocol as any,
 								error: browseError instanceof Error ? browseError.message : String(browseError),
 								depth
@@ -787,18 +846,13 @@ export class OPCUADiscovery extends BaseDiscovery {
 					}
 				} catch (browseError) {
 					if (endpoint.connection?.deviceIdentification) throw browseError;
-					this.logger?.warnSync('Failed to browse OPC UA tree recursively, using default node', {
+					status.complete = false;
+					dataPointsComplete = false;
+					this.logger?.warnSync('Failed to browse OPC UA tree recursively', {
 						component: LogComponents.discovery + "] [" + this.protocol as any,
 						error: browseError instanceof Error ? browseError.message : String(browseError)
 					});
 					
-					// Fallback to example node if browsing fails
-					if (dataPoints.length === 0) {
-						dataPoints.push({
-							nodeId: 'ns=2;s=MyVariable',
-							name: 'example_node'
-						});
-					}
 				} finally {
 					// Probe subscription support while the session is still open, before
 					// closing it — a server that doesn't implement the Subscribe service
@@ -871,10 +925,8 @@ export class OPCUADiscovery extends BaseDiscovery {
 							...(endpoint.connection?.deviceIdentification && { deviceIdentification: endpoint.connection.deviceIdentification }),
 							...(certThumbprint ? { expectedServerThumbprint: certThumbprint } : {})
 						},
-						dataPoints: dataPoints.length > 0 ? dataPoints : [{
-							nodeId: 'ns=2;s=MyVariable',
-							name: 'example_node'
-						}],
+						dataPoints,
+						dataPointsComplete,
 						confidence: 'medium',
 						discoveredAt: new Date().toISOString(),
 						validated: false,
@@ -894,8 +946,16 @@ export class OPCUADiscovery extends BaseDiscovery {
 						endpoints: endpoints.length,
 						phase: 'discovery'
 					});
+				} else {
+					status.successful = false;
+					status.complete = false;
+					this.logger?.warnSync('OPC UA server returned no endpoints', {
+						component: LogComponents.discovery, endpointUrl: url,
+					});
 				}
 			} catch (error) {
+				status.successful = false;
+				status.complete = false;
 				this.logger?.warnSync(`OPC-UA discovery failed at ${url}`, {
 					component: LogComponents.discovery + "] [" + this.protocol as any,
 					error: error instanceof Error ? error.message : String(error),
@@ -914,6 +974,8 @@ export class OPCUADiscovery extends BaseDiscovery {
 			}
 		}
 
+		// Targets are a configured subset, not an inventory of every OPC UA endpoint.
+		discovered.scanComplete = status.complete;
 		return discovered;
 	}
 	/**
