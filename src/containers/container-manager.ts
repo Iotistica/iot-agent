@@ -22,7 +22,6 @@
 
 import type { ImageUpdateStatus } from './image-update';
 import { EventEmitter } from 'events';
-import crypto from 'crypto';
 import type Docker from 'dockerode';
 import { DockerManager } from './docker-manager';
 import { RetryManager } from './retry-manager';
@@ -30,7 +29,6 @@ import type { ServiceSecurityConfig, SecurityPolicySummary } from './container-s
 import { HealthCheckManager } from './health-check';
 import { type ContainerHealthProbe as HealthProbe } from './types';
 import { cloneDeep, uniq } from '../lib/collection-utils';
-import { StateSnapshotModel } from '../db/models';
 import type { ContainerLogMonitor } from '../logging/container-monitor';
 import type { AgentLogger } from '../logging/agent-logger';
 import { LogComponents } from '../logging/types';
@@ -298,8 +296,6 @@ export class ContainerManager extends EventEmitter {
 	private reconciliationInterval?: NodeJS.Timeout;
 	private isReconciliationEnabled = false;
 	private logMonitor?: ContainerLogMonitor;
-	private lastSavedCurrentStateHash: string = '';
-	private lastSavedTargetStateHash: string = '';
 	private logger?: AgentLogger;
 	private devicePublish?: { reloadAllBindings(): Promise<void> };
 
@@ -367,11 +363,8 @@ export class ContainerManager extends EventEmitter {
 			component: LogComponents.containerManager,
 			operation: 'init'
 		});
-		
-		// Load target state from database
-		await this.loadTargetStateFromDB();
-		
-		// Sync current state from Docker
+
+		// Sync current state from Docker (target is seeded by StateManager before init)
 		await this.syncCurrentStateFromDocker();
 		
 		this.logger?.infoSync('ContainerManager initialized', {
@@ -381,115 +374,22 @@ export class ContainerManager extends EventEmitter {
 	}
 
 	/**
-	* Generate SHA-256 hash of state for efficient comparison
+	* Load target state without triggering reconciliation or DB writes.
+	* Called by StateManager during init to seed the apps target from the unified 'target' snapshot.
 	*/
-	private getStateHash(state: DeviceState): string {
-		const stateJson = JSON.stringify(state);
-		return crypto.createHash('sha256').update(stateJson).digest('hex');
+	public loadTarget(target: DeviceState): void {
+		this.targetState = cloneDeep(target);
+		this.sanitizeState(this.targetState);
+		this.emit('target-state-changed', this.targetState);
 	}
 
 	/**
-	* Load target state from database
+	* Load current state baseline without triggering reconciliation or DB writes.
+	* Called by StateManager during init to seed from the unified 'current' snapshot.
+	* Docker sync in init() overwrites this with live data.
 	*/
-	private async loadTargetStateFromDB(): Promise<void> {
-		try {
-			const snapshot = StateSnapshotModel.getLatest('apps-target');
-
-			if (snapshot) {
-				this.targetState = JSON.parse(snapshot.state);
-			
-				// Ensure config field exists (for backward compatibility with old snapshots)
-				if (!this.targetState.config) {
-					this.targetState.config = {};
-				}
-			
-				// Load the hash for future comparisons
-				if (snapshot.stateHash) {
-					this.lastSavedTargetStateHash = snapshot.stateHash;
-				}
-			
-				// Sanitize loaded state to ensure ports are strings
-				this.sanitizeState(this.targetState);				this.logger?.infoSync('Loaded target state from database', {
-					component: LogComponents.containerManager,
-					operation: 'loadTargetState',
-					appsCount: Object.keys(this.targetState.apps).length
-				});
-				this.emit('target-state-changed', this.targetState);
-			}
-		} catch (error) {
-			this.logger?.errorSync(
-				'Failed to load target state from DB',
-				error instanceof Error ? error : new Error(String(error)),
-				{
-					component: LogComponents.containerManager,
-					operation: 'loadTargetState'
-				}
-			);
-		}
-	}
-
-	/**
-	* Save target state to database (only if changed)
-	*/
-	private async saveTargetStateToDB(): Promise<void> {
-		try {
-			const stateHash = this.getStateHash(this.targetState);
-			
-			// Skip if state hasn't changed (compare hashes)
-			if (stateHash === this.lastSavedTargetStateHash) {
-				this.logger?.debugSync('Skipping save - state unchanged', {
-					component: LogComponents.containerManager,
-					operation: 'saveTargetState'
-				});
-				return;
-			}
-			
-			this.logger?.debugSync('Saving target state to database', {
-				component: LogComponents.containerManager,
-				operation: 'saveTargetState'
-			});
-			this.lastSavedTargetStateHash = stateHash;
-		
-			const stateJson = JSON.stringify(this.targetState);
-	
-			// Delete old target snapshots and insert new (with hash)
-			StateSnapshotModel.replace('apps-target', stateJson, stateHash);
-			
-		} catch (error) {
-			this.logger?.errorSync(
-				'Failed to save target state to DB',
-				error instanceof Error ? error : new Error(String(error)),
-				{
-					component: LogComponents.containerManager,
-					operation: 'saveTargetState'
-				}
-			);
-		}
-	}
-
-	/**
-	* Save current state to database (only if changed)
-	*/
-	private async saveCurrentStateToDB(): Promise<void> {
-		try {
-			const stateHash = this.getStateHash(this.currentState);
-			
-			this.lastSavedCurrentStateHash = stateHash;
-			
-			const stateJson = JSON.stringify(this.currentState);
-			
-			// Delete old current snapshots and insert new (with hash)
-			StateSnapshotModel.replace('current', stateJson, stateHash);
-		} catch (error) {
-			this.logger?.errorSync(
-				'Failed to save current state to DB',
-				error instanceof Error ? error : new Error(String(error)),
-				{
-					component: LogComponents.containerManager,
-					operation: 'saveCurrentState'
-				}
-			);
-		}
+	public loadCurrentState(state: DeviceState): void {
+		this.currentState = cloneDeep(state);
 	}
 
 	// Typed event emitter methods
@@ -530,13 +430,10 @@ export class ContainerManager extends EventEmitter {
 		});
 		
 		this.targetState = cloneDeep(target);
-		
+
 		// Sanitize the target state to ensure correct data types
 		this.sanitizeState(this.targetState);
-		
-		// Persist to database
-		await this.saveTargetStateToDB();
-		
+
 		this.emit('target-state-changed', target);
 		
 		// Trigger immediate reconciliation if using real Docker
@@ -580,15 +477,12 @@ export class ContainerManager extends EventEmitter {
 	/**
 	* Sync current state from real Docker containers
 	*/
-	private async syncCurrentStateFromDocker(saveState = true): Promise<void> {
+	private async syncCurrentStateFromDocker(): Promise<void> {
 		try {
 			this.currentState = await syncStateFromDocker({
 				dockerManager: this.dockerManager,
 				logger: this.logger,
 			});
-
-			// Save the synced current state to database
-			if (saveState) await this.saveCurrentStateToDB();
 		} catch (error) {
 			this.logger?.errorSync(
 				'Failed to sync state from Docker',
@@ -610,11 +504,8 @@ export class ContainerManager extends EventEmitter {
 
 	/**
 	* Main function: Reconcile current state → target state
-	* @param options.saveState - Whether to save state to DB after reconciliation (default: true)
 	*/
-	public async applyTargetState(options: { saveState?: boolean } = {}): Promise<void> {
-		const { saveState = true } = options;
-		
+	public async applyTargetState(): Promise<void> {
 		if (this.isApplyingState) {
 			this.logger?.debugSync('Already applying state, skipping', {
 				component: LogComponents.containerManager,
@@ -627,7 +518,7 @@ export class ContainerManager extends EventEmitter {
 
 		try {
 			if (this.useRealDocker) {
-				await this.syncCurrentStateFromDocker(saveState);
+				await this.syncCurrentStateFromDocker();
 			}
 
 			// Step 1: Calculate what needs to change
@@ -715,11 +606,6 @@ export class ContainerManager extends EventEmitter {
 						}
 					})
 				});
-			}
-
-			// Save current state snapshot (includes error states)
-			if (saveState) {
-				await this.saveCurrentStateToDB();
 			}
 
 			// Ensure logs are attached to all running containers (including pre-existing ones)
@@ -1177,7 +1063,7 @@ export class ContainerManager extends EventEmitter {
 				logger: this.logger,
 				shouldRun: () => this.useRealDocker && !this.isApplyingState,
 				onTick: async () => {
-					await this.applyTargetState({ saveState: false });
+					await this.applyTargetState();
 				},
 			},
 			intervalMs,

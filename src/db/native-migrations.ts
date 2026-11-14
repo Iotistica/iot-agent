@@ -51,6 +51,7 @@ import { migration as seedAppMarketplace } from './migrations/20261106000000_see
 import { migration as addFirewallRuleAction } from './migrations/20261111000000_add_firewall_rule_action.js';
 import { migration as addDeviceResolutionEvidence } from './migrations/20261113000000_add_device_resolution_evidence.js';
 import { migration as addPointIdentity } from './migrations/20261114000000_add_point_identity.js';
+import { migration as unifyStateSnapshots } from './migrations/20261115000000_unify_state_snapshots.js';
 import type { NativeSqliteMigration } from './migration-types.js';
 
 export const nativeMigrations: NativeSqliteMigration[] = [
@@ -107,4 +108,5 @@ export const nativeMigrations: NativeSqliteMigration[] = [
 	addFirewallRuleAction,
 	addDeviceResolutionEvidence,
 	addPointIdentity,
+	unifyStateSnapshots,
 ];

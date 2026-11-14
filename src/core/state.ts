@@ -53,6 +53,7 @@ export class StateManager extends EventEmitter {
 	private agentUpdater?: any; // AgentUpdater instance for version reconciliation
 	private lastSavedStateHash: string = '';
 	private lastSavedCurrentStateHash: string = '';
+	private lastCurrentState: AgentState | null = null;
 	private logger?: AgentLogger;
 	private isReconciling = false;
 	private pendingReconcile = false;
@@ -127,10 +128,22 @@ export class StateManager extends EventEmitter {
 			operation: 'init',
 		});
 
-		// Load target state from database
+		// Load unified target and current state from database
 		await this.loadTargetStateFromDB();
+		await this.loadCurrentStateFromDB();
+
+		// Seed ContainerManager with target and current apps before its init.
+		// ContainerManager no longer reads from stateSnapshot directly.
+		if (Object.keys(this.targetState.apps).length > 0) {
+			this.containerManager.loadTarget({ apps: this.targetState.apps });
+		}
+		if (this.lastCurrentState?.apps && Object.keys(this.lastCurrentState.apps).length > 0) {
+			this.containerManager.loadCurrentState({ apps: this.lastCurrentState.apps });
+		}
 
 		// Initialize both managers
+		// ContainerManager.init() syncs live Docker state (overwrites current baseline)
+		// ConfigManager.init() loads 'config' checkpoint from DB + bootstrap MQTT auth
 		await this.containerManager.init();
 		await this.configManager.init();
 
@@ -139,7 +152,7 @@ export class StateManager extends EventEmitter {
 		// WITHOUT triggering reconciliation (which happens later)
 		if (this.targetState.config) {
 			this.configManager.loadTarget(this.targetState.config);
-			
+
 			this.logger?.infoSync('Loaded target config into ConfigManager', {
 				component: LogComponents.stateReconciler,
 				operation: 'init',
@@ -540,6 +553,40 @@ export class StateManager extends EventEmitter {
 				{
 					component: LogComponents.stateReconciler,
 					operation: 'loadTargetState',
+				}
+			);
+		}
+	}
+
+	/**
+	* Load current state from database (unified {apps, config}).
+	* Used during init to seed ContainerManager with a baseline before Docker sync.
+	*/
+	private async loadCurrentStateFromDB(): Promise<void> {
+		try {
+			const snapshot = StateSnapshotModel.getLatest('current');
+
+			if (snapshot) {
+				this.lastCurrentState = JSON.parse(snapshot.state);
+
+				if (snapshot.stateHash) {
+					this.lastSavedCurrentStateHash = snapshot.stateHash;
+				}
+
+				this.logger?.infoSync('Loaded current state from database', {
+					component: LogComponents.stateReconciler,
+					operation: 'loadCurrentState',
+					appsCount: Object.keys(this.lastCurrentState?.apps || {}).length,
+					hasConfig: !!this.lastCurrentState?.config,
+				});
+			}
+		} catch (error) {
+			this.logger?.errorSync(
+				'Failed to load current state from DB',
+				error instanceof Error ? error : new Error(String(error)),
+				{
+					component: LogComponents.stateReconciler,
+					operation: 'loadCurrentState',
 				}
 			);
 		}
