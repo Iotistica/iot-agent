@@ -3,10 +3,11 @@
  */
 
 import { EventEmitter } from "events";
+import * as mqttPattern from "mqtt-pattern";
 import { type AgentLogger } from "../logging/agent-logger.js";
 import { ModbusAdapter } from "./modbus/adapter.js";
 import { type ModbusAdapterConfig, normalizeModbusRegisters } from "./modbus/types.js";
-import { MqttAdapter, type MqttShadowOptions } from "./mqtt/adapter.js";
+import { MqttAdapter, type MqttReadingEvidence, type MqttShadowOptions } from "./mqtt/adapter.js";
 import { type MqttAdapterConfig } from "./mqtt/types.js";
 import { SocketServer } from "../core/socket-server.js";
 import {
@@ -24,6 +25,8 @@ import { DeviceModel } from "../db/models/device.model.js";
 import { getDatabase } from "../db/sqlite.js";
 import { encodeIfUuid } from "../mqtt/codec.js";
 import { createIdentities, resolveEndpoints } from "../points/configured-point-resolver.js";
+import { canonicalizeAddress } from "../points/canonical-address.js";
+import { resolveMqttConfiguredFields } from "../points/mqtt-configured-fields.js";
 
 // Type-only import.
 import type { OPCUAAdapterConfig } from "./opcua/types.js";
@@ -40,6 +43,16 @@ interface OpcuaIdentityState {
 	addressKeys: ReadonlyMap<string, string>;
 	retry?: ReturnType<typeof setTimeout>;
 }
+
+interface MqttIdentityState {
+	snapshot: string;
+	lookup: ReadonlyMap<string, string>;
+	filters: readonly string[];
+	ambiguityReported: boolean;
+	retryAfter: number;
+}
+
+type MqttSourceRows = ReturnType<ReturnType<ReturnType<typeof getDatabase>['prepare']>['all']>;
 
 function hasOpcuaReadingEvidence(adapter: IProtocolAdapter): adapter is IProtocolAdapter & Pick<OPCUAAdapter, "getReadingEvidence"> {
 	return "getReadingEvidence" in adapter && typeof adapter.getReadingEvidence === "function";
@@ -239,6 +252,8 @@ export class AdapterManager extends EventEmitter {
 	// this throttle a busy subscription can spend most of a second doing
 	// redundant writes of the same timestamp to the same row.
 	private lastSeenAtUpdated: Map<string, number> = new Map();
+	private readonly mqttIdentityStates = new WeakMap<MqttAdapter, Map<string, MqttIdentityState>>();
+	private readonly mqttIdentityPending = new WeakMap<MqttAdapter, Set<string>>();
 	private readonly LAST_SEEN_THROTTLE_MS = 5000;
 	private config: AdapterConfig;
 	private deviceUuid: string;
@@ -272,6 +287,7 @@ export class AdapterManager extends EventEmitter {
 		}
 
 		const opcuaStates = new Map<string, OpcuaIdentityState | undefined>();
+		const mqttSnapshot: { sources?: MqttSourceRows; value?: string } = {};
 		return dataPoints.map((point) => {
 			const resolved = resolveEnrichedDeviceName(
 				point.deviceName,
@@ -280,7 +296,7 @@ export class AdapterManager extends EventEmitter {
 				endpointUuidByName,
 			);
 			if (!resolved) {
-				if (point.protocol === "opcua" && point.pointUuid) {
+				if ((point.protocol === "opcua" || point.protocol === "mqtt") && point.pointUuid) {
 					const unverified = { ...point };
 					delete unverified.pointUuid;
 					return unverified;
@@ -301,7 +317,11 @@ export class AdapterManager extends EventEmitter {
 					const addressKey = state.addressKeys.get(reading.nodeId);
 					if (addressKey) pointUuid = state.lookup.get(addressKey);
 				}
-			} else if (resolved.endpoint_uuid) {
+			} else if (point.protocol === "mqtt" && adapter instanceof MqttAdapter) {
+				const reading = adapter.getReadingEvidence(point);
+				const endpointUuid = reading && endpointUuidByName.get(reading.deviceName);
+				if (reading && endpointUuid) pointUuid = this.mqttPointUuid(adapter, endpointUuid, reading, mqttSnapshot);
+			} else if (point.protocol !== "mqtt" && resolved.endpoint_uuid) {
 				pointUuid = this.lookupPointUuid(resolved.endpoint_uuid, point.metric);
 			}
 			const clone = {
@@ -312,7 +332,7 @@ export class AdapterManager extends EventEmitter {
 				device_uuid: resolved.device_uuid,
 				...(pointUuid && { pointUuid }),
 			};
-			if (point.protocol === "opcua" && !pointUuid) delete clone.pointUuid;
+			if ((point.protocol === "opcua" || point.protocol === "mqtt") && !pointUuid) delete clone.pointUuid;
 			if (shadow) {
 				const shadowProtocol = point.protocol === "mqtt" ? "MQTT" : "OPC UA";
 				let ref: object | undefined;
@@ -336,6 +356,123 @@ export class AdapterManager extends EventEmitter {
 			}
 			return clone;
 		});
+	}
+
+	private readMqttSources(): MqttSourceRows {
+		return getDatabase().prepare(`
+			SELECT uuid, name, connection, data_points FROM endpoints
+			WHERE protocol = 'mqtt' AND enabled = 1 ORDER BY uuid
+		`).all();
+	}
+
+	private mqttPointUuid(
+		adapter: MqttAdapter, endpointUuid: string, reading: MqttReadingEvidence,
+		batch: { sources?: MqttSourceRows; value?: string },
+	): string | undefined {
+		try {
+			const sources = batch.sources ??= this.readMqttSources();
+			const snapshot = batch.value ??= JSON.stringify(sources);
+			const states = this.mqttIdentityStates.get(adapter) ?? new Map<string, MqttIdentityState>();
+			this.mqttIdentityStates.set(adapter, states);
+			const state = states.get(endpointUuid);
+			if (state?.snapshot !== snapshot || state.retryAfter <= Date.now()) {
+				let pending = this.mqttIdentityPending.get(adapter);
+				if (!pending) {
+					pending = new Set();
+					this.mqttIdentityPending.set(adapter, pending);
+				}
+				if (!pending.has(endpointUuid)) {
+					pending.add(endpointUuid);
+					void this.resolveMqttPointIdentities(adapter, endpointUuid, reading, sources, snapshot)
+						.finally(() => pending.delete(endpointUuid));
+				}
+			}
+			if (state?.snapshot !== snapshot || !reading.isCurrent()) return undefined;
+			if (state.filters.filter(filter => mqttPattern.matches(filter, reading.topic)).length !== 1) {
+				if (!state.ambiguityReported) {
+					state.ambiguityReported = true;
+					this.logger.warn(`MQTT identity correlation disabled for overlapping sources: ${reading.deviceName}`);
+				}
+				return undefined;
+			}
+			const result = canonicalizeAddress({
+				protocol: 'mqtt', topic: reading.topic, selector: reading.selector, selectorSource: 'observed',
+			});
+			return result.status === 'resolved' ? state.lookup.get(result.addressKey) : undefined;
+		} catch (error) {
+			this.logger.warn(`MQTT identity lookup failed for ${reading.deviceName}: ${error instanceof Error ? error.message : String(error)}`);
+			return undefined;
+		}
+	}
+
+	private async resolveMqttPointIdentities(
+		adapter: MqttAdapter, endpointUuid: string, reading: MqttReadingEvidence,
+		sources: MqttSourceRows, snapshot: string,
+	): Promise<void> {
+		const states = this.mqttIdentityStates.get(adapter);
+		if (!states) return;
+		const failed = () => states.set(endpointUuid, {
+			snapshot, lookup: new Map(), filters: [], ambiguityReported: false, retryAfter: Date.now() + 5000,
+		});
+		try {
+			const source = sources.filter(row => row.uuid === endpointUuid && row.name === reading.deviceName);
+			if (source.length !== 1 || typeof source[0].connection !== 'string') {
+				throw new Error('source is missing or ambiguous');
+			}
+			const connections = sources.map(row => {
+				if (typeof row.connection !== 'string') throw new Error('invalid source connection');
+				const connection: unknown = JSON.parse(row.connection);
+				if (typeof connection !== 'object' || connection === null || Array.isArray(connection)) {
+					throw new Error('invalid source connection');
+				}
+				const value = connection as Record<string, unknown>;
+				const base = value.baseTopic || value.topic;
+				if (typeof base !== 'string' || !base) throw new Error('source subscription cannot be verified');
+				return { row, connection: value, filter: `${base}/#` };
+			});
+			const target = connections.find(item => item.row === source[0]);
+			if (target?.filter !== reading.subscriptionTopic ||
+				connections.filter(item => mqttPattern.matches(item.filter, reading.topic)).length !== 1) {
+				throw new Error('source subscription is stale or ambiguous');
+			}
+			const fields = resolveMqttConfiguredFields(target.connection);
+			if (fields.status === 'invalid') throw new Error(fields.reason);
+			if (fields.fields.some(field => field.provenance.protocol !== 'mqtt' ||
+				!mqttPattern.matches(target.filter, field.provenance.topic))) {
+				throw new Error('admitted field is outside the source subscription');
+			}
+			const endpoint = await EndpointModel.getByUuid(endpointUuid);
+			if (endpoint?.name !== reading.deviceName || endpoint.protocol !== 'mqtt') {
+				throw new Error('source configuration changed');
+			}
+			const isCurrent = () => reading.isCurrent() && JSON.stringify(this.readMqttSources()) === snapshot;
+			if (!isCurrent()) return;
+			const result = resolveEndpoints([endpoint]);
+			result.endpoints[0].points.push(...fields.fields.map(field => ({ pointName: field.addressKey, result: field })));
+			const identities = await createIdentities(getDatabase(), result, undefined, isCurrent);
+			if (!isCurrent()) return;
+			const lookup = new Map<string, string>();
+			const failures = new Map<string, number>();
+			let retryable = false;
+			for (const identity of identities.identities) {
+				if (identity.catalogResult.status === 'resolved') lookup.set(identity.addressKey, identity.catalogResult.value.pointUuid);
+				else {
+					const { reason } = identity.catalogResult;
+					failures.set(reason, (failures.get(reason) ?? 0) + 1);
+					if (identity.catalogResult.retryable || reason === 'foreign-keys-disabled' || reason === 'read-only') retryable = true;
+				}
+			}
+			for (const [reason, count] of failures) {
+				this.logger.warn(`MQTT identity resolution failed for ${reading.deviceName}: ${reason} (${count} points)`);
+			}
+			states.set(endpointUuid, {
+				snapshot, lookup, filters: connections.map(item => item.filter), ambiguityReported: false,
+				retryAfter: retryable ? Date.now() + 5000 : Infinity,
+			});
+		} catch (error) {
+			failed();
+			this.logger.warn(`MQTT identity resolution failed for ${reading.deviceName}: ${error instanceof Error ? error.message : String(error)}`);
+		}
 	}
 
 	/** Build a device-name to endpoint-UUID map. */

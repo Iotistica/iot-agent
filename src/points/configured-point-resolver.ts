@@ -232,9 +232,16 @@ export async function createIdentities(
 		if (!ep.endpointUuid) continue;
 		const protocol = ep.protocol as AddressProtocol;
 		const ambiguousKeys = findAmbiguousKeys(ep);
+		let mqttProcessed = 0;
 
 		for (const p of ep.points) {
 			if (p.result.status !== 'resolved') continue;
+			if (protocol === 'mqtt') {
+				if (mqttProcessed > 0 && mqttProcessed % 16 === 0) {
+					await new Promise<void>(resolve => setImmediate(resolve));
+				}
+				mqttProcessed++;
+			}
 			const addressKey = p.result.addressKey;
 
 			const evidence: VerifierEvidence = {

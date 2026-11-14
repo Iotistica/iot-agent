@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
 import { transact } from '../db/sqlite.js';
-import { CANONICAL_ADDRESS_VERSION, MAX_CANONICAL_ADDRESS_BYTES, type AddressProtocol } from './canonical-address.js';
+import { canonicalizeAddress, CANONICAL_ADDRESS_VERSION, MAX_CANONICAL_ADDRESS_BYTES, type AddressProtocol } from './canonical-address.js';
+import { MAX_MQTT_FIELD_IDENTITIES } from './mqtt-configured-fields.js';
 
 export interface PointScope {
 	endpointUuid: string;
@@ -29,7 +30,8 @@ export type CatalogReason =
 	| 'invalid-input' | 'evidence-missing' | 'stale-configuration'
 	| 'identity-ambiguous' | 'address-conflict' | 'alias-conflict'
 	| 'association-conflict' | 'version-unreconciled'
-	| 'foreign-keys-disabled' | 'read-only' | 'transaction-active' | 'reentrant-operation' | 'busy';
+	| 'foreign-keys-disabled' | 'read-only' | 'transaction-active' | 'reentrant-operation' | 'busy'
+	| 'field-capacity-exceeded';
 
 export type CatalogResult<T> =
 	| { status: 'resolved'; value: T }
@@ -109,6 +111,32 @@ function identity(row: IdentityRow): PointIdentityRecord {
 		protocol: row.protocol,
 		deviceUuid: row.device_uuid,
 	};
+}
+
+function storedMqttSelector(key: string): 'whole' | 'path' | undefined {
+	let parts: unknown;
+	try {
+		parts = JSON.parse(key);
+	} catch {
+		return undefined;
+	}
+	if (!Array.isArray(parts) || parts.length !== 2 || !Array.isArray(parts[1])) return undefined;
+	const selector = parts[1];
+	let input: unknown;
+	if (selector.length === 1 && selector[0] === 'whole') {
+		input = { kind: 'whole' };
+	} else if (selector.length === 2 && selector[0] === 'path' && Array.isArray(selector[1])) {
+		const tokens: unknown[] = [];
+		for (const token of selector[1]) {
+			if (!Array.isArray(token) || token.length !== 2) return undefined;
+			if (token[0] === 'key') tokens.push({ kind: 'key', key: token[1] });
+			else if (token[0] === 'index') tokens.push({ kind: 'index', index: token[1] });
+			else return undefined;
+		}
+		input = { kind: 'path', tokens };
+	} else return undefined;
+	const result = canonicalizeAddress({ protocol: 'mqtt', topic: parts[0], selector: input, selectorSource: 'configured' });
+	return result.status === 'resolved' && result.addressKey === key ? selector[0] : undefined;
 }
 
 /**
@@ -237,6 +265,21 @@ export class PointIdentityCatalog {
 		return this.write(address, { operation: 'create', address, evidence }, () => {
 			const owner = this.addressOwner(address);
 			if (owner) return sameScope(owner, address) ? resolved(owner) : unresolved('identity-ambiguous');
+			if (address.protocol === 'mqtt') {
+				const kind = storedMqttSelector(address.key);
+				if (kind === 'path') {
+					const rows = this.db.prepare(`
+						SELECT address_key FROM point_identity_address WHERE endpoint_uuid = ? AND protocol = 'mqtt'
+					`).all(address.endpointUuid) as Array<{ address_key: string }>;
+					let count = 0;
+					for (const row of rows) {
+						const stored = storedMqttSelector(row.address_key);
+						if (!stored) return unresolved('invalid-input');
+						if (stored === 'path') count++;
+					}
+					if (count >= MAX_MQTT_FIELD_IDENTITIES) return unresolved('field-capacity-exceeded');
+				}
+			}
 			const otherVersion = this.db.prepare(`
 				SELECT 1 FROM point_identity_address WHERE endpoint_uuid = ? AND protocol = ? AND address_version != ? LIMIT 1
 			`).get(address.endpointUuid, address.protocol, address.version);

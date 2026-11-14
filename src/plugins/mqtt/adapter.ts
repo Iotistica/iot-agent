@@ -28,6 +28,14 @@ interface MqttTraversal {
 	valid: boolean;
 }
 
+export interface MqttReadingEvidence {
+	deviceName: string;
+	topic: string;
+	subscriptionTopic: string;
+	selector: MqttSelector;
+	isCurrent(): boolean;
+}
+
 // MQTT's own short-code canonical vocabulary (set by canonicalizeUnit()
 // below) translated to the shared catalog's canonical unit names
 // (src/units/unit-catalog-seed.ts), used only at the boundary where
@@ -91,6 +99,7 @@ export class MqttAdapter extends BaseProtocolAdapter {
 		Array<MqttMetricConfig & { path: string[] }>
 	>();
 	private compiledTimestampFields = new Map<string, string[]>();
+	private readonly compiledDeviceConfigurations = new Map<string, string>();
 	private lwtDeviceIdToName = new Map<string, string>();
 	private brokerStatusTopic: string | null = null;
 	private deviceUuid: string | null = null;
@@ -100,6 +109,9 @@ export class MqttAdapter extends BaseProtocolAdapter {
 	private shadowErrorReported = false;
 	private shadowTransportReady = false;
 	private shadowConfigurationValid = true;
+	private readonly readingEvidence = new WeakMap<DeviceDataPoint, MqttReadingEvidence>();
+	private identityAmbiguityReported = false;
+	private identityEvidenceErrorReported = false;
 	// Optional human-readable labels keyed by topic (resolve via subscriptions map at publish time)
 	private displayNamesByTopic = new Map<string, string>();
 
@@ -232,6 +244,7 @@ export class MqttAdapter extends BaseProtocolAdapter {
 					})),
 				);
 			}
+			this.rememberCompiledConfiguration(device);
 		}
 
 		this.initializeMqttDeviceStatuses();
@@ -248,6 +261,16 @@ export class MqttAdapter extends BaseProtocolAdapter {
 					if (result.status === "ok") this.shadowBindings.set(source.configuration, result.value.ref);
 				});
 			}
+		}
+	}
+
+	private rememberCompiledConfiguration(device: MqttDevice): void {
+		try {
+			this.compiledDeviceConfigurations.set(device.name, JSON.stringify(device));
+		} catch (error) {
+			this.logger.warn("MQTT identity configuration could not be recorded; telemetry continues", {
+				error: error instanceof Error ? error.message : String(error),
+			});
 		}
 	}
 
@@ -276,10 +299,38 @@ export class MqttAdapter extends BaseProtocolAdapter {
 		this.withShadow(() => { this.shadow!.registry.disposeAdapter(this); });
 	}
 
-	private captureShadow(
+	private captureReadingEvidence(
 		device: MqttDevice, point: DeviceDataPoint, topic: string, selector: MqttSelector,
 		origin: "configured" | "automatic" | "fallback",
 	): void {
+		const isCurrent = () => {
+			try {
+				if (!this.connected || !device.enabled) return false;
+				const matches = this.config.devices.filter(candidate =>
+					candidate.enabled && mqttPattern.matches(this.resolveSubscriptionTopic(candidate), topic));
+				if (matches.length > 1 && !this.identityAmbiguityReported) {
+					this.identityAmbiguityReported = true;
+					this.logger.warn("MQTT identity correlation disabled for overlapping source subscriptions", { topic });
+				}
+				const configuration = JSON.stringify(device);
+				return matches.length === 1 && JSON.stringify(matches[0]) === configuration &&
+					this.compiledDeviceConfigurations.get(device.name) === configuration &&
+					this.subscriptions.get(this.resolveSubscriptionTopic(device)) === device;
+			} catch (error) {
+				if (!this.identityEvidenceErrorReported) {
+					this.identityEvidenceErrorReported = true;
+					this.logger.warn("MQTT identity evidence failed; telemetry continues", {
+						error: error instanceof Error ? error.message : String(error),
+					});
+				}
+				return false;
+			}
+		};
+		if (topic && !/[+#\0]/.test(topic) && isCurrent()) {
+			this.readingEvidence.set(point, {
+				deviceName: device.name, topic, subscriptionTopic: this.resolveSubscriptionTopic(device), selector, isCurrent,
+			});
+		}
 		const binding = this.shadowBindings.get(device);
 		if (!this.shadow || !binding || !this.connected || !this.shadowTransportReady || !this.shadowConfigurationValid) return;
 		this.withShadow(() => {
@@ -292,6 +343,11 @@ export class MqttAdapter extends BaseProtocolAdapter {
 				this.shadow!.activeFilters.filter(filter => mqttPattern.matches(filter, topic)).length !== 1) return;
 			this.shadow!.registry.observe(binding, this, device, point, { protocol: "mqtt", topic, selector, origin });
 		});
+	}
+
+	public getReadingEvidence(point: DeviceDataPoint): MqttReadingEvidence | undefined {
+		const evidence = this.readingEvidence.get(point);
+		return evidence?.isCurrent() ? evidence : undefined;
 	}
 
 	private dropShadowPoints(points: DeviceDataPoint[]): void {
@@ -469,6 +525,7 @@ export class MqttAdapter extends BaseProtocolAdapter {
 			this.deviceStatuses.delete(device.name);
 			this.compiledMetrics.delete(device.name);
 			this.compiledTimestampFields.delete(device.name);
+			this.compiledDeviceConfigurations.delete(device.name);
 			this.displayNamesByTopic.delete(subTopic);
 
 			if (device.deviceId?.trim()) {
@@ -531,6 +588,7 @@ export class MqttAdapter extends BaseProtocolAdapter {
 					})),
 				);
 			}
+			this.rememberCompiledConfiguration(device);
 
 			if (this.client && this.connected) {
 				try {
@@ -785,6 +843,12 @@ export class MqttAdapter extends BaseProtocolAdapter {
 		const enriched = resolvedDisplayName
 			? points.map((p) => ({ ...p, resolvedDisplayName }))
 			: points;
+		if (enriched !== points) {
+			for (let i = 0; i < points.length; i++) {
+				const evidence = this.readingEvidence.get(points[i]);
+				if (evidence) this.readingEvidence.set(enriched[i], evidence);
+			}
+		}
 		if (this.shadow && enriched !== points) {
 			for (let i = 0; i < points.length; i++) this.withShadow(() => {
 				const ref = this.shadow!.registry.correlation(points[i]);
@@ -1269,7 +1333,7 @@ export class MqttAdapter extends BaseProtocolAdapter {
 					!Array.isArray(parsed)
 				) {
 					for (const metricConfig of compiledDeviceMetrics) {
-						const traversal: MqttTraversal | undefined = this.shadow ? { tokens: [], valid: true } : undefined;
+						const traversal: MqttTraversal = { tokens: [], valid: true };
 						const rawValue = this.getFieldFast(parsed, metricConfig.path, traversal);
 
 						if (rawValue === undefined) {
@@ -1301,7 +1365,7 @@ export class MqttAdapter extends BaseProtocolAdapter {
 								const selector: MqttSelector = traversal.tokens.length
 									? { kind: "path", tokens: traversal.tokens }
 									: { kind: "whole" };
-								this.captureShadow(device, points[points.length - 1], topic, selector, "configured");
+								this.captureReadingEvidence(device, points[points.length - 1], topic, selector, "configured");
 							}
 						} catch (fieldError) {
 							this.logger.warn(
@@ -1357,7 +1421,7 @@ export class MqttAdapter extends BaseProtocolAdapter {
 								retain,
 							),
 						);
-						this.captureShadow(device, points[points.length - 1], topic,
+						this.captureReadingEvidence(device, points[points.length - 1], topic,
 							{ kind: "path", tokens: [{ kind: "key", key }] }, "automatic");
 					} catch (fieldError) {
 						this.logger.warn(
@@ -1441,7 +1505,7 @@ export class MqttAdapter extends BaseProtocolAdapter {
 										metricName,
 									),
 								);
-								this.captureShadow(device, points[points.length - 1], topic,
+								this.captureReadingEvidence(device, points[points.length - 1], topic,
 									{ kind: "path", tokens: [{ kind: "key", key: metricName }] }, "fallback");
 							}
 
@@ -1459,6 +1523,7 @@ export class MqttAdapter extends BaseProtocolAdapter {
 							singleSelector = undefined;
 						}
 					}
+					if (Array.isArray(parsed)) singleSelector = undefined;
 				}
 
 				if (points.length === 0) {
@@ -1478,7 +1543,7 @@ export class MqttAdapter extends BaseProtocolAdapter {
 							singleRawPointName,
 						),
 					);
-					if (singleSelector) this.captureShadow(device, points[points.length - 1], topic, singleSelector, "fallback");
+					if (singleSelector) this.captureReadingEvidence(device, points[points.length - 1], topic, singleSelector, "fallback");
 				}
 			}
 

@@ -385,6 +385,51 @@ if (metrics.extended) {
 - **Graceful Degradation**: All extended metrics optional - returns `undefined` if unavailable
 - **Production Insights**: Go beyond basic metrics without sacrificing reliability
 
+## MQTT measurement identities
+
+Source Points continues to list configured MQTT topics; Data Points may contain
+multiple measurements extracted from each topic. Discovery's sampled fields do
+not approve identities. To approve fields explicitly, add
+`pointIdentityFields` to the MQTT source's `connection` using the existing
+endpoint configuration API. Preserve the other source configuration when
+replacing it. For example:
+
+```json
+{
+  "baseTopic": "factory/sim-002",
+  "pointIdentityFields": [
+    { "topic": "factory/sim-002/telemetry", "selector": { "kind": "path", "tokens": [{ "kind": "key", "key": "temperature" }] } },
+    { "topic": "factory/sim-002/telemetry", "selector": { "kind": "path", "tokens": [{ "kind": "key", "key": "pressure" }] } },
+    { "topic": "factory/sim-002/telemetry", "selector": { "kind": "path", "tokens": [{ "kind": "key", "key": "flow_rate" }] } }
+  ]
+}
+```
+
+Topics must be concrete and within the source subscription. Selectors use exact
+JSON keys and, for configured array metrics, `{ "kind": "index", "index": 0 }`
+tokens. A literal dotted key is one key token, not a nested path. The adapter
+only emits fields supported by its existing parsing configuration; approving a
+selector does not enable nested or array extraction.
+
+At most 1,000 field identities may be admitted per source over its lifetime;
+removing an approval does not delete its persisted identity or free capacity.
+Invalid or duplicate entries fail closed and are logged. Unapproved fields
+continue as telemetry without permanent UUIDs. Approved fields receive stable
+UUIDs after asynchronous resolution; initial readings can lack a UUID.
+Scalar payloads use the existing whole-topic identity when the concrete topic
+is configured. A JSON field never receives that identity. Wildcards require
+separate approvals for each concrete topic. Overlapping source subscriptions
+are treated as ambiguous and do not receive permanent identities.
+If a hot update changes parsing settings but the active subscription still uses
+the previous settings, identities are withheld until the adapter is rebuilt
+with the current settings. Grouped MQTT adapters do not currently pass
+configured nested or array metrics to the parser; approvals do not change that
+existing behavior.
+
+The existing live-grid, favorite, and dataset selection keys are still
+name-based and can merge same-named measurements; field UUIDs do not migrate
+those selections or change publishing.
+
 ## 🔐 MQTTS/TLS Setup
 
 Secure MQTT communication with TLS encryption using self-signed or commercial certificates.

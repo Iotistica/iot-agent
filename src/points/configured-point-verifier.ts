@@ -4,6 +4,7 @@ import {
 	type CanonicalAddressInput, type CanonicalAddressResult,
 } from './canonical-address.js';
 import type { CatalogEvidenceRequest, CatalogEvidenceVerifier } from './point-identity-catalog.js';
+import { resolveMqttConfiguredFields } from './mqtt-configured-fields.js';
 
 export interface VerifierEvidence {
 	resolverRef: object;
@@ -51,10 +52,21 @@ export class ConfiguredPointVerifier implements CatalogEvidenceVerifier {
 			if (address.endpointUuid !== evidence.endpointUuid) return false;
 			if (address.protocol !== evidence.protocol) return false;
 
-			const row = this.db.prepare('SELECT uuid, protocol FROM endpoints WHERE uuid = ? AND enabled = 1 LIMIT 1')
-				.get(evidence.endpointUuid) as { uuid: string; protocol: string } | undefined;
+			const row = this.db.prepare('SELECT uuid, protocol, connection FROM endpoints WHERE uuid = ? AND enabled = 1 LIMIT 1')
+				.get(evidence.endpointUuid) as { uuid: string; protocol: string; connection: string } | undefined;
 			if (!row) return false;
 			if (row.protocol !== evidence.protocol) return false;
+			if (evidence.canonicalInput.protocol === 'mqtt' && evidence.canonicalInput.selector.kind === 'path') {
+				let connection: unknown;
+				try {
+					connection = JSON.parse(row.connection);
+				} catch {
+					return false;
+				}
+				const fields = resolveMqttConfiguredFields(connection);
+				if (fields.status !== 'resolved' ||
+					!fields.fields.some(field => field.addressKey === address.key)) return false;
+			}
 		}
 
 		// 3. Canonical address validity: re-derive and confirm match
