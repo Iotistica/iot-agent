@@ -8,7 +8,7 @@ test('preserves device workflows under Sources and scopes devices to the source'
   const deleted: string[] = []
   const devices = [
     { uuid: 'device-1', endpoint_id: 1, name: 'Pump', protocol: 'modbus', enabled: true, identifier: '1', metadata: {}, assetPath: null, lastSeenAt: null, created_at: '' },
-    { uuid: 'device-2', endpoint_id: 2, name: 'Other device', protocol: 'modbus', enabled: true, identifier: '2', metadata: {}, assetPath: null, lastSeenAt: null, created_at: '' },
+    { uuid: 'device-2', endpoint_id: 2, name: 'Other device', protocol: 'opcua', enabled: true, identifier: '2', metadata: {}, assetPath: null, lastSeenAt: null, created_at: '' },
   ]
   await page.route('**/v1/**', async route => {
     const request = route.request()
@@ -35,6 +35,7 @@ test('preserves device workflows under Sources and scopes devices to the source'
   await expect(page.getByRole('tab', { name: 'Connected Devices' })).toHaveAttribute('aria-selected', 'true')
   await expect(page.locator('.ant-menu-item', { hasText: 'Devices' })).toHaveCount(0)
   await expect(page.getByTestId('device-name')).toHaveCount(2)
+  await expect(page.getByRole('tabpanel', { name: 'Connected Devices' }).locator('.ant-table-row', { hasText: 'OPC-UA' }).first()).toBeVisible()
 
   await page.getByRole('tab', { name: 'Sources', exact: true }).click()
   await page.getByTestId('source-edit').click()

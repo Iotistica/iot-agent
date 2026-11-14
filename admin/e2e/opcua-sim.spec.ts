@@ -55,10 +55,10 @@ test.describe('OPC-UA simulator integration', () => {
 
     await expect(page.getByText('opcua-sim')).toBeVisible({ timeout: 10_000 })
 
-    await page.locator('.ant-menu-item', { hasText: 'Devices' }).click()
-    await expect(page).toHaveURL(/\/devices/)
+    await page.getByRole('tab', { name: 'Connected Devices', exact: true }).click()
+    const devices = page.getByRole('tabpanel', { name: 'Connected Devices' })
 
-    await expect(page.locator('.ant-table-row').first()).toBeVisible({ timeout: 60_000 })
+    await expect(devices.locator('.ant-table-row', { hasText: 'OPC-UA' }).first()).toBeVisible({ timeout: 60_000 })
   })
 
   test('source shows connected status on Sources page', async ({ page, baseURL }) => {
@@ -81,12 +81,13 @@ test.describe('OPC-UA simulator integration', () => {
     await expect(dot).toHaveClass(/status-dot--pulse/)
   })
 
-  test('discovered device shows Active on Devices page', async ({ page, baseURL }) => {
+  test('discovered device shows Active in Connected Devices', async ({ page, baseURL }) => {
     test.setTimeout(90_000)
 
-    await page.goto(baseURL + 'devices')
+    await page.goto(baseURL + 'sources?tab=devices')
 
-    const deviceRow = page.locator('.ant-table-row').first()
+    const devices = page.getByRole('tabpanel', { name: 'Connected Devices' })
+    const deviceRow = devices.locator('.ant-table-row', { hasText: 'OPC-UA' }).first()
     await expect(deviceRow).toBeVisible({ timeout: 30_000 })
 
     const deviceName = deviceRow.getByTestId('device-name')
@@ -96,7 +97,7 @@ test.describe('OPC-UA simulator integration', () => {
 
     await expect.poll(async () => {
       await page.reload()
-      const row = page.locator('.ant-table-row').first()
+      const row = devices.locator('.ant-table-row', { hasText: 'OPC-UA' }).first()
       const status = row.getByTestId('device-status')
       return (await status.textContent())?.trim() ?? ''
     }, { timeout: 60_000, intervals: [5_000] }).toBe('Active')
@@ -105,9 +106,10 @@ test.describe('OPC-UA simulator integration', () => {
   test('device drawer shows OPC-UA protocol and last seen', async ({ page, baseURL }) => {
     test.setTimeout(60_000)
 
-    await page.goto(baseURL + 'devices')
+    await page.goto(baseURL + 'sources?tab=devices')
 
-    const deviceRow = page.locator('.ant-table-row').first()
+    const deviceRow = page.getByRole('tabpanel', { name: 'Connected Devices' })
+      .locator('.ant-table-row', { hasText: 'OPC-UA' }).first()
     await expect(deviceRow).toBeVisible({ timeout: 30_000 })
 
     await deviceRow.click()
