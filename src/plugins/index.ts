@@ -521,7 +521,7 @@ export class AdapterManager extends EventEmitter {
 			const { resolveEndpoints, createIdentities } = await import('../points/configured-point-resolver.js');
 			const { getDatabase } = await import('../db/sqlite.js');
 			const endpoint = await EndpointModel.getByUuid(endpointUuid);
-			if (!endpoint || endpoint.protocol !== 'opcua') return;
+			if (endpoint?.protocol !== 'opcua') return;
 
 			const nsMap = new Map<string, OpcuaAddressInput['namespaceArray']>();
 			nsMap.set(endpointUuid, { verified: true, uris: namespaceUris });

@@ -55,7 +55,7 @@ function bacnetInput(dp: Record<string, unknown>, deviceInstance: number): Bacne
 	const input: BacnetAddressInput = {
 		protocol: 'bacnet', deviceInstance,
 		networkScope: { uniqueDeviceInstance: true, source: 'configured' },
-		objectType: objectType as string | number, objectInstance,
+		objectType, objectInstance,
 	};
 	if (typeof dp.propertyId === 'number') input.propertyId = dp.propertyId;
 	return input;
