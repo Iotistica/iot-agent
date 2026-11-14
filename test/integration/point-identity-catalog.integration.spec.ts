@@ -356,6 +356,29 @@ describe('isolated point identity catalog', () => {
 		}
 	});
 
+	it('rechecks evidence after a contended write before creating an identity', async () => {
+		const other = new DatabaseSync(dbPath);
+		other.exec('PRAGMA busy_timeout = 1; BEGIN IMMEDIATE');
+		let current = true;
+		const verify = jest.fn(() => current);
+		const guarded = new PointIdentityCatalog(db, { verify });
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		try {
+			const pending = guarded.createIdentityIfAbsent(address, 'fixture');
+			timer = setTimeout(() => {
+				current = false;
+				other.exec('COMMIT');
+			}, 5);
+			expect(await pending).toMatchObject({ status: 'unresolved', reason: 'evidence-missing' });
+			expect(verify).toHaveBeenCalledTimes(2);
+			expect(db.prepare('SELECT * FROM point_identity').all()).toEqual([]);
+			expect(db.prepare('SELECT * FROM point_identity_address').all()).toEqual([]);
+		} finally {
+			if (timer) clearTimeout(timer);
+			other.close();
+		}
+	});
+
 	it('surfaces read contention before and after verification without leaving a transaction open', () => {
 		db.exec('PRAGMA journal_mode = DELETE');
 		const other = new DatabaseSync(dbPath);

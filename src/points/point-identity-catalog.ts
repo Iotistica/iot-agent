@@ -333,6 +333,11 @@ export class PointIdentityCatalog {
 			if (this.db.prepare('PRAGMA query_only').get()?.query_only === 1) return unresolved('read-only');
 			if (this.db.isTransaction === true) return unresolved('transaction-active');
 			try {
+				if (attempt > 0) {
+					// Evidence can expire while waiting for the write lock.
+					const currentVerification = this.verify(request);
+					if (currentVerification.status === 'unresolved') return currentVerification;
+				}
 				return transact(this.db, () => {
 					const current = this.source(scope);
 					if (current.status === 'unresolved') return current;
