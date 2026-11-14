@@ -1,8 +1,8 @@
-export async function copyText(text: string): Promise<void> {
+export async function copyText(text: string): Promise<boolean> {
   if (navigator.clipboard) {
     try {
       await navigator.clipboard.writeText(text)
-      return
+      return true
     } catch { /* fall through to textarea fallback */ }
   }
   const ta = document.createElement('textarea')
@@ -10,7 +10,10 @@ export async function copyText(text: string): Promise<void> {
   ta.style.position = 'fixed'
   ta.style.opacity = '0'
   document.body.appendChild(ta)
-  ta.select()
-  document.execCommand('copy')
-  document.body.removeChild(ta)
+  try {
+    ta.select()
+    return document.execCommand('copy')
+  } finally {
+    document.body.removeChild(ta)
+  }
 }

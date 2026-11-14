@@ -2,6 +2,8 @@ import { test, expect } from '@playwright/test'
 
 test.use({ storageState: { cookies: [], origins: [] }, channel: process.env.E2E_BROWSER_CHANNEL || undefined })
 
+const pointUuid = 'a81a11ce-b043-4248-a1c2-09ada497db2d'
+
 test('preserves device workflows under Sources and scopes devices to the source', async ({ page, baseURL }) => {
   const updates: Array<Record<string, unknown>> = []
   const writes: Array<Record<string, unknown>> = []
@@ -10,6 +12,21 @@ test('preserves device workflows under Sources and scopes devices to the source'
     { uuid: 'device-1', endpoint_id: 1, name: 'Pump', protocol: 'modbus', enabled: true, identifier: '1', metadata: {}, assetPath: null, lastSeenAt: null, created_at: '' },
     { uuid: 'device-2', endpoint_id: 2, name: 'Other device', protocol: 'opcua', enabled: true, identifier: '2', metadata: {}, assetPath: null, lastSeenAt: null, created_at: '' },
   ]
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: {
+      writeText: async (text: string) => {
+        if (Reflect.get(window, 'failCopy')) throw new Error('Clipboard unavailable')
+        Reflect.set(window, 'copiedText', text)
+      },
+    } })
+    document.execCommand = command => {
+      if (command !== 'copy' || !Reflect.get(window, 'allowFallback')) return false
+      const selected = document.activeElement
+      if (!(selected instanceof HTMLTextAreaElement)) return false
+      Reflect.set(window, 'fallbackCopiedText', selected.value)
+      return true
+    }
+  })
   await page.route('**/v1/**', async route => {
     const request = route.request()
     const path = new URL(request.url()).pathname
@@ -17,7 +34,7 @@ test('preserves device workflows under Sources and scopes devices to the source'
     if (path === '/v1/auth/me') response = { username: 'admin', role: 'admin', is_superuser: true, must_change_password: false }
     else if (path === '/v1/endpoints') response = { endpoints: [{ id: 1, uuid: 'source-1', name: 'Source one', protocol: 'modbus', enabled: true, poll_interval: 5000, connection: { host: 'localhost', port: 502 } }] }
     else if (path === '/v1/endpoints/source-1/points') response = { points: [
-      { name: 'speed', protocolAddress: { address: 1 }, canonicalStatus: 'resolved', canonicalReason: null, identityStatus: 'resolved', identityReason: null, pointUuid: 'durable-uuid', deviceUuid: 'device-1', deviceName: 'Pump' },
+      { name: 'speed', protocolAddress: { address: 1 }, canonicalStatus: 'resolved', canonicalReason: null, identityStatus: 'resolved', identityReason: null, pointUuid, deviceUuid: 'device-1', deviceName: 'Pump' },
       { name: 'pending', protocolAddress: null, canonicalStatus: 'deferred', canonicalReason: 'namespace-evidence-required', identityStatus: 'deferred', identityReason: 'namespace-evidence-required' },
       { name: 'invalid', protocolAddress: null, canonicalStatus: 'unresolved', canonicalReason: 'invalid-input', identityStatus: 'unresolved', identityReason: 'invalid-input' },
     ] }
@@ -41,12 +58,22 @@ test('preserves device workflows under Sources and scopes devices to the source'
   await page.getByTestId('source-edit').click()
   const sourceDrawer = page.locator('.ant-drawer').filter({ hasText: 'Edit — Source one' })
   await sourceDrawer.getByRole('tab', { name: 'Points', exact: true }).click()
-  await expect(sourceDrawer.getByText('durable-uuid')).toBeVisible()
+  await expect(sourceDrawer.getByText('a81a11ce…')).toHaveAttribute('title', pointUuid)
+  await sourceDrawer.getByRole('button', { name: 'Copy point UUID' }).click()
+  await expect.poll(() => page.evaluate(() => Reflect.get(window, 'copiedText'))).toBe(pointUuid)
+  await expect(page.getByText('Point UUID copied')).toBeVisible()
+  await page.evaluate(() => Reflect.set(window, 'failCopy', true))
+  await sourceDrawer.getByRole('button', { name: 'Copy point UUID' }).click()
+  await expect(page.getByText('Unable to copy Point UUID')).toBeVisible()
+  await page.evaluate(() => Reflect.set(window, 'allowFallback', true))
+  await sourceDrawer.getByRole('button', { name: 'Copy point UUID' }).click()
+  await expect.poll(() => page.evaluate(() => Reflect.get(window, 'fallbackCopiedText'))).toBe(pointUuid)
   await expect(sourceDrawer.getByText('Pump', { exact: true })).toBeVisible()
   await expect(sourceDrawer.getByText('Pending', { exact: true })).toBeVisible()
   await expect(sourceDrawer.getByText('Unresolvable', { exact: true })).toBeVisible()
+  await expect(sourceDrawer.getByRole('row').filter({ hasText: 'pending' }).getByRole('button', { name: 'Copy point UUID' })).toHaveCount(0)
   await sourceDrawer.getByPlaceholder('Search points, source, address or UUID').fill('pending')
-  await expect(sourceDrawer.getByText('durable-uuid')).toHaveCount(0)
+  await expect(sourceDrawer.getByText('a81a11ce…')).toHaveCount(0)
   await expect(sourceDrawer.getByText('Pending', { exact: true })).toBeVisible()
   await sourceDrawer.getByRole('tab', { name: 'Connected Devices' }).click()
   await expect(sourceDrawer.getByTestId('device-name')).toHaveCount(1)
@@ -100,7 +127,7 @@ test('shows durable point UUIDs only when the optional column is enabled', async
       { id: 3, uuid: 'source-3', name: 'Source zzz', protocol: 'opcua', enabled: true, poll_interval: 5000, connection: { host: 'localhost' } },
     ] }
     else if (path === '/v1/endpoints/source-1/points') response = { points: [
-      { name: 'speed', protocolAddress: { address: 1 }, canonicalStatus: 'resolved', canonicalReason: null, identityStatus: 'resolved', identityReason: null, pointUuid: 'durable-uuid' },
+      { name: 'speed', protocolAddress: { address: 1 }, canonicalStatus: 'resolved', canonicalReason: null, identityStatus: 'resolved', identityReason: null, pointUuid },
     ] }
     else if (path === '/v1/endpoints/source-2/points') response = { points: [
       { name: 'temperature', protocolAddress: 'sensors/temperature', canonicalStatus: 'resolved', canonicalReason: null, identityStatus: 'unresolved', identityReason: 'not-found' },
@@ -121,7 +148,7 @@ test('shows durable point UUIDs only when the optional column is enabled', async
     else if (path === '/v1/pipeline/subscriptions') response = { subscriptions: [] }
     else if (path === '/v1/pipeline/overview') response = { overview: { activePoints: 2 } }
     else if (path === '/v1/pipeline/points') response = { points: [
-      { id: 1, timestamp: new Date().toISOString(), protocol: 'modbus', endpointName: 'Pump', sourceEndpointUuid: 'source-1', metric: 'speed', pointUuid: 'durable-uuid', value: 10, subscriptionId: 1, destinationId: 1, destinationName: 'MQTT', pointCount: 1 },
+      { id: 1, timestamp: new Date().toISOString(), protocol: 'modbus', endpointName: 'Pump', sourceEndpointUuid: 'source-1', metric: 'speed', pointUuid, value: 10, subscriptionId: 1, destinationId: 1, destinationName: 'MQTT', pointCount: 1 },
       { id: 2, timestamp: new Date().toISOString(), protocol: 'mqtt', endpointName: 'Pump', sourceEndpointUuid: 'source-2', metric: 'temperature', provisionalPointId: 'provisional-uuid', value: 20, subscriptionId: 1, destinationId: 1, destinationName: 'MQTT', pointCount: 1 },
     ] }
     await route.fulfill({ json: response })
@@ -158,9 +185,9 @@ test('shows durable point UUIDs only when the optional column is enabled', async
   await expect(page.getByRole('columnheader', { name: 'Point UUID' })).toHaveCount(0)
   await page.getByRole('checkbox', { name: 'Point UUID' }).check()
   await expect(page.getByRole('columnheader', { name: 'Point UUID' })).toBeVisible()
-  await expect(page.getByText('durable-uuid')).toBeVisible()
+  await expect(page.getByText(pointUuid)).toBeVisible()
   await expect(page.getByText('Provisional', { exact: true })).toBeVisible()
-  await page.getByTestId('data-search').fill('durable-uuid')
+  await page.getByTestId('data-search').fill(pointUuid)
   await expect(page.getByTestId('point-name')).toHaveCount(1)
   await expect(page.getByTestId('point-name')).toHaveText('speed')
   await expect(page.getByTestId('data-tab-configured')).toHaveText('Source Points (1)')
@@ -169,11 +196,11 @@ test('shows durable point UUIDs only when the optional column is enabled', async
   await expect(toolbarInfo).toHaveCount(0)
   await expect(page.getByTestId('data-tab-configured')).toHaveClass(/active/)
   await expect(page.getByTestId('data-tab-live')).not.toHaveClass(/active/)
-  await expect(page.getByText('durable-uuid')).toBeVisible()
+  await expect(page.getByText('a81a11ce…')).toHaveAttribute('title', pointUuid)
   await expect(page.getByRole('columnheader', { name: 'Protocol', exact: true })).toBeVisible()
   await expect(page.getByRole('columnheader', { name: 'Actions', exact: true })).toHaveCount(0)
   await expect(page.getByRole('button', { name: 'Manage', exact: true })).toHaveCount(0)
-  const modbusRow = page.getByRole('row').filter({ hasText: 'durable-uuid' })
+  const modbusRow = page.getByRole('row').filter({ hasText: 'a81a11ce…' })
   const mqttRow = page.getByRole('row').filter({ hasText: 'sensors/temperature' })
   await expect(mqttRow).toHaveCount(0)
   await page.getByTestId('data-clear-filters').click()

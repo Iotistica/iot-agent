@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
-import type { TableColumnType } from 'ant-design-vue'
+import { message, type TableColumnType } from 'ant-design-vue'
+import { CopyOutlined } from '@ant-design/icons-vue'
 import { sourcesApi, type ConfiguredPoint } from '@/api/sources'
 import type { Endpoint } from '@/types'
+import { copyText } from '@/utils/clipboard'
 import { protocolColor, protocolLabel } from '@/utils/protocol'
 
 const props = withDefaults(defineProps<{
@@ -55,9 +57,18 @@ const columns = computed<TableColumnType<PointRow>[]>(() => [
   { title: 'Protocol address', key: 'address', width: 200, ellipsis: true },
   { title: 'Canonical', key: 'canonical', width: 130 },
   { title: 'Identity', key: 'identity', width: 120 },
-  { title: 'Point UUID', key: 'uuid', width: 220, ellipsis: true },
+  { title: 'Point UUID', key: 'uuid', width: 150 },
   { title: 'Device', key: 'device', width: 110 },
 ])
+
+async function copyPointUuid(uuid: string) {
+  try {
+    if (!await copyText(uuid)) throw new Error('Clipboard copy failed')
+    message.success('Point UUID copied')
+  } catch {
+    message.error('Unable to copy Point UUID')
+  }
+}
 
 async function load() {
   const request = ++generation
@@ -103,7 +114,7 @@ onBeforeUnmount(() => { generation++ })
       <a-button :loading="loading" @click="load">Refresh</a-button>
     </a-space>
     <a-table :columns="columns" :data-source="filtered" :loading="loading" row-key="key" size="small"
-      :scroll="{ x: showSource ? 1205 : 1000 }" :pagination="{ pageSize: 20, showSizeChanger: true }">
+      :scroll="{ x: showSource ? 1135 : 930 }" :pagination="{ pageSize: 20, showSizeChanger: true }">
       <template #bodyCell="{ column, record }">
         <template v-if="column.key === 'protocol'"><a-tag :color="protocolColor(record.source.protocol)">{{ protocolLabel(record.source.protocol) }}</a-tag></template>
         <template v-else-if="column.key === 'source'">{{ record.source.name }}</template>
@@ -114,7 +125,17 @@ onBeforeUnmount(() => { generation++ })
         <template v-else-if="column.key === 'identity'">
           <a-tooltip :title="statusReason(record.identityReason)">{{ identityLabel(record) }}</a-tooltip>
         </template>
-        <template v-else-if="column.key === 'uuid'"><span :title="record.pointUuid">{{ record.pointUuid || '—' }}</span></template>
+        <template v-else-if="column.key === 'uuid'">
+          <template v-if="record.pointUuid">
+            <span :title="record.pointUuid">{{ record.pointUuid.length > 16 ? `${record.pointUuid.slice(0, 8)}…` : record.pointUuid }}</span>
+            <a-tooltip title="Copy point UUID">
+              <a-button type="text" size="small" aria-label="Copy point UUID" @click.stop="copyPointUuid(record.pointUuid)">
+                <template #icon><CopyOutlined /></template>
+              </a-button>
+            </a-tooltip>
+          </template>
+          <span v-else>—</span>
+        </template>
         <template v-else-if="column.key === 'device'"><span :title="record.deviceUuid">{{ record.deviceName || '—' }}</span></template>
       </template>
       <template #emptyText>No configured points found.</template>
