@@ -83,11 +83,27 @@ import { resolveDeviceDisplayNames } from './device-display.js';
 import type { PrivateEvidenceRegistry } from '../../points/private-evidence-registry.js';
 import type { PrivateShadowObserver } from '../../points/private-shadow-observer.js';
 import type { ObservationRef, SourceBindingRef } from '../../points/private-evidence-types.js';
+import { canonicalizeAddress } from '../../points/canonical-address.js';
 
 export interface OpcuaShadowOptions {
 	registry: PrivateEvidenceRegistry;
 	observer: PrivateShadowObserver;
 	sources: readonly { configuration: OPCUADeviceConfig; endpointUuid: string }[];
+}
+
+export interface OpcuaNamespaceEvidence {
+	deviceName: string;
+	device: OPCUADeviceConfig;
+	transportConnection: OPCUADeviceConfig['connection'];
+	namespaceArray: readonly string[];
+	validatedNodeIds: ReadonlySet<string>;
+	isCurrent(): boolean;
+}
+
+export interface OpcuaReadingEvidence {
+	deviceName: string;
+	nodeId: string;
+	isCurrent(): boolean;
 }
 
 /**
@@ -150,6 +166,8 @@ interface OPCUAConnectionGroup {
 	session: OPCUASession;
 	tornDown: boolean;
 	ambiguousNodeIds: Set<string>;
+	identityEpoch?: object;
+	identityRetry?: ReturnType<typeof setTimeout>;
 }
 
 /**
@@ -164,6 +182,7 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 	private readonly shadowBindings = new WeakMap<OPCUADeviceConfig, SourceBindingRef>();
 	private readonly shadow?: OpcuaShadowOptions;
 	private shadowErrorReported = false;
+	private readonly readingEvidence = new WeakMap<DeviceDataPoint, OpcuaReadingEvidence>();
 
 	// Guards against two independent reconnect paths (this adapter's own
 	// scheduleReconnect/attemptReconnect, and BaseProtocolAdapter's poll-failure
@@ -959,6 +978,10 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 
 			group.on('changed', (_monitoredItem: unknown, dataValue: DataValue, index: number) => {
 				const dp = batchDataPoints[index];
+				if (!dp) {
+					this.logger.warn(`OPC UA subscription returned an unknown monitored-item index for ${deviceName}`);
+					return;
+				}
 
 				// Resolve the REAL owning device for this node — when `device`
 				// is a pooled composite spanning multiple configured devices
@@ -1003,8 +1026,17 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 					...(dp.writable && { writable: true }),
 				};
 
-				const operationNodeId = itemsToMonitor[index]?.nodeId;
-				if (this.shadow && typeof operationNodeId === 'string' && operationNodeId === dp.nodeId &&
+				const operationNodeId = dp.nodeId;
+				const matchesOperation = this.matchesOperationNodeId(itemsToMonitor[index]?.nodeId, operationNodeId);
+				const activeGroupKey = this.deviceGroupKey.get(owningDeviceName);
+				const activeGroup = activeGroupKey ? this.groups.get(activeGroupKey) : undefined;
+				if (activeGroup?.session === sessionWrapper && matchesOperation &&
+					_monitoredItem === group.monitoredItems[index] &&
+					sessionWrapper.session === session && !sessionWrapper.reconnecting &&
+					this.sessions.get(owningDeviceName) === sessionWrapper && owningDevice.dataPoints.includes(dp)) {
+					this.recordReadingEvidence(dataPoint, owningDeviceName, operationNodeId, activeGroup);
+				}
+				if (this.shadow && matchesOperation &&
 					!ambiguousNodeIds.has(operationNodeId) && _monitoredItem === group.monitoredItems[index] &&
 					sessionWrapper.session === session && !sessionWrapper.reconnecting &&
 					this.sessions.get(owningDeviceName) === sessionWrapper &&
@@ -1245,9 +1277,11 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 		// physical server. See GitHub issue #11.
 		const existingGroup = this.groups.get(groupKey);
 		if (existingGroup && !existingGroup.tornDown) {
+			const newlyAdded = !existingGroup.memberDeviceNames.has(device.name);
 			existingGroup.memberDeviceNames.add(device.name);
 			this.clients.set(device.name, existingGroup.client);
 			this.sessions.set(device.name, existingGroup.session);
+			if (newlyAdded) this.refreshNamespaceEvidence(existingGroup);
 			return existingGroup.session;
 		}
 
@@ -1281,31 +1315,32 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 		const members = this.getConfiguredGroupMembers(groupKey);
 		const { device: compositeDevice, nodeIdToDevice } = this.buildCompositeDevice(members);
 		const ambiguousNodeIds = new Set<string>();
-		if (this.shadow) {
-			const owners = new Map<string, { member: OPCUADeviceConfig; nodeIds: string[]; conflict: boolean }>();
-			let invalidNodeId = false;
+		const owners = new Map<string, { member: OPCUADeviceConfig; nodeIds: string[]; conflict: boolean }>();
+		let invalidNodeId = false;
+		for (const member of members) {
+			for (const point of member.dataPoints) {
+				try {
+					const key = coerceNodeId(point.nodeId).toString();
+					const owner = owners.get(key);
+					if (owner) {
+						owner.nodeIds.push(point.nodeId);
+						if (owner.member !== member) owner.conflict = true;
+					} else owners.set(key, { member, nodeIds: [point.nodeId], conflict: false });
+				} catch {
+					invalidNodeId = true;
+				}
+			}
+		}
+		for (const owner of owners.values()) {
+			if (owner.conflict) for (const nodeId of owner.nodeIds) ambiguousNodeIds.add(nodeId);
+		}
+		if (invalidNodeId) {
 			for (const member of members) {
-				for (const point of member.dataPoints) {
-					try {
-						const key = coerceNodeId(point.nodeId).toString();
-						const owner = owners.get(key);
-						if (owner) {
-							owner.nodeIds.push(point.nodeId);
-							if (owner.member !== member) owner.conflict = true;
-						} else owners.set(key, { member, nodeIds: [point.nodeId], conflict: false });
-					} catch {
-						invalidNodeId = true;
-					}
-					for (const owner of owners.values()) {
-						if (owner.conflict) for (const nodeId of owner.nodeIds) ambiguousNodeIds.add(nodeId);
-					}
-				}
+				for (const point of member.dataPoints) ambiguousNodeIds.add(point.nodeId);
 			}
-			if (invalidNodeId) {
-				for (const member of members) {
-					for (const point of member.dataPoints) ambiguousNodeIds.add(point.nodeId);
-				}
-			}
+		}
+		if (ambiguousNodeIds.size > 0) {
+			this.logger.warn(`OPC UA identity resolution deferred for ${ambiguousNodeIds.size} ambiguous or invalid NodeIds in ${compositeDevice.name}`);
 		}
 		const sessionWrapper = await this.doConnectDevice(compositeDevice, nodeIdToDevice, ambiguousNodeIds, members);
 		const client = this.clients.get(compositeDevice.name)!;
@@ -1335,6 +1370,7 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 			this.deviceGroupKey.set(m.name, groupKey);
 		}
 
+		this.refreshNamespaceEvidence(group);
 		return sessionWrapper;
 	}
 
@@ -1349,6 +1385,7 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 	private invalidateGroupForReconnect(groupKey: string): void {
 		const group = this.groups.get(groupKey);
 		if (!group) return;
+		this.invalidateNamespaceEvidence(group);
 		this.groups.delete(groupKey);
 		for (const name of group.memberDeviceNames) {
 			this.clients.delete(name);
@@ -1396,6 +1433,14 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 			}
 
 			const session = sessionWrapper.session;
+			session.on('session_repaired', () => {
+				const group = this.groups.get(this.computeGroupKey(device));
+				if (group?.session === sessionWrapper) this.refreshNamespaceEvidence(group);
+			});
+			session.on('session_repaired_failed', () => {
+				const group = this.groups.get(this.computeGroupKey(device));
+				if (group?.session === sessionWrapper) this.invalidateNamespaceEvidence(group);
+			});
 			if (this.shadow) {
 				session.on('session_repaired', () => {
 					for (const member of members) {
@@ -1596,8 +1641,6 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 			// TEMPORARY diagnostics — see diagnostics.ts.
 			this.diagnostics.logAggregateSnapshot(this.sessions);
 
-			this.readAndEmitNamespaceArray(session, device.name).catch(() => {});
-
 			return sessionWrapper;
 		} catch (error) {
 			// Safe unconditionally: commitSession() above is the only place that attaches
@@ -1608,15 +1651,117 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 		}
 	}
 
-	private async readAndEmitNamespaceArray(session: ClientSession, deviceName: string): Promise<void> {
-		try {
-			const uris = await session.readNamespaceArray();
-			if (Array.isArray(uris) && uris.length > 0) {
-				this.emit('namespace-ready', { deviceName, namespaceArray: uris });
-			}
-		} catch {
-			this.logger.debug(`Failed to read NamespaceArray for ${deviceName} — OPC UA identity deferred`);
+	private invalidateNamespaceEvidence(group: OPCUAConnectionGroup): void {
+		group.identityEpoch = undefined;
+		if (group.identityRetry) clearTimeout(group.identityRetry);
+		group.identityRetry = undefined;
+	}
+
+	private refreshNamespaceEvidence(group: OPCUAConnectionGroup): void {
+		this.invalidateNamespaceEvidence(group);
+		const epoch = {};
+		group.identityEpoch = epoch;
+		const session = group.session.session;
+		if (!session) {
+			this.invalidateNamespaceEvidence(group);
+			this.logger.warn(`OPC UA session unavailable for identity resolution: ${group.compositeDevice.name}`);
+			return;
 		}
+		const isCurrent = () => group.identityEpoch === epoch && !group.tornDown &&
+			!group.session.reconnecting && group.session.session === session &&
+			this.groups.get(group.key) === group;
+
+		const readNamespaceArray = async (): Promise<string[]> => {
+			// ClientSession.readNamespaceArray() caches its result across session repair.
+			const value = await session.read({ nodeId: 'ns=0;i=2255', attributeId: AttributeIds.Value });
+			const uris: unknown = value.value?.value;
+			if (!value.statusCode.isGood() || !Array.isArray(uris) || !uris.every(uri => typeof uri === 'string')) {
+				throw new Error('OPC UA NamespaceArray read failed');
+			}
+			return uris;
+		};
+		const retry = () => {
+			group.identityRetry = setTimeout(() => {
+				group.identityRetry = undefined;
+				void read();
+			}, this.MIN_RETRY_DELAY);
+			group.identityRetry.unref();
+		};
+		const read = async (): Promise<void> => {
+			try {
+				const uris = await readNamespaceArray();
+				if (!isCurrent()) return;
+				const namespaceArray = Object.freeze([...uris]);
+				const check = canonicalizeAddress({
+					protocol: 'opcua', nodeId: 'i=2255',
+					namespaceArray: { verified: true, uris: namespaceArray },
+					nodeIdVerifiedAgainstNamespaceArray: true,
+				});
+				if (check.status !== 'resolved') throw new Error(`Invalid NamespaceArray: ${check.reason}`);
+				const nodeIds = [...group.session.validatedNodes].filter(nodeId => !group.ambiguousNodeIds.has(nodeId));
+				const values = nodeIds.length
+					? await session.read(nodeIds.map(nodeId => ({ nodeId, attributeId: AttributeIds.Value })))
+					: [];
+				if (!isCurrent()) return;
+				if (!Array.isArray(values) || values.length !== nodeIds.length) {
+					throw new Error('OPC UA node validation returned an unexpected number of results');
+				}
+				const confirmedUris = await readNamespaceArray();
+				if (!isCurrent()) return;
+				if (JSON.stringify(confirmedUris) !== JSON.stringify(namespaceArray)) {
+					throw new Error('OPC UA NamespaceArray changed during identity validation');
+				}
+				const verifiedNodes = new Set(nodeIds.filter((_, index) => values[index].statusCode.isGood()));
+				if (verifiedNodes.size !== nodeIds.length) {
+					this.logger.warn(`OPC UA identity verification failed for ${nodeIds.length - verifiedNodes.size} NodeIds in ${group.compositeDevice.name}`);
+				}
+				for (const name of group.memberDeviceNames) {
+					const device = this.devices.get(name) as OPCUADeviceConfig | undefined;
+					if (!device || this.sessions.get(name) !== group.session) continue;
+					const validatedNodeIds = new Set(device.dataPoints
+						.map(point => point.nodeId).filter(nodeId => verifiedNodes.has(nodeId)));
+					const evidence: OpcuaNamespaceEvidence = {
+						deviceName: name, device, transportConnection: group.compositeDevice.connection,
+						namespaceArray, validatedNodeIds,
+						isCurrent: () => isCurrent() && group.memberDeviceNames.has(name) &&
+							this.sessions.get(name) === group.session,
+					};
+					this.emit('namespace-ready', evidence);
+				}
+				if (verifiedNodes.size !== nodeIds.length) retry();
+			} catch (error) {
+				if (!isCurrent()) return;
+				this.logger.warn(`OPC UA identity evidence unavailable for ${group.compositeDevice.name}: ${error instanceof Error ? error.message : String(error)}`);
+				retry();
+			}
+		};
+		void read();
+	}
+
+	getReadingEvidence(point: DeviceDataPoint): OpcuaReadingEvidence | undefined {
+		const evidence = this.readingEvidence.get(point);
+		return evidence?.isCurrent() ? evidence : undefined;
+	}
+
+	private matchesOperationNodeId(nodeId: ReadValueIdOptions['nodeId'] | undefined, expected: string): boolean {
+		if (nodeId === undefined) return false;
+		try {
+			return coerceNodeId(nodeId).toString() === coerceNodeId(expected).toString();
+		} catch (error) {
+			this.logger.warn(`Cannot verify OPC UA reading NodeId: ${error instanceof Error ? error.message : String(error)}`);
+			return false;
+		}
+	}
+
+	private recordReadingEvidence(point: DeviceDataPoint, deviceName: string, nodeId: string, group: OPCUAConnectionGroup): void {
+		const epoch = group.identityEpoch;
+		if (!epoch || group.ambiguousNodeIds.has(nodeId)) return;
+		this.readingEvidence.set(point, {
+			deviceName, nodeId,
+			isCurrent: () => group.identityEpoch === epoch && !group.tornDown &&
+				!group.session.reconnecting && this.groups.get(group.key) === group &&
+				group.memberDeviceNames.has(deviceName) && this.sessions.get(deviceName) === group.session,
+		});
 	}
 
 	/**
@@ -1708,6 +1853,9 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 			return;
 		}
 		this.invalidateShadowTransport(sessionWrapper);
+		const groupKey = this.deviceGroupKey.get(device.name);
+		const group = groupKey ? this.groups.get(groupKey) : undefined;
+		if (group?.session === sessionWrapper) this.invalidateNamespaceEvidence(group);
     
 		sessionWrapper.reconnecting = true;
 		sessionWrapper.consecutiveFailures = Math.min(
@@ -1926,6 +2074,7 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 		}
 
 		if (group.memberDeviceNames.size > 0) {
+			this.refreshNamespaceEvidence(group);
 			// Siblings still active on this shared session — leave it up.
 			this.logger.debug(`OPC-UA device ${deviceName} left shared session group (${group.memberDeviceNames.size} member(s) remain)`);
 			return;
@@ -1946,6 +2095,7 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 			return;
 		}
 		group.tornDown = true;
+		this.invalidateNamespaceEvidence(group);
 		this.groups.delete(group.key);
 
 		// Stop reconnection attempts. `reconnecting=true` is what blocks
@@ -1986,6 +2136,9 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 			throw new Error(`No active session for device: ${deviceName}`);
 		}
 		const operationSession = sessionWrapper.session;
+		const operationGroupKey = this.deviceGroupKey.get(deviceName);
+		const operationGroup = operationGroupKey ? this.groups.get(operationGroupKey) : undefined;
+		const operationIdentityEpoch = operationGroup?.identityEpoch;
 
 		// If subscription is active, data comes via events - skip polling
 		if (sessionWrapper.subscription && device.connection.useSubscription) {
@@ -2014,6 +2167,7 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 			nodeId: dp.nodeId,
 			attributeId: AttributeIds.Value,
 		}));
+		const requestedNodeIds = validDataPoints.map(dp => dp.nodeId);
 
 		const readStartedAt = Date.now();
 
@@ -2109,18 +2263,22 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 
 		const groupKey = this.deviceGroupKey.get(deviceName);
 		const group = groupKey ? this.groups.get(groupKey) : undefined;
-		if (this.shadow && group?.session === sessionWrapper && !sessionWrapper.reconnecting &&
+		if (group && group === operationGroup && operationIdentityEpoch &&
+			group.identityEpoch === operationIdentityEpoch && group.session === sessionWrapper && !sessionWrapper.reconnecting &&
 			sessionWrapper.session === operationSession && this.sessions.get(deviceName) === sessionWrapper &&
 			dataValues.length === nodesToRead.length && results.length === nodesToRead.length) {
 			const pending: ObservationRef[] = [];
 			for (let i = 0; i < results.length; i++) {
-				const nodeId = nodesToRead[i].nodeId;
-				if (typeof nodeId !== 'string' || nodeId !== validDataPoints[i].nodeId ||
+				const nodeId = requestedNodeIds[i];
+				if (!this.matchesOperationNodeId(nodesToRead[i].nodeId, nodeId) ||
 					group.ambiguousNodeIds.has(nodeId)) continue;
-				const ref = this.captureShadow(device, results[i], nodeId);
-				if (ref) pending.push(ref);
+				this.recordReadingEvidence(results[i], deviceName, nodeId, group);
+				if (this.shadow) {
+					const ref = this.captureShadow(device, results[i], nodeId);
+					if (ref) pending.push(ref);
+				}
 			}
-			if (pending.length) setImmediate(() => {
+			if (this.shadow && pending.length) setImmediate(() => {
 				for (const ref of pending) this.withShadow(() => {
 					const decision = this.shadow!.registry.inspect(ref);
 					if (decision.status === 'candidate-observed' && decision.phase === 'constructed') {
@@ -2144,6 +2302,7 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
    */
 	public async stop(): Promise<void> {
 		if (this.shadow) this.withShadow(() => { this.shadow!.registry.disposeAdapter(this); });
+		for (const group of this.groups.values()) this.invalidateNamespaceEvidence(group);
 		await super.stop();
 		this.clients.clear();
 		this.sessions.clear();

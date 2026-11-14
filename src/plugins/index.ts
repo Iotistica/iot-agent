@@ -21,15 +21,58 @@ import { EndpointOutputModel } from "../db/models/endpoint-outputs.model.js";
 import { deviceNameSuffixFor, toDeviceUuid } from "../db/models/device.model.js";
 import { EndpointModel, type Endpoint } from "../db/models/endpoint.model.js";
 import { DeviceModel } from "../db/models/device.model.js";
+import { getDatabase } from "../db/sqlite.js";
 import { encodeIfUuid } from "../mqtt/codec.js";
+import { createIdentities, resolveEndpoints } from "../points/configured-point-resolver.js";
 
 // Type-only import.
 import type { OPCUAAdapterConfig } from "./opcua/types.js";
-import type { OpcuaShadowOptions } from "./opcua/adapter.js";
+import type { OPCUAAdapter, OpcuaNamespaceEvidence, OpcuaShadowOptions } from "./opcua/adapter.js";
 import { OPCUAConnectionSchema } from "./opcua/types.js";
 import { BACnetAdapter } from "./bacnet/adapter.js";
 import { type BACnetAdapterConfig } from "./bacnet/types.js";
 import type { OpcuaAddressInput } from "../points/canonical-address.js";
+
+interface OpcuaIdentityState {
+	evidence: OpcuaNamespaceEvidence;
+	isCurrent(): boolean;
+	lookup: ReadonlyMap<string, string>;
+	addressKeys: ReadonlyMap<string, string>;
+	retry?: ReturnType<typeof setTimeout>;
+}
+
+function hasOpcuaReadingEvidence(adapter: IProtocolAdapter): adapter is IProtocolAdapter & Pick<OPCUAAdapter, "getReadingEvidence"> {
+	return "getReadingEvidence" in adapter && typeof adapter.getReadingEvidence === "function";
+}
+
+function matchesOpcuaConfiguration(endpoint: Endpoint, evidence: OpcuaNamespaceEvidence): boolean {
+	if (!endpoint.enabled || endpoint.protocol !== "opcua" || endpoint.name !== evidence.deviceName) return false;
+	const expected = OPCUAConnectionSchema.safeParse(endpoint.connection);
+	const actual = OPCUAConnectionSchema.safeParse(evidence.device.connection);
+	if (!expected.success || !actual.success || JSON.stringify(expected.data) !== JSON.stringify(actual.data)) return false;
+	const transport = OPCUAConnectionSchema.safeParse(evidence.transportConnection);
+	if (!transport.success ||
+		new URL(expected.data.endpointUrl).href !== new URL(transport.data.endpointUrl).href ||
+		expected.data.username !== transport.data.username ||
+		expected.data.password !== transport.data.password ||
+		expected.data.securityMode !== transport.data.securityMode ||
+		expected.data.securityPolicy !== transport.data.securityPolicy ||
+		expected.data.certificateTrustMode !== transport.data.certificateTrustMode ||
+		expected.data.expectedServerThumbprint !== transport.data.expectedServerThumbprint) return false;
+	const bindings = (points: readonly unknown[]): Array<[unknown, unknown]> | undefined => {
+		const result: Array<[unknown, unknown]> = [];
+		for (const point of points) {
+			if (typeof point !== "object" || point === null || Array.isArray(point)) return undefined;
+			const record = point as Record<string, unknown>;
+			result.push([record.name, record.nodeId]);
+		}
+		return result;
+	};
+	const expectedPoints = bindings(Array.isArray(endpoint.data_points) ? endpoint.data_points : []);
+	const actualPoints = bindings(evidence.device.dataPoints);
+	return expectedPoints !== undefined && actualPoints !== undefined &&
+		JSON.stringify(expectedPoints) === JSON.stringify(actualPoints);
+}
 
 export interface AdapterConfig {
 	modbus?: { enabled: boolean; config?: ModbusAdapterConfig };
@@ -186,6 +229,7 @@ export class AdapterManager extends EventEmitter {
 	// Populated by AdaptersInitializer after configured-point identity creation
 	// and updated when OPC UA sessions provide namespace arrays.
 	private pointIdentityLookup: Map<string, string> = new Map();
+	private readonly opcuaIdentityStates = new Map<string, OpcuaIdentityState>();
 	// Throttles lastSeenAt DB writes per device name — see wireAdapterEvents's
 	// "data" handler. A protocol that emits one 'data' event per changed value
 	// (OPC-UA subscriptions) rather than one batched event per poll (BACnet,
@@ -214,6 +258,7 @@ export class AdapterManager extends EventEmitter {
 		dataPoints: DeviceDataPoint[],
 		endpointUuidByName: Map<string, string>,
 		shadow?: Omit<OpcuaShadowOptions, "sources">,
+		adapter?: IProtocolAdapter,
 	): DeviceDataPoint[] {
 		// Deliberately NOT also gated on endpointUuidByName.size === 0: a
 		// reading can carry its own source-provided device identity
@@ -226,6 +271,7 @@ export class AdapterManager extends EventEmitter {
 			return dataPoints;
 		}
 
+		const opcuaStates = new Map<string, OpcuaIdentityState | undefined>();
 		return dataPoints.map((point) => {
 			const resolved = resolveEnrichedDeviceName(
 				point.deviceName,
@@ -234,12 +280,30 @@ export class AdapterManager extends EventEmitter {
 				endpointUuidByName,
 			);
 			if (!resolved) {
+				if (point.protocol === "opcua" && point.pointUuid) {
+					const unverified = { ...point };
+					delete unverified.pointUuid;
+					return unverified;
+				}
 				return point;
 			}
 
-			const pointUuid = resolved.endpoint_uuid
-				? this.lookupPointUuid(resolved.endpoint_uuid, point.metric)
-				: undefined;
+			let pointUuid: string | undefined;
+			if (point.protocol === "opcua") {
+				const reading = adapter && hasOpcuaReadingEvidence(adapter) ? adapter.getReadingEvidence(point) : undefined;
+				const endpointUuid = reading && endpointUuidByName.get(reading.deviceName);
+				if (endpointUuid && !opcuaStates.has(endpointUuid)) {
+					opcuaStates.set(endpointUuid, this.getCurrentOpcuaIdentityState(endpointUuid));
+				}
+				const state = endpointUuid && opcuaStates.get(endpointUuid);
+				if (reading && endpointUuid && state && state.evidence.deviceName === reading.deviceName &&
+					state.evidence.validatedNodeIds.has(reading.nodeId)) {
+					const addressKey = state.addressKeys.get(reading.nodeId);
+					if (addressKey) pointUuid = state.lookup.get(addressKey);
+				}
+			} else if (resolved.endpoint_uuid) {
+				pointUuid = this.lookupPointUuid(resolved.endpoint_uuid, point.metric);
+			}
 			const clone = {
 				...point,
 				deviceName: resolved.deviceName,
@@ -248,6 +312,7 @@ export class AdapterManager extends EventEmitter {
 				device_uuid: resolved.device_uuid,
 				...(pointUuid && { pointUuid }),
 			};
+			if (point.protocol === "opcua" && !pointUuid) delete clone.pointUuid;
 			if (shadow) {
 				const shadowProtocol = point.protocol === "mqtt" ? "MQTT" : "OPC UA";
 				let ref: object | undefined;
@@ -319,7 +384,7 @@ export class AdapterManager extends EventEmitter {
 		const label = protocol.toUpperCase();
 		adapter.on("started", () => this.logger.info(`${label} adapter started`));
 		adapter.on("data", (dps: DeviceDataPoint[]) => {
-			socket.sendData(this.enrichWithEndpointUuid(dps, uuidMap, shadow), protocol);
+			socket.sendData(this.enrichWithEndpointUuid(dps, uuidMap, shadow, adapter), protocol);
 			// Stamp lastSeenAt for both endpoint and device tables, throttled per
 			// device name (see LAST_SEEN_THROTTLE_MS above) — health freshness
 			// doesn't need sub-second resolution, and each write is a synchronous
@@ -404,9 +469,8 @@ export class AdapterManager extends EventEmitter {
 		);
 		adapter.on(
 			"namespace-ready",
-			(data: { deviceName: string; namespaceArray: string[] }) => {
-				this.resolveOpcuaPointIdentities(data.deviceName, data.namespaceArray, uuidMap)
-					.catch(() => {});
+			(data: OpcuaNamespaceEvidence) => {
+				void this.resolveOpcuaPointIdentities(data, uuidMap);
 			},
 		);
 	}
@@ -510,45 +574,129 @@ export class AdapterManager extends EventEmitter {
 		return this.pointIdentityLookup.get(`${endpointUuid}\0${pointName}`);
 	}
 
+	private getCurrentOpcuaIdentityState(endpointUuid: string): OpcuaIdentityState | undefined {
+		const state = this.opcuaIdentityStates.get(endpointUuid);
+		if (!state) return undefined;
+		if (state.isCurrent()) return state;
+		if (!state.evidence.isCurrent()) {
+			if (state.retry) clearTimeout(state.retry);
+			this.opcuaIdentityStates.delete(endpointUuid);
+		}
+		return undefined;
+	}
+
+	getOpcuaNamespaceEvidence(endpoint: Endpoint): Pick<OpcuaNamespaceEvidence, "namespaceArray" | "validatedNodeIds"> | undefined {
+		if (!endpoint.uuid) return undefined;
+		const state = this.getCurrentOpcuaIdentityState(endpoint.uuid);
+		return state && matchesOpcuaConfiguration(endpoint, state.evidence) ? {
+			namespaceArray: state.evidence.namespaceArray,
+			validatedNodeIds: state.evidence.validatedNodeIds,
+		} : undefined;
+	}
+
 	private async resolveOpcuaPointIdentities(
-		deviceName: string,
-		namespaceUris: string[],
+		evidence: OpcuaNamespaceEvidence,
 		uuidMap: Map<string, string>,
 	): Promise<void> {
-		const endpointUuid = uuidMap.get(deviceName);
-		if (!endpointUuid) return;
+		const endpointUuid = uuidMap.get(evidence.deviceName);
+		if (!endpointUuid) {
+			this.logger.warn(`OPC UA identity source has no persistent endpoint UUID: ${evidence.deviceName}`);
+			return;
+		}
+		if (!evidence.isCurrent()) return;
+		let state: OpcuaIdentityState | undefined;
+		const retry = () => {
+			if (!evidence.isCurrent() || state?.retry) return;
+			const timer = setTimeout(() => {
+				if (state) state.retry = undefined;
+				void this.resolveOpcuaPointIdentities(evidence, uuidMap);
+			}, 5000);
+			timer.unref();
+			if (state) state.retry = timer;
+		};
 		try {
-			const { resolveEndpoints, createIdentities } = await import('../points/configured-point-resolver.js');
-			const { getDatabase } = await import('../db/sqlite.js');
-			const endpoint = await EndpointModel.getByUuid(endpointUuid);
-			if (endpoint?.protocol !== 'opcua') return;
-
-			const nsMap = new Map<string, OpcuaAddressInput['namespaceArray']>();
-			nsMap.set(endpointUuid, { verified: true, uris: namespaceUris });
-
-			const input = {
-				uuid: endpoint.uuid,
-				name: endpoint.name,
-				protocol: endpoint.protocol,
-				connection: endpoint.connection,
-				data_points: endpoint.data_points,
-			};
-			const resolved = resolveEndpoints([input], nsMap);
-			if (resolved.summary.resolved === 0) return;
-
+			if (!evidence.isCurrent()) return;
 			const db = getDatabase();
-			const result = await createIdentities(db, resolved, nsMap);
-			if (result.pointNameLookup.size > 0) {
-				this.mergePointIdentities(result.pointNameLookup);
-				this.logger.info(
-					`OPC UA point identity resolution for ${deviceName}: ` +
-					`${result.summary.created} created, ${result.summary.failed} failed`,
-				);
+			const readSource = () => db.prepare(`
+				SELECT id, uuid, name, protocol, enabled, connection, data_points,
+					(SELECT count(*) FROM endpoints other WHERE other.name = ? AND other.protocol = 'opcua' AND other.enabled = 1) AS name_count
+				FROM endpoints WHERE uuid = ? LIMIT 2
+			`).all(evidence.deviceName, endpointUuid);
+			const rows = readSource();
+			if (rows.length !== 1 || rows[0].name !== evidence.deviceName ||
+				rows[0].protocol !== 'opcua' || rows[0].enabled !== 1 || rows[0].name_count !== 1) {
+				this.logger.warn(`OPC UA identity source is missing or ambiguous: ${evidence.deviceName}`);
+				return;
 			}
-		} catch (err) {
-			this.logger.debug(
-				`OPC UA point identity resolution failed for ${deviceName}: ${err instanceof Error ? err.message : err}`,
+			const snapshot = JSON.stringify(rows);
+			const endpoint = await EndpointModel.getByUuid(endpointUuid);
+			if (!evidence.isCurrent() || endpoint?.protocol !== 'opcua') return;
+			const configuredPoints = Array.isArray(endpoint.data_points) ? endpoint.data_points : [];
+			if (!matchesOpcuaConfiguration(endpoint, evidence)) {
+				this.logger.warn(`OPC UA identity configuration changed for ${evidence.deviceName}; waiting for adapter reload`);
+				return;
+			}
+			let snapshotErrorReported = false;
+			let staleConfigurationReported = false;
+			state = {
+				evidence,
+				lookup: new Map(),
+				addressKeys: new Map(),
+				isCurrent: () => {
+					if (!evidence.isCurrent() || this.opcuaIdentityStates.get(endpointUuid) !== state) return false;
+					try {
+						const current = JSON.stringify(readSource()) === snapshot;
+						snapshotErrorReported = false;
+						if (!current && !staleConfigurationReported) {
+							this.logger.warn(`OPC UA identity source changed for ${evidence.deviceName}; waiting for adapter reload`);
+							staleConfigurationReported = true;
+						}
+						return current;
+					} catch (error) {
+						if (!snapshotErrorReported) {
+							this.logger.warn(`Cannot verify OPC UA identity source ${evidence.deviceName}: ${error instanceof Error ? error.message : String(error)}`);
+							snapshotErrorReported = true;
+						}
+						retry();
+						return false;
+					}
+				},
+			};
+			const previous = this.opcuaIdentityStates.get(endpointUuid);
+			if (previous?.retry) clearTimeout(previous.retry);
+			this.opcuaIdentityStates.set(endpointUuid, state);
+			if (!state.isCurrent()) return;
+
+			const nsMap = new Map<string, OpcuaAddressInput['namespaceArray']>([
+				[endpointUuid, { verified: true, uris: evidence.namespaceArray }],
+			]);
+			const resolved = resolveEndpoints([endpoint], nsMap);
+			const addressKeys = new Map<string, string>();
+			for (let index = 0; index < resolved.endpoints[0].points.length; index++) {
+				const nodeId = configuredPoints[index]?.nodeId;
+				if (typeof nodeId !== 'string' || !evidence.validatedNodeIds.has(nodeId)) {
+					resolved.endpoints[0].points[index].result = {
+						status: 'unresolved', protocol: 'opcua', reason: 'namespace-evidence-required',
+					};
+				} else {
+					const result = resolved.endpoints[0].points[index].result;
+					if (result.status === 'resolved') addressKeys.set(nodeId, `${endpointUuid}:opcua:${result.addressKey}`);
+				}
+			}
+			state.addressKeys = addressKeys;
+			const result = await createIdentities(db, resolved, nsMap, state.isCurrent);
+			if (!state.isCurrent()) return;
+			state.lookup = result.lookup;
+			this.logger.info(
+				`OPC UA point identity resolution for ${evidence.deviceName}: ` +
+				`${result.summary.created} resolved, ${result.summary.failed} failed`,
 			);
+			if (result.identities.some(identity => identity.catalogResult.status === 'unresolved' && identity.catalogResult.retryable)) retry();
+			else if (result.summary.failed) this.logger.warn(`Some OPC UA point identities could not be resolved for ${evidence.deviceName}`);
+		} catch (error) {
+			if (!evidence.isCurrent()) return;
+			this.logger.warn(`OPC UA point identity resolution failed for ${evidence.deviceName}: ${error instanceof Error ? error.message : String(error)}`);
+			retry();
 		}
 	}
 
@@ -669,6 +817,10 @@ export class AdapterManager extends EventEmitter {
 		}
 		this.adapters.clear();
 		this.groupProtocol.clear();
+		for (const state of this.opcuaIdentityStates.values()) {
+			if (state.retry) clearTimeout(state.retry);
+		}
+		this.opcuaIdentityStates.clear();
 		for (const [, server] of this.socketServers) await server.stop();
 		this.socketServers.clear();
 		this.running = false;

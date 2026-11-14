@@ -4,11 +4,12 @@ import type { DatabaseSync } from 'node:sqlite';
 import { getDatabase } from '../db/sqlite.js';
 import { EndpointModel, type Endpoint } from '../db/models/endpoint.model.js';
 import {
-	CANONICAL_ADDRESS_VERSION,
+	CANONICAL_ADDRESS_VERSION, canonicalizeAddress,
 } from '../points/canonical-address.js';
 import { PointIdentityCatalog } from '../points/point-identity-catalog.js';
 import { resolveEndpoint } from '../points/configured-point-resolver.js';
 import { requireRole } from './middleware/roles.js';
+import { getAdapterManager } from './actions.js';
 
 export interface ConfiguredPointRow {
 	name: string;
@@ -92,7 +93,17 @@ function findAssociatedDevice(
  * Resolves configured addresses and performs catalog lookups only. It never
  * creates or otherwise mutates point identities.
  */
-export function getConfiguredPointRows(endpoint: ConfiguredEndpoint, db: DatabaseSync): ConfiguredPointRow[] {
+export function getConfiguredPointRows(
+	endpoint: ConfiguredEndpoint,
+	db: DatabaseSync,
+	opcuaEvidence?: { namespaceArray: readonly string[]; validatedNodeIds: ReadonlySet<string> },
+): ConfiguredPointRow[] {
+	const evidenceCheck = opcuaEvidence && canonicalizeAddress({
+		protocol: 'opcua', nodeId: 'i=2255',
+		namespaceArray: { verified: true, uris: opcuaEvidence.namespaceArray },
+		nodeIdVerifiedAgainstNamespaceArray: true,
+	});
+	const verifiedEvidence = evidenceCheck?.status === 'resolved' ? opcuaEvidence : undefined;
 	const configuredPoints = Array.isArray(endpoint.data_points) ? endpoint.data_points : [];
 	const points = configuredPoints.map(point => isRecord(point) ? point : {});
 	const resolution = resolveEndpoint({
@@ -101,7 +112,7 @@ export function getConfiguredPointRows(endpoint: ConfiguredEndpoint, db: Databas
 		protocol: endpoint.protocol,
 		connection: endpoint.connection ?? {},
 		data_points: points,
-	});
+	}, verifiedEvidence && { verified: true, uris: verifiedEvidence.namespaceArray });
 	const duplicateAddressKeys = new Set<string>();
 	const addressCounts = new Map<string, number>();
 
@@ -115,7 +126,10 @@ export function getConfiguredPointRows(endpoint: ConfiguredEndpoint, db: Databas
 
 	const catalog = new PointIdentityCatalog(db);
 	return resolution.points.map((resolvedPoint, index) => {
-		const result = resolvedPoint.result;
+		const result = endpoint.protocol === 'opcua' &&
+			(typeof points[index].nodeId !== 'string' || !verifiedEvidence?.validatedNodeIds.has(points[index].nodeId))
+			? { status: 'unresolved' as const, protocol: 'opcua', reason: 'namespace-evidence-required' as const }
+			: resolvedPoint.result;
 		const row: ConfiguredPointRow = {
 			name: pointName(points[index], index),
 			protocolAddress: protocolAddress(endpoint, points[index]),
@@ -169,9 +183,11 @@ configuredPointsRouter.get(
 
 			const endpoint = await EndpointModel.getByUuid(req.params.uuid);
 			if (!endpoint) return res.status(404).json({ error: 'Endpoint not found' });
+			const evidence = endpoint.protocol === 'opcua'
+				? getAdapterManager()?.getOpcuaNamespaceEvidence(endpoint) : undefined;
 			return res.status(200).json({
 				endpointUuid: req.params.uuid,
-				points: getConfiguredPointRows(endpoint, db),
+				points: getConfiguredPointRows(endpoint, db, evidence),
 			});
 		} catch (error) {
 			next(error);

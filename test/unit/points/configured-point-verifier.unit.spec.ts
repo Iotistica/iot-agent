@@ -54,6 +54,14 @@ describe('ConfiguredPointVerifier', () => {
 		expect(verifier.verify(makeRequest())).toBe(true);
 	});
 
+	it('rejects identity creation after its session evidence becomes stale', () => {
+		let current = true;
+		const request = makeRequest({ evidence: makeEvidence({ isCurrent: () => current }) });
+		expect(verifier.verify(request)).toBe(true);
+		current = false;
+		expect(verifier.verify(request)).toBe(false);
+	});
+
 	it('rejects when resolver reference does not match', () => {
 		const wrongRef = Object.freeze({});
 		expect(verifier.verify(makeRequest({

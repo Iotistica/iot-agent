@@ -11,6 +11,7 @@ export interface VerifierEvidence {
 	endpointUuid: string;
 	protocol: string;
 	ambiguousAddressKeys?: ReadonlySet<string>;
+	isCurrent?: () => boolean;
 }
 
 function isVerifierEvidence(value: unknown): value is VerifierEvidence {
@@ -19,7 +20,8 @@ function isVerifierEvidence(value: unknown): value is VerifierEvidence {
 	return typeof ev.resolverRef === 'object' && ev.resolverRef !== null &&
 		typeof ev.canonicalInput === 'object' && ev.canonicalInput !== null &&
 		typeof ev.endpointUuid === 'string' && ev.endpointUuid.length > 0 &&
-		typeof ev.protocol === 'string' && ev.protocol.length > 0;
+		typeof ev.protocol === 'string' && ev.protocol.length > 0 &&
+		(ev.isCurrent === undefined || typeof ev.isCurrent === 'function');
 }
 
 export class ConfiguredPointVerifier implements CatalogEvidenceVerifier {
@@ -41,6 +43,7 @@ export class ConfiguredPointVerifier implements CatalogEvidenceVerifier {
 		// 1. Authorization: confirm the caller is the authorized resolver instance
 		const resolver = this.authorizedResolver.deref();
 		if (!resolver || evidence.resolverRef !== resolver) return false;
+		if (evidence.isCurrent && !evidence.isCurrent()) return false;
 
 		// 2. Persistent source: verify endpoint exists in DB and protocol matches
 		if (request.operation === 'create' || request.operation === 'resolve') {

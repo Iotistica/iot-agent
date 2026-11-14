@@ -62,6 +62,19 @@ describe('SocketServer', () => {
     ]);
   });
 
+  it('keeps verified point UUIDs in JSON without changing CSV fields', () => {
+    const server = new SocketServer(config, mockLogger);
+    const point = {
+      deviceName: 'plc', metric: 'power', value: 25, timestamp: '2026-01-01T00:00:00Z',
+      quality: 'GOOD' as const, protocol: 'opcua', pointUuid: 'permanent-point-uuid',
+    };
+    const json = Reflect.get(server, 'formatAsJson').bind(server);
+    const csv = Reflect.get(server, 'formatAsCsv').bind(server);
+    expect(JSON.parse(json([point]))).toMatchObject({ metric: 'power', pointUuid: 'permanent-point-uuid' });
+    const { pointUuid: _pointUuid, ...withoutUuid } = point;
+    expect(csv([point])).toBe(csv([withoutUuid]));
+  });
+
   it('should not send data when not started', () => {
     const server = new SocketServer(config, mockLogger);
     const dataPoints = [{

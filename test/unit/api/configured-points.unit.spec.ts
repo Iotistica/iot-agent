@@ -7,6 +7,8 @@ import * as sqlite from '../../../src/db/sqlite';
 import { AdminSessionModel } from '../../../src/db/models/admin-session.model';
 import { EndpointModel, type Endpoint } from '../../../src/db/models/endpoint.model';
 import { UserModel, type User } from '../../../src/db/models/admin-user.model';
+import { AdapterManager } from '../../../src/plugins/index';
+import * as actions from '../../../src/api/actions';
 import {
 	getConfiguredPointRows, configuredPointsRouter, type ConfiguredEndpoint,
 } from '../../../src/api/configured-points';
@@ -243,6 +245,75 @@ describe('configured points read API', () => {
 			identityReason: 'namespace-evidence-required',
 		});
 		expect(rows[0].pointUuid).toBeUndefined();
+	});
+
+	it('assigns only verified OPC UA addresses and refreshes previously deferred points', () => {
+		const endpoint: ConfiguredEndpoint = {
+			...mqttEndpoint([
+				{ name: 'power', nodeId: 'ns=1;s=A' },
+				{ name: 'power', nodeId: 'ns=1;s=B' },
+			], 'source-opcua'),
+			protocol: 'opcua',
+		};
+		insertEndpoint(db, endpoint);
+		for (const [nodeId, uuid] of [['ns=1;s=A', 'point-a'], ['ns=1;s=B', 'point-b']]) {
+			const canonical = canonicalizeAddress({
+				protocol: 'opcua', nodeId, namespaceArray: namespaces, nodeIdVerifiedAgainstNamespaceArray: true,
+			});
+			if (canonical.status !== 'resolved') throw new Error('Expected canonical OPC UA address');
+			storeIdentity(db, endpoint.uuid!, 'opcua', canonical.addressKey, uuid);
+		}
+
+		expect(getConfiguredPointRows(endpoint, db).map(row => row.identityStatus)).toEqual(['deferred', 'deferred']);
+		const evidence = { namespaceArray: namespaces.uris, validatedNodeIds: new Set(['ns=1;s=A']) };
+		const rows = getConfiguredPointRows(endpoint, db, evidence);
+		expect(rows[0]).toMatchObject({ canonicalStatus: 'resolved', identityStatus: 'resolved', pointUuid: 'point-a' });
+		expect(rows[1]).toMatchObject({ canonicalStatus: 'deferred', identityStatus: 'deferred' });
+		expect(rows[1].pointUuid).toBeUndefined();
+		evidence.validatedNodeIds.add('ns=1;s=B');
+		expect(getConfiguredPointRows(endpoint, db, evidence).map(row => row.pointUuid)).toEqual(['point-a', 'point-b']);
+	});
+
+	it('defers OPC UA points when namespace evidence is invalid', () => {
+		const endpoint: ConfiguredEndpoint = {
+			...mqttEndpoint([{ name: 'temperature', nodeId: 'ns=1;s=Temperature' }], 'source-opcua'),
+			protocol: 'opcua',
+		};
+		insertEndpoint(db, endpoint);
+		const rows = getConfiguredPointRows(endpoint, db, {
+			namespaceArray: ['invalid'], validatedNodeIds: new Set(['ns=1;s=Temperature']),
+		});
+		expect(rows[0]).toMatchObject({ canonicalStatus: 'deferred', identityStatus: 'deferred' });
+		expect(rows[0].pointUuid).toBeUndefined();
+	});
+
+	it('refreshes OPC UA status over HTTP after session evidence becomes available', async () => {
+		const endpoint: Endpoint = {
+			...mqttEndpoint([{ name: 'temperature', nodeId: 'ns=1;s=Temperature' }], 'source-opcua'),
+			protocol: 'opcua',
+		};
+		insertEndpoint(db, endpoint);
+		const canonical = canonicalizeAddress({
+			protocol: 'opcua', nodeId: 'ns=1;s=Temperature',
+			namespaceArray: namespaces, nodeIdVerifiedAgainstNamespaceArray: true,
+		});
+		if (canonical.status !== 'resolved') throw new Error('Expected canonical OPC UA address');
+		storeIdentity(db, endpoint.uuid!, 'opcua', canonical.addressKey, 'point-temperature');
+		jest.spyOn(sqlite, 'getDatabase').mockReturnValue(db);
+		const logger = { infoSync: jest.fn(), warnSync: jest.fn(), errorSync: jest.fn(), debugSync: jest.fn() };
+		const manager = new AdapterManager({}, logger as any, 'agent');
+		jest.spyOn(actions, 'getAdapterManager').mockReturnValue(manager);
+		jest.spyOn(manager, 'getOpcuaNamespaceEvidence').mockReturnValueOnce(undefined).mockReturnValue({
+			namespaceArray: namespaces.uris, validatedNodeIds: new Set(['ns=1;s=Temperature']),
+		});
+		authorizeRouteRequest();
+
+		const before = await requestPoints('/v1/endpoints/source-opcua/points', true);
+		expect(await before.json()).toMatchObject({ points: [{ canonicalStatus: 'deferred', identityStatus: 'deferred' }] });
+		const after = await requestPoints('/v1/endpoints/source-opcua/points', true);
+		expect(await after.json()).toMatchObject({ points: [{
+			canonicalStatus: 'resolved', identityStatus: 'resolved', pointUuid: 'point-temperature',
+		}] });
 	});
 
 	it('returns points over HTTP for an authenticated request', async () => {

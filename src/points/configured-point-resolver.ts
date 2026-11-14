@@ -217,6 +217,7 @@ export async function createIdentities(
 	db: DatabaseSync,
 	resolverResult: ResolverResult,
 	opcuaNamespaceArrays?: Map<string, OpcuaAddressInput['namespaceArray']>,
+	isCurrent?: () => boolean,
 ): Promise<CreateIdentitiesResult> {
 	const resolverRef = Object.freeze({});
 	const verifier = new ConfiguredPointVerifier(db, resolverRef);
@@ -242,6 +243,7 @@ export async function createIdentities(
 				endpointUuid: ep.endpointUuid,
 				protocol: ep.protocol,
 				ambiguousAddressKeys: ambiguousKeys.size > 0 ? ambiguousKeys : undefined,
+				isCurrent,
 			};
 
 			const result = await catalog.createIdentityIfAbsent(
