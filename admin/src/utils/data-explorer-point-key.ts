@@ -18,6 +18,8 @@ export interface DataExplorerPointRow extends DataExplorerPointIdentity {
   sourceEndpointUuid?: string
   deviceUuid?: string
   deviceDisplayName?: string
+  pointUuid?: string
+  provisionalPointId?: string
   rawPointName?: string
   rawObjectName?: string
   value: unknown
@@ -47,6 +49,7 @@ export function dataExplorerPoints(events: ActivityEvent[], subscriptions: Subsc
     add({
       protocol: e.protocol, endpointName: e.endpointName, pointIdentityEndpointName: e.pointIdentityEndpointName,
       sourceEndpointUuid: e.sourceEndpointUuid, deviceUuid: e.deviceUuid, deviceDisplayName: e.deviceDisplayName,
+      pointUuid: e.pointUuid, provisionalPointId: e.provisionalPointId,
       metric: e.metric, normalizedName: e.normalizedName, rawPointName: e.rawPointName,
       rawObjectName: e.rawObjectName, value: e.value, quality: e.quality,
       unit: e.unit, timestamp: e.timestamp, destinationName: e.destinationName,
@@ -57,6 +60,7 @@ export function dataExplorerPoints(events: ActivityEvent[], subscriptions: Subsc
     add({
       protocol: s.protocol, endpointName: s.endpointName, pointIdentityEndpointName: s.pointIdentityEndpointName,
       sourceEndpointUuid: s.sourceEndpointUuid, deviceUuid: s.deviceUuid, deviceDisplayName: s.deviceDisplayName,
+      pointUuid: s.pointUuid, provisionalPointId: s.provisionalPointId,
       metric: s.lastMetric, normalizedName: s.normalizedName, rawPointName: s.rawPointName,
       rawObjectName: s.rawObjectName, value: s.lastValue, quality: s.lastQuality,
       unit: s.lastUnit, timestamp: s.lastPublishTime, destinationName: s.destinationName,

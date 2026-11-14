@@ -3,6 +3,18 @@ import type { Endpoint, EndpointCreateData, EndpointUpdateData } from '@/types'
 
 const BASE = '/v1/endpoints'
 
+export interface ConfiguredPoint {
+  name: string
+  protocolAddress: string | Record<string, unknown> | null
+  canonicalStatus: 'resolved' | 'unresolved' | 'deferred'
+  canonicalReason: string | null
+  identityStatus: 'resolved' | 'unresolved' | 'deferred'
+  identityReason: string | null
+  pointUuid?: string
+  deviceUuid?: string
+  deviceName?: string
+}
+
 export interface SourceTestRegisterResult {
   name: string
   value: unknown
@@ -59,6 +71,11 @@ export const sourcesApi = {
     return client
       .get<{ endpoints: Endpoint[] }>(BASE, { params: protocol ? { protocol } : {} })
       .then((r) => r.data.endpoints)
+  },
+
+  getPoints(uuid: string): Promise<ConfiguredPoint[]> {
+    return client.get<{ points: ConfiguredPoint[] }>(`${BASE}/${encodeURIComponent(uuid)}/points`)
+      .then(r => r.data.points)
   },
 
   test(data: { protocol: string; connection: Record<string, unknown>; registers?: unknown[] }): Promise<SourceTestResult> {

@@ -8,6 +8,8 @@ import { EditOutlined, FolderOpenOutlined } from '@ant-design/icons-vue'
 import SourceConnectionFields from './SourceConnectionFields.vue'
 import ModbusRegisterMapEditor from './ModbusRegisterMapEditor.vue'
 import OPCUABrowser from './OPCUABrowser.vue'
+import DevicesPanel from '@/components/devices/DevicesPanel.vue'
+import ConfiguredPointsPanel from './ConfiguredPointsPanel.vue'
 
 const props = defineProps<{
   open: boolean
@@ -29,6 +31,7 @@ const testResult = ref<SourceTestResult | null>(null)
 const registerMapOpen = ref(false)
 const opcuaBrowserOpen = ref(false)
 const identification = ref<OPCUADeviceIdentification | null>(null)
+const activeTab = ref('settings')
 
 function connectionWithDefaults(protocol: string, connection: Record<string, unknown> = {}) {
   return protocol === 'modbus' && connection.type == null ? { ...connection, type: 'tcp' } : { ...connection }
@@ -50,6 +53,7 @@ watch(
       return
     }
     testResult.value = null
+    activeTab.value = 'settings'
     if (props.editing) {
       form.value = {
         name: props.editing.name,
@@ -144,9 +148,11 @@ function close() {
   <a-drawer
     :open="open"
     :title="editing ? `Edit — ${editing.name}` : 'New Source'"
-    :width="560"
+    :width="activeTab === 'settings' ? 560 : 900"
     @close="close"
   >
+    <a-tabs v-model:active-key="activeTab">
+      <a-tab-pane key="settings" tab="Settings">
     <a-form
       ref="formRef"
       :model="form"
@@ -230,8 +236,17 @@ function close() {
       show-icon
       style="margin-top: 12px"
     />
+      </a-tab-pane>
+      <a-tab-pane v-if="editing" key="points" tab="Points">
+        <ConfiguredPointsPanel v-if="activeTab === 'points'" :sources="[editing]" />
+      </a-tab-pane>
+      <a-tab-pane v-if="editing" key="devices" tab="Connected Devices">
+        <a-alert v-if="editing.id == null" type="warning" show-icon message="This source has no database ID; its devices cannot be associated." />
+        <DevicesPanel v-if="activeTab === 'devices'" :source-id="editing.id ?? null" />
+      </a-tab-pane>
+    </a-tabs>
 
-    <template #footer>
+    <template v-if="activeTab === 'settings'" #footer>
       <a-space style="width: 100%; justify-content: space-between">
         <a-space>
           <a-button :loading="testing" data-testid="source-drawer-test-connection" @click="testConnection">Test Connection</a-button>

@@ -1,4 +1,4 @@
-const builtInTabs = new Set(['all', 'favorites', 'views', 'datasets'])
+const builtInTabs = new Set(['all', 'configured', 'favorites', 'views', 'datasets'])
 
 export interface DataExplorerTabs {
   activeTab: string

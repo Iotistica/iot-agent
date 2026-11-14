@@ -30,6 +30,7 @@ export interface SubscriptionActivity {
 	normalizedName?: string;
 	pointIdentityEndpointName?: string;
 	provisionalPointId?: string;
+	pointUuid?: string;
 	rulesVersion?: string;
 	/** True protocol-reported name, when the adapter captured one separately from the sanitized metric identifier (currently BACnet only — see plugins/types.ts's DeviceDataPoint.rawObjectName). Display-only. */
 	rawObjectName?: string;
@@ -67,6 +68,7 @@ export interface ActivityEvent {
 	normalizedName?: string;
 	pointIdentityEndpointName?: string;
 	provisionalPointId?: string;
+	pointUuid?: string;
 	rulesVersion?: string;
 	/** True protocol-reported name, when the adapter captured one separately from the sanitized metric identifier (currently BACnet only — see plugins/types.ts's DeviceDataPoint.rawObjectName). Display-only. */
 	rawObjectName?: string;
@@ -110,6 +112,7 @@ interface RecordParams {
 	normalizedName?: string;
 	pointIdentityEndpointName?: string;
 	provisionalPointId?: string;
+	pointUuid?: string;
 	rulesVersion?: string;
 	rawObjectName?: string;
 	rawPointName?: string;
@@ -209,6 +212,7 @@ class ActivityMonitor {
 			normalizedName: params.normalizedName,
 			pointIdentityEndpointName: params.pointIdentityEndpointName,
 			provisionalPointId: params.provisionalPointId,
+			pointUuid: params.pointUuid,
 			rulesVersion: params.rulesVersion,
 			rawObjectName: params.rawObjectName,
 			rawPointName: params.rawPointName,
@@ -248,6 +252,7 @@ class ActivityMonitor {
 			normalizedName: params.normalizedName,
 			pointIdentityEndpointName: params.pointIdentityEndpointName,
 			provisionalPointId: params.provisionalPointId,
+			pointUuid: params.pointUuid,
 			rulesVersion: params.rulesVersion,
 			rawObjectName: params.rawObjectName,
 			rawPointName: params.rawPointName,

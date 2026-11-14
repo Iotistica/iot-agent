@@ -34,8 +34,10 @@ import type { MarketplaceImage } from '../containers/types.js';
 import { MarketplaceCategoriesModel } from '../db/models/marketplace-categories.model.js';
 import { DeviceCandidateStrategySchema } from '../discovery/device-candidates.js';
 import { OPCUAConnectionSchema } from '../plugins/opcua/types.js';
+import { configuredPointsRouter } from './configured-points.js';
 
 export const router = express.Router();
+router.use(configuredPointsRouter);
 
 /**
  * POST /v1/restart

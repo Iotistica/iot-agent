@@ -14,7 +14,6 @@ import {
   TeamOutlined,
   SafetyOutlined,
   WifiOutlined,
-  ClusterOutlined,
   DatabaseOutlined,
   CodeOutlined,
   NodeIndexOutlined,
@@ -102,11 +101,6 @@ function onMenuClick({ key }: { key: string }) {
         <a-menu-item key="/data-flow">
           <template #icon><NodeIndexOutlined /></template>
           Data
-        </a-menu-item>
-
-        <a-menu-item key="/devices">
-          <template #icon><ClusterOutlined /></template>
-          Devices
         </a-menu-item>
 
         <!-- Assets hidden for now — route still works, just not linked from the sidebar. -->

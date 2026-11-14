@@ -36,6 +36,7 @@ describe('ActivityMonitor latest point snapshots', () => {
 			sourceEndpointUuid: 'endpoint-1',
 			deviceUuid: 'device-1',
 			deviceDisplayName: 'AHU-7',
+			pointUuid: 'point-1',
 			pointIdentityEndpointName: 'opcua-pipe',
 			metric: 'ahu_7_cc_valve',
 			value: 1,
@@ -44,7 +45,7 @@ describe('ActivityMonitor latest point snapshots', () => {
 
 		expect(activityMonitor.getLatestPoints().find(point => point.protocol === protocol)?.pointIdentityEndpointName).toBe('opcua-pipe');
 		expect(activityMonitor.getSubscriptions().find(subscription => subscription.protocol === protocol)?.pointIdentityEndpointName).toBe('opcua-pipe');
-		expect(activityMonitor.getLatestPoints().find(point => point.protocol === protocol)).toEqual(expect.objectContaining({ sourceEndpointUuid: 'endpoint-1', deviceUuid: 'device-1', deviceDisplayName: 'AHU-7' }));
-		expect(activityMonitor.getSubscriptions().find(subscription => subscription.protocol === protocol)).toEqual(expect.objectContaining({ sourceEndpointUuid: 'endpoint-1', deviceUuid: 'device-1', deviceDisplayName: 'AHU-7' }));
+		expect(activityMonitor.getLatestPoints().find(point => point.protocol === protocol)).toEqual(expect.objectContaining({ sourceEndpointUuid: 'endpoint-1', deviceUuid: 'device-1', deviceDisplayName: 'AHU-7', pointUuid: 'point-1' }));
+		expect(activityMonitor.getSubscriptions().find(subscription => subscription.protocol === protocol)).toEqual(expect.objectContaining({ sourceEndpointUuid: 'endpoint-1', deviceUuid: 'device-1', deviceDisplayName: 'AHU-7', pointUuid: 'point-1' }));
 	});
 });

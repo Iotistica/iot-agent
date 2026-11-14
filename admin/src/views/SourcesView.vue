@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import { useRoute } from 'vue-router'
 import { message, Modal } from 'ant-design-vue'
 import { PlusOutlined, EditOutlined, DeleteOutlined, RadarChartOutlined, CheckCircleOutlined, StopOutlined } from '@ant-design/icons-vue'
 import type { TableColumnType } from 'ant-design-vue'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import { useAuth } from '@/composables/useAuth'
 import SourceDrawer from '@/components/sources/SourceDrawer.vue'
+import DevicesPanel from '@/components/devices/DevicesPanel.vue'
 import DiscoveryDrawer from '@/components/discovery/DiscoveryDrawer.vue'
 import DiscoveryRuleDrawer, { type DiscoveryRulePrefill } from '@/components/discovery/DiscoveryRuleDrawer.vue'
 import type { Endpoint, EndpointCommunicationQuality, EndpointCreateData, DiscoveryRule } from '@/types'
@@ -18,6 +20,9 @@ import { protocolColor, protocolLabel } from '@/utils/protocol'
 const DISCOVERABLE_PROTOCOLS = new Set(['bacnet', 'modbus', 'opcua', 'mqtt'])
 
 const { hasRole } = useAuth()
+const route = useRoute()
+const activeTab = ref(route.query.tab === 'devices' ? 'devices' : 'sources')
+watch(() => route.query.tab, tab => { activeTab.value = tab === 'devices' ? 'devices' : 'sources' })
 
 const rows = ref<Endpoint[]>([])
 const loading = ref(false)
@@ -359,6 +364,8 @@ onUnmounted(() => {
 
 <template>
   <AppLayout title="Sources">
+    <a-tabs v-model:active-key="activeTab">
+      <a-tab-pane key="sources" tab="Sources">
     <div class="heading">
       <p>Manage connected protocol endpoints and communication health.</p>
       <div class="header-actions">
@@ -458,7 +465,7 @@ onUnmounted(() => {
                 <template #icon><RadarChartOutlined /></template>
               </a-button>
             </a-tooltip>
-            <a-button size="small" @click="openEdit(record)">
+            <a-button size="small" data-testid="source-edit" @click="openEdit(record)">
               <template #icon><EditOutlined /></template>
             </a-button>
             <a-button v-if="hasRole('operator')" size="small" danger @click="confirmDelete(record)">
@@ -469,6 +476,11 @@ onUnmounted(() => {
       </template>
     </a-table>
     </a-card>
+      </a-tab-pane>
+      <a-tab-pane key="devices" tab="Connected Devices">
+        <DevicesPanel />
+      </a-tab-pane>
+    </a-tabs>
 
     <SourceDrawer
       v-model:open="drawerOpen"

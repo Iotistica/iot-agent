@@ -24,6 +24,7 @@ export interface SubscriptionActivity {
   normalizedName?: string
   pointIdentityEndpointName?: string
   provisionalPointId?: string
+  pointUuid?: string
   rulesVersion?: string
   // True protocol-reported name, when the adapter captured one separately from the
   // sanitized lastMetric identifier (currently BACnet only). Display-only.
@@ -50,6 +51,7 @@ export interface ActivityEvent {
   normalizedName?: string
   pointIdentityEndpointName?: string
   provisionalPointId?: string
+  pointUuid?: string
   rulesVersion?: string
   rawObjectName?: string
   rawPointName?: string

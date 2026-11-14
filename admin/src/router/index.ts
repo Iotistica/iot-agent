@@ -32,11 +32,7 @@ const router = createRouter({
       component: () => import('@/views/SourcesView.vue'),
       meta: { title: 'Sources' },
     },
-    {
-      path: '/devices',
-      component: () => import('@/views/DevicesView.vue'),
-      meta: { title: 'Devices' },
-    },
+    { path: '/devices', redirect: '/sources?tab=devices' },
     {
       path: '/assets',
       component: () => import('@/views/AssetsView.vue'),

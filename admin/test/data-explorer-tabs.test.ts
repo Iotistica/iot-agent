@@ -30,6 +30,10 @@ test('restores built-in tabs and ignores malformed or invalid state', () => {
     ),
     { activeTab: 'datasets', openViewIds: [] },
   )
+  assert.deepEqual(
+    restoreDataExplorerTabs(JSON.stringify({ activeTab: 'configured', openViewIds: [] }), []),
+    { activeTab: 'configured', openViewIds: [] },
+  )
   assert.deepEqual(restoreDataExplorerTabs('invalid', ['view-1']), { activeTab: 'all', openViewIds: [] })
   assert.deepEqual(restoreDataExplorerTabs(null, ['view-1']), { activeTab: 'all', openViewIds: [] })
 })

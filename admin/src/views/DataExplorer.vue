@@ -18,6 +18,8 @@ import type { Endpoint } from '@/types'
 import { dataExplorerPointName, dataExplorerPoints, dataExplorerSourceLookup, dataExplorerSourceName, matchesDataExplorerView, missingDataExplorerViewPointCount, normalizeDataExplorerPointKey, orderDataExplorerViewPoints, type DataExplorerPointRow } from '@/utils/data-explorer-point-key'
 import { mergePinnedDataExplorerPoints } from '@/utils/data-explorer-pins'
 import { restoreDataExplorerTabs } from '@/utils/data-explorer-tabs'
+import ConfiguredPointsPanel from '@/components/sources/ConfiguredPointsPanel.vue'
+import SourceDrawer from '@/components/sources/SourceDrawer.vue'
 
 type PointRow = DataExplorerPointRow
 type DeviceRecord = { uuid: string; endpoint_id: number; name: string; protocol: string; metadata?: Record<string, unknown> }
@@ -33,6 +35,10 @@ const search = ref('')
 const protocolFilter = ref<string | undefined>(undefined)
 const sourceFilter = ref<string | undefined>(undefined)
 const qualityFilter = ref<string | undefined>(undefined)
+const showPointUuid = ref(false)
+const sourceDrawerOpen = ref(false)
+const editingSource = ref<Endpoint | null>(null)
+const configuredRevision = ref(0)
 const selected = ref<PointRow | null>(null)
 const drawerOpen = ref(false)
 const historyPoint = ref<PointRow | null>(null)
@@ -187,7 +193,7 @@ const pointsMatchingFilters = computed(() => {
   source = mergePinnedDataExplorerPoints(source, pinnedKeys.value, pinnedPointCache.value)
   const q = search.value.trim().toLowerCase()
   return source.filter(p => {
-    return (!q || [sourceName(p), deviceName(p), p.metric, p.normalizedName, p.rawPointName, p.rawObjectName, p.destinationName]
+    return (!q || [sourceName(p), deviceName(p), p.metric, p.normalizedName, p.rawPointName, p.rawObjectName, p.destinationName, p.pointUuid, p.provisionalPointId]
       .some(v => (v || '').toLowerCase().includes(q)))
       && (!protocolFilter.value || p.protocol === protocolFilter.value)
       && (sourceFilter.value === undefined || (sourceFor(p)?.uuid ?? UNKNOWN_SOURCE) === sourceFilter.value)
@@ -386,6 +392,7 @@ const columns = computed<TableColumnType<PointRow>[]>(() => {
     { title: 'Destination', dataIndex: 'destinationName', key: 'destinationName', width: 150, ellipsis: true },
     { title: '', key: 'action', width: 125 },
   )
+  if (showPointUuid.value) cols.splice(4, 0, { title: 'Point UUID', key: 'pointUuid', width: 260, ellipsis: true })
   return cols
 })
 const viewColumns: TableColumnType<SavedView>[] = [
@@ -445,6 +452,8 @@ async function poll() {
   }
 }
 function openPointDrawer(row: PointRow) { selected.value = row; drawerOpen.value = true }
+function manageSource(source: Endpoint) { editingSource.value = source; sourceDrawerOpen.value = true }
+async function onSourceSaved() { await loadSourceMetadata(); configuredRevision.value++ }
 function openHistory(row: PointRow) { historyPoint.value = row; historyOpen.value = true }
 function resetFilters() { search.value = ''; protocolFilter.value = undefined; sourceFilter.value = undefined; qualityFilter.value = undefined }
 watch(points, () => {
@@ -513,7 +522,7 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
         <a-col :xs="12" :md="6"><a-card size="small" class="metric-card"><div class="metric-inner"><span class="metric-icon icon-stale"><ClockCircleOutlined /></span><a-statistic title="No update in 60s" :value="staleCount" /></div></a-card></a-col>
       </a-row>
       <a-card size="small" class="browser-card">
-        <div class="filters">
+        <div v-if="activeTab !== 'configured'" class="filters">
           <a-input v-model:value="search" data-testid="data-search" placeholder="Search source, device, point, destination…" allow-clear class="search" />
           <a-select v-model:value="protocolFilter" :options="protocolOptions" placeholder="All protocols" allow-clear class="filter" />
           <a-select v-model:value="sourceFilter" :options="sourceOptions" show-search option-filter-prop="label" placeholder="All sources" allow-clear class="filter" />
@@ -523,6 +532,7 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
             <a-select-option value="STALE">No update in 60s</a-select-option>
           </a-select>
           <a-button data-testid="data-clear-filters" @click="resetFilters">Clear</a-button>
+          <a-checkbox v-model:checked="showPointUuid">Point UUID</a-checkbox>
           <div class="filters-actions">
             <a-button data-testid="data-pause" @click="paused = !paused">
               <PauseOutlined v-if="!paused" />
@@ -537,6 +547,7 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
         <div class="views-bar">
           <div class="views-list">
             <button type="button" data-testid="data-tab-live" :class="['view-tab', { active: activeTab === 'all' }]" @click="activateTab('all')">Live ({{ livePointCount }})</button>
+            <button type="button" data-testid="data-tab-configured" :class="['view-tab', { active: activeTab === 'configured' }]" @click="activateTab('configured')">Configured Points</button>
             <button type="button" data-testid="data-tab-favorites" :class="['view-tab', { active: activeTab === 'favorites' }]" @click="activateTab('favorites')"> Favorites ({{ favoriteCount }})</button>
             <div v-for="view in savedViews.filter(v => openViewIds.includes(v.id))" :key="view.id" :class="['saved-view-tab', { active: activeTab === view.id }]">
               <button type="button" @click="activateTab(view.id)">{{ view.name }} ({{ new Set(view.pointKeys.map(normalizeDataExplorerPointKey)).size }})</button>
@@ -548,13 +559,14 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
         </div>
         <a-alert v-if="viewError" type="warning" show-icon :message="viewError" style="margin-bottom: 10px" />
         <a-alert v-if="activeSavedView && missingViewCount" type="info" show-icon :message="`${missingViewCount} saved point(s) are not in the recent sample. They remain saved in this view.`" style="margin-bottom: 10px" />
-        <div class="table-meta">
+        <div v-if="activeTab !== 'configured'" class="table-meta">
           <div></div>
           <span class="toolbar-info" data-testid="data-toolbar-info">Showing {{ activeTab === 'datasets' ? datasets.length + ' datasets' : activeTab === 'views' ? savedViews.length + ' views' : filteredPoints.length + ' points' }}<template v-if="lastSync"> · Last sync {{ lastSync }}</template></span>
         </div>
 
         <!-- Views tab content -->
-        <template v-if="activeTab === 'views'">
+        <ConfiguredPointsPanel v-if="activeTab === 'configured'" :sources="sources" :revision="configuredRevision" show-source @manage="manageSource" />
+        <template v-else-if="activeTab === 'views'">
           <a-table :columns="viewColumns" :data-source="savedViews" :loading="viewsLoading" row-key="id" size="small" :pagination="{ pageSize: 20, showSizeChanger: true, pageSizeOptions: ['10', '20', '50'] }">
             <template #bodyCell="{ column, record: view }">
               <template v-if="column.key === 'name'">
@@ -607,6 +619,7 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
             <template v-else-if="column.key === 'source'">{{ sourceName(record) }}</template>
             <template v-else-if="column.key === 'device'">{{ deviceName(record) }}</template>
             <template v-else-if="column.key === 'point'"><div class="point-primary" data-testid="point-name" :title="pointName(record)">{{ pointName(record) }}</div><div v-if="record.normalizedName && originalName(record) !== pointName(record)" class="point-secondary" :title="originalName(record)">Original: {{ originalName(record) }}</div></template>
+            <template v-else-if="column.key === 'pointUuid'"><span :title="record.pointUuid || record.provisionalPointId || 'No durable UUID reported'">{{ record.pointUuid || (record.provisionalPointId ? 'Provisional' : 'Not assigned') }}</span></template>
             <template v-else-if="column.key === 'value'"><a-tag v-if="record.quality === 'BAD' && record.value == null" color="red">No Value</a-tag><span v-else>{{ valueText(record.value) }}</span></template>
             <template v-else-if="column.key === 'unit'">{{ record.unit || '—' }}</template>
             <template v-else-if="column.key === 'quality'"><a-tag v-if="record.quality === 'BAD'" color="red">BAD</a-tag><a-tag v-else-if="isStale(record.timestamp)" color="orange">STALE</a-tag><a-tag v-else color="green">{{ record.quality || 'CURRENT' }}</a-tag></template>
@@ -633,6 +646,7 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
       @update:open="drawerOpen = $event"
     />
     <PointHistoryModal v-model:open="historyOpen" :point="historyPoint" />
+    <SourceDrawer v-model:open="sourceDrawerOpen" :editing="editingSource" :prefill="null" @saved="onSourceSaved" />
     <CreateDatasetDrawer
       v-model:open="datasetDrawerOpen"
       :point-rows="candidateDatasetPoints"

@@ -3,12 +3,12 @@ import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { message, Modal } from 'ant-design-vue'
 import { CheckCircleOutlined, StopOutlined, DeleteOutlined } from '@ant-design/icons-vue'
 import type { TableColumnType } from 'ant-design-vue'
-import AppLayout from '@/components/layout/AppLayout.vue'
 import DeviceDrawer from '@/components/devices/DeviceDrawer.vue'
 import { client } from '@/api/client'
 import { protocolColor, protocolLabel } from '@/utils/protocol'
 
 interface Device {
+  endpoint_id: number | null
   uuid: string
   name: string
   protocol: string
@@ -19,6 +19,8 @@ interface Device {
   lastSeenAt: string | null
   created_at: string
 }
+
+const props = defineProps<{ sourceId?: number | null }>()
 
 const rows = ref<Device[]>([])
 const loading = ref(false)
@@ -55,7 +57,8 @@ const rowSelection = computed(() => ({
 const filtered = computed(() => rows.value.filter(d => {
   const q = search.value.trim().toLowerCase()
   const name = (d.metadata?.objectName as string | undefined) || d.name
-  return (!q || [name, d.name, d.protocol, d.identifier].some(v => (v || '').toLowerCase().includes(q)))
+  return (props.sourceId === undefined || (props.sourceId !== null && d.endpoint_id === props.sourceId))
+    && (!q || [name, d.name, d.protocol, d.identifier].some(v => (v || '').toLowerCase().includes(q)))
     && (!activeProtocol.value || d.protocol === activeProtocol.value)
 }))
 
@@ -77,6 +80,8 @@ async function load() {
   try {
     const { data } = await client.get<{ devices: Device[] }>('/v1/devices')
     rows.value = data.devices ?? []
+  } catch {
+    message.error('Failed to load devices')
   } finally {
     loading.value = false
   }
@@ -181,7 +186,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <AppLayout title="Devices">
+  <div>
     <div class="heading">
       <p>Physical and logical devices discovered through protocol endpoints.</p>
       <div class="header-actions">
@@ -201,12 +206,13 @@ onUnmounted(() => {
         <a-select v-model:value="activeProtocol" :options="protocolOptions" placeholder="All protocols" allow-clear class="filter" />
         <a-button @click="clearFilters">Clear</a-button>
       </div>
-      <div class="toolbar-info">Showing {{ filtered.length }} of {{ rows.length }} devices</div>
+      <div class="toolbar-info">Showing {{ filtered.length }} devices</div>
       <a-table
         :dataSource="filtered"
         :columns="columns"
         :loading="loading"
         :pagination="{ pageSize: 20, showSizeChanger: true, pageSizeOptions: ['10', '20', '50'] }"
+        :scroll="{ x: 700 }"
         :row-selection="rowSelection"
         :customRow="(record: Device) => ({ onClick: (e: MouseEvent) => { if (!(e.target as HTMLElement).closest('.ant-checkbox-wrapper')) openDrawer(record) }, style: 'cursor: pointer' })"
         row-key="uuid"
@@ -248,7 +254,6 @@ onUnmounted(() => {
           <a-empty description="No devices yet">
             <template #description>
               <span>Devices appear here once endpoints connect and report data.</span><br>
-              <a-typography-link href="/admin/#/endpoints">Go to Endpoints →</a-typography-link>
             </template>
           </a-empty>
         </template>
@@ -261,7 +266,7 @@ onUnmounted(() => {
       @update:open="drawerOpen = $event"
       @saved="onDrawerSaved"
     />
-  </AppLayout>
+  </div>
 </template>
 
 <style scoped>
