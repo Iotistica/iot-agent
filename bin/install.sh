@@ -807,7 +807,7 @@ echo ""
     echo "✓ System dependencies installed"
     installer_step "System dependencies ready (including tcpdump)."
 
-    # Install Docker (required for agent functionality)
+    # Install Docker (required for agent functionality)docker
     installer_step "Checking Docker and Node.js..."
     echo ""
     install_docker_if_needed "no"
@@ -1155,7 +1155,7 @@ echo ""
     fi
 
     # Install root-owned updater assets. The agent itself receives no sudo privileges.
-    installer_step "Configuring root-owned agent update service..."
+    installer_step "Configuring agent update service..."
     UPDATE_ASSET_DIR="/opt/iotistic/agent/bin"
     for update_asset in update.sh update-runner.sh systemd/update.service systemd/update.path; do
         if [ ! -f "$UPDATE_ASSET_DIR/$update_asset" ]; then

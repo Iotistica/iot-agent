@@ -16,6 +16,19 @@ Ping the local API (confirms the agent process is up and listening):
 curl -s http://localhost:48484/ping
 ```
 
+For watchdog restarts, inspect the watchdog configuration and journal:
+
+```bash
+systemctl show iotistica-agent -p WatchdogUSec -p NotifyAccess -p Result
+journalctl -u iotistica-agent -b --no-pager | grep -i watchdog
+command -v systemd-notify
+```
+
+The agent sends health-gated heartbeats at half `WatchdogSec`. An unhealthy
+critical subsystem intentionally withholds heartbeats. Notification failures
+are logged; check that `systemd-notify` is installed and the service has
+`NotifyAccess=all`. Keep watchdog protection enabled while investigating.
+
 ---
 
 ## Check first-run setup status

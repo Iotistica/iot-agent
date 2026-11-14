@@ -2,96 +2,38 @@
  * Systemd watchdog helpers for readiness and keepalive notifications.
  */
 
-import { createSocket } from 'dgram';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 import type { AgentLogger } from '../logging/agent-logger';
 import { LogComponents } from '../logging/types';
-import type { Socket } from 'dgram';
 
 const execFileAsync = promisify(execFile);
-let watchdogInterval: NodeJS.Timeout | null = null;
-let notifySocket: Socket | null = null;
-let lastWatchdogPing: number = 0;
-let consecutiveSkippedPings: number = 0;
 
-/** Send a systemd notification via native Unix socket. */
-function sendNativeNotification(message: string, socketPath: string, logger?: AgentLogger): void {
-	try {
-		// Lazy-create Unix datagram socket.
-		if (!notifySocket) {
-			notifySocket = createSocket({ type: 'unix_dgram' } as any); // Type workaround for unix_dgram
-			notifySocket.on('error', (err) => {
-				logger?.errorSync('Watchdog socket error', err, {
-					component: LogComponents.agent,
-					operation: 'sendNativeNotification'
-				});
-				// Recreate socket on the next attempt.
-				notifySocket?.close();
-				notifySocket = null;
-			});
-		}
-
-		// systemd encodes abstract socket paths with a leading '@'.
-		// The kernel abstract namespace uses a NUL byte prefix instead.
-		const actualPath = socketPath.startsWith('@') ? '\0' + socketPath.slice(1) : socketPath;
-
-		// Send datagram to systemd socket.
-		// Must use the 5-arg form (buf, offset, length, path, cb) — the 3-arg
-		// form (buf, path, cb) maps 'path' into the 'port' slot and is silently dropped.
-		const buf = Buffer.isBuffer(message) ? message : Buffer.from(message);
-		// @ts-ignore - Unix socket path not in official types
-		notifySocket.send(buf, 0, buf.length, actualPath, (err: Error | null) => {
-			if (err) {
-				logger?.errorSync('Failed to send watchdog ping', err, {
-					component: LogComponents.agent,
-					operation: 'sendNativeNotification',
-					message
-				});
-				// Recreate socket on the next attempt.
-				notifySocket?.close();
-				notifySocket = null;
-			}
-		});
-    
-		logger?.debugSync(`Sent notification: ${message}`, {
-			component: LogComponents.agent,
-			operation: 'sendNativeNotification',
-			method: 'unix_socket'
-		});
-	} catch (error) {
-		logger?.errorSync(`Native notification failed: ${message}`, error instanceof Error ? error : undefined, {
-			component: LogComponents.agent,
-			operation: 'sendNativeNotification'
-		});
-	}
-}
-
-/** Send a systemd notification. Prefers the systemd-notify CLI which correctly
- *  handles both filesystem and abstract socket paths without needing a bound
- *  local socket. Falls back to raw unix_dgram if the CLI is unavailable. */
+/** Send a systemd notification using the blocking helper so systemd can attribute it. */
 async function sendNotification(message: string, logger?: AgentLogger): Promise<void> {
-	const socketPath = process.env.NOTIFY_SOCKET;
-	if (!socketPath) {
+	if (!process.env.NOTIFY_SOCKET) {
 		return;
 	}
 
-	// Try systemd-notify CLI first — it is the most reliable method and handles
-	// all socket path formats (filesystem and abstract @-prefixed paths).
 	try {
-		await execFileAsync('systemd-notify', ['--pid=parent', message]);
+		await execFileAsync('systemd-notify', ['--pid=parent', message], { timeout: 5000 });
 		logger?.debugSync(`Sent notification: ${message}`, {
 			component: LogComponents.agent,
 			operation: 'sendNotification',
 			method: 'systemd-notify'
 		});
-		return;
-	} catch {
-		// CLI not available; fall back to raw unix_dgram socket.
+	} catch (error) {
+		const failure = error instanceof Error ? error : new Error(String(error));
+		if (logger) {
+			logger.errorSync(`Systemd notification failed: ${message}`, failure, {
+				component: LogComponents.agent,
+				operation: 'sendNotification',
+			});
+		} else {
+			console.error(`[watchdog] Systemd notification failed: ${message}`, failure);
+		}
+		throw failure;
 	}
-
-	sendNativeNotification(message, socketPath, logger);
-	await new Promise(resolve => setTimeout(resolve, 25));
 }
 
 export interface HealthCheckResult {
@@ -131,7 +73,7 @@ export function startWatchdog(healthCheck?: HealthCheckFn, logger?: AgentLogger)
 	logger?.infoSync('Starting systemd watchdog', {
 		component: LogComponents.agent,
 		socket: socketPath,
-		method: 'native_unix_socket',
+		method: 'systemd-notify',
 		systemdUnit,
 		invocationId
 	});
@@ -160,7 +102,7 @@ export function startWatchdog(healthCheck?: HealthCheckFn, logger?: AgentLogger)
 	}
   
 	const intervalMs = watchdogUsec > 0 && Number.isFinite(watchdogUsec)
-		? Math.floor(watchdogUsec / 2000)
+		? Math.max(1, Math.floor(watchdogUsec / 2000))
 		: 10000;
 
 	logger?.infoSync('Watchdog interval configured', {
@@ -176,105 +118,119 @@ export function startWatchdog(healthCheck?: HealthCheckFn, logger?: AgentLogger)
 	// Do not send READY=1 here.
 	// Application readiness is handled by notifyReady().
   
-	// Initialize last ping timestamp.
-	lastWatchdogPing = Date.now();
 	const watchdogStartedAt = Date.now();
+	let lastWatchdogTick = watchdogStartedAt;
 	let lastInitLogAt = 0;
+	let consecutiveSkippedPings = 0;
+	let stopped = false;
+	let tickInProgress = false;
+	let notificationInFlight: Promise<void> | undefined;
 
-	// Send periodic watchdog pings through native socket.
-	watchdogInterval = setInterval(async () => {
+	const watchdogInterval = setInterval(async () => {
 		const now = Date.now();
-		const drift = now - lastWatchdogPing;
+		const drift = now - lastWatchdogTick;
+		lastWatchdogTick = now;
 		const maxDrift = intervalMs * 2; // Tolerance: 2x expected interval
 
-		// Skip ping when drift exceeds tolerance.
 		if (drift > maxDrift) {
-			consecutiveSkippedPings++;
-			logger?.errorSync('Watchdog ping skipped - timing drift detected', undefined, {
+			logger?.warnSync('Watchdog timer delayed', {
 				component: LogComponents.agent,
 				operation: 'watchdog',
-				action: 'skipped',
 				reason: 'timing_drift',
 				driftMs: drift,
 				expectedIntervalMs: intervalMs,
 				maxDriftMs: maxDrift,
-				consecutiveSkips: consecutiveSkippedPings,
 				systemdUnit,
-				invocationId,
-				consequence: 'systemd_will_restart'
+				invocationId
 			});
-			return;
+			if (!logger) console.warn(`[watchdog] Watchdog timer delayed by ${drift}ms`);
 		}
+		if (tickInProgress || stopped) return;
+		tickInProgress = true;
+		try {
+			const rawResult = healthCheck ? await healthCheck() : true;
+			if (stopped) return;
+			const { healthy, reason } = normalizeHealthResult(rawResult);
 
-		const rawResult = healthCheck ? await healthCheck() : true;
-		const { healthy, reason } = normalizeHealthResult(
-			typeof rawResult === 'boolean' ? rawResult : rawResult as HealthCheckResult
-		);
+			if (healthy) {
+				notificationInFlight = sendNotification('WATCHDOG=1', logger);
+				await notificationInFlight;
+				notificationInFlight = undefined;
 
-		if (healthy) {
-			await sendNotification('WATCHDOG=1', logger);
-			lastWatchdogPing = now;
-
-			// Reset skip counter on successful ping.
-			if (consecutiveSkippedPings > 0) {
-				logger?.infoSync('Watchdog ping resumed after skips', {
+				// Reset skip counter on successful ping.
+				if (consecutiveSkippedPings > 0) {
+					logger?.infoSync('Watchdog ping resumed after skips', {
+						component: LogComponents.agent,
+						operation: 'watchdog',
+						previousSkips: consecutiveSkippedPings
+					});
+					consecutiveSkippedPings = 0;
+				}
+			} else if (reason === 'initializing') {
+				consecutiveSkippedPings++;
+				const elapsedMs = now - watchdogStartedAt;
+				// Throttle initializing messages to once every 30s
+				if (now - lastInitLogAt >= 30000) {
+					lastInitLogAt = now;
+					logger?.warnSync('Watchdog ping suppressed - agent still initializing', {
+						component: LogComponents.agent,
+						operation: 'watchdog',
+						action: 'suppressed',
+						reason: 'initializing',
+						elapsedSinceStartMs: elapsedMs,
+						consecutiveSkips: consecutiveSkippedPings,
+						systemdUnit,
+						invocationId,
+					});
+					console.warn(`[watchdog] Agent still initializing (${Math.round(elapsedMs / 1000)}s elapsed) - watchdog pings suppressed`);
+				}
+			} else {
+				// Post-ready health check failure — withhold ping; systemd restarts after timeout.
+				consecutiveSkippedPings++;
+				logger?.errorSync('Watchdog ping skipped - unhealthy state', undefined, {
 					component: LogComponents.agent,
 					operation: 'watchdog',
-					previousSkips: consecutiveSkippedPings
-				});
-				consecutiveSkippedPings = 0;
-			}
-		} else if (reason === 'initializing') {
-			consecutiveSkippedPings++;
-			const elapsedMs = now - watchdogStartedAt;
-			// Throttle initializing messages to once every 30s
-			if (now - lastInitLogAt >= 30000) {
-				lastInitLogAt = now;
-				logger?.warnSync('Watchdog ping suppressed - agent still initializing', {
-					component: LogComponents.agent,
-					operation: 'watchdog',
-					action: 'suppressed',
-					reason: 'initializing',
-					elapsedSinceStartMs: elapsedMs,
+					action: 'skipped',
+					reason: 'health_check_failed',
 					consecutiveSkips: consecutiveSkippedPings,
 					systemdUnit,
 					invocationId,
+					consequence: 'systemd_will_restart'
 				});
-				console.warn(`[watchdog] Agent still initializing (${Math.round(elapsedMs / 1000)}s elapsed) - watchdog pings suppressed`);
+				if (!logger) console.error('[watchdog] Watchdog ping skipped - unhealthy state');
 			}
-		} else {
-			// Post-ready health check failure — withhold ping; systemd restarts after timeout.
+		} catch (error) {
 			consecutiveSkippedPings++;
-			logger?.errorSync('Watchdog ping skipped - unhealthy state', undefined, {
-				component: LogComponents.agent,
-				operation: 'watchdog',
-				action: 'skipped',
-				reason: 'health_check_failed',
-				consecutiveSkips: consecutiveSkippedPings,
-				systemdUnit,
-				invocationId,
-				consequence: 'systemd_will_restart'
-			});
+			if (logger) {
+				logger.errorSync('Watchdog health check or notification failed', error instanceof Error ? error : undefined, {
+					component: LogComponents.agent,
+					operation: 'watchdog',
+				});
+			} else {
+				console.error('[watchdog] Health check or notification failed', error);
+			}
+		} finally {
+			notificationInFlight = undefined;
+			tickInProgress = false;
 		}
 	}, intervalMs);
 
 	// Cleanup function.
 	return async () => {
-		// Send STOPPING and flush before cleanup.
-		sendNativeNotification('STOPPING=1', socketPath, logger);
-    
-		// Ensure datagram is flushed.
-		await new Promise(resolve => setTimeout(resolve, 50));
-
-		if (watchdogInterval) {
-			clearInterval(watchdogInterval);
-			watchdogInterval = null;
+		if (stopped) return;
+		stopped = true;
+		clearInterval(watchdogInterval);
+		if (notificationInFlight) {
+			try {
+				await notificationInFlight;
+			} catch {
+				// The failed notification was already reported by sendNotification().
+			}
 		}
-    
-		// Close native socket.
-		if (notifySocket) {
-			notifySocket.close();
-			notifySocket = null;
+		try {
+			await sendNotification('STOPPING=1', logger);
+		} catch {
+			// Shutdown must continue after a reported notification failure.
 		}
     
 		logger?.infoSync('Watchdog stopped', {
@@ -310,5 +266,7 @@ export function notifySystemd(status: string, logger?: AgentLogger): void {
 		return;
 	}
 
-	void sendNotification(status, logger);
+	void sendNotification(status, logger).catch(() => {
+		// sendNotification() reports the failure.
+	});
 }

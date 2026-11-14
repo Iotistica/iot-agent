@@ -202,10 +202,7 @@ async function gracefulShutdown(signal: string, exitCode = 0) {
 		health.stop();
 
 		// Stop watchdog timer next (no further WATCHDOG=1 messages)
-		stopWatchdog();
-
-		// Notify systemd we're stopping (final meaningful signal)
-		notifySystemd('STOPPING=1');
+		await stopWatchdog();
 
 		// Stop the agent (closes Device API, MQTT, etc.)
 		await agent.stop();
