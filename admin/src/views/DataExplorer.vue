@@ -35,6 +35,7 @@ const search = ref('')
 const protocolFilter = ref<string | undefined>(undefined)
 const sourceFilter = ref<string | undefined>(undefined)
 const qualityFilter = ref<string | undefined>(undefined)
+const identityFilter = ref<string | undefined>(undefined)
 const showPointUuid = ref(false)
 const sourceDrawerOpen = ref(false)
 const editingSource = ref<Endpoint | null>(null)
@@ -68,6 +69,12 @@ const rowSelection = computed(() => ({
 const pageSize = ref(20)
 const tableSortField = ref<string | null>(null)
 const tableSortOrder = ref<'ascend' | 'descend' | null>(null)
+watch(activeTab, tab => {
+  if (tab === 'all' && tableSortField.value === 'device') {
+    tableSortField.value = null
+    tableSortOrder.value = null
+  }
+})
 const lastSync = ref('')
 const refreshing = ref(false)
 const now = ref(Date.now())
@@ -154,6 +161,7 @@ watch([points, pinnedKeys], () => {
 })
 const sourceOptions = computed(() => {
   const options = new Map<string, string>()
+  for (const source of sources.value) options.set(source.uuid, dataExplorerSourceName(source))
   for (const point of points.value) {
     const source = sourceFor(point)
     options.set(source?.uuid ?? UNKNOWN_SOURCE, dataExplorerSourceName(source))
@@ -164,6 +172,7 @@ const sourceOptions = computed(() => {
 const protocolOptions = computed(() => [...new Set([
   ...points.value.map(p => p.protocol),
   ...devices.value.map(d => d.protocol),
+  ...sources.value.map(s => s.protocol),
 ])].sort()
   .map(v => ({ value: v, label: protocolLabel(v) })))
 function columnSort(a: PointRow, b: PointRow): number {
@@ -383,7 +392,7 @@ const columns = computed<TableColumnType<PointRow>[]>(() => {
   cols.push(
     { title: 'Protocol', key: 'protocol', width: 105 },
     { title: 'Source', key: 'source', width: 180, ellipsis: true, sorter: true, sortOrder: sortOrderFor('source') },
-    { title: 'Device', key: 'device', width: 180, ellipsis: true, sorter: true, sortOrder: sortOrderFor('device') },
+    ...(activeTab.value !== 'all' ? [{ title: 'Device', key: 'device', width: 180, ellipsis: true, sorter: true, sortOrder: sortOrderFor('device') }] : []),
     { title: 'Point', key: 'point', width: 320, ellipsis: true, sorter: true, sortOrder: sortOrderFor('point') },
     { title: 'Latest Value', key: 'value', width: 135, sorter: true, sortOrder: sortOrderFor('value') },
     { title: 'Unit', key: 'unit', width: 115, ellipsis: true },
@@ -455,7 +464,7 @@ function openPointDrawer(row: PointRow) { selected.value = row; drawerOpen.value
 function manageSource(source: Endpoint) { editingSource.value = source; sourceDrawerOpen.value = true }
 async function onSourceSaved() { await loadSourceMetadata(); configuredRevision.value++ }
 function openHistory(row: PointRow) { historyPoint.value = row; historyOpen.value = true }
-function resetFilters() { search.value = ''; protocolFilter.value = undefined; sourceFilter.value = undefined; qualityFilter.value = undefined }
+function resetFilters() { search.value = ''; protocolFilter.value = undefined; sourceFilter.value = undefined; qualityFilter.value = undefined; identityFilter.value = undefined }
 watch(points, () => {
   if (selected.value) selected.value = points.value.find(p => p.key === selected.value?.key) || selected.value
 })
@@ -522,32 +531,34 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
         <a-col :xs="12" :md="6"><a-card size="small" class="metric-card"><div class="metric-inner"><span class="metric-icon icon-stale"><ClockCircleOutlined /></span><a-statistic title="No update in 60s" :value="staleCount" /></div></a-card></a-col>
       </a-row>
       <a-card size="small" class="browser-card">
-        <div v-if="activeTab !== 'configured'" class="filters">
+        <div class="filters">
           <a-input v-model:value="search" data-testid="data-search" placeholder="Search source, device, point, destination…" allow-clear class="search" />
-          <a-select v-model:value="protocolFilter" :options="protocolOptions" placeholder="All protocols" allow-clear class="filter" />
-          <a-select v-model:value="sourceFilter" :options="sourceOptions" show-search option-filter-prop="label" placeholder="All sources" allow-clear class="filter" />
-          <a-select v-model:value="qualityFilter" placeholder="All states" allow-clear class="filter">
+          <a-select v-model:value="protocolFilter" :options="protocolOptions" data-testid="data-protocol-filter" placeholder="All protocols" allow-clear class="filter" />
+          <a-select v-model:value="sourceFilter" :options="sourceOptions" data-testid="data-source-filter" show-search option-filter-prop="label" placeholder="All sources" allow-clear class="filter" />
+          <a-select v-if="activeTab === 'configured'" v-model:value="identityFilter" data-testid="data-identity-filter" placeholder="All identities" allow-clear class="filter"
+            :options="['Assigned', 'Pending', 'Unresolvable'].map(value => ({ value, label: value }))" />
+          <a-select v-else v-model:value="qualityFilter" data-testid="data-quality-filter" placeholder="All states" allow-clear class="filter">
             <a-select-option value="GOOD">Good / current</a-select-option>
             <a-select-option value="BAD">Bad quality</a-select-option>
             <a-select-option value="STALE">No update in 60s</a-select-option>
           </a-select>
           <a-button data-testid="data-clear-filters" @click="resetFilters">Clear</a-button>
-          <a-checkbox v-model:checked="showPointUuid">Point UUID</a-checkbox>
+          <a-checkbox v-if="activeTab !== 'configured'" v-model:checked="showPointUuid">Point UUID</a-checkbox>
           <div class="filters-actions">
-            <a-button data-testid="data-pause" @click="paused = !paused">
+            <a-button v-if="activeTab !== 'configured'" data-testid="data-pause" @click="paused = !paused">
               <PauseOutlined v-if="!paused" />
               <PlayCircleOutlined v-else />
               {{ paused ? 'Resume' : 'Pause' }}
             </a-button>
-            <a-button data-testid="data-refresh" @click="poll"><ReloadOutlined :spin="refreshing" /> Refresh</a-button>
-            <a-button class="save-view-button" @click="openCreateView(false)"><SaveOutlined /> Add View</a-button>
-            <a-button type="primary" :disabled="!filteredPoints.length" @click="openCreateDataset()"><DatabaseOutlined /> Add Dataset</a-button>
+            <a-button data-testid="data-refresh" @click="activeTab === 'configured' ? configuredRevision++ : poll()"><ReloadOutlined :spin="activeTab !== 'configured' && refreshing" /> Refresh</a-button>
+            <a-button v-if="activeTab !== 'configured'" class="save-view-button" @click="openCreateView(false)"><SaveOutlined /> Add View</a-button>
+            <a-button v-if="activeTab !== 'configured'" type="primary" :disabled="!filteredPoints.length" @click="openCreateDataset()"><DatabaseOutlined /> Add Dataset</a-button>
           </div>
         </div>
         <div class="views-bar">
           <div class="views-list">
-            <button type="button" data-testid="data-tab-live" :class="['view-tab', { active: activeTab === 'all' }]" @click="activateTab('all')">Live ({{ livePointCount }})</button>
-            <button type="button" data-testid="data-tab-configured" :class="['view-tab', { active: activeTab === 'configured' }]" @click="activateTab('configured')">Configured Points</button>
+            <button type="button" data-testid="data-tab-live" :class="['view-tab', { active: activeTab === 'all' }]" @click="activateTab('all')">Data Points ({{ livePointCount }})</button>
+            <button type="button" data-testid="data-tab-configured" :class="['view-tab', { active: activeTab === 'configured' }]" @click="activateTab('configured')">Source Points</button>
             <button type="button" data-testid="data-tab-favorites" :class="['view-tab', { active: activeTab === 'favorites' }]" @click="activateTab('favorites')"> Favorites ({{ favoriteCount }})</button>
             <div v-for="view in savedViews.filter(v => openViewIds.includes(v.id))" :key="view.id" :class="['saved-view-tab', { active: activeTab === view.id }]">
               <button type="button" @click="activateTab(view.id)">{{ view.name }} ({{ new Set(view.pointKeys.map(normalizeDataExplorerPointKey)).size }})</button>
@@ -565,7 +576,8 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
         </div>
 
         <!-- Views tab content -->
-        <ConfiguredPointsPanel v-if="activeTab === 'configured'" :sources="sources" :revision="configuredRevision" show-source @manage="manageSource" />
+        <ConfiguredPointsPanel v-if="activeTab === 'configured'" :sources="sources" :revision="configuredRevision"
+          :filters="{ search, protocol: protocolFilter, source: sourceFilter, identity: identityFilter }" show-source @manage="manageSource" />
         <template v-else-if="activeTab === 'views'">
           <a-table :columns="viewColumns" :data-source="savedViews" :loading="viewsLoading" row-key="id" size="small" :pagination="{ pageSize: 20, showSizeChanger: true, pageSizeOptions: ['10', '20', '50'] }">
             <template #bodyCell="{ column, record: view }">
@@ -613,7 +625,7 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
         </template>
 
         <!-- Points table -->
-        <a-table v-else :columns="columns" :data-source="filteredPoints" :loading="loading" row-key="key" :row-selection="rowSelection" :customRow="(record: PointRow) => ({ onClick: (e: MouseEvent) => { if (!(e.target as HTMLElement).closest('.ant-checkbox-wrapper')) openPointDrawer(record) }, style: 'cursor: pointer' })" size="small" :pagination="{ pageSize, showSizeChanger: true, pageSizeOptions: ['10', '20', '50'], onShowSizeChange: (_: number, size: number) => { pageSize = size } }" :scroll="{ x: 1570 }" table-layout="fixed" @change="onTableChange">
+        <a-table v-else :columns="columns" :data-source="filteredPoints" :loading="loading" row-key="key" :row-selection="rowSelection" :customRow="(record: PointRow) => ({ onClick: (e: MouseEvent) => { if (!(e.target as HTMLElement).closest('.ant-checkbox-wrapper')) openPointDrawer(record) }, style: 'cursor: pointer' })" size="small" :pagination="{ pageSize, showSizeChanger: true, pageSizeOptions: ['10', '20', '50'], onShowSizeChange: (_: number, size: number) => { pageSize = size } }" :scroll="{ x: activeTab === 'all' ? 1390 : 1570 }" table-layout="fixed" @change="onTableChange">
           <template #bodyCell="{ column, record }">
             <template v-if="column.key === 'protocol'"><a-tag :color="protocolColor(record.protocol)">{{ protocolLabel(record.protocol) }}</a-tag></template>
             <template v-else-if="column.key === 'source'">{{ sourceName(record) }}</template>

@@ -30,7 +30,7 @@ test.describe('Data Explorer', () => {
     await expect(search).toHaveValue('')
   })
 
-  test('tab navigation switches between Live, Favorites, Views, and Datasets', async ({ page }) => {
+  test('tab navigation switches between Data Points, Favorites, Views, and Datasets', async ({ page }) => {
     const liveTab = page.getByTestId('data-tab-live')
     const favTab = page.getByTestId('data-tab-favorites')
     const viewsTab = page.getByTestId('data-tab-views')

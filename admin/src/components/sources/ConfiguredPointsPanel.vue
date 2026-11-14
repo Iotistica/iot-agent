@@ -3,9 +3,14 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import type { TableColumnType } from 'ant-design-vue'
 import { sourcesApi, type ConfiguredPoint } from '@/api/sources'
 import type { Endpoint } from '@/types'
-import { protocolLabel } from '@/utils/protocol'
+import { protocolColor, protocolLabel } from '@/utils/protocol'
 
-const props = defineProps<{ sources: Endpoint[]; showSource?: boolean; revision?: number }>()
+const props = defineProps<{
+  sources: Endpoint[]
+  showSource?: boolean
+  revision?: number
+  filters?: { search: string; protocol?: string; source?: string; identity?: string }
+}>()
 const emit = defineEmits<{ manage: [source: Endpoint] }>()
 
 type PointRow = ConfiguredPoint & { key: string; source: Endpoint }
@@ -33,13 +38,17 @@ function addressText(address: ConfiguredPoint['protocolAddress']): string {
 }
 
 const filtered = computed(() => {
-  const q = search.value.trim().toLowerCase()
-  return rows.value.filter(row => (!status.value || identityLabel(row) === status.value)
+  const q = (props.filters ? props.filters.search : search.value).trim().toLowerCase()
+  const identity = props.filters ? props.filters.identity : status.value
+  return rows.value.filter(row => (!identity || identityLabel(row) === identity)
+    && (!props.filters?.protocol || row.source.protocol === props.filters.protocol)
+    && (!props.filters?.source || row.source.uuid === props.filters.source)
     && (!q || [row.name, row.source.name, row.source.protocol, addressText(row.protocolAddress), row.pointUuid, row.deviceName, row.deviceUuid]
       .some(value => value?.toLowerCase().includes(q))))
 })
 
 const columns = computed<TableColumnType<PointRow>[]>(() => [
+  ...(props.showSource ? [{ title: 'Protocol', key: 'protocol', width: 105 }] : []),
   ...(props.showSource ? [{ title: 'Source', key: 'source', width: 150, sorter: (a: PointRow, b: PointRow) => a.source.name.localeCompare(b.source.name) }] : []),
   { title: 'Point', key: 'name', dataIndex: 'name', width: 150, sorter: (a, b) => a.name.localeCompare(b.name) },
   { title: 'Protocol address', key: 'address', width: 200, ellipsis: true },
@@ -84,16 +93,17 @@ onBeforeUnmount(() => { generation++ })
 <template>
   <div>
     <a-alert v-if="error" type="warning" show-icon :message="error" style="margin-bottom: 12px" />
-    <a-space wrap style="margin-bottom: 12px">
+    <a-space v-if="!filters" wrap style="margin-bottom: 12px">
       <a-input v-model:value="search" placeholder="Search points, source, address or UUID" allow-clear style="width: 260px" />
       <a-select v-model:value="status" placeholder="All identities" allow-clear style="width: 150px"
         :options="['Assigned', 'Pending', 'Unresolvable'].map(value => ({ value, label: value }))" />
       <a-button :loading="loading" @click="load">Refresh</a-button>
     </a-space>
     <a-table :columns="columns" :data-source="filtered" :loading="loading" row-key="key" size="small"
-      :scroll="{ x: showSource ? 1200 : 1000 }" :pagination="{ pageSize: 20, showSizeChanger: true }">
+      :scroll="{ x: showSource ? 1305 : 1000 }" :pagination="{ pageSize: 20, showSizeChanger: true }">
       <template #bodyCell="{ column, record }">
-        <template v-if="column.key === 'source'">{{ record.source.name }} ({{ protocolLabel(record.source.protocol) }})</template>
+        <template v-if="column.key === 'protocol'"><a-tag :color="protocolColor(record.source.protocol)">{{ protocolLabel(record.source.protocol) }}</a-tag></template>
+        <template v-else-if="column.key === 'source'">{{ record.source.name }}</template>
         <template v-else-if="column.key === 'address'"><span :title="addressText(record.protocolAddress)">{{ addressText(record.protocolAddress) }}</span></template>
         <template v-else-if="column.key === 'canonical'">
           <a-tooltip :title="statusReason(record.canonicalReason)">{{ record.canonicalStatus }}</a-tooltip>

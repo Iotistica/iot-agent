@@ -54,7 +54,7 @@ The agent is the core component. It runs on edge hardware and handles:
 The agent ships a local admin UI (Vue 3 + Ant Design Vue) served at `http://<device>:48481/admin/`.
 
 Use **Sources** to manage endpoints and connected devices, including device metadata and writable commands.
-The **Points** tab in a source and **Data → Configured Points** show configured addresses and identity status.
+The **Points** tab in a source and **Data → Source Points** show configured addresses and identity status.
 The live Data view can optionally display point UUIDs. The old `/admin/devices` link redirects to connected devices in Sources.
 OPC UA configured identities remain pending in this view when verified namespace evidence is unavailable.
 
