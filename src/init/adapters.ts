@@ -115,6 +115,13 @@ export class AdapterInitializer {
 			const { setAdapterManager } = await import('../api/actions.js');
 			setAdapterManager(this.features.devices);
 
+			this._resolveConfiguredPointIdentities().catch((err) => {
+				logger.warnSync('Configured-point identity resolution failed (non-fatal)', {
+					component: LogComponents.agent,
+					error: (err as Error)?.message,
+				});
+			});
+
 			this._wireRediscoveryListener();
 
 		} catch (error) {
@@ -409,6 +416,71 @@ export class AdapterInitializer {
 		const cloudSync = this.getCloudSync();
 		if (cloudSync && this.features.devices) {
 			cloudSync.setDevices(this.features.devices);
+		}
+	}
+
+	/** Resolve canonical addresses for all configured points, then create durable identities. */
+	private async _resolveConfiguredPointIdentities(): Promise<void> {
+		const { logger } = this.context;
+		const { EndpointModel } = await import('../db/models/endpoint.model.js');
+		const { resolveEndpoints, createIdentities } = await import('../points/configured-point-resolver.js');
+		const { getDatabase } = await import('../db/sqlite.js');
+
+		const protocols = ['mqtt', 'modbus', 'bacnet', 'opcua'] as const;
+		const endpoints = (await Promise.all(protocols.map((p) => EndpointModel.getEnabled(p)))).flat()
+			.filter((e) => !!e.uuid);
+
+		if (endpoints.length === 0) return;
+
+		const result = resolveEndpoints(endpoints);
+
+		logger.infoSync('Configured-point identity resolution', {
+			component: LogComponents.agent,
+			endpoints: result.summary.endpoints,
+			resolved: result.summary.resolved,
+			unresolved: result.summary.unresolved,
+			deferred: result.summary.deferred,
+		});
+
+		for (const ep of result.endpoints) {
+			const unresolvedPoints = ep.points.filter((p) => p.result.status === 'unresolved');
+			if (unresolvedPoints.length > 0) {
+				logger.debugSync('Unresolved points in endpoint', {
+					component: LogComponents.agent,
+					endpoint: ep.endpointName,
+					protocol: ep.protocol,
+					unresolvedCount: unresolvedPoints.length,
+					reasons: [...new Set(unresolvedPoints.map((p) =>
+						p.result.status === 'unresolved' ? p.result.reason : ''))],
+				});
+			}
+		}
+
+		if (result.summary.resolved === 0) return;
+
+		const db = getDatabase();
+		const identityResult = await createIdentities(db, result);
+
+		logger.infoSync('Configured-point identity creation', {
+			component: LogComponents.agent,
+			created: identityResult.summary.created,
+			failed: identityResult.summary.failed,
+			lookupSize: identityResult.lookup.size,
+		});
+
+		if (identityResult.pointNameLookup.size > 0 && this.features.devices) {
+			this.features.devices.mergePointIdentities(identityResult.pointNameLookup);
+		}
+
+		if (identityResult.summary.failed > 0) {
+			const failures = identityResult.identities.filter((i) => i.catalogResult.status === 'unresolved');
+			for (const f of failures.slice(0, 10)) {
+				logger.debugSync('Identity creation failed for point', {
+					component: LogComponents.agent,
+					pointName: f.pointName,
+					reason: f.catalogResult.status === 'unresolved' ? f.catalogResult.reason : 'unknown',
+				});
+			}
 		}
 	}
 }

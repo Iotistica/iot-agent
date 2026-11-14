@@ -929,6 +929,7 @@ export class SocketServer {
 				normalizationDeviceName: point.normalizationDeviceName,
 			}),
 			...(point.sourceEndpointName && { sourceEndpointName: point.sourceEndpointName }),
+			...(point.pointUuid && { pointUuid: point.pointUuid }),
 			...(point.writable && { writable: true }),
 		}));
 

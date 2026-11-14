@@ -1595,6 +1595,9 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 			commitSession(sessionWrapper);
 			// TEMPORARY diagnostics — see diagnostics.ts.
 			this.diagnostics.logAggregateSnapshot(this.sessions);
+
+			this.readAndEmitNamespaceArray(session, device.name).catch(() => {});
+
 			return sessionWrapper;
 		} catch (error) {
 			// Safe unconditionally: commitSession() above is the only place that attaches
@@ -1602,6 +1605,17 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 			// disconnect cannot trigger an independent, untracked reconnect loop.
 			await runtimeClient.disconnect().catch(() => {});
 			throw error;
+		}
+	}
+
+	private async readAndEmitNamespaceArray(session: ClientSession, deviceName: string): Promise<void> {
+		try {
+			const uris = await session.readNamespaceArray();
+			if (Array.isArray(uris) && uris.length > 0) {
+				this.emit('namespace-ready', { deviceName, namespaceArray: uris });
+			}
+		} catch {
+			this.logger.debug(`Failed to read NamespaceArray for ${deviceName} — OPC UA identity deferred`);
 		}
 	}
 

@@ -29,6 +29,7 @@ import type { OpcuaShadowOptions } from "./opcua/adapter.js";
 import { OPCUAConnectionSchema } from "./opcua/types.js";
 import { BACnetAdapter } from "./bacnet/adapter.js";
 import { type BACnetAdapterConfig } from "./bacnet/types.js";
+import type { OpcuaAddressInput } from "../points/canonical-address.js";
 
 export interface AdapterConfig {
 	modbus?: { enabled: boolean; config?: ModbusAdapterConfig };
@@ -181,6 +182,10 @@ export class AdapterManager extends EventEmitter {
 	private protocolEnabledOverrides: Map<string, boolean> = new Map();
 	// Shared endpoint UUID lookup for MQTT hot-reloads.
 	private mqttEndpointUuidByName: Map<string, string> = new Map();
+	// Point identity lookup: "endpointUuid\0pointName" → pointUuid.
+	// Populated by AdaptersInitializer after configured-point identity creation
+	// and updated when OPC UA sessions provide namespace arrays.
+	private pointIdentityLookup: Map<string, string> = new Map();
 	// Throttles lastSeenAt DB writes per device name — see wireAdapterEvents's
 	// "data" handler. A protocol that emits one 'data' event per changed value
 	// (OPC-UA subscriptions) rather than one batched event per poll (BACnet,
@@ -232,12 +237,16 @@ export class AdapterManager extends EventEmitter {
 				return point;
 			}
 
+			const pointUuid = resolved.endpoint_uuid
+				? this.lookupPointUuid(resolved.endpoint_uuid, point.metric)
+				: undefined;
 			const clone = {
 				...point,
 				deviceName: resolved.deviceName,
 				sourceEndpointName: point.deviceName,
 				endpoint_uuid: resolved.endpoint_uuid,
 				device_uuid: resolved.device_uuid,
+				...(pointUuid && { pointUuid }),
 			};
 			if (shadow) {
 				const shadowProtocol = point.protocol === "mqtt" ? "MQTT" : "OPC UA";
@@ -393,6 +402,13 @@ export class AdapterManager extends EventEmitter {
 				this.emit("rediscovery-needed", data);
 			},
 		);
+		adapter.on(
+			"namespace-ready",
+			(data: { deviceName: string; namespaceArray: string[] }) => {
+				this.resolveOpcuaPointIdentities(data.deviceName, data.namespaceArray, uuidMap)
+					.catch(() => {});
+			},
+		);
 	}
 
 	constructor(
@@ -482,6 +498,58 @@ export class AdapterManager extends EventEmitter {
 
 	public buildEndpointUuidMap(devices: any[]): Map<string, string> {
 		return this.buildUuidMap(devices);
+	}
+
+	mergePointIdentities(identities: ReadonlyMap<string, string>): void {
+		for (const [key, uuid] of identities) {
+			this.pointIdentityLookup.set(key, uuid);
+		}
+	}
+
+	lookupPointUuid(endpointUuid: string, pointName: string): string | undefined {
+		return this.pointIdentityLookup.get(`${endpointUuid}\0${pointName}`);
+	}
+
+	private async resolveOpcuaPointIdentities(
+		deviceName: string,
+		namespaceUris: string[],
+		uuidMap: Map<string, string>,
+	): Promise<void> {
+		const endpointUuid = uuidMap.get(deviceName);
+		if (!endpointUuid) return;
+		try {
+			const { resolveEndpoints, createIdentities } = await import('../points/configured-point-resolver.js');
+			const { getDatabase } = await import('../db/sqlite.js');
+			const endpoint = await EndpointModel.getByUuid(endpointUuid);
+			if (!endpoint || endpoint.protocol !== 'opcua') return;
+
+			const nsMap = new Map<string, OpcuaAddressInput['namespaceArray']>();
+			nsMap.set(endpointUuid, { verified: true, uris: namespaceUris });
+
+			const input = {
+				uuid: endpoint.uuid,
+				name: endpoint.name,
+				protocol: endpoint.protocol,
+				connection: endpoint.connection,
+				data_points: endpoint.data_points,
+			};
+			const resolved = resolveEndpoints([input], nsMap);
+			if (resolved.summary.resolved === 0) return;
+
+			const db = getDatabase();
+			const result = await createIdentities(db, resolved, nsMap);
+			if (result.pointNameLookup.size > 0) {
+				this.mergePointIdentities(result.pointNameLookup);
+				this.logger.info(
+					`OPC UA point identity resolution for ${deviceName}: ` +
+					`${result.summary.created} created, ${result.summary.failed} failed`,
+				);
+			}
+		} catch (err) {
+			this.logger.debug(
+				`OPC UA point identity resolution failed for ${deviceName}: ${err instanceof Error ? err.message : err}`,
+			);
+		}
 	}
 
 	/** Determine effective group name: use explicit groupName or default to protocol. */
