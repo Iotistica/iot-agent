@@ -23,9 +23,9 @@ describe('ContainerManager.applyTargetState', () => {
 			return [];
 		});
 
-		await manager.applyTargetState({ saveState: false });
+		await manager.applyTargetState();
 
-		expect(manager.syncCurrentStateFromDocker).toHaveBeenCalledWith(false);
+		expect(manager.syncCurrentStateFromDocker).toHaveBeenCalled();
 		expect(calls).toEqual(['sync', 'calculate']);
 	});
 });

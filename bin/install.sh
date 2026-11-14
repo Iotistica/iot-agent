@@ -27,6 +27,10 @@ set -e
 #   MQTT_USERNAME                  - MQTT broker username (default: admin; prompted interactively on first install)
 #   MQTT_PASSWORD                  - MQTT broker password (default: auto-generated; prompted interactively on first install)
 #   AGENT_SHELL_HMAC_KEY           - HMAC secret for remote shell command verification
+#   AGENT_STARTUP_TIMEOUT          - systemd startup timeout in seconds (default: 300, range: 30-900)
+#   AGENT_CPU_QUOTA                - systemd CPUQuota for the agent service (default: 100%, format: <number>%)
+#   AGENT_MEMORY_HIGH              - systemd MemoryHigh soft limit (default: 250M, format: <number>[K|M|G|T])
+#   AGENT_MEMORY_LIMIT             - systemd MemoryMax hard limit (default: 300M, format: <number>[K|M|G|T])
 #   FORCE_INSTALL                  - Legacy opt-in flag; set to 1 to allow automatic Docker installation
 
 # Note: This script is POSIX-compliant and works with both sh and bash
@@ -93,6 +97,157 @@ installer_message "Installation log: $INSTALL_LOG"
 
 # Ensuree common binary locations are in PATH — sudo sh strips user profile
 export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH"
+
+# --- Validation helpers (also used by tests) ---
+
+validate_systemd_memory() {
+    _varname="$1"; _value="$2"
+    case "$_value" in
+        [1-9]|[1-9][0-9]|[1-9][0-9][0-9]|[1-9][0-9][0-9][0-9]|[1-9][0-9][0-9][0-9][0-9]|[1-9][0-9][0-9][0-9][0-9][0-9]) return 0 ;;
+        [1-9]*[KMGT]) ;;
+        *)
+            installer_message "Error: $_varname value '$_value' is not a valid systemd memory limit."
+            installer_message "  Expected format: <number>[K|M|G|T] (e.g., 250M, 1G, 512K)"
+            return 1
+            ;;
+    esac
+    _num="${_value%[KMGT]}"
+    case "$_num" in
+        ''|*[!0-9]*|0*)
+            installer_message "Error: $_varname value '$_value' is not a valid systemd memory limit."
+            installer_message "  Expected format: <number>[K|M|G|T] (e.g., 250M, 1G, 512K)"
+            return 1
+            ;;
+    esac
+    return 0
+}
+
+validate_systemd_timeout() {
+    _varname="$1"; _value="$2"
+    case "$_value" in
+        ''|*[!0-9]*)
+            installer_message "Error: $_varname value '$_value' is not a valid timeout."
+            installer_message "  Expected: integer between 30 and 900 (seconds)"
+            return 1
+            ;;
+    esac
+    if [ "$_value" -lt 30 ] || [ "$_value" -gt 900 ]; then
+        installer_message "Error: $_varname value '$_value' is out of range."
+        installer_message "  Expected: integer between 30 and 900 (seconds)"
+        return 1
+    fi
+    return 0
+}
+
+validate_cpu_quota() {
+    _varname="$1"; _value="$2"
+    case "$_value" in
+        *%) ;;
+        *)
+            installer_message "Error: $_varname value '$_value' is not a valid CPU quota."
+            installer_message "  Expected format: <number>% (e.g., 100%, 200%)"
+            return 1
+            ;;
+    esac
+    _num="${_value%\%}"
+    case "$_num" in
+        ''|*[!0-9]*)
+            installer_message "Error: $_varname value '$_value' is not a valid CPU quota."
+            installer_message "  Expected format: <number>% (e.g., 100%, 200%)"
+            return 1
+            ;;
+    esac
+    if [ "$_num" -lt 1 ] || [ "$_num" -gt 800 ]; then
+        installer_message "Error: $_varname value '$_value' is out of range (1%-800%)."
+        return 1
+    fi
+    return 0
+}
+
+validate_memory_high_le_max() {
+    _high="$1"; _max="$2"
+    _h_num="${_high%[KMGT]}"; _h_suffix="${_high#"$_h_num"}"
+    _m_num="${_max%[KMGT]}"; _m_suffix="${_max#"$_m_num"}"
+    _order="K M G T"
+    _h_rank=0; _m_rank=0; _r=0
+    for _s in $_order; do
+        _r=$((_r + 1))
+        [ "$_h_suffix" = "$_s" ] && _h_rank=$_r
+        [ "$_m_suffix" = "$_s" ] && _m_rank=$_r
+    done
+    if [ "$_h_rank" -gt "$_m_rank" ]; then
+        installer_message "Error: AGENT_MEMORY_HIGH ($_high) exceeds AGENT_MEMORY_LIMIT ($_max)."
+        installer_message "  MemoryHigh must be less than or equal to MemoryMax."
+        return 1
+    elif [ "$_h_rank" -lt "$_m_rank" ]; then
+        return 0
+    fi
+    if [ "$_h_num" -gt "$_m_num" ]; then
+        installer_message "Error: AGENT_MEMORY_HIGH ($_high) exceeds AGENT_MEMORY_LIMIT ($_max)."
+        installer_message "  MemoryHigh must be less than or equal to MemoryMax."
+        return 1
+    fi
+    return 0
+}
+
+generate_systemd_unit() {
+    cat << EOFSVC
+[Unit]
+Description=Iotistic Agent - IoT Device Management Service
+Documentation=https://github.com/Iotistica/iotistic
+After=${UNIT_AFTER}
+Requires=${UNIT_REQUIRES}
+Wants=network-online.target
+StartLimitIntervalSec=60
+StartLimitBurst=10
+
+[Service]
+Type=${SERVICE_TYPE}
+User=iotistic
+Group=iotistic
+WorkingDirectory=/opt/iotistic/agent
+EnvironmentFile=/etc/iotistic/agent.env
+Environment=NODE_ENV=production
+Environment=DEPLOYMENT_TYPE=systemd
+
+ExecStart=${NODE_PATH} ${APP_JS_PATH}
+
+Restart=always
+RestartSec=5
+
+${WATCHDOG_DIRECTIVES}
+
+TimeoutStartSec=${STARTUP_TIMEOUT}
+
+TimeoutStopSec=20
+KillMode=control-group
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=${SERVICE_NAME}
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=${SERVICE_READWRITE_PATHS}
+CapabilityBoundingSet=CAP_NET_RAW CAP_NET_ADMIN
+AmbientCapabilities=CAP_NET_RAW CAP_NET_ADMIN
+LockPersonality=true
+MemoryAccounting=true
+CPUAccounting=true
+
+LimitNOFILE=65536
+LimitNPROC=65536
+MemoryHigh=${AGENT_MEMORY_HIGH}
+MemoryMax=${AGENT_MEMORY_LIMIT}
+TasksMax=512
+CPUQuota=${AGENT_CPU_QUOTA}
+
+[Install]
+WantedBy=multi-user.target
+EOFSVC
+}
 
 # Check if running as root
 if [ "$(id -u)" -ne 0 ]; then
@@ -1155,15 +1310,24 @@ EOF
         exit 1
     fi
 
-    # Allow install-time override for service memory cap.
+    # Resource and timeout defaults (overridable via environment variables).
     AGENT_MEMORY_LIMIT="${AGENT_MEMORY_LIMIT:-300M}"
     AGENT_MEMORY_HIGH="${AGENT_MEMORY_HIGH:-250M}"
+    AGENT_CPU_QUOTA="${AGENT_CPU_QUOTA:-100%}"
+    AGENT_STARTUP_TIMEOUT="${AGENT_STARTUP_TIMEOUT:-300}"
+
+    # Validate all resource/timeout values before generating the unit file.
+    validate_systemd_memory "AGENT_MEMORY_LIMIT" "$AGENT_MEMORY_LIMIT" || exit 1
+    validate_systemd_memory "AGENT_MEMORY_HIGH" "$AGENT_MEMORY_HIGH" || exit 1
+    validate_cpu_quota "AGENT_CPU_QUOTA" "$AGENT_CPU_QUOTA" || exit 1
+    validate_systemd_timeout "AGENT_STARTUP_TIMEOUT" "$AGENT_STARTUP_TIMEOUT" || exit 1
+    validate_memory_high_le_max "$AGENT_MEMORY_HIGH" "$AGENT_MEMORY_LIMIT" || exit 1
 
     SERVICE_TYPE="notify"
     WATCHDOG_DIRECTIVES="# Watchdog configuration (health-gated automatic restart)
 WatchdogSec=60
 NotifyAccess=all"
-    STARTUP_TIMEOUT="120"
+    STARTUP_TIMEOUT="$AGENT_STARTUP_TIMEOUT"
 
     if [ "$CI" = "true" ]; then
         echo "CI mode: using systemd Type=simple and disabling watchdog for deterministic startup tests"
@@ -1182,68 +1346,7 @@ NotifyAccess=all"
         SERVICE_READWRITE_PATHS="$SERVICE_READWRITE_PATHS /etc/mosquitto"
     fi
     
-    cat > /etc/systemd/system/${SERVICE_NAME}.service << EOFSVC
-[Unit]
-Description=Iotistic Agent - IoT Device Management Service
-Documentation=https://github.com/Iotistica/iotistic
-After=${UNIT_AFTER}
-Requires=${UNIT_REQUIRES}
-Wants=network-online.target
-StartLimitIntervalSec=60
-StartLimitBurst=10
-
-[Service]
-# Service type differs between production and CI mode
-Type=${SERVICE_TYPE}
-User=iotistic
-Group=iotistic
-WorkingDirectory=/opt/iotistic/agent
-EnvironmentFile=/etc/iotistic/agent.env
-Environment=NODE_ENV=production
-Environment=DEPLOYMENT_TYPE=systemd
-
-ExecStart=$NODE_PATH $APP_JS_PATH
-
-# Restart policy (automatic recovery from failures)
-Restart=always
-RestartSec=5
-
-${WATCHDOG_DIRECTIVES}
-
-# Startup timeout
-TimeoutStartSec=${STARTUP_TIMEOUT}
-
-# Graceful shutdown timeout (kill misbehaving services)
-TimeoutStopSec=20
-KillMode=control-group
-
-StandardOutput=journal
-StandardError=journal
-SyslogIdentifier=${SERVICE_NAME}
-
-# Security hardening (production recommended)
-NoNewPrivileges=true
-PrivateTmp=true
-ProtectSystem=strict
-ProtectHome=true
-ReadWritePaths=${SERVICE_READWRITE_PATHS}
-CapabilityBoundingSet=CAP_NET_RAW CAP_NET_ADMIN
-AmbientCapabilities=CAP_NET_RAW CAP_NET_ADMIN
-LockPersonality=true
-MemoryAccounting=true
-CPUAccounting=true
-
-# Resource limits (prevent memory leaks from killing device)
-LimitNOFILE=65536
-LimitNPROC=65536
-MemoryHigh=${AGENT_MEMORY_HIGH}
-MemoryMax=${AGENT_MEMORY_LIMIT}
-TasksMax=512
-CPUQuota=80%
-
-[Install]
-WantedBy=multi-user.target
-EOFSVC
+    generate_systemd_unit > /etc/systemd/system/${SERVICE_NAME}.service
 
     # Configure journald limits (prevent disk exhaustion on edge devices)
     # Configure journald log limits

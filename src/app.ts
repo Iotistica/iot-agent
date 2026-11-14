@@ -169,8 +169,9 @@ let ready = false;
 // CRITICAL: Watchdog is suppressed until READY=1 is sent to systemd
 // This prevents premature timeouts during slow initialization (network, VPN, MQTT, TPM)
 const stopWatchdog = startWatchdog(() => {
-	if (!ready) return false; // Suppress pings until agent.init() completes
-	return health.isHealthy(); // Check all critical subsystems
+	if (!ready) return { healthy: false, reason: 'initializing' as const };
+	const ok = health.isHealthy();
+	return { healthy: ok, reason: ok ? 'ok' as const : 'health_check_failed' as const };
 });
 
 // Track if shutdown is in progress
@@ -309,6 +310,8 @@ agent.init()
 	.then(async () => {
 		const ciReadyMode = process.env.CI === 'true' || process.env.SYSTEMD_READY_MODE === 'ci';
 
+		notifySystemd('STATUS=Verifying readiness...');
+
 		// Verify agent is fully operational before marking ready
 		// READY=1 semantics: "Restarting me after this point is meaningful"
 		if (!ciReadyMode && !agent.isFullyOperational()) {
@@ -318,21 +321,19 @@ agent.init()
 		if (ciReadyMode && !agent.isFullyOperational()) {
 			console.warn('[READY] CI readiness mode active - skipping strict isFullyOperational gate');
 		}
-    
+
 		// Set logger after agent initialization
 		health.setLogger(agent.agentLogger);
 		setHealthReporter(() => health.getHealthReport());
 		registerRuntimeHealthSubsystems();
 		// Start periodic health checks (includes memory) on fixed cadence
 		health.startPeriodicChecks(parseInt(process.env.HEALTH_CHECK_INTERVAL_MS || '30000', 10));
-    
+
 		// Mark agent as ready - enables watchdog pings
 		// IMPORTANT: Set this BEFORE notifyReady() to ensure health checks work
 		ready = true;
-    
-		// Notify systemd agent is fully initialized and ready
-		// Only after: database, logging, device API, MQTT (if provisioned), CloudSync (if provisioned)
-		// From this point, watchdog timeout (WatchdogSec) applies, not startup timeout
+
+		notifySystemd('STATUS=Ready');
 		await notifyReady();
 
 	})

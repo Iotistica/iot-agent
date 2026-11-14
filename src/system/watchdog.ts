@@ -94,8 +94,20 @@ async function sendNotification(message: string, logger?: AgentLogger): Promise<
 	await new Promise(resolve => setTimeout(resolve, 25));
 }
 
+export interface HealthCheckResult {
+	healthy: boolean;
+	reason: 'ok' | 'initializing' | 'health_check_failed';
+}
+
 /** Health check used to gate watchdog pings. */
-export type HealthCheckFn = () => boolean | Promise<boolean>;
+export type HealthCheckFn = () => boolean | HealthCheckResult | Promise<boolean | HealthCheckResult>;
+
+function normalizeHealthResult(raw: boolean | HealthCheckResult): HealthCheckResult {
+	if (typeof raw === 'boolean') {
+		return { healthy: raw, reason: raw ? 'ok' : 'health_check_failed' };
+	}
+	return raw;
+}
 
 /**
  * Starts systemd watchdog notifications.
@@ -166,13 +178,15 @@ export function startWatchdog(healthCheck?: HealthCheckFn, logger?: AgentLogger)
   
 	// Initialize last ping timestamp.
 	lastWatchdogPing = Date.now();
-  
+	const watchdogStartedAt = Date.now();
+	let lastInitLogAt = 0;
+
 	// Send periodic watchdog pings through native socket.
 	watchdogInterval = setInterval(async () => {
 		const now = Date.now();
 		const drift = now - lastWatchdogPing;
 		const maxDrift = intervalMs * 2; // Tolerance: 2x expected interval
-    
+
 		// Skip ping when drift exceeds tolerance.
 		if (drift > maxDrift) {
 			consecutiveSkippedPings++;
@@ -191,13 +205,16 @@ export function startWatchdog(healthCheck?: HealthCheckFn, logger?: AgentLogger)
 			});
 			return;
 		}
-    
-		const isHealthy = healthCheck ? await healthCheck() : true;
 
-		if (isHealthy) {
+		const rawResult = healthCheck ? await healthCheck() : true;
+		const { healthy, reason } = normalizeHealthResult(
+			typeof rawResult === 'boolean' ? rawResult : rawResult as HealthCheckResult
+		);
+
+		if (healthy) {
 			await sendNotification('WATCHDOG=1', logger);
 			lastWatchdogPing = now;
-      
+
 			// Reset skip counter on successful ping.
 			if (consecutiveSkippedPings > 0) {
 				logger?.infoSync('Watchdog ping resumed after skips', {
@@ -207,8 +224,26 @@ export function startWatchdog(healthCheck?: HealthCheckFn, logger?: AgentLogger)
 				});
 				consecutiveSkippedPings = 0;
 			}
+		} else if (reason === 'initializing') {
+			consecutiveSkippedPings++;
+			const elapsedMs = now - watchdogStartedAt;
+			// Throttle initializing messages to once every 30s
+			if (now - lastInitLogAt >= 30000) {
+				lastInitLogAt = now;
+				logger?.warnSync('Watchdog ping suppressed - agent still initializing', {
+					component: LogComponents.agent,
+					operation: 'watchdog',
+					action: 'suppressed',
+					reason: 'initializing',
+					elapsedSinceStartMs: elapsedMs,
+					consecutiveSkips: consecutiveSkippedPings,
+					systemdUnit,
+					invocationId,
+				});
+				console.warn(`[watchdog] Agent still initializing (${Math.round(elapsedMs / 1000)}s elapsed) - watchdog pings suppressed`);
+			}
 		} else {
-			// Withhold ping; systemd restarts service after timeout.
+			// Post-ready health check failure — withhold ping; systemd restarts after timeout.
 			consecutiveSkippedPings++;
 			logger?.errorSync('Watchdog ping skipped - unhealthy state', undefined, {
 				component: LogComponents.agent,

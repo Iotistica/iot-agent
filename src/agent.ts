@@ -45,6 +45,7 @@ import {
 } from './init/features.js';
 import { initSync as runInitSync } from './init/sync.js';
 import { AgentLifecycle, AgentState } from './lifecycle.js';
+import { notifySystemd } from './system/watchdog.js';
 
 
 export default class Agent {
@@ -134,6 +135,7 @@ export default class Agent {
 			dictionaryManager: this.dictionaryManager,
 		};
 
+		const initStartedAt = Date.now();
 		await this.lifecycle.transition(AgentState.INIT, async () => {
 			await this.runInitPhase('core', () => runInitCore(ctx));
 			await this.runInitPhase('logging', () => runInitLogging(ctx));
@@ -141,6 +143,13 @@ export default class Agent {
 			await this.runInitPhase('infrastructure', () => runInitInfrastructure(ctx));
 			await this.runInitPhase('features', () => runInitFeatures(ctx));
 			await this.runInitPhase('sync', () => runInitSync(ctx));
+		});
+		const totalInitMs = Date.now() - initStartedAt;
+		console.log(`[INIT] all phases complete (${totalInitMs}ms)`);
+		this.agentLogger?.infoSync('Agent initialization completed', {
+			component: LogComponents.agent,
+			operation: 'init',
+			totalDurationMs: totalInitMs,
 		});
 
 		await this.lifecycle.transition(AgentState.READY, async () => {
@@ -156,6 +165,7 @@ export default class Agent {
 	private async runInitPhase(name: string, operation: () => Promise<void>): Promise<void> {
 		const startedAt = Date.now();
 		console.log(`[INIT] ${name} start`);
+		notifySystemd(`STATUS=Initializing: ${name}...`);
 
 		try {
 			await operation();
@@ -687,28 +697,33 @@ export default class Agent {
         || this.isExternalPublishTarget()
 		};
 
-		const now = Date.now();
-
-		// Check all critical components.
+		const failures: string[] = [];
 		for (const [component, operational] of Object.entries(checks)) {
 			if (!operational) {
-				const shouldLog =
-          this.lastOperationalFailureKey !== component ||
-          now - this.lastOperationalFailureLogAt >= 30000;
-
-				if (shouldLog) {
-					this.agentLogger?.warnSync('Agent not fully operational - missing critical component', {
-						component: LogComponents.agent,
-						operation: 'isFullyOperational',
-						missingComponent: component,
-						checks
-					});
-					this.lastOperationalFailureKey = component;
-					this.lastOperationalFailureLogAt = now;
-				}
-
-				return false;
+				failures.push(component);
 			}
+		}
+
+		if (failures.length > 0) {
+			const now = Date.now();
+			const failureKey = failures.join(',');
+			const shouldLog =
+				this.lastOperationalFailureKey !== failureKey ||
+				now - this.lastOperationalFailureLogAt >= 30000;
+
+			if (shouldLog) {
+				this.agentLogger?.warnSync('Agent not fully operational - missing critical components', {
+					component: LogComponents.agent,
+					operation: 'isFullyOperational',
+					missingComponents: failures,
+					checks
+				});
+				console.warn(`[READY] Missing critical components: ${failures.join(', ')}`);
+				this.lastOperationalFailureKey = failureKey;
+				this.lastOperationalFailureLogAt = now;
+			}
+
+			return false;
 		}
 
 		this.lastOperationalFailureKey = undefined;
