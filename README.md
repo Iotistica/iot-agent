@@ -55,6 +55,7 @@ The agent ships a local admin UI (Vue 3 + Ant Design Vue) served at `http://<dev
 
 Use **Sources** to manage endpoints and connected devices, including device metadata and writable commands.
 The **Points** tab in a source and **Data → Source Points** show configured addresses and identity status.
+The Source Points tab count reflects its filters; the Source points card shows the total configured points.
 The live Data view can optionally display point UUIDs. The old `/admin/devices` link redirects to connected devices in Sources.
 OPC UA configured identities remain pending in this view when verified namespace evidence is unavailable.
 

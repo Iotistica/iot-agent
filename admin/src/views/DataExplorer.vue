@@ -19,7 +19,6 @@ import { dataExplorerPointName, dataExplorerPoints, dataExplorerSourceLookup, da
 import { mergePinnedDataExplorerPoints } from '@/utils/data-explorer-pins'
 import { restoreDataExplorerTabs } from '@/utils/data-explorer-tabs'
 import ConfiguredPointsPanel from '@/components/sources/ConfiguredPointsPanel.vue'
-import SourceDrawer from '@/components/sources/SourceDrawer.vue'
 
 type PointRow = DataExplorerPointRow
 type DeviceRecord = { uuid: string; endpoint_id: number; name: string; protocol: string; metadata?: Record<string, unknown> }
@@ -31,15 +30,19 @@ const observedPointCount = ref(0)
 const loading = ref(true)
 const error = ref('')
 const metadataError = ref('')
+const sourceMetadataReady = ref(false)
 const search = ref('')
 const protocolFilter = ref<string | undefined>(undefined)
 const sourceFilter = ref<string | undefined>(undefined)
 const qualityFilter = ref<string | undefined>(undefined)
 const identityFilter = ref<string | undefined>(undefined)
 const showPointUuid = ref(false)
-const sourceDrawerOpen = ref(false)
-const editingSource = ref<Endpoint | null>(null)
 const configuredRevision = ref(0)
+const configuredCount = ref({ count: 0, total: 0, loading: true, error: '' })
+const configuredCountLabel = computed(() => metadataError.value || configuredCount.value.error ? '!'
+  : !sourceMetadataReady.value || configuredCount.value.loading ? '…' : configuredCount.value.count)
+const configuredTotalLabel = computed(() => metadataError.value || configuredCount.value.error ? '!'
+  : !sourceMetadataReady.value || configuredCount.value.loading ? '…' : configuredCount.value.total)
 const selected = ref<PointRow | null>(null)
 const drawerOpen = ref(false)
 const historyPoint = ref<PointRow | null>(null)
@@ -252,6 +255,7 @@ function persistViewTabs() {
   } catch {}
 }
 function activateTab(id: string) {
+  if (id === 'configured' && activeTab.value !== id) configuredRevision.value++
   activeTab.value = id
   persistViewTabs()
 }
@@ -433,6 +437,8 @@ async function loadSourceMetadata() {
     ])
     devices.value = deviceResponse.data.devices
     sources.value = endpointRows
+    sourceMetadataReady.value = true
+    configuredRevision.value++
     metadataError.value = ''
   } catch {
     metadataError.value = 'Unable to refresh source and device names. Showing the last available names.'
@@ -461,8 +467,6 @@ async function poll() {
   }
 }
 function openPointDrawer(row: PointRow) { selected.value = row; drawerOpen.value = true }
-function manageSource(source: Endpoint) { editingSource.value = source; sourceDrawerOpen.value = true }
-async function onSourceSaved() { await loadSourceMetadata(); configuredRevision.value++ }
 function openHistory(row: PointRow) { historyPoint.value = row; historyOpen.value = true }
 function resetFilters() { search.value = ''; protocolFilter.value = undefined; sourceFilter.value = undefined; qualityFilter.value = undefined; identityFilter.value = undefined }
 watch(points, () => {
@@ -524,12 +528,14 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
       </div>
       <a-alert v-if="error"  type="warning" show-icon :message="error" style="margin-bottom: 14px" />
       <a-alert v-if="metadataError" type="warning" show-icon :message="metadataError" style="margin-bottom: 14px" />
-      <a-row :gutter="12" class="stats">
-        <a-col :xs="12" :md="6"><a-card size="small" class="metric-card" data-testid="stat-observed-points"><div class="metric-inner"><span class="metric-icon icon-points"><BarChartOutlined /></span><a-statistic title="Observed points" :value="observedPointCount" /></div></a-card></a-col>
-        <a-col :xs="12" :md="6"><a-card size="small" class="metric-card" data-testid="stat-subscriptions"><div class="metric-inner"><span class="metric-icon icon-subscriptions"><WifiOutlined /></span><a-statistic title="Active subscriptions" :value="subscriptions.length" /></div></a-card></a-col>
-        <a-col :xs="12" :md="6"><a-card size="small" class="metric-card"><div class="metric-inner"><span class="metric-icon icon-quality"><WarningOutlined /></span><a-statistic title="Bad quality" :value="badCount" /></div></a-card></a-col>
-        <a-col :xs="12" :md="6"><a-card size="small" class="metric-card"><div class="metric-inner"><span class="metric-icon icon-stale"><ClockCircleOutlined /></span><a-statistic title="No update in 60s" :value="staleCount" /></div></a-card></a-col>
-      </a-row>
+      <a-alert v-if="configuredCount.error && activeTab !== 'configured'" type="warning" show-icon :message="configuredCount.error" style="margin-bottom: 14px" />
+      <div class="stats">
+        <a-card size="small" class="metric-card" data-testid="stat-observed-points"><div class="metric-inner"><span class="metric-icon icon-points"><BarChartOutlined /></span><a-statistic title="Observed points" :value="observedPointCount" /></div></a-card>
+        <a-card size="small" class="metric-card" data-testid="stat-source-points"><div class="metric-inner" :title="metadataError || configuredCount.error || undefined"><span class="metric-icon icon-points"><DatabaseOutlined /></span><a-statistic title="Source points" :value="configuredTotalLabel" /></div></a-card>
+        <a-card size="small" class="metric-card" data-testid="stat-subscriptions"><div class="metric-inner"><span class="metric-icon icon-subscriptions"><WifiOutlined /></span><a-statistic title="Active subscriptions" :value="subscriptions.length" /></div></a-card>
+        <a-card size="small" class="metric-card"><div class="metric-inner"><span class="metric-icon icon-quality"><WarningOutlined /></span><a-statistic title="Bad quality" :value="badCount" /></div></a-card>
+        <a-card size="small" class="metric-card"><div class="metric-inner"><span class="metric-icon icon-stale"><ClockCircleOutlined /></span><a-statistic title="No update in 60s" :value="staleCount" /></div></a-card>
+      </div>
       <a-card size="small" class="browser-card">
         <div class="filters">
           <a-input v-model:value="search" data-testid="data-search" placeholder="Search source, device, point, destination…" allow-clear class="search" />
@@ -558,7 +564,8 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
         <div class="views-bar">
           <div class="views-list">
             <button type="button" data-testid="data-tab-live" :class="['view-tab', { active: activeTab === 'all' }]" @click="activateTab('all')">Data Points ({{ livePointCount }})</button>
-            <button type="button" data-testid="data-tab-configured" :class="['view-tab', { active: activeTab === 'configured' }]" @click="activateTab('configured')">Source Points</button>
+            <button type="button" data-testid="data-tab-configured" :class="['view-tab', { active: activeTab === 'configured' }]"
+              :title="metadataError || configuredCount.error || undefined" @click="activateTab('configured')">Source Points ({{ configuredCountLabel }})</button>
             <button type="button" data-testid="data-tab-favorites" :class="['view-tab', { active: activeTab === 'favorites' }]" @click="activateTab('favorites')"> Favorites ({{ favoriteCount }})</button>
             <div v-for="view in savedViews.filter(v => openViewIds.includes(v.id))" :key="view.id" :class="['saved-view-tab', { active: activeTab === view.id }]">
               <button type="button" @click="activateTab(view.id)">{{ view.name }} ({{ new Set(view.pointKeys.map(normalizeDataExplorerPointKey)).size }})</button>
@@ -575,10 +582,10 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
           <span class="toolbar-info" data-testid="data-toolbar-info">Showing {{ activeTab === 'datasets' ? datasets.length + ' datasets' : activeTab === 'views' ? savedViews.length + ' views' : filteredPoints.length + ' points' }}<template v-if="lastSync"> · Last sync {{ lastSync }}</template></span>
         </div>
 
+        <ConfiguredPointsPanel :visible="activeTab === 'configured'" :sources="sources" :revision="configuredRevision"
+          :filters="{ search, protocol: protocolFilter, source: sourceFilter, identity: identityFilter }" show-source @count-change="configuredCount = $event" />
         <!-- Views tab content -->
-        <ConfiguredPointsPanel v-if="activeTab === 'configured'" :sources="sources" :revision="configuredRevision"
-          :filters="{ search, protocol: protocolFilter, source: sourceFilter, identity: identityFilter }" show-source @manage="manageSource" />
-        <template v-else-if="activeTab === 'views'">
+        <template v-if="activeTab === 'views'">
           <a-table :columns="viewColumns" :data-source="savedViews" :loading="viewsLoading" row-key="id" size="small" :pagination="{ pageSize: 20, showSizeChanger: true, pageSizeOptions: ['10', '20', '50'] }">
             <template #bodyCell="{ column, record: view }">
               <template v-if="column.key === 'name'">
@@ -625,7 +632,7 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
         </template>
 
         <!-- Points table -->
-        <a-table v-else :columns="columns" :data-source="filteredPoints" :loading="loading" row-key="key" :row-selection="rowSelection" :customRow="(record: PointRow) => ({ onClick: (e: MouseEvent) => { if (!(e.target as HTMLElement).closest('.ant-checkbox-wrapper')) openPointDrawer(record) }, style: 'cursor: pointer' })" size="small" :pagination="{ pageSize, showSizeChanger: true, pageSizeOptions: ['10', '20', '50'], onShowSizeChange: (_: number, size: number) => { pageSize = size } }" :scroll="{ x: activeTab === 'all' ? 1390 : 1570 }" table-layout="fixed" @change="onTableChange">
+        <a-table v-else-if="activeTab !== 'configured'" :columns="columns" :data-source="filteredPoints" :loading="loading" row-key="key" :row-selection="rowSelection" :customRow="(record: PointRow) => ({ onClick: (e: MouseEvent) => { if (!(e.target as HTMLElement).closest('.ant-checkbox-wrapper')) openPointDrawer(record) }, style: 'cursor: pointer' })" size="small" :pagination="{ pageSize, showSizeChanger: true, pageSizeOptions: ['10', '20', '50'], onShowSizeChange: (_: number, size: number) => { pageSize = size } }" :scroll="{ x: activeTab === 'all' ? 1390 : 1570 }" table-layout="fixed" @change="onTableChange">
           <template #bodyCell="{ column, record }">
             <template v-if="column.key === 'protocol'"><a-tag :color="protocolColor(record.protocol)">{{ protocolLabel(record.protocol) }}</a-tag></template>
             <template v-else-if="column.key === 'source'">{{ sourceName(record) }}</template>
@@ -658,7 +665,6 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
       @update:open="drawerOpen = $event"
     />
     <PointHistoryModal v-model:open="historyOpen" :point="historyPoint" />
-    <SourceDrawer v-model:open="sourceDrawerOpen" :editing="editingSource" :prefill="null" @saved="onSourceSaved" />
     <CreateDatasetDrawer
       v-model:open="datasetDrawerOpen"
       :point-rows="candidateDatasetPoints"
@@ -707,7 +713,9 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
 @media (max-width: 900px) { .heading { align-items: flex-start; flex-direction: column; } }
 .heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 16px; }
 .heading p { color: var(--text-tertiary); margin: 0; }
-.stats { margin-bottom: 14px; }
+.stats { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-bottom: 14px; }
+@media (min-width: 768px) { .stats { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (min-width: 1200px) { .stats { grid-template-columns: repeat(5, minmax(0, 1fr)); } }
 .filters { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-bottom: 12px; }
 .search { width: 240px; flex-shrink: 0; }
 .filter { width: 160px; flex-shrink: 0; }

@@ -5,13 +5,14 @@ import { sourcesApi, type ConfiguredPoint } from '@/api/sources'
 import type { Endpoint } from '@/types'
 import { protocolColor, protocolLabel } from '@/utils/protocol'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   sources: Endpoint[]
   showSource?: boolean
   revision?: number
+  visible?: boolean
   filters?: { search: string; protocol?: string; source?: string; identity?: string }
-}>()
-const emit = defineEmits<{ manage: [source: Endpoint] }>()
+}>(), { visible: true })
+const emit = defineEmits<{ countChange: [state: { count: number; total: number; loading: boolean; error: string }] }>()
 
 type PointRow = ConfiguredPoint & { key: string; source: Endpoint }
 const rows = ref<PointRow[]>([])
@@ -56,7 +57,6 @@ const columns = computed<TableColumnType<PointRow>[]>(() => [
   { title: 'Identity', key: 'identity', width: 120 },
   { title: 'Point UUID', key: 'uuid', width: 220, ellipsis: true },
   { title: 'Device', key: 'device', width: 110 },
-  ...(props.showSource ? [{ title: 'Actions', key: 'actions', width: 100 }] : []),
 ])
 
 async function load() {
@@ -87,11 +87,14 @@ async function load() {
 }
 
 watch(() => [props.sources.map(source => source.uuid).join('\0'), props.revision], () => { void load() }, { immediate: true })
+watch([() => filtered.value.length, () => rows.value.length, loading, error], ([count, total, isLoading, loadError]) => {
+  emit('countChange', { count, total, loading: isLoading, error: loadError })
+}, { immediate: true })
 onBeforeUnmount(() => { generation++ })
 </script>
 
 <template>
-  <div>
+  <div v-if="visible">
     <a-alert v-if="error" type="warning" show-icon :message="error" style="margin-bottom: 12px" />
     <a-space v-if="!filters" wrap style="margin-bottom: 12px">
       <a-input v-model:value="search" placeholder="Search points, source, address or UUID" allow-clear style="width: 260px" />
@@ -100,7 +103,7 @@ onBeforeUnmount(() => { generation++ })
       <a-button :loading="loading" @click="load">Refresh</a-button>
     </a-space>
     <a-table :columns="columns" :data-source="filtered" :loading="loading" row-key="key" size="small"
-      :scroll="{ x: showSource ? 1305 : 1000 }" :pagination="{ pageSize: 20, showSizeChanger: true }">
+      :scroll="{ x: showSource ? 1205 : 1000 }" :pagination="{ pageSize: 20, showSizeChanger: true }">
       <template #bodyCell="{ column, record }">
         <template v-if="column.key === 'protocol'"><a-tag :color="protocolColor(record.source.protocol)">{{ protocolLabel(record.source.protocol) }}</a-tag></template>
         <template v-else-if="column.key === 'source'">{{ record.source.name }}</template>
@@ -113,7 +116,6 @@ onBeforeUnmount(() => { generation++ })
         </template>
         <template v-else-if="column.key === 'uuid'"><span :title="record.pointUuid">{{ record.pointUuid || '—' }}</span></template>
         <template v-else-if="column.key === 'device'"><span :title="record.deviceUuid">{{ record.deviceName || '—' }}</span></template>
-        <template v-else-if="column.key === 'actions'"><a-button size="small" @click="emit('manage', record.source)">Manage</a-button></template>
       </template>
       <template #emptyText>No configured points found.</template>
     </a-table>

@@ -89,6 +89,7 @@ test('preserves device workflows under Sources and scopes devices to the source'
 })
 
 test('shows durable point UUIDs only when the optional column is enabled', async ({ page, baseURL }) => {
+  let failSourcePoints = false
   await page.route('**/v1/**', async route => {
     const path = new URL(route.request().url()).pathname
     let response: unknown = {}
@@ -96,7 +97,7 @@ test('shows durable point UUIDs only when the optional column is enabled', async
     else if (path === '/v1/endpoints') response = { endpoints: [
       { id: 1, uuid: 'source-1', name: 'Source one', protocol: 'modbus', enabled: true, poll_interval: 5000, connection: { host: 'localhost' } },
       { id: 2, uuid: 'source-2', name: 'Source two', protocol: 'mqtt', enabled: true, poll_interval: 5000, connection: { host: 'localhost' } },
-      { id: 3, uuid: 'source-3', name: 'Source three', protocol: 'opcua', enabled: true, poll_interval: 5000, connection: { host: 'localhost' } },
+      { id: 3, uuid: 'source-3', name: 'Source zzz', protocol: 'opcua', enabled: true, poll_interval: 5000, connection: { host: 'localhost' } },
     ] }
     else if (path === '/v1/endpoints/source-1/points') response = { points: [
       { name: 'speed', protocolAddress: { address: 1 }, canonicalStatus: 'resolved', canonicalReason: null, identityStatus: 'resolved', identityReason: null, pointUuid: 'durable-uuid' },
@@ -104,9 +105,16 @@ test('shows durable point UUIDs only when the optional column is enabled', async
     else if (path === '/v1/endpoints/source-2/points') response = { points: [
       { name: 'temperature', protocolAddress: 'sensors/temperature', canonicalStatus: 'resolved', canonicalReason: null, identityStatus: 'unresolved', identityReason: 'not-found' },
     ] }
-    else if (path === '/v1/endpoints/source-3/points') response = { points: [
-      { name: 'pressure', protocolAddress: 'ns=1;s=pressure', canonicalStatus: 'resolved', canonicalReason: null, identityStatus: 'resolved', identityReason: null, pointUuid: 'pressure-uuid' },
-    ] }
+    else if (path === '/v1/endpoints/source-3/points') {
+      if (failSourcePoints) return route.fulfill({ status: 503, json: { error: 'Unavailable' } })
+      response = { points: [
+        { name: 'pressure', protocolAddress: 'ns=1;s=pressure', canonicalStatus: 'resolved', canonicalReason: null, identityStatus: 'resolved', identityReason: null, pointUuid: 'pressure-uuid' },
+        ...Array.from({ length: 20 }, (_, index) => ({
+          name: `zzz-point-${index}`, protocolAddress: `ns=1;s=point-${index}`, canonicalStatus: 'resolved',
+          canonicalReason: null, identityStatus: 'resolved', identityReason: null, pointUuid: `point-${index}`,
+        })),
+      ] }
+    }
     else if (path === '/v1/devices') response = { devices: [] }
     else if (path === '/v1/data-explorer/views') response = { views: [] }
     else if (path === '/v1/ml-datasets') response = { datasets: [] }
@@ -122,8 +130,10 @@ test('shows durable point UUIDs only when the optional column is enabled', async
   await page.goto(baseURL + 'data-flow')
   await expect(page.getByTestId('point-name')).toHaveCount(2)
   await expect(page.locator('.views-list > button')).toHaveText([
-    'Data Points (2)', 'Source Points', 'Favorites (0)', 'Views (0)', 'Datasets (0)',
+    'Data Points (2)', 'Source Points (23)', 'Favorites (0)', 'Views (0)', 'Datasets (0)',
   ])
+  await expect(page.getByTestId('stat-source-points')).toContainText('Source points')
+  await expect(page.getByTestId('stat-source-points')).toContainText('23')
   await expect(page.getByTestId('data-tab-live')).toHaveClass(/active/)
   await expect(page.getByRole('columnheader', { name: /^Device\b/ })).toHaveCount(0)
   await page.getByTestId('data-tab-favorites').click()
@@ -138,11 +148,15 @@ test('shows durable point UUIDs only when the optional column is enabled', async
   await page.getByTestId('data-search').fill('durable-uuid')
   await expect(page.getByTestId('point-name')).toHaveCount(1)
   await expect(page.getByTestId('point-name')).toHaveText('speed')
+  await expect(page.getByTestId('data-tab-configured')).toHaveText('Source Points (1)')
+  await expect(page.getByTestId('stat-source-points')).toContainText('23')
   await page.getByTestId('data-tab-configured').click()
   await expect(page.getByTestId('data-tab-configured')).toHaveClass(/active/)
   await expect(page.getByTestId('data-tab-live')).not.toHaveClass(/active/)
   await expect(page.getByText('durable-uuid')).toBeVisible()
   await expect(page.getByRole('columnheader', { name: 'Protocol', exact: true })).toBeVisible()
+  await expect(page.getByRole('columnheader', { name: 'Actions', exact: true })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Manage', exact: true })).toHaveCount(0)
   const modbusRow = page.getByRole('row').filter({ hasText: 'durable-uuid' })
   const mqttRow = page.getByRole('row').filter({ hasText: 'sensors/temperature' })
   await expect(mqttRow).toHaveCount(0)
@@ -155,8 +169,9 @@ test('shows durable point UUIDs only when the optional column is enabled', async
   await protocolFilter.locator('.ant-select-selector').click()
   await page.locator('.ant-select-item-option').filter({ hasText: 'OPC-UA' }).click()
   await page.getByTestId('data-source-filter').locator('.ant-select-selector').click()
-  await page.locator('.ant-select-item-option').filter({ hasText: 'Source three' }).click()
+  await page.locator('.ant-select-item-option').filter({ hasText: 'Source zzz' }).click()
   await expect(page.getByRole('row').filter({ hasText: 'pressure-uuid' })).toBeVisible()
+  await expect(page.getByTestId('data-tab-configured')).toHaveText('Source Points (21)')
   await page.getByTestId('data-tab-live').click()
   await expect(page.getByTestId('point-name')).toHaveCount(0)
   await page.getByTestId('data-clear-filters').click()
@@ -184,6 +199,7 @@ test('shows durable point UUIDs only when the optional column is enabled', async
   await page.getByTestId('data-identity-filter').locator('.ant-select-selector').click()
   await page.locator('.ant-select-item-option').filter({ hasText: 'Assigned' }).click()
   await expect(mqttRow).toHaveCount(0)
+  await expect(page.getByTestId('data-tab-configured')).toHaveText('Source Points (0)')
   await page.getByTestId('data-tab-live').click()
   await expect(page.getByTestId('point-name')).toHaveText(['temperature'])
   await page.getByTestId('data-tab-configured').click()
@@ -191,6 +207,13 @@ test('shows durable point UUIDs only when the optional column is enabled', async
   await page.getByTestId('data-clear-filters').click()
   await expect(modbusRow).toBeVisible()
   await expect(mqttRow).toBeVisible()
-  await modbusRow.getByRole('button', { name: 'Manage', exact: true }).click()
-  await expect(page.locator('.ant-drawer').filter({ hasText: 'Edit — Source one' })).toBeVisible()
+  await expect(page.getByTestId('data-tab-configured')).toHaveText('Source Points (23)')
+  failSourcePoints = true
+  await page.getByTestId('data-refresh').click()
+  await expect(page.getByTestId('data-tab-configured')).toHaveText('Source Points (!)')
+  await expect(page.getByTestId('stat-source-points')).toContainText('!')
+  await expect(page.getByText('Unable to load points for: Source zzz')).toBeVisible()
+  failSourcePoints = false
+  await page.getByTestId('data-refresh').click()
+  await expect(page.getByTestId('data-tab-configured')).toHaveText('Source Points (23)')
 })
