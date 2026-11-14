@@ -198,6 +198,7 @@ test('shows durable point UUIDs only when the optional column is enabled', async
   await expect(page.getByTestId('data-tab-live')).not.toHaveClass(/active/)
   await expect(page.getByText('a81a11ce…')).toHaveAttribute('title', pointUuid)
   await expect(page.getByRole('columnheader', { name: 'Protocol', exact: true })).toBeVisible()
+  await expect(page.getByRole('columnheader', { name: 'Address Status', exact: true })).toBeVisible()
   await expect(page.getByRole('columnheader', { name: 'Actions', exact: true })).toHaveCount(0)
   await expect(page.getByRole('button', { name: 'Manage', exact: true })).toHaveCount(0)
   const modbusRow = page.getByRole('row').filter({ hasText: 'a81a11ce…' })

@@ -55,7 +55,7 @@ const columns = computed<TableColumnType<PointRow>[]>(() => [
   ...(props.showSource ? [{ title: 'Source', key: 'source', width: 150, sorter: (a: PointRow, b: PointRow) => a.source.name.localeCompare(b.source.name) }] : []),
   { title: 'Point', key: 'name', dataIndex: 'name', width: 150, sorter: (a, b) => a.name.localeCompare(b.name) },
   { title: 'Protocol address', key: 'address', width: 200, ellipsis: true },
-  { title: 'Canonical', key: 'canonical', width: 130 },
+  { title: 'Address Status', key: 'canonical', width: 130 },
   { title: 'Identity', key: 'identity', width: 120 },
   { title: 'Point UUID', key: 'uuid', width: 150 },
   { title: 'Device', key: 'device', width: 110 },
