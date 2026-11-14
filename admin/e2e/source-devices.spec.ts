@@ -127,8 +127,23 @@ test('shows durable point UUIDs only when the optional column is enabled', async
     await route.fulfill({ json: response })
   })
 
+
   await page.goto(baseURL + 'data-flow')
   await expect(page.getByTestId('point-name')).toHaveCount(2)
+  const tabBar = page.locator('.views-bar')
+  const toolbarInfo = tabBar.getByTestId('data-toolbar-info')
+  await expect(toolbarInfo).toContainText('Showing 2 points')
+  await expect(toolbarInfo).toContainText('Last sync')
+  const tabBox = await page.getByTestId('data-tab-live').boundingBox()
+  const infoBox = await toolbarInfo.boundingBox()
+  expect(tabBox).not.toBeNull()
+  expect(infoBox).not.toBeNull()
+  expect(Math.abs((tabBox!.y + tabBox!.height / 2) - (infoBox!.y + infoBox!.height / 2))).toBeLessThan(2)
+  await page.getByTestId('data-tab-views').click()
+  await expect(toolbarInfo).toContainText('Showing 0 views')
+  await page.getByTestId('data-tab-datasets').click()
+  await expect(toolbarInfo).toContainText('Showing 0 datasets')
+  await page.getByTestId('data-tab-live').click()
   await expect(page.locator('.views-list > button')).toHaveText([
     'Data Points (2)', 'Source Points (23)', 'Favorites (0)', 'Views (0)', 'Datasets (0)',
   ])
@@ -151,6 +166,7 @@ test('shows durable point UUIDs only when the optional column is enabled', async
   await expect(page.getByTestId('data-tab-configured')).toHaveText('Source Points (1)')
   await expect(page.getByTestId('stat-source-points')).toContainText('23')
   await page.getByTestId('data-tab-configured').click()
+  await expect(toolbarInfo).toHaveCount(0)
   await expect(page.getByTestId('data-tab-configured')).toHaveClass(/active/)
   await expect(page.getByTestId('data-tab-live')).not.toHaveClass(/active/)
   await expect(page.getByText('durable-uuid')).toBeVisible()
@@ -216,4 +232,152 @@ test('shows durable point UUIDs only when the optional column is enabled', async
   failSourcePoints = false
   await page.getByTestId('data-refresh').click()
   await expect(page.getByTestId('data-tab-configured')).toHaveText('Source Points (23)')
+  await page.getByTestId('data-tab-live').click()
+  await page.setViewportSize({ width: 375, height: 800 })
+  await expect(toolbarInfo).toBeVisible()
+  expect(await tabBar.locator('.views-list').evaluate(el => el.scrollWidth > el.clientWidth)).toBe(true)
+})
+
+test('groups picker points by source UUID and blocks ambiguous identities without remapping saved keys', async ({ page, baseURL }) => {
+  const key = (endpoint: string, name: string) => JSON.stringify(['opcua', endpoint, name])
+  const firstKey = key('device-a', 'same')
+  const legacyKey = JSON.stringify(['opcua', 'device-a', 'same', 'old-device'])
+  const secondKey = key('device-b', 'same')
+  const duplicateKey = key('shared', 'duplicate')
+  const orphanKey = key('orphan', 'orphan')
+  const patches: Array<{ pointKeys: string[] }> = []
+  let failConfiguredPoints = false
+  const sources = [
+    { id: 1, uuid: 'source-11111111', name: 'plc', protocol: 'opcua', enabled: true, poll_interval: 5000, connection: {} },
+    { id: 2, uuid: 'source-22222222', name: 'plc', protocol: 'opcua', enabled: true, poll_interval: 5000, connection: {} },
+    { id: 3, uuid: 'source-33333333', name: 'mqtt-source', protocol: 'mqtt', enabled: true, poll_interval: 5000, connection: {} },
+  ]
+  const configured = (name: string, address: string, deviceUuid?: string) => ({
+    name, protocolAddress: address, deviceUuid, canonicalStatus: 'resolved', canonicalReason: null,
+    identityStatus: 'resolved', identityReason: null,
+  })
+  const catalog = [
+    { sourceSystem: 'opcua', endpointName: 'device-a', deviceKey: 'device-a', rawName: 'raw-a', normalizedName: 'same', pointKey: firstKey },
+    { sourceSystem: 'opcua', endpointName: 'device-b', deviceKey: 'device-b', rawName: 'raw-b', normalizedName: 'same', pointKey: secondKey },
+    { sourceSystem: 'opcua', endpointName: 'shared', deviceKey: 'device-a', rawName: 'duplicate', normalizedName: 'duplicate', pointKey: duplicateKey },
+    { sourceSystem: 'opcua', endpointName: 'shared', deviceKey: 'device-c', rawName: 'duplicate', normalizedName: 'duplicate', pointKey: duplicateKey },
+    { sourceSystem: 'opcua', endpointName: 'device-a', deviceKey: 'device-a', rawName: 'collapsed', normalizedName: 'collapsed', pointKey: key('device-a', 'collapsed') },
+    { sourceSystem: 'opcua', endpointName: 'orphan', deviceKey: 'orphan', rawName: 'orphan', normalizedName: 'orphan', pointKey: orphanKey },
+    { sourceSystem: 'mqtt', endpointName: 'mqtt-input', deviceKey: 'source-33333333', rawName: 'temperature', normalizedName: 'temperature', pointKey: JSON.stringify(['mqtt', 'mqtt-input', 'temperature']) },
+  ]
+  const view = { id: 'view-1', name: 'Saved view', description: '', pointKeys: [legacyKey, duplicateKey, orphanKey] }
+  await page.route('**/v1/**', async route => {
+    const request = route.request()
+    const path = new URL(request.url()).pathname
+    let response: unknown = {}
+    if (path === '/v1/auth/me') response = { username: 'admin', role: 'admin', is_superuser: true, must_change_password: false }
+    else if (path === '/v1/endpoints') response = { endpoints: sources }
+    else if (path === '/v1/endpoints/source-11111111/points') {
+      if (failConfiguredPoints) return route.fulfill({ status: 503, json: { error: 'Unavailable' } })
+      response = { points: [
+        configured('raw-a', 'ns=2;s=a', 'device-a'),
+        configured('raw-b', 'ns=2;s=b', 'device-b'),
+        configured('duplicate', 'ns=2;s=d1', 'device-a'),
+        configured('collapsed', 'ns=2;s=c1', 'device-a'),
+        configured('collapsed', 'ns=2;s=c2', 'device-a'),
+      ] }
+    }
+    else if (path === '/v1/endpoints/source-22222222/points') response = { points: [configured('duplicate', 'ns=2;s=d2', 'device-c')] }
+    else if (path === '/v1/endpoints/source-33333333/points') response = { points: [configured('temperature', 'sensor/temperature')] }
+    else if (path === '/v1/devices') response = { devices: [
+      { uuid: 'device-a', endpoint_id: 1, name: 'AHU-1', protocol: 'opcua' },
+      { uuid: 'device-b', endpoint_id: 1, name: 'AHU-2', protocol: 'opcua' },
+      { uuid: 'device-c', endpoint_id: 2, name: 'AHU-3', protocol: 'opcua' },
+    ] }
+    else if (path === '/v1/point-catalog') response = { points: catalog }
+    else if (path === '/v1/data-explorer/views') response = { views: [view] }
+    else if (path === '/v1/data-explorer/views/view-1' && request.method() === 'PATCH') {
+      patches.push(request.postDataJSON())
+      response = { view }
+    }
+    else if (path === '/v1/ml-datasets') response = { datasets: [] }
+    else if (path === '/v1/anomaly/config') response = { config: { metrics: [] } }
+    else if (path === '/v1/anomaly-incidents') response = { incidents: [], total: 0 }
+    else if (path === '/v1/pipeline/subscriptions') response = { subscriptions: [] }
+    else if (path === '/v1/pipeline/overview') response = { overview: {} }
+    else if (path === '/v1/pipeline/points') response = { points: [] }
+    await route.fulfill({ json: response })
+  })
+
+  await page.goto(baseURL + 'data-flow')
+  await page.getByTestId('data-tab-views').click()
+  await page.getByRole('row', { name: /Saved view/ }).getByRole('button').nth(2).click()
+  const drawer = page.locator('.ant-drawer').filter({ hasText: 'Edit View' })
+  await drawer.getByRole('button', { name: 'Edit Selection' }).click()
+  const modal = page.getByRole('dialog', { name: 'Select Points' })
+  await expect(modal.getByText('1 catalog points could not be matched', { exact: false })).toBeVisible()
+  await expect(modal.getByText('Some points have ambiguous or unverifiable', { exact: false })).toBeVisible()
+  const opcua = modal.locator('.protocol-group').filter({ hasText: 'OPC-UA' })
+  await opcua.locator('.protocol-header').click()
+  const groups = opcua.locator('.source-group')
+  await expect(groups).toHaveCount(2)
+  await expect(groups.locator('.source-name')).toHaveText(['plc', 'plc'])
+  await expect(groups.nth(0)).toContainText('source-11111111')
+  await expect(groups.nth(1)).toContainText('source-22222222')
+  await groups.nth(0).locator('.source-header').click()
+  await groups.nth(1).locator('.source-header').click()
+  const first = groups.nth(0).locator('.point-item').filter({ hasText: 'raw-a' })
+  const second = groups.nth(0).locator('.point-item').filter({ hasText: 'raw-b' })
+  await expect(first).toContainText('AHU-1')
+  await expect(second).toContainText('AHU-2')
+  await expect(first.getByRole('checkbox')).toBeChecked()
+  await expect(second.getByRole('checkbox')).not.toBeChecked()
+  await groups.nth(0).locator('.source-header').getByRole('checkbox').check()
+  await expect(first.getByRole('checkbox')).toBeChecked()
+  await expect(second.getByRole('checkbox')).toBeChecked()
+  await expect(modal.getByText('4 selected')).toBeVisible()
+  await expect(modal.locator('.point-item').filter({ hasText: 'duplicate' }).getByRole('checkbox')).toHaveCount(2)
+  for (const checkbox of await modal.locator('.point-item').filter({ hasText: 'duplicate' }).getByRole('checkbox').all()) {
+    await expect(checkbox).toBeDisabled()
+  }
+  await expect(modal.locator('.point-item').filter({ hasText: 'collapsed' }).getByRole('checkbox')).toBeDisabled()
+  await modal.getByPlaceholder('Search source or point name…').fill('raw-b')
+  await expect(modal.locator('.point-item')).toHaveCount(1)
+  await modal.getByPlaceholder('Search source or point name…').clear()
+  await modal.getByPlaceholder('Search source or point name…').fill('plc')
+  await expect(groups).toHaveCount(2)
+  await modal.getByPlaceholder('Search source or point name…').clear()
+  await modal.locator('.ant-select-selector').click()
+  await page.locator('.ant-select-item-option').filter({ hasText: 'MQTT' }).click()
+  await expect(modal.locator('.protocol-group')).toHaveCount(1)
+  await modal.locator('.protocol-header').click()
+  const mqttSource = modal.locator('.source-group')
+  await expect(mqttSource.locator('.source-name')).toHaveText('mqtt-source')
+  await mqttSource.locator('.source-header').click()
+  await expect(mqttSource.locator('.point-item').getByRole('checkbox')).toBeEnabled()
+  await modal.locator('.ant-select-clear').click()
+  await modal.getByRole('button', { name: 'Confirm (4)' }).click()
+  await drawer.getByRole('button', { name: 'Save Changes' }).click()
+  await expect.poll(() => patches.length).toBe(1)
+  expect(patches[0].pointKeys).toEqual([legacyKey, duplicateKey, orphanKey, secondKey])
+
+  await page.goto(baseURL + 'anomaly')
+  await page.getByRole('tab', { name: 'Anomaly Rules' }).click()
+  await page.getByRole('button', { name: 'Add rule' }).click()
+  const ruleDrawer = page.locator('.ant-drawer').filter({ hasText: 'Apply to' })
+  await ruleDrawer.getByText('Click to select a point…').click()
+  const singlePicker = page.getByRole('dialog', { name: 'Select Point', exact: true })
+  const mqttGroup = singlePicker.locator('.protocol-group').filter({ hasText: 'MQTT' })
+  await mqttGroup.locator('.protocol-header').click()
+  await mqttGroup.locator('.source-header').click()
+  await expect(mqttGroup.getByText('Device metadata is required for this selection.')).toBeVisible()
+  await mqttGroup.locator('.point-item').click()
+  await expect(singlePicker).toBeVisible()
+  await singlePicker.locator('.protocol-group').filter({ hasText: 'OPC-UA' }).locator('.protocol-header').click()
+  const singleSource = singlePicker.locator('.source-group').filter({ hasText: 'source-11111111' })
+  await singleSource.locator('.source-header').click()
+  await singleSource.locator('.point-item').filter({ hasText: 'collapsed' }).click()
+  await expect(singlePicker).toBeVisible()
+  await singleSource.locator('.point-item').filter({ hasText: 'raw-b' }).click()
+  await expect(singlePicker).not.toBeVisible()
+  await expect(ruleDrawer.locator('.point-picker-trigger')).toContainText('same')
+  await expect(ruleDrawer.locator('.point-picker-trigger')).toContainText('AHU-2')
+  failConfiguredPoints = true
+  await ruleDrawer.getByRole('button', { name: 'Change' }).click()
+  await expect(singlePicker.getByText('Unable to load sources and points.', { exact: false })).toBeVisible()
 })

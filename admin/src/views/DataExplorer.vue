@@ -574,13 +574,10 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
             <button type="button" data-testid="data-tab-views" :class="['view-tab', { active: activeTab === 'views' }]" @click="activateTab('views')">Views ({{ savedViews.length }})</button>
             <button type="button" data-testid="data-tab-datasets" :class="['view-tab', { active: activeTab === 'datasets' }]" @click="activateTab('datasets')">Datasets ({{ datasets.length }})</button>
           </div>
+          <span v-if="activeTab !== 'configured'" class="toolbar-info" data-testid="data-toolbar-info">Showing {{ activeTab === 'datasets' ? datasets.length + ' datasets' : activeTab === 'views' ? savedViews.length + ' views' : filteredPoints.length + ' points' }}<template v-if="lastSync"> · Last sync {{ lastSync }}</template></span>
         </div>
         <a-alert v-if="viewError" type="warning" show-icon :message="viewError" style="margin-bottom: 10px" />
         <a-alert v-if="activeSavedView && missingViewCount" type="info" show-icon :message="`${missingViewCount} saved point(s) are not in the recent sample. They remain saved in this view.`" style="margin-bottom: 10px" />
-        <div v-if="activeTab !== 'configured'" class="table-meta">
-          <div></div>
-          <span class="toolbar-info" data-testid="data-toolbar-info">Showing {{ activeTab === 'datasets' ? datasets.length + ' datasets' : activeTab === 'views' ? savedViews.length + ' views' : filteredPoints.length + ' points' }}<template v-if="lastSync"> · Last sync {{ lastSync }}</template></span>
-        </div>
 
         <ConfiguredPointsPanel :visible="activeTab === 'configured'" :sources="sources" :revision="configuredRevision"
           :filters="{ search, protocol: protocolFilter, source: sourceFilter, identity: identityFilter }" show-source @count-change="configuredCount = $event" />
@@ -684,13 +681,12 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
 .metric-card :deep(.ant-statistic-content) { font-size: 23px; }
 .save-view-button { color: #1677ff; border-color: #1677ff; }
 .views-bar { display: flex; justify-content: space-between; align-items: center; gap: 12px; border-bottom: 1px solid var(--border-color); margin: 8px 0 12px; }
-.views-list { display: flex; align-items: stretch; gap: 4px; overflow-x: auto; min-width: 0; }
+.views-list { display: flex; align-items: stretch; gap: 4px; overflow-x: auto; min-width: 0; max-width: 100%; }
 .view-tab, .saved-view-tab { background: transparent; color: var(--text-primary); border: 0; border-bottom: 2px solid transparent; padding: 10px 12px; font: inherit; white-space: nowrap; cursor: pointer; }
 .view-tab.active, .saved-view-tab.active { color: #1677ff; border-bottom-color: #1677ff; }
 .saved-view-tab { display: flex; gap: 10px; align-items: center; }
 .saved-view-tab button { color: inherit; background: none; border: 0; cursor: pointer; padding: 0; font: inherit; }
 .saved-view-tab .close-view { color: var(--text-tertiary); }
-.table-meta { display: flex; justify-content: space-between; align-items: center; min-height: 28px; margin-bottom: 10px; gap: 8px; }
 @media (max-width: 850px) { .views-bar { align-items: flex-start; flex-direction: column; } .metric-inner { gap: 8px; } .metric-icon { width: 38px; height: 38px; } }
 
 .eyebrow { font-size: 10px; letter-spacing: 1.3px; font-weight: 700; color: var(--text-tertiary); margin-bottom: 7px; }
@@ -721,7 +717,7 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
 .filter { width: 160px; flex-shrink: 0; }
 .filter :deep(.ant-select) { width: 100% !important; }
 .filters-actions { display: flex; gap: 8px; margin-left: auto; flex-shrink: 0; }
-.toolbar-info { color: var(--text-tertiary); font-size: 12px; }
+.toolbar-info { color: var(--text-tertiary); font-size: 12px; flex-shrink: 0; white-space: nowrap; }
 .note { color: var(--text-tertiary); font-size: 12px; margin-top: 12px; }
 .point-primary { font-size: 13px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .point-secondary { color: var(--text-tertiary); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
