@@ -168,9 +168,9 @@ let ready = false;
 // Start systemd watchdog with centralized health check
 // CRITICAL: Watchdog is suppressed until READY=1 is sent to systemd
 // This prevents premature timeouts during slow initialization (network, VPN, MQTT, TPM)
-const stopWatchdog = startWatchdog(() => {
+const stopWatchdog = startWatchdog(async () => {
 	if (!ready) return { healthy: false, reason: 'initializing' as const };
-	const ok = health.isHealthy();
+	const ok = await health.isHealthy();
 	return { healthy: ok, reason: ok ? 'ok' as const : 'health_check_failed' as const };
 });
 

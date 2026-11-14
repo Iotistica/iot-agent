@@ -1,26 +1,29 @@
 import { execSync } from 'child_process';
+import { writeFileSync, unlinkSync, mkdtempSync } from 'fs';
+import { join } from 'path';
+import { tmpdir } from 'os';
 import * as path from 'path';
 
 const INSTALL_SH = path.resolve(__dirname, '../../../bin/install.sh').replace(/\\/g, '/');
 
-/**
- * Extracts the validation functions and generate_systemd_unit from install.sh
- * into a self-contained bash snippet that tests can invoke without running the
- * full installer (no root, no systemctl, no file-system side effects).
- */
 function buildTestPreamble(): string {
-	return [
-		'set -e',
-		'installer_message() { echo "$*" >&2; }',
-		'installer_step() { installer_message "  $*"; }',
-		// Extract function definitions from install.sh (validate_* and generate_systemd_unit)
-		`eval "$(sed -n '/^validate_systemd_memory()/,/^}/p; /^validate_systemd_timeout()/,/^}/p; /^validate_cpu_quota()/,/^}/p; /^validate_memory_high_le_max()/,/^}/p; /^generate_systemd_unit()/,/^}/p' '${INSTALL_SH}')"`,
-	].join('\n');
+	return `set -e
+installer_message() { echo "$*" >&2; }
+installer_step() { installer_message "  $*"; }
+eval "$(sed -n '/^validate_systemd_memory()/,/^}/p; /^validate_systemd_timeout()/,/^}/p; /^validate_cpu_quota()/,/^}/p; /^validate_memory_high_le_max()/,/^}/p; /^generate_systemd_unit()/,/^}/p' '${INSTALL_SH}')"
+`;
 }
 
+let tmpDir: string;
+beforeAll(() => {
+	tmpDir = mkdtempSync(join(tmpdir(), 'install-test-'));
+});
+
 function runBash(script: string): { stdout: string; stderr: string; exitCode: number } {
+	const scriptFile = join(tmpDir, `test-${Date.now()}.sh`).replace(/\\/g, '/');
+	writeFileSync(scriptFile, script, 'utf-8');
 	try {
-		const stdout = execSync(`bash -c '${script.replace(/'/g, "'\\''")}'`, {
+		const stdout = execSync(`bash "${scriptFile}"`, {
 			encoding: 'utf-8',
 			stdio: ['pipe', 'pipe', 'pipe'],
 		});
@@ -31,6 +34,8 @@ function runBash(script: string): { stdout: string; stderr: string; exitCode: nu
 			stderr: error.stderr || '',
 			exitCode: error.status ?? 1,
 		};
+	} finally {
+		try { unlinkSync(scriptFile); } catch {}
 	}
 }
 
@@ -222,9 +227,10 @@ describe('systemd unit generation', () => {
 			expect(result.exitCode).not.toBe(0);
 		});
 
-		it('rejects empty memory value', () => {
+		it('falls back to default when memory value is empty', () => {
+			// Shell default (:-300M) fills in, so validation passes
 			const result = validateOnly({ AGENT_MEMORY_LIMIT: '' });
-			expect(result.exitCode).not.toBe(0);
+			expect(result.exitCode).toBe(0);
 		});
 
 		it('rejects MemoryHigh exceeding MemoryMax', () => {

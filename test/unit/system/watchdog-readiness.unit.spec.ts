@@ -3,52 +3,50 @@
  * initializing vs unhealthy states produce distinct log messages.
  */
 
-// Mock child_process before importing watchdog
+const mockExecFile = jest.fn((_cmd: string, _args: string[], cb: Function) => {
+	cb(null, '', '');
+});
+
 jest.mock('child_process', () => ({
-	execFile: jest.fn((_cmd: string, _args: string[], cb: Function) => {
-		// Simulate systemd-notify success
-		cb(null, '', '');
-	}),
+	execFile: mockExecFile,
 }));
 
-// Mock dgram to capture sent messages
-const mockSend = jest.fn((_buf: Buffer, _off: number, _len: number, _path: any, cb: Function) => {
-	cb(null);
-});
-const mockClose = jest.fn();
 jest.mock('dgram', () => ({
 	createSocket: jest.fn(() => ({
-		send: mockSend,
-		close: mockClose,
+		send: jest.fn((_b: any, _o: any, _l: any, _p: any, cb: Function) => cb(null)),
+		close: jest.fn(),
 		on: jest.fn(),
 	})),
 }));
 
 import type { HealthCheckResult } from '../../../src/system/watchdog';
 
+function countNotifications(message: string): number {
+	return mockExecFile.mock.calls.filter(
+		(call: any[]) => call[1] && call[1].includes(message)
+	).length;
+}
+
 describe('watchdog readiness gating', () => {
 	const ORIGINAL_ENV = process.env;
 
 	beforeEach(() => {
 		jest.useFakeTimers();
+		mockExecFile.mockClear();
 		process.env = {
 			...ORIGINAL_ENV,
 			NOTIFY_SOCKET: '/run/systemd/notify',
-			WATCHDOG_USEC: '60000000', // 60s timeout -> 30s ping interval
+			WATCHDOG_USEC: '60000000',
 		};
-		mockSend.mockClear();
-		mockClose.mockClear();
 	});
 
-	afterEach(async () => {
+	afterEach(() => {
 		jest.useRealTimers();
 		process.env = ORIGINAL_ENV;
-		// Reset module state by clearing the module cache
 		jest.resetModules();
 	});
 
 	function loadWatchdog() {
-		// Fresh import each test to reset module-level state
 		return require('../../../src/system/watchdog') as typeof import('../../../src/system/watchdog');
 	}
 
@@ -61,17 +59,9 @@ describe('watchdog readiness gating', () => {
 		});
 
 		startWatchdog(healthCheck);
+		await jest.advanceTimersByTimeAsync(90_000);
 
-		// Advance past several ping intervals (30s each)
-		jest.advanceTimersByTime(90_000);
-
-		// No WATCHDOG=1 should have been sent
-		const watchdogCalls = mockSend.mock.calls.filter(
-			(call: any[]) => call[0] && Buffer.from(call[0]).toString().includes('WATCHDOG=1')
-		);
-		expect(watchdogCalls).toHaveLength(0);
-
-		// Health check should have been called
+		expect(countNotifications('WATCHDOG=1')).toBe(0);
 		expect(healthCheck).toHaveBeenCalled();
 	});
 
@@ -79,99 +69,65 @@ describe('watchdog readiness gating', () => {
 		const { startWatchdog } = loadWatchdog();
 
 		let ready = false;
-		const healthCheck = jest.fn<HealthCheckResult, []>().mockImplementation(() => {
+		const healthCheck = jest.fn().mockImplementation(() => {
 			if (!ready) return { healthy: false, reason: 'initializing' };
 			return { healthy: true, reason: 'ok' };
 		});
 
 		startWatchdog(healthCheck);
 
-		// Advance 30s — still initializing
-		jest.advanceTimersByTime(30_000);
-		let watchdogCalls = mockSend.mock.calls.filter(
-			(call: any[]) => call[0] && Buffer.from(call[0]).toString().includes('WATCHDOG=1')
-		);
-		expect(watchdogCalls).toHaveLength(0);
+		await jest.advanceTimersByTimeAsync(30_000);
+		expect(countNotifications('WATCHDOG=1')).toBe(0);
 
-		// Mark ready and advance another interval
 		ready = true;
-		jest.advanceTimersByTime(30_000);
-		watchdogCalls = mockSend.mock.calls.filter(
-			(call: any[]) => call[0] && Buffer.from(call[0]).toString().includes('WATCHDOG=1')
-		);
-		expect(watchdogCalls.length).toBeGreaterThan(0);
+		await jest.advanceTimersByTimeAsync(30_000);
+		expect(countNotifications('WATCHDOG=1')).toBeGreaterThan(0);
 	});
 
-	it('does not send READY=1 from startWatchdog', () => {
+	it('does not send READY=1 from startWatchdog', async () => {
 		const { startWatchdog } = loadWatchdog();
-
-		startWatchdog(() => ({ healthy: true, reason: 'ok' }));
-
-		jest.advanceTimersByTime(60_000);
-
-		const readyCalls = mockSend.mock.calls.filter(
-			(call: any[]) => call[0] && Buffer.from(call[0]).toString().includes('READY=1')
-		);
-		expect(readyCalls).toHaveLength(0);
+		startWatchdog(() => ({ healthy: true, reason: 'ok' as const }));
+		await jest.advanceTimersByTimeAsync(60_000);
+		expect(countNotifications('READY=1')).toBe(0);
 	});
 
-	it('withholds pings when health check fails post-ready', () => {
+	it('withholds pings when health check fails post-ready', async () => {
 		const { startWatchdog } = loadWatchdog();
 
 		let healthy = true;
-		const healthCheck = jest.fn<HealthCheckResult, []>().mockImplementation(() => ({
+		const healthCheck = jest.fn().mockImplementation(() => ({
 			healthy,
 			reason: healthy ? 'ok' : 'health_check_failed',
 		}));
 
 		startWatchdog(healthCheck);
 
-		// First interval — healthy, ping sent
-		jest.advanceTimersByTime(30_000);
-		let watchdogCalls = mockSend.mock.calls.filter(
-			(call: any[]) => call[0] && Buffer.from(call[0]).toString().includes('WATCHDOG=1')
-		);
-		const countBefore = watchdogCalls.length;
+		await jest.advanceTimersByTimeAsync(30_000);
+		const countBefore = countNotifications('WATCHDOG=1');
 		expect(countBefore).toBeGreaterThan(0);
 
-		// Mark unhealthy
 		healthy = false;
-		jest.advanceTimersByTime(30_000);
-		watchdogCalls = mockSend.mock.calls.filter(
-			(call: any[]) => call[0] && Buffer.from(call[0]).toString().includes('WATCHDOG=1')
-		);
-		// Count should not have increased
-		expect(watchdogCalls.length).toBe(countBefore);
+		await jest.advanceTimersByTimeAsync(30_000);
+		expect(countNotifications('WATCHDOG=1')).toBe(countBefore);
 	});
 
 	it('accepts plain boolean health check for backward compatibility', () => {
 		const { startWatchdog } = loadWatchdog();
-
-		const healthCheck = jest.fn<boolean, []>().mockReturnValue(true);
-		startWatchdog(healthCheck);
-
-		jest.advanceTimersByTime(30_000);
-
-		const watchdogCalls = mockSend.mock.calls.filter(
-			(call: any[]) => call[0] && Buffer.from(call[0]).toString().includes('WATCHDOG=1')
-		);
-		expect(watchdogCalls.length).toBeGreaterThan(0);
+		startWatchdog(() => true);
+		await jest.advanceTimersByTimeAsync(30_000);
+		expect(countNotifications('WATCHDOG=1')).toBeGreaterThan(0);
 	});
 
 	it('is a no-op without NOTIFY_SOCKET', () => {
 		delete process.env.NOTIFY_SOCKET;
 		const { startWatchdog } = loadWatchdog();
 
-		const healthCheck = jest.fn<boolean, []>().mockReturnValue(true);
+		const healthCheck = jest.fn().mockReturnValue(true);
 		const cleanup = startWatchdog(healthCheck);
 
-		jest.advanceTimersByTime(60_000);
-
-		// Health check should never be called
+		await jest.advanceTimersByTimeAsync(60_000);
 		expect(healthCheck).not.toHaveBeenCalled();
-		expect(mockSend).not.toHaveBeenCalled();
-
-		// Cleanup should be a no-op function
+		expect(mockExecFile).not.toHaveBeenCalled();
 		expect(typeof cleanup).toBe('function');
 	});
 });

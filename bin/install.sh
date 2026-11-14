@@ -102,18 +102,23 @@ export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH"
 
 validate_systemd_memory() {
     _varname="$1"; _value="$2"
+    # Strip optional suffix to get the numeric part
     case "$_value" in
-        [1-9]|[1-9][0-9]|[1-9][0-9][0-9]|[1-9][0-9][0-9][0-9]|[1-9][0-9][0-9][0-9][0-9]|[1-9][0-9][0-9][0-9][0-9][0-9]) return 0 ;;
-        [1-9]*[KMGT]) ;;
-        *)
+        *[KMGT]) _num="${_value%[KMGT]}" ;;
+        *)       _num="$_value" ;;
+    esac
+    # Numeric part must be a positive integer (no leading zeros except bare "0" which we reject)
+    case "$_num" in
+        ''|*[!0-9]*|0|0*)
             installer_message "Error: $_varname value '$_value' is not a valid systemd memory limit."
             installer_message "  Expected format: <number>[K|M|G|T] (e.g., 250M, 1G, 512K)"
             return 1
             ;;
     esac
-    _num="${_value%[KMGT]}"
-    case "$_num" in
-        ''|*[!0-9]*|0*)
+    # Ensure the original value is only digits + optional suffix (reject e.g., "300ZM")
+    case "$_value" in
+        [1-9]*[KMGT]|[1-9]|[1-9][0-9]*) ;;
+        *)
             installer_message "Error: $_varname value '$_value' is not a valid systemd memory limit."
             installer_message "  Expected format: <number>[K|M|G|T] (e.g., 250M, 1G, 512K)"
             return 1
