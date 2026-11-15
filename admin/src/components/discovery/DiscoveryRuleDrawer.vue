@@ -236,21 +236,9 @@ function close() {
         </a-select>
       </a-form-item>
 
-      <a-row :gutter="16">
-        <a-col :span="12">
-          <a-form-item label="Enabled" name="enabled">
-            <a-switch v-model:checked="form.enabled" />
-          </a-form-item>
-        </a-col>
-        <a-col :span="12">
-          <a-form-item
-            label="Auto-enable found sources"
-            name="auto_enable"
-          >
-            <a-switch v-model:checked="form.auto_enable" />
-          </a-form-item>
-        </a-col>
-      </a-row>
+      <a-form-item label="Enabled" name="enabled">
+        <a-switch v-model:checked="form.enabled" />
+      </a-form-item>
 
       <!-- ── Per-protocol scan targets ──────────────────────────────── -->
       <template v-if="hasParamFields">
@@ -362,9 +350,9 @@ function close() {
           </a-form-item>
           <a-form-item
             label="Root topics"
-            extra="Topics to subscribe to during discovery — comma-separated."
+            extra="Topics to subscribe to during discovery — comma-separated. Empty subscribes to all (#)."
           >
-            <a-input v-model:value="mqttP.topics" placeholder="sensors/#, devices/#" />
+            <a-input v-model:value="mqttP.topics" placeholder="# (all topics)" />
           </a-form-item>
           <a-form-item label="Sampling duration (ms)">
             <a-input-number v-model:value="mqttP.samplingDurationMs" :min="1000" style="width:100%" placeholder="10000" />
@@ -372,6 +360,14 @@ function close() {
         </template>
 
       </template>
+
+      <a-form-item
+        label="Auto-enable found sources"
+        name="auto_enable"
+        extra="When enabled, discovered sources are automatically activated for data collection."
+      >
+        <a-switch v-model:checked="form.auto_enable" />
+      </a-form-item>
 
     </a-form>
 

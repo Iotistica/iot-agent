@@ -92,11 +92,19 @@ export class MqttDiscovery extends BaseDiscovery {
 		if (!brokerUrl) {
 			throw new Error("MQTT_BROKER_URL is required for MQTT discovery");
 		}
-		const topics = options?.topics || [];
+		const requestedTopics = options?.topics || [];
+		const topics = requestedTopics.length > 0 ? requestedTopics : ['#'];
 		const samplingDurationMs = options?.samplingDurationMs || 10000;
 		const qos = options?.qos ?? 0;
 
 		this.brokerConfig = options;
+
+		if (requestedTopics.length === 0) {
+			this.logger?.infoSync("No topics provided — defaulting to wildcard '#'", {
+				component: (LogComponents.discovery + "] [" + this.protocol) as any,
+				brokerUrl,
+			});
+		}
 
 		this.logger?.infoSync("MQTT discover() called", {
 			component: (LogComponents.discovery + "] [" + this.protocol) as any,
@@ -108,15 +116,6 @@ export class MqttDiscovery extends BaseDiscovery {
 			qos,
 			optionKeys: options ? Object.keys(options) : [],
 		});
-
-		if (!topics || topics.length === 0) {
-			this.logger?.warnSync("No topics provided for MQTT discovery — returning empty", {
-				component: (LogComponents.discovery + "] [" + this.protocol) as any,
-				brokerUrl,
-				hint: 'Provide explicit topics in the discovery rule (e.g., "factory/#") or set discoveryRoots in MQTT config',
-			});
-			return withDiscoveryScanStatus([], { successful: false, complete: false, authoritative: false });
-		}
 
 		this.logger?.infoSync("Starting MQTT device discovery", {
 			component: (LogComponents.discovery + "] [" + this.protocol) as any,
