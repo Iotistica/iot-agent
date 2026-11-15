@@ -127,7 +127,7 @@ const sourceSearch = ref('')
 
 function detectSourceMode(sub: Subscription | null): SourceMode {
   if (!sub) return 'all'
-  if ((sub.route_json?.includeDevices?.length ?? 0) > 0) return 'specific'
+  if (sub.route_json?.sourceFilterMode === 'specific' || (sub.route_json?.includeDevices?.length ?? 0) > 0) return 'specific'
   if (sub.topics?.length > 0) return 'protocol'
   return 'all'
 }
@@ -135,9 +135,15 @@ function detectSourceMode(sub: Subscription | null): SourceMode {
 watch(sourceMode, (mode) => {
   if (mode === 'all') {
     form.value.topics = []
-    if (form.value.route_json) form.value.route_json.includeDevices = []
+    if (form.value.route_json) {
+      form.value.route_json.includeDevices = []
+      delete form.value.route_json.sourceFilterMode
+    }
   } else if (mode === 'protocol') {
-    if (form.value.route_json) form.value.route_json.includeDevices = []
+    if (form.value.route_json) {
+      form.value.route_json.includeDevices = []
+      delete form.value.route_json.sourceFilterMode
+    }
   } else if (mode === 'specific') {
     form.value.topics = []
   }
@@ -327,7 +333,16 @@ watch(
       form.value = {
         publish_destination_id: props.editing.publish_destination_id,
         topics: [...props.editing.topics],
-        route_json: props.editing.route_json ?? blankRoute(),
+        route_json: props.editing.route_json
+          ? {
+              ...props.editing.route_json,
+              includeMetrics: [...(props.editing.route_json.includeMetrics ?? [])],
+              excludeMetrics: [...(props.editing.route_json.excludeMetrics ?? [])],
+              includeDevices: [...(props.editing.route_json.includeDevices ?? [])],
+              excludeDevices: [...(props.editing.route_json.excludeDevices ?? [])],
+              qualities: [...(props.editing.route_json.qualities ?? [])],
+            }
+          : blankRoute(),
         payload_format: props.editing.payload_format,
         compression: props.editing.compression ?? null,
         ml_dataset_id: props.editing.ml_dataset_id ?? null,
@@ -375,6 +390,7 @@ async function submit() {
     if (payload.route_json) payload.route_json.includeDevices = []
   } else if (sourceMode.value === 'specific') {
     payload.topics = []
+    if (payload.route_json) payload.route_json.sourceFilterMode = 'specific'
   }
 
   const r = payload.route_json
@@ -383,6 +399,7 @@ async function submit() {
     ((r.includeMetrics?.length ?? 0) > 0 ||
       (r.excludeMetrics?.length ?? 0) > 0 ||
       (r.includeDevices?.length ?? 0) > 0 ||
+      r.sourceFilterMode === 'specific' ||
       (r.excludeDevices?.length ?? 0) > 0 ||
       (r.qualities?.length ?? 0) > 0 ||
       r.minIntervalMs != null ||
@@ -502,6 +519,13 @@ function close() {
 
         <!-- Specific sources: grouped checkbox list -->
         <div v-if="sourceMode === 'specific'" class="source-sub-panel">
+          <a-alert
+            v-if="!selectedSources.size"
+            type="info"
+            show-icon
+            message="No sources selected. This subscription will not receive source data."
+            style="margin-bottom: 8px"
+          />
           <a-input
             v-model:value="sourceSearch"
             placeholder="Search sources..."

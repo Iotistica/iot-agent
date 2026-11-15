@@ -9,10 +9,8 @@ import type { Logger } from './types.js';
  * data (decision #3, no runtime mutation path beyond this) — safe/idempotent
  * to run on every startup. Validates the seed's structural integrity first
  * (throws on failure — a shipped-code bug, not a runtime data problem), then
- * inserts base-unit rows before dependent rows (base_unit has a FOREIGN KEY
- * reference to unit_definitions(canonical_unit) — though this repo's SQLite
- * connection doesn't enable PRAGMA foreign_keys, the ordering is still done
- * for correctness/clarity).
+ * inserts base-unit rows before dependent rows because base_unit has a FOREIGN
+ * KEY reference to unit_definitions(canonical_unit).
  */
 export function seedUnitCatalog(): void {
 	const errors = validateUnitCatalogSeed();

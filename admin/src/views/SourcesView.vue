@@ -12,6 +12,7 @@ import DiscoveryDrawer from '@/components/discovery/DiscoveryDrawer.vue'
 import DiscoveryRuleDrawer, { type DiscoveryRulePrefill } from '@/components/discovery/DiscoveryRuleDrawer.vue'
 import type { Endpoint, EndpointCommunicationQuality, EndpointCreateData, DiscoveryRule } from '@/types'
 import { sourcesApi } from '@/api/sources'
+import { subscriptionsApi } from '@/api/subscriptions'
 import { discoveryRulesApi } from '@/api/discovery'
 import { protocolColor, protocolLabel } from '@/utils/protocol'
 
@@ -268,10 +269,45 @@ function openEdit(row: Endpoint) {
   drawerOpen.value = true
 }
 
-function confirmDelete(row: Endpoint) {
+async function subscriptionDeletionWarning(sources: Endpoint[]): Promise<string> {
+  const subscriptions = await subscriptionsApi.getAll()
+  const names = new Set(sources.map(source => source.name))
+  const explicitlySelected = subscriptions.filter(subscription =>
+    subscription.route_json?.includeDevices?.some(name => names.has(name)),
+  )
+  const emptied = explicitlySelected.filter(subscription =>
+    subscription.route_json!.includeDevices!.every(name => names.has(name)),
+  )
+  const broad = subscriptions.filter(subscription => {
+    const route = subscription.route_json
+    if (route?.sourceFilterMode === 'specific' || route?.includeDevices?.length) return false
+    return sources.some(source => !route?.excludeDevices?.includes(source.name) &&
+      (!subscription.topics.length || subscription.topics.includes(source.protocol)))
+  })
+  const parts: string[] = []
+  if (explicitlySelected.length) {
+    parts.push(`${explicitlySelected.length} subscription${explicitlySelected.length === 1 ? '' : 's'} explicitly select${explicitlySelected.length === 1 ? 's' : ''} these sources; the deleted source associations will be removed.`)
+  }
+  if (emptied.length) {
+    parts.push(`${emptied.length} subscription${emptied.length === 1 ? '' : 's'} will have no selected sources and will receive no source data.`)
+  }
+  if (broad.length) {
+    parts.push(`${broad.length} other subscription${broad.length === 1 ? '' : 's'} select${broad.length === 1 ? 's' : ''} all sources or their protocols and may also be affected.`)
+  }
+  return parts.length ? ` ${parts.join(' ')}` : ''
+}
+
+async function confirmDelete(row: Endpoint) {
+  let warning: string
+  try {
+    warning = await subscriptionDeletionWarning([row])
+  } catch {
+    message.error('Unable to check associated subscriptions; source was not deleted')
+    return
+  }
   Modal.confirm({
     title: `Delete "${row.name}"?`,
-    content: 'This will remove the source and stop data collection from it.',
+    content: `This will remove the source and stop data collection from it.${warning}`,
     okType: 'danger',
     okText: 'Delete',
     async onOk() {
@@ -282,10 +318,17 @@ function confirmDelete(row: Endpoint) {
   })
 }
 
-function confirmDeleteAll() {
+async function confirmDeleteAll() {
+  let warning: string
+  try {
+    warning = await subscriptionDeletionWarning(rows.value)
+  } catch {
+    message.error('Unable to check associated subscriptions; sources were not deleted')
+    return
+  }
   Modal.confirm({
     title: `Delete all ${rows.value.length} sources?`,
-    content: 'This removes every source across all protocols — not just the ones currently filtered/shown — and stops data collection from all of them. This cannot be undone from here.',
+    content: `This removes every source across all protocols — not just the ones currently filtered/shown — and stops data collection from all of them. This cannot be undone from here.${warning}`,
     okType: 'danger',
     okText: 'Delete all',
     async onOk() {
@@ -302,19 +345,29 @@ function confirmDeleteAll() {
   })
 }
 
-function confirmDeleteSelected() {
+async function confirmDeleteSelected() {
   const count = selectedUuids.value.length
+  let warning: string
+  try {
+    warning = await subscriptionDeletionWarning(rows.value.filter(row => selectedUuids.value.includes(row.uuid)))
+  } catch {
+    message.error('Unable to check associated subscriptions; sources were not deleted')
+    return
+  }
   Modal.confirm({
     title: `Delete ${count} source${count !== 1 ? 's' : ''}?`,
-    content: 'This will remove the selected sources and stop data collection from them.',
+    content: `This will remove the selected sources and stop data collection from them.${warning}`,
     okType: 'danger',
     okText: `Delete ${count}`,
     async onOk() {
       deleting.value = true
       try {
-        await Promise.allSettled(selectedUuids.value.map((uuid) => sourcesApi.remove(uuid)))
-        selectedUuids.value = []
-        message.success(`Deleted ${count} source${count !== 1 ? 's' : ''}`)
+        const uuids = [...selectedUuids.value]
+        const results = await Promise.allSettled(uuids.map((uuid) => sourcesApi.remove(uuid)))
+        const failed = uuids.filter((_, index) => results[index].status === 'rejected')
+        selectedUuids.value = failed
+        if (failed.length) message.error(`Failed to delete ${failed.length} source${failed.length !== 1 ? 's' : ''}`)
+        if (failed.length < count) message.success(`Deleted ${count - failed.length} source${count - failed.length !== 1 ? 's' : ''}`)
         await load()
       } finally {
         deleting.value = false

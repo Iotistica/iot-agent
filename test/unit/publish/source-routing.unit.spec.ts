@@ -9,6 +9,16 @@ function makeManager(): any {
 }
 
 describe('PublishManager source routing', () => {
+	it('routes no messages when a specific-source subscription has lost its last source', async () => {
+		const manager = makeManager();
+		const messages = [{ deviceName: 'plc', metric: 'temperature', value: 21 }];
+		const route = { sourceFilterMode: 'specific', includeDevices: [] };
+		expect(manager.filterMessagesForSourceRoute(messages, route, 'mqtt-pipe')).toEqual([]);
+		manager.bindings = [{ publisher: { id: 1, type: 'noop' }, subscription: { id: 1, route_json: route }, plugin: {} }];
+		manager.resolveDestinationTopic = () => '';
+		manager.resolvePayloadFormatForBinding = () => 'tags';
+		expect(await manager.collectRouteEntries('topic', new Map(), new Map(), 'mqtt-pipe', messages)).toEqual([]);
+	});
 	it.each([false, true])('forwards source and device identity to activity monitoring (dataset: %s)', async (dataset) => {
 		const manager = makeManager();
 		const reading = {

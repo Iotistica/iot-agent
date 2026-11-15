@@ -1,5 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite';
-import { getDatabase } from '../sqlite';
+import { getDatabase, transact } from '../sqlite';
+import { readSubscriptionSources, writeSubscriptionSources } from '../subscription-sources.js';
 
 export type PublishPayloadFormat = 'custom' | 'tags' | 'ecp' | 'ml';
 export type SubscriptionCompression = 'json' | 'msgpack' | 'json+deflate' | 'msgpack+deflate';
@@ -9,6 +10,7 @@ export interface PublishSubscriptionRoute {
 	excludeMetrics?: string[];
 	includeDevices?: string[];
 	excludeDevices?: string[];
+	sourceFilterMode?: 'specific';
 	qualities?: Array<'GOOD' | 'BAD' | 'UNCERTAIN'>;
 	minIntervalMs?: number;
 	maxPointsPerMessage?: number;
@@ -66,8 +68,9 @@ export class PublishSubscriptionsModel {
 			try {
 				route = JSON.parse(row.route_json) as PublishSubscriptionRoute;
 			} catch {
-				route = null;
+				throw new Error(`Invalid routing configuration for subscription ${row.id}`);
 			}
+			route = readSubscriptionSources(this.getDb(), row.id!, route);
 		}
 
 		return {
@@ -110,54 +113,56 @@ export class PublishSubscriptionsModel {
 
 	static create(input: Omit<PublishSubscriptionRecord, 'id' | 'created_at' | 'updated_at'>): PublishSubscriptionRecord | null {
 		const now = new Date().toISOString();
-		const result = this.getDb().prepare(`
-			INSERT INTO ${this.table} (
-				publish_destination_id,
-				topics,
-				route_json,
-				payload_format,
-				compression,
-				ml_dataset_id,
-				enabled,
-				created_at,
-				updated_at
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-		`).run(
-			input.publish_destination_id,
-			JSON.stringify(input.topics || []),
-			input.route_json ? JSON.stringify(input.route_json) : null,
-			input.payload_format,
-			input.compression ?? null,
-			input.ml_dataset_id ?? null,
-			input.enabled ? 1 : 0,
-			now,
-			now,
-		);
+		const db = this.getDb();
+		return transact(db, () => {
+			const result = db.prepare(`
+				INSERT INTO ${this.table} (
+					publish_destination_id, topics, route_json, payload_format, compression,
+					ml_dataset_id, enabled, created_at, updated_at
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+			`).run(
+				input.publish_destination_id,
+				JSON.stringify(input.topics || []),
+				null,
+				input.payload_format,
+				input.compression ?? null,
+				input.ml_dataset_id ?? null,
+				input.enabled ? 1 : 0,
+				now,
+				now,
+			);
 
-		return this.getById(Number(result.lastInsertRowid));
+			const id = Number(result.lastInsertRowid);
+			const route = writeSubscriptionSources(db, id, input.route_json);
+			if (route) db.prepare(`UPDATE ${this.table} SET route_json = ? WHERE id = ?`).run(JSON.stringify(route), id);
+			return this.getById(id);
+		}, 'IMMEDIATE');
 	}
 
 	static update(id: number, updates: Partial<Omit<PublishSubscriptionRecord, 'id' | 'created_at'>>): PublishSubscriptionRecord | null {
-		const payload: Record<string, unknown> = {
-			updated_at: new Date().toISOString(),
-		};
+		const db = this.getDb();
+		return transact(db, () => {
+			if (!db.prepare(`SELECT 1 FROM ${this.table} WHERE id = ?`).get(id)) return null;
+			const payload: Record<string, unknown> = {
+				updated_at: new Date().toISOString(),
+			};
 
-		if (updates.publish_destination_id !== undefined) payload.publish_destination_id = updates.publish_destination_id;
-		if (updates.topics !== undefined) payload.topics = JSON.stringify(updates.topics || []);
-		if (updates.route_json !== undefined) payload.route_json = updates.route_json ? JSON.stringify(updates.route_json) : null;
-		if (updates.payload_format !== undefined) payload.payload_format = updates.payload_format;
-		if (updates.compression !== undefined) payload.compression = updates.compression ?? null;
-		if (updates.ml_dataset_id !== undefined) payload.ml_dataset_id = updates.ml_dataset_id ?? null;
-		if (updates.enabled !== undefined) payload.enabled = updates.enabled ? 1 : 0;
+			if (updates.publish_destination_id !== undefined) payload.publish_destination_id = updates.publish_destination_id;
+			if (updates.topics !== undefined) payload.topics = JSON.stringify(updates.topics || []);
+			if (updates.route_json !== undefined) {
+				const route = writeSubscriptionSources(db, id, updates.route_json);
+				payload.route_json = route ? JSON.stringify(route) : null;
+			}
+			if (updates.payload_format !== undefined) payload.payload_format = updates.payload_format;
+			if (updates.compression !== undefined) payload.compression = updates.compression ?? null;
+			if (updates.ml_dataset_id !== undefined) payload.ml_dataset_id = updates.ml_dataset_id ?? null;
+			if (updates.enabled !== undefined) payload.enabled = updates.enabled ? 1 : 0;
 
-		const columns = Object.keys(payload);
-		if (columns.length === 0) {
+			const columns = Object.keys(payload);
+			const sql = `UPDATE ${this.table} SET ${columns.map((column) => `${column} = @${column}`).join(', ')} WHERE id = @id`;
+			db.prepare(sql).run({ ...payload, id });
 			return this.getById(id);
-		}
-
-		const sql = `UPDATE ${this.table} SET ${columns.map((column) => `${column} = @${column}`).join(', ')} WHERE id = @id`;
-		this.getDb().prepare(sql).run({ ...payload, id });
-		return this.getById(id);
+		}, 'IMMEDIATE');
 	}
 
 	static delete(id: number): boolean {

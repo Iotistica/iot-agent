@@ -10,6 +10,7 @@ export function getDatabase(): DatabaseSync {
 		const safeBusyTimeoutMs = Number.isFinite(busyTimeoutMs) && busyTimeoutMs > 0 ? busyTimeoutMs : 15000;
 
 		db.exec(`PRAGMA journal_mode = WAL`);
+		db.exec('PRAGMA foreign_keys = ON');
 		db.exec(`PRAGMA busy_timeout = ${safeBusyTimeoutMs}`);
 
 		if (process.env.SQLITE_READONLY_MODE === 'true') {

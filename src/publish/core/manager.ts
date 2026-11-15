@@ -1992,6 +1992,7 @@ export class PublishManager extends EventEmitter {
 			const route = binding.subscription.route_json as PublishSubscriptionRoute | null;
 			const routedMessages = this.filterMessagesForSourceRoute(messages, route, endpointName);
 			if (routedMessages.length === 0 && (
+				route?.sourceFilterMode === 'specific' ||
 				(route?.includeDevices?.length ?? 0) > 0 ||
 				(route?.excludeDevices?.length ?? 0) > 0
 			)) {
@@ -2378,6 +2379,7 @@ export class PublishManager extends EventEmitter {
 	): ProtocolMessage[] {
 		const includedSources = new Set(route?.includeDevices ?? []);
 		const excludedSources = new Set(route?.excludeDevices ?? []);
+		if (route?.sourceFilterMode === 'specific' && includedSources.size === 0) return [];
 		if (includedSources.size === 0 && excludedSources.size === 0) return messages;
 
 		const matchesSource = (record: ProtocolMessage, fallback?: string): boolean => {

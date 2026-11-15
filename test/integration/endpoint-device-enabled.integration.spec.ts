@@ -71,6 +71,48 @@ describe('Endpoint device enabled state (integration)', () => {
 		expect(devices.every((device) => device.enabled)).toBe(true);
 	});
 
+	it('cascades deleted source associations without changing the subscription, including after restart', async () => {
+		const actions: typeof import('../../src/api/actions') = require('../../src/api/actions');
+		const sqlite: typeof import('../../src/db/sqlite') = require('../../src/db/sqlite');
+		const { PublishSubscriptionsModel } = require('../../src/db/models/publish-subscriptions.model');
+		const endpoint = await EndpointModel.create({
+			uuid: '7c0e0a77-594c-49cc-a4d2-8d0b32e080e5',
+			name: 'subscription-source', protocol: 'opcua', enabled: true, poll_interval: 5000,
+			connection: { endpointUrl: 'opc.tcp://localhost:4899' },
+		});
+		const destination = sqlite.getDatabase().prepare(
+			"INSERT INTO publish_destinations (name, type, enabled) VALUES ('source-delete-test', 'noop', 1)",
+		).run();
+		const subscription = PublishSubscriptionsModel.create({
+			publish_destination_id: Number(destination.lastInsertRowid), topics: [],
+			route_json: { includeDevices: [endpoint.name] }, payload_format: 'tags', enabled: true,
+		});
+		const before = sqlite.getDatabase().prepare('SELECT * FROM publish_subscriptions WHERE id = ?').get(subscription.id);
+		let target: { apps: Record<string, unknown>; config: Record<string, unknown> } = { apps: {}, config: { endpoints: [endpoint] } };
+		const manager = {
+			getTargetState: () => target,
+			setTarget: jest.fn(async (state: typeof target) => { target = state; }),
+		};
+		const reloadAllBindings = jest.fn().mockResolvedValue(undefined);
+		actions.setStateManager(manager as unknown as Parameters<typeof actions.setStateManager>[0]);
+		actions.setDevicePublish({ reloadAllBindings } as unknown as Parameters<typeof actions.setDevicePublish>[0]);
+		try {
+			await actions.removeEndpoint(endpoint.uuid!);
+			expect(reloadAllBindings).toHaveBeenCalledTimes(1);
+			expect(sqlite.getDatabase().prepare('SELECT * FROM publish_subscriptions WHERE id = ?').get(subscription.id)).toEqual(before);
+			expect(PublishSubscriptionsModel.getById(subscription.id)).toMatchObject({
+				enabled: true, route_json: { sourceFilterMode: 'specific', includeDevices: [] },
+			});
+			sqlite.closeDatabase();
+			expect(PublishSubscriptionsModel.getById(subscription.id)).toMatchObject({
+				enabled: true, route_json: { sourceFilterMode: 'specific', includeDevices: [] },
+			});
+		} finally {
+			actions.setDevicePublish(undefined);
+			actions.setStateManager(undefined);
+		}
+	});
+
 	it('renames a source by UUID and rejects conflicts without changing target configuration', async () => {
 		const actions: typeof import('../../src/api/actions') = require('../../src/api/actions');
 		const endpoint = await EndpointModel.create({
@@ -97,13 +139,16 @@ describe('Endpoint device enabled state (integration)', () => {
 			getTargetState: () => target,
 			setTarget: jest.fn(async (state: typeof target) => { target = state; }),
 		};
+		const reloadAllBindings = jest.fn().mockResolvedValue(undefined);
 		actions.setStateManager(manager as unknown as Parameters<typeof actions.setStateManager>[0]);
+		actions.setDevicePublish({ reloadAllBindings } as unknown as Parameters<typeof actions.setDevicePublish>[0]);
 		try {
 			const body = {
 				name: 'renamed-source', protocol: 'opcua', enabled: true,
 				connection: endpoint.connection, data_points: endpoint.data_points,
 			};
 			await actions.replaceEndpoint(endpoint.uuid!, body);
+			expect(reloadAllBindings).toHaveBeenCalledTimes(1);
 			const saved = await EndpointModel.getByUuid(endpoint.uuid!);
 			expect(saved).toMatchObject({ id: endpoint.id, uuid: endpoint.uuid, name: 'renamed-source', data_points: endpoint.data_points });
 			expect(await ProtocolDevicesModel.getByEndpointId(endpoint.id!)).toHaveLength(beforeDevices.length);
@@ -119,6 +164,7 @@ describe('Endpoint device enabled state (integration)', () => {
 			expect((await EndpointModel.getByUuid(endpoint.uuid!))?.name).toBe('renamed-source');
 			expect((await EndpointModel.getByUuid(other.uuid!))?.name).toBe(other.name);
 		} finally {
+			actions.setDevicePublish(undefined);
 			actions.setStateManager(undefined);
 		}
 	});

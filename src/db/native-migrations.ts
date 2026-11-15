@@ -52,6 +52,7 @@ import { migration as addFirewallRuleAction } from './migrations/20261111000000_
 import { migration as addDeviceResolutionEvidence } from './migrations/20261113000000_add_device_resolution_evidence.js';
 import { migration as addPointIdentity } from './migrations/20261114000000_add_point_identity.js';
 import { migration as unifyStateSnapshots } from './migrations/20261115000000_unify_state_snapshots.js';
+import { migration as subscriptionSources } from './migrations/20261116000000_subscription_sources.js';
 import type { NativeSqliteMigration } from './migration-types.js';
 
 export const nativeMigrations: NativeSqliteMigration[] = [
@@ -109,4 +110,5 @@ export const nativeMigrations: NativeSqliteMigration[] = [
 	addDeviceResolutionEvidence,
 	addPointIdentity,
 	unifyStateSnapshots,
+	subscriptionSources,
 ];

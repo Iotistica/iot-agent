@@ -25,6 +25,7 @@ export interface SubscriptionRoute {
   excludeMetrics?: string[]
   includeDevices?: string[]
   excludeDevices?: string[]
+  sourceFilterMode?: 'specific'
   qualities?: Array<'GOOD' | 'BAD' | 'UNCERTAIN'>
   minIntervalMs?: number
   maxPointsPerMessage?: number

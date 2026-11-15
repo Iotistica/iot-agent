@@ -226,7 +226,8 @@ onMounted(load)
         </template>
 
         <template v-else-if="column.key === 'topics'">
-          <template v-if="record.route_json?.includeDevices?.length">
+          <span v-if="record.route_json?.sourceFilterMode === 'specific' && !record.route_json?.includeDevices?.length" style="color: var(--text-muted)">No sources selected</span>
+          <template v-else-if="record.route_json?.includeDevices?.length">
             <a-tag v-for="d in record.route_json.includeDevices" :key="d" style="margin-bottom: 2px">{{ d }}</a-tag>
           </template>
           <template v-else-if="record.topics?.length">

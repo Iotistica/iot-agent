@@ -1716,8 +1716,6 @@ export const updateEndpoint = async (uuidOrName: string, patch: { enabled?: bool
 export const removeEndpoint = async (uuid: string) => {
 	if (!configManager && !stateManager) throw new Error('Config manager not initialized');
 
-	const { EndpointModel } = await import('../db/models/endpoint.model.js');
-
 	// Verify the endpoint exists before attempting removal
 	const existing = await EndpointModel.getByUuid(uuid);
 	if (!existing) {
@@ -1745,6 +1743,7 @@ export const removeEndpoint = async (uuid: string) => {
 	await adapterManager?.reloadAdapterGroup(existing.protocol).catch((err) => {
 		logger?.warn(`Failed to reload ${existing.protocol} adapter after removing endpoint ${uuid}`, err as Error);
 	});
+	if (devicePublish) await devicePublish.reloadAllBindings();
 };
 
 /**
@@ -1843,6 +1842,8 @@ export const replaceEndpoint = async (
 			// Non-fatal: device rows will be synced on the next discovery or poll cycle.
 		}
 	}
+
+	if (existing.name !== body.name && devicePublish) await devicePublish.reloadAllBindings();
 
 	return { uuid, name: body.name, protocol: body.protocol, enabled: updatedEndpoint.enabled };
 };
@@ -3109,9 +3110,7 @@ export const updateAsset = async (uuid: string, body: {
 /**
  * Assets: delete an asset and its metric bindings
  *
- * SQLite foreign keys aren't enforced in this DB (PRAGMA foreign_keys is never
- * turned on), so ON DELETE CASCADE on asset_metrics is not actually applied —
- * bindings must be cleaned up explicitly here.
+ * Bindings are explicitly cleaned up before deleting the asset.
  */
 export const deleteAsset = async (uuid: string) => {
 	const { AssetModel } = await import('../db/models/asset.model.js');
