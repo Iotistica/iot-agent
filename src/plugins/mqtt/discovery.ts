@@ -645,6 +645,18 @@ export class MqttDiscovery extends BaseDiscovery {
 				}
 			}
 
+			const pointIdentityFields: Array<{ topic: string; selector: { kind: string; tokens: Array<{ kind: string; key: string }> } }> = [];
+			for (const dp of dataPoints) {
+				if (dp.sampleFields) {
+					for (const field of dp.sampleFields) {
+						pointIdentityFields.push({
+							topic: dp.fullTopic,
+							selector: { kind: 'path', tokens: [{ kind: 'key', key: field }] },
+						});
+					}
+				}
+			}
+
 			const device: DiscoveredDevice = {
 				name,
 				protocol: "mqtt",
@@ -654,6 +666,7 @@ export class MqttDiscovery extends BaseDiscovery {
 					...(brokerHost ? { host: brokerHost } : {}),
 					...(brokerPort ? { port: brokerPort } : {}),
 					autoMetrics: true,
+					...(pointIdentityFields.length > 0 ? { pointIdentityFields } : {}),
 				},
 				dataPoints,
 				confidence: "high",

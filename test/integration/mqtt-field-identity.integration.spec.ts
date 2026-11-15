@@ -93,9 +93,17 @@ describe('MQTT field identities', () => {
 		const endpoint = await EndpointModel.getByUuid('source-uuid');
 		if (!endpoint) throw new Error('test source is missing');
 		const sourcePoints = getConfiguredPointRows(endpoint, db);
-		expect(sourcePoints).toHaveLength(2);
-		expect(sourcePoints[0].pointUuid).toBe(scalar[0].pointUuid);
-		expect(sourcePoints[0].identityStatus).toBe('resolved');
+		expect(sourcePoints).toHaveLength(4);
+		const fieldNames = sourcePoints.slice(0, 3).map(r => r.name);
+		expect(fieldNames).toEqual(['temperature', 'pressure', 'flow_rate']);
+		for (const row of sourcePoints.slice(0, 3)) {
+			expect(row.canonicalStatus).toBe('resolved');
+			expect(row.protocolAddress).toEqual(expect.objectContaining({ topic, field: row.name }));
+		}
+		const perFieldUuids = sourcePoints.slice(0, 3).map(r => r.pointUuid);
+		expect(perFieldUuids).toEqual(uuids);
+		expect(sourcePoints[3].name).toBe('status');
+		expect(sourcePoints[3].protocolAddress).toBe('factory/sim-002/status');
 		await adapter.updateDevices([{ ...(adapter as any).config.devices[0] }]);
 		expect((await send(topic, payload)).slice(0, 3).map(point => point.pointUuid)).toEqual(uuids);
 		runtime();

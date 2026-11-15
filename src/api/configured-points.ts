@@ -5,9 +5,11 @@ import { getDatabase } from '../db/sqlite.js';
 import { EndpointModel, type Endpoint } from '../db/models/endpoint.model.js';
 import {
 	CANONICAL_ADDRESS_VERSION, canonicalizeAddress,
+	type MqttSelector,
 } from '../points/canonical-address.js';
 import { PointIdentityCatalog } from '../points/point-identity-catalog.js';
 import { resolveEndpoint } from '../points/configured-point-resolver.js';
+import { resolveMqttConfiguredFields } from '../points/mqtt-configured-fields.js';
 import { requireRole } from './middleware/roles.js';
 import { getAdapterManager } from './actions.js';
 
@@ -73,6 +75,11 @@ function isDeferred(reason: string | undefined): boolean {
 	return reason === 'namespace-evidence-required';
 }
 
+function mqttFieldName(selector: MqttSelector): string {
+	if (selector.kind !== 'path') return '';
+	return selector.tokens.map(t => t.kind === 'key' ? t.key : `[${t.index}]`).join('.');
+}
+
 function findAssociatedDevice(
 	db: DatabaseSync,
 	endpoint: ConfiguredEndpoint,
@@ -125,11 +132,87 @@ export function getConfiguredPointRows(
 	}
 
 	const catalog = new PointIdentityCatalog(db);
-	return resolution.points.map((resolvedPoint, index) => {
+
+	// For MQTT endpoints, resolve per-field entries from pointIdentityFields
+	let mqttFieldsByTopic: Map<string, Array<Extract<
+		import('../points/canonical-address.js').CanonicalAddressResult,
+		{ status: 'resolved' }
+	>>> | undefined;
+	if (endpoint.protocol === 'mqtt') {
+		const fieldsResult = resolveMqttConfiguredFields(endpoint.connection ?? {});
+		if (fieldsResult.status === 'resolved' && fieldsResult.fields.length > 0) {
+			mqttFieldsByTopic = new Map();
+			for (const field of fieldsResult.fields) {
+				if (field.provenance.protocol !== 'mqtt') continue;
+				const topic = field.provenance.topic;
+				let bucket = mqttFieldsByTopic.get(topic);
+				if (!bucket) { bucket = []; mqttFieldsByTopic.set(topic, bucket); }
+				bucket.push(field);
+				addressCounts.set(field.addressKey, (addressCounts.get(field.addressKey) ?? 0) + 1);
+			}
+			duplicateAddressKeys.clear();
+			for (const [key, count] of addressCounts) {
+				if (count > 1) duplicateAddressKeys.add(key);
+			}
+		}
+	}
+
+	const rows: ConfiguredPointRow[] = [];
+	for (let index = 0; index < resolution.points.length; index++) {
+		const resolvedPoint = resolution.points[index];
 		const result = endpoint.protocol === 'opcua' &&
-			(typeof points[index].nodeId !== 'string' || !verifiedEvidence?.validatedNodeIds.has(points[index].nodeId))
+			(typeof points[index].nodeId !== 'string' || !verifiedEvidence?.validatedNodeIds.has(points[index].nodeId as string))
 			? { status: 'unresolved' as const, protocol: 'opcua', reason: 'namespace-evidence-required' as const }
 			: resolvedPoint.result;
+
+		const fullTopic = points[index].fullTopic;
+		const topic = typeof fullTopic === 'string' ? fullTopic : undefined;
+		const fieldEntries = topic ? mqttFieldsByTopic?.get(topic) : undefined;
+
+		if (fieldEntries && fieldEntries.length > 0) {
+			for (const field of fieldEntries) {
+				const fieldName = field.provenance.protocol === 'mqtt'
+					? mqttFieldName(field.provenance.selector) : '';
+				const row: ConfiguredPointRow = {
+					name: fieldName || `unnamed-field`,
+					protocolAddress: field.provenance.protocol === 'mqtt'
+						? { topic: field.provenance.topic, field: fieldName }
+						: null,
+					canonicalStatus: 'resolved',
+					canonicalReason: null,
+					identityStatus: 'unresolved',
+					identityReason: null,
+				};
+
+				if (duplicateAddressKeys.has(field.addressKey)) {
+					row.identityReason = 'identity-ambiguous';
+					rows.push(row);
+					continue;
+				}
+
+				const identity = catalog.findByCanonicalAddress({
+					endpointUuid: endpoint.uuid ?? '',
+					protocol: field.protocol,
+					version: CANONICAL_ADDRESS_VERSION,
+					key: field.addressKey,
+				});
+				if (identity.status === 'resolved') {
+					row.identityStatus = 'resolved';
+					row.identityReason = null;
+					row.pointUuid = identity.value.pointUuid;
+					const device = findAssociatedDevice(db, endpoint, identity.value.deviceUuid);
+					if (device) {
+						row.deviceUuid = device.uuid;
+						row.deviceName = device.name;
+					}
+				} else {
+					row.identityReason = identity.reason;
+				}
+				rows.push(row);
+			}
+			continue;
+		}
+
 		const row: ConfiguredPointRow = {
 			name: pointName(points[index], index),
 			protocolAddress: protocolAddress(endpoint, points[index]),
@@ -141,10 +224,11 @@ export function getConfiguredPointRows(
 			identityReason: result.status === 'resolved' ? null : result.reason,
 		};
 
-		if (result.status !== 'resolved') return row;
+		if (result.status !== 'resolved') { rows.push(row); continue; }
 		if (duplicateAddressKeys.has(result.addressKey)) {
 			row.identityReason = 'identity-ambiguous';
-			return row;
+			rows.push(row);
+			continue;
 		}
 
 		const identity = catalog.findByCanonicalAddress({
@@ -165,8 +249,9 @@ export function getConfiguredPointRows(
 		} else {
 			row.identityReason = identity.reason;
 		}
-		return row;
-	});
+		rows.push(row);
+	}
+	return rows;
 }
 
 export const configuredPointsRouter = express.Router();

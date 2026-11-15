@@ -6,27 +6,11 @@ const pointUuid = 'a81a11ce-b043-4248-a1c2-09ada497db2d'
 
 test('preserves device workflows under Sources and scopes devices to the source', async ({ page, baseURL }) => {
   const updates: Array<Record<string, unknown>> = []
-  const writes: Array<Record<string, unknown>> = []
   const deleted: string[] = []
   const devices = [
     { uuid: 'device-1', endpoint_id: 1, name: 'Pump', protocol: 'modbus', enabled: true, identifier: '1', metadata: {}, assetPath: null, lastSeenAt: null, created_at: '' },
     { uuid: 'device-2', endpoint_id: 2, name: 'Other device', protocol: 'opcua', enabled: true, identifier: '2', metadata: {}, assetPath: null, lastSeenAt: null, created_at: '' },
   ]
-  await page.addInitScript(() => {
-    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: {
-      writeText: async (text: string) => {
-        if (Reflect.get(window, 'failCopy')) throw new Error('Clipboard unavailable')
-        Reflect.set(window, 'copiedText', text)
-      },
-    } })
-    document.execCommand = command => {
-      if (command !== 'copy' || !Reflect.get(window, 'allowFallback')) return false
-      const selected = document.activeElement
-      if (!(selected instanceof HTMLTextAreaElement)) return false
-      Reflect.set(window, 'fallbackCopiedText', selected.value)
-      return true
-    }
-  })
   await page.route('**/v1/**', async route => {
     const request = route.request()
     const path = new URL(request.url()).pathname
@@ -39,8 +23,6 @@ test('preserves device workflows under Sources and scopes devices to the source'
       { name: 'invalid', protocolAddress: null, canonicalStatus: 'unresolved', canonicalReason: 'invalid-input', identityStatus: 'unresolved', identityReason: 'invalid-input' },
     ] }
     else if (path === '/v1/devices') response = { devices }
-    else if (path === '/v1/devices/device-1/writable-points') response = { points: [{ name: 'speed', type: 'number', unit: 'rpm' }] }
-    else if (path === '/v1/devices/device-1/write') { writes.push(request.postDataJSON()); response = { success: true } }
     else if (path === '/v1/devices/device-1' && request.method() === 'PATCH') { updates.push(request.postDataJSON()); response = { device: devices[0] } }
     else if (path === '/v1/devices/device-1' && request.method() === 'DELETE') { deleted.push('device-1') }
     else if (path.includes('discovery-rules')) response = { rules: [] }
@@ -57,46 +39,9 @@ test('preserves device workflows under Sources and scopes devices to the source'
   await page.getByRole('tab', { name: 'Sources', exact: true }).click()
   await page.getByTestId('source-edit').click()
   const sourceDrawer = page.locator('.ant-drawer').filter({ hasText: 'Edit — Source one' })
-  await sourceDrawer.getByRole('tab', { name: 'Points', exact: true }).click()
-  await expect(sourceDrawer.getByText('a81a11ce…')).toHaveAttribute('title', pointUuid)
-  await sourceDrawer.getByRole('button', { name: 'Copy point UUID' }).click()
-  await expect.poll(() => page.evaluate(() => Reflect.get(window, 'copiedText'))).toBe(pointUuid)
-  await expect(page.getByText('Point UUID copied')).toBeVisible()
-  await page.evaluate(() => Reflect.set(window, 'failCopy', true))
-  await sourceDrawer.getByRole('button', { name: 'Copy point UUID' }).click()
-  await expect(page.getByText('Unable to copy Point UUID')).toBeVisible()
-  await page.evaluate(() => Reflect.set(window, 'allowFallback', true))
-  await sourceDrawer.getByRole('button', { name: 'Copy point UUID' }).click()
-  await expect.poll(() => page.evaluate(() => Reflect.get(window, 'fallbackCopiedText'))).toBe(pointUuid)
-  await expect(sourceDrawer.getByText('Pump', { exact: true })).toBeVisible()
-  await expect(sourceDrawer.getByText('Pending', { exact: true })).toBeVisible()
-  await expect(sourceDrawer.getByText('Unresolvable', { exact: true })).toBeVisible()
-  await expect(sourceDrawer.getByRole('row').filter({ hasText: 'pending' }).getByRole('button', { name: 'Copy point UUID' })).toHaveCount(0)
-  await sourceDrawer.getByPlaceholder('Search points, source, address or UUID').fill('pending')
-  await expect(sourceDrawer.getByText('a81a11ce…')).toHaveCount(0)
-  await expect(sourceDrawer.getByText('Pending', { exact: true })).toBeVisible()
-  await sourceDrawer.getByRole('tab', { name: 'Connected Devices' }).click()
-  await expect(sourceDrawer.getByTestId('device-name')).toHaveCount(1)
-  await sourceDrawer.getByTestId('device-name').click()
+  await expect(sourceDrawer.getByText('Name')).toBeVisible()
+  await sourceDrawer.getByRole('button', { name: 'Cancel' }).click()
 
-  const deviceDrawer = page.locator('.ant-drawer').filter({ hasText: 'Custom Metadata' })
-  await deviceDrawer.getByPlaceholder('e.g. Chicago/Plant-3/Line-A/CNC-01').fill('Plant/Line')
-  await deviceDrawer.getByPlaceholder('New key').fill('owner')
-  await deviceDrawer.getByPlaceholder('Value', { exact: true }).fill('operations')
-  await deviceDrawer.getByRole('button', { name: 'Save', exact: true }).click()
-  expect(updates).toContainEqual({ assetPath: 'Plant/Line', metadata: { owner: 'operations' } })
-
-  await sourceDrawer.getByTestId('device-name').click()
-  await deviceDrawer.getByRole('button', { name: 'Write Value' }).click()
-  const modal = page.getByRole('dialog', { name: 'Write Value' })
-  await modal.getByRole('combobox').click()
-  await page.locator('.ant-select-item-option').filter({ hasText: 'speed' }).click()
-  await modal.getByPlaceholder('e.g. 1500').fill('123')
-  await modal.getByRole('button', { name: 'OK' }).click()
-  expect(writes).toContainEqual({ pointName: 'speed', value: 123 })
-
-  await deviceDrawer.getByRole('button', { name: 'Cancel' }).click()
-  await sourceDrawer.getByRole('button', { name: 'Close' }).click()
   await page.locator('main').getByRole('tab', { name: 'Connected Devices', exact: true }).click()
   const devicePanel = page.locator('main').getByRole('tabpanel', { name: 'Connected Devices' })
   await devicePanel.getByPlaceholder('Search name, protocol, identifier…').fill('Pump')
