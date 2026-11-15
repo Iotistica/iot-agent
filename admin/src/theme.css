@@ -56,6 +56,12 @@
   --badge-stopped-bg: #fff2f0;
   --badge-stopped-color: #ff4d4f;
   --badge-stopped-border: #ffccc7;
+
+  /* JSON syntax highlighting */
+  --json-key: #0451a5;
+  --json-string: #a31515;
+  --json-number: #098658;
+  --json-bool: #0000ff;
 }
 
 [data-theme="dark"] {
@@ -115,6 +121,12 @@
   --badge-stopped-bg: rgba(255, 77, 79, 0.15);
   --badge-stopped-color: #ff7875;
   --badge-stopped-border: rgba(255, 77, 79, 0.3);
+
+  /* JSON syntax highlighting */
+  --json-key: #9cdcfe;
+  --json-string: #ce9178;
+  --json-number: #b5cea8;
+  --json-bool: #569cd6;
 }
 
 /* ── Resizable table columns ──────────────────────────────────────────────── */

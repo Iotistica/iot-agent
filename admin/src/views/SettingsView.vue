@@ -581,6 +581,27 @@ const targetStateJson = computed(() =>
   stateData.value?.target ? JSON.stringify(stateData.value.target, null, 2) : '',
 )
 
+function syntaxHighlight(json: string): string {
+  return json.replace(
+    /("(?:\\.|[^"\\])*")\s*:/g,
+    '<span class="json-key">$1</span>:',
+  ).replace(
+    /:\s*("(?:\\.|[^"\\])*")/g,
+    (m, val) => ': <span class="json-string">' + val + '</span>',
+  ).replace(
+    /:\s*(\d+(?:\.\d+)?)/g,
+    ': <span class="json-number">$1</span>',
+  ).replace(
+    /:\s*(true|false)/g,
+    ': <span class="json-bool">$1</span>',
+  ).replace(
+    /:\s*(null)/g,
+    ': <span class="json-null">$1</span>',
+  )
+}
+const currentStateHtml = computed(() => currentStateJson.value ? syntaxHighlight(currentStateJson.value) : '')
+const targetStateHtml = computed(() => targetStateJson.value ? syntaxHighlight(targetStateJson.value) : '')
+
 async function loadState() {
   stateLoading.value = true
   try {
@@ -1621,7 +1642,7 @@ watch(activeTab, (tab) => {
                   </a-button>
                 </div>
                 <div class="state-panel__body">
-                  <pre v-if="currentStateJson" class="state-json">{{ currentStateJson }}</pre>
+                  <pre v-if="currentStateJson" class="state-json" v-html="currentStateHtml"></pre>
                   <div v-else class="state-panel__empty">No current state available.</div>
                 </div>
               </div>
@@ -1681,7 +1702,7 @@ watch(activeTab, (tab) => {
                     />
                   </template>
                   <template v-else>
-                    <pre v-if="targetStateJson" class="state-json">{{ targetStateJson }}</pre>
+                    <pre v-if="targetStateJson" class="state-json" v-html="targetStateHtml"></pre>
                     <div v-else class="state-panel__empty">No target state available.</div>
                   </template>
                 </div>
@@ -1922,6 +1943,11 @@ watch(activeTab, (tab) => {
   tab-size: 2;
   border: none;
 }
+.state-json :deep(.json-key) { color: var(--json-key, #0451a5); }
+.state-json :deep(.json-string) { color: var(--json-string, #a31515); }
+.state-json :deep(.json-number) { color: var(--json-number, #098658); }
+.state-json :deep(.json-bool) { color: var(--json-bool, #0000ff); }
+.state-json :deep(.json-null) { color: var(--json-bool, #0000ff); font-style: italic; }
 .state-editor {
   width: 100%;
   min-height: max(300px, 50vh);
