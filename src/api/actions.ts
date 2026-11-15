@@ -1706,6 +1706,14 @@ export const updateEndpoint = async (uuidOrName: string, patch: { enabled?: bool
 	if (patch.poll_interval !== undefined) updates.poll_interval = patch.poll_interval;
 
 	const result = await EndpointModel.update(ep.name, updates);
+
+	if (patch.enabled !== undefined) {
+		await adapterManager?.reloadAdapterGroup(ep.protocol).catch((err) => {
+			logger?.warn(`Failed to reload ${ep.protocol} adapter after endpoint update`, err as Error);
+		});
+		if (devicePublish) await devicePublish.reloadAllBindings();
+	}
+
 	return { uuid: ep.uuid, name: ep.name, enabled: result?.enabled };
 };
 

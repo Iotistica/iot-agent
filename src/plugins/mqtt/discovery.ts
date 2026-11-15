@@ -617,11 +617,18 @@ export class MqttDiscovery extends BaseDiscovery {
 		}
 	}
 
+	private static readonly METADATA_KEYS = new Set([
+		'ts', 'timestamp', 'time', 'datetime', 'created_at', 'updated_at',
+		'device_uuid', 'device_id', 'deviceId', 'deviceUuid',
+		'units',
+	]);
+
 	private extractSampleFields(payload: string): string[] | undefined {
 		try {
 			const parsed = JSON.parse(payload);
 			if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
 				return Object.keys(parsed).filter(key => {
+					if (MqttDiscovery.METADATA_KEYS.has(key)) return false;
 					const val = parsed[key];
 					return val === null || typeof val !== "object";
 				}).slice(0, 20);

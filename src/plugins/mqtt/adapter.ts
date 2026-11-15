@@ -15,6 +15,12 @@ import type { PrivateEvidenceRegistry } from "../../points/private-evidence-regi
 import type { ObservationRef, SourceBindingRef } from "../../points/private-evidence-types.js";
 import type { PrivateShadowObserver } from "../../points/private-shadow-observer.js";
 
+const AUTO_METRICS_SKIP_KEYS = new Set([
+	'ts', 'timestamp', 'time', 'datetime', 'created_at', 'updated_at',
+	'device_uuid', 'device_id', 'deviceId', 'deviceUuid',
+	'units',
+]);
+
 export interface MqttShadowOptions {
 	registry: PrivateEvidenceRegistry;
 	observer: PrivateShadowObserver;
@@ -1324,6 +1330,7 @@ export class MqttAdapter extends BaseProtocolAdapter {
 					? this.resolveTimestamp(this.getFieldFast(parsed, timestampPath), now)
 					: now;
 			const resolvedDeviceId = this.resolveMessageDeviceId(device, parsed);
+			const tsTopKey = timestampPath?.length === 1 ? timestampPath[0] : undefined;
 
 			const compiledDeviceMetrics = this.compiledMetrics.get(device.name);
 			if (compiledDeviceMetrics && compiledDeviceMetrics.length > 0) {
@@ -1404,6 +1411,14 @@ export class MqttAdapter extends BaseProtocolAdapter {
 					if (rawValue !== null && typeof rawValue === "object") {
 						continue;
 					}
+					// Skip the configured timestamp field — it's metadata, not a metric.
+					if (tsTopKey && key === tsTopKey) {
+						continue;
+					}
+					// Skip common metadata fields that aren't sensor readings.
+					if (AUTO_METRICS_SKIP_KEYS.has(key)) {
+						continue;
+					}
 
 					try {
 						points.push(
@@ -1482,9 +1497,11 @@ export class MqttAdapter extends BaseProtocolAdapter {
 						singleSelector = { kind: "path", tokens: [{ kind: "key", key: "value" }] };
 					} else {
 						const primitiveEntries = Object.entries(parsedObj).filter(
-							([, value]) =>
-								value === null ||
-								["string", "number", "boolean"].includes(typeof value),
+							([key, value]) =>
+								!AUTO_METRICS_SKIP_KEYS.has(key) &&
+								!(tsTopKey && key === tsTopKey) &&
+								(value === null ||
+								["string", "number", "boolean"].includes(typeof value)),
 						);
 
 						if (primitiveEntries.length > 0) {
