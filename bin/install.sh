@@ -1296,8 +1296,11 @@ EOF
 
     # Set permissions
     chown -R iotistic:iotistic /opt/iotistic/agent
+    chmod 755 /opt/iotistic/agent
     chown -R iotistic:iotistic /var/lib/iotistic/agent
+    chmod 755 /var/lib/iotistic/agent
     chown -R iotistic:iotistic /var/log/iotistic
+    chmod 755 /var/log/iotistic
     chown iotistic:iotistic /etc/iotistic/agent.env
     chmod 600 /etc/iotistic/agent.env
 
