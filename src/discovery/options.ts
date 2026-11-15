@@ -49,7 +49,12 @@ export class DiscoveryOptionsBuilder {
 			// Always return credentials so discovery rules with their own brokerUrl
 			// get auth even when MQTT isn't globally enabled.
 			const brokerUrl = config.brokerUrl || process.env.MQTT_BROKER_URL;
-			if (!brokerUrl) return undefined;
+			if (!brokerUrl) {
+				this.logger?.debugSync('MQTT options: no brokerUrl from config or env, skipping', {
+					component: LogComponents.discovery,
+				});
+				return undefined;
+			}
 
 			const options: MqttDiscoveryOptions = { brokerUrl, topics: [] };
 			if (config.username || process.env.MQTT_USERNAME)
@@ -59,12 +64,26 @@ export class DiscoveryOptionsBuilder {
 			if (config.discoveryRoots?.length)      options.topics = config.discoveryRoots;
 			if (config.monitorDurationMs)           options.samplingDurationMs = config.monitorDurationMs;
 			if (config.qos !== undefined)           options.qos = config.qos;
+
+			this.logger?.debugSync('MQTT base options built from ConfigManager', {
+				component: LogComponents.discovery,
+				brokerUrl,
+				topics: options.topics,
+				topicCount: options.topics.length,
+				hasCredentials: !!(options.username && options.password),
+				discoveryRoots: config.discoveryRoots,
+			});
 			return options;
 		}
 
 		// Legacy: direct env var reads (backward compatibility)
 		const brokerUrl = process.env.MQTT_BROKER_URL;
-		if (!brokerUrl) return undefined;
+		if (!brokerUrl) {
+			this.logger?.debugSync('MQTT options: no MQTT_BROKER_URL env var, skipping', {
+				component: LogComponents.discovery,
+			});
+			return undefined;
+		}
 
 		const options: MqttDiscoveryOptions = { brokerUrl, topics: [] };
 		if (process.env.MQTT_USERNAME) options.username = process.env.MQTT_USERNAME;
@@ -86,6 +105,15 @@ export class DiscoveryOptionsBuilder {
 		if (process.env.MQTT_DISCOVERY_QOS) {
 			options.qos = parseInt(process.env.MQTT_DISCOVERY_QOS, 10) as 0 | 1 | 2;
 		}
+
+		this.logger?.debugSync('MQTT base options built from env vars', {
+			component: LogComponents.discovery,
+			brokerUrl,
+			topics: options.topics,
+			topicCount: options.topics.length,
+			hasCredentials: !!(options.username && options.password),
+			hasDiscoveryRootsEnv: !!process.env.MQTT_DISCOVERY_ROOTS,
+		});
 		return options;
 	}
 

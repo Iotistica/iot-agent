@@ -98,10 +98,22 @@ export class MqttDiscovery extends BaseDiscovery {
 
 		this.brokerConfig = options;
 
+		this.logger?.infoSync("MQTT discover() called", {
+			component: (LogComponents.discovery + "] [" + this.protocol) as any,
+			brokerUrl,
+			topicsReceived: topics,
+			topicCount: topics.length,
+			hasCredentials: !!(options?.username && options?.password),
+			samplingDurationMs,
+			qos,
+			optionKeys: options ? Object.keys(options) : [],
+		});
+
 		if (!topics || topics.length === 0) {
-			this.logger?.warnSync("No topics provided for MQTT discovery", {
+			this.logger?.warnSync("No topics provided for MQTT discovery — returning empty", {
 				component: (LogComponents.discovery + "] [" + this.protocol) as any,
-				hint: 'Provide explicit topics to validate (e.g., ["factory/#"])',
+				brokerUrl,
+				hint: 'Provide explicit topics in the discovery rule (e.g., "factory/#") or set discoveryRoots in MQTT config',
 			});
 			return withDiscoveryScanStatus([], { successful: false, complete: false, authoritative: false });
 		}
@@ -277,8 +289,28 @@ export class MqttDiscovery extends BaseDiscovery {
 			}
 
 			const deviceGroups = this.groupTopicsIntoDevices(activeTopics, options?.topicPattern);
+
+			this.logger?.infoSync("MQTT topic grouping complete", {
+				component: (LogComponents.discovery + "] [" + this.protocol) as any,
+				activeTopicNames: activeTopics.map(t => t.topic),
+				deviceGroupCount: deviceGroups.length,
+				deviceGroups: deviceGroups.map(g => ({
+					deviceId: g.deviceId,
+					baseTopic: g.baseTopic,
+					dataPointCount: g.dataPointTopics.size,
+				})),
+			});
+
+			const devices = this.convertGroupsToDevices(deviceGroups);
+
+			this.logger?.infoSync("MQTT discovery result", {
+				component: (LogComponents.discovery + "] [" + this.protocol) as any,
+				devicesFound: devices.length,
+				deviceNames: devices.map(d => d.name),
+			});
+
 			// A sampling window cannot enumerate inactive or non-retained topics.
-			return withDiscoveryScanStatus(this.convertGroupsToDevices(deviceGroups), {
+			return withDiscoveryScanStatus(devices, {
 				successful, complete: false, authoritative: false,
 			});
 		} catch (error) {

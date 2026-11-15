@@ -226,6 +226,20 @@ export class DiscoveryService extends EventEmitter {
 					? { ...(baseOptions ?? {}), ...override }
 					: baseOptions;
 
+				if (protocol === 'mqtt') {
+					this.logger?.infoSync('MQTT discovery option merge', {
+						component: LogComponents.discovery,
+						traceId,
+						hasBaseOptions: baseOptions !== undefined,
+						baseTopics: (baseOptions as any)?.topics,
+						hasOverride: override !== undefined,
+						overrideKeys: override ? Object.keys(override) : [],
+						overrideTopics: (override as any)?.topics,
+						mergedTopics: (pluginOptions as any)?.topics,
+						mergedPluginOptions: pluginOptions ? Object.keys(pluginOptions) : undefined,
+					});
+				}
+
 				if (pluginOptions === undefined) {
 					pruneEligibleProtocols.delete(protocol);
 					pruneIneligibleProtocols.add(protocol);
