@@ -1295,6 +1295,7 @@ EOF
     fi
 
     # Set permissions
+    chmod 755 /opt/iotistic
     chown -R iotistic:iotistic /opt/iotistic/agent
     chmod 755 /opt/iotistic/agent
     chown -R iotistic:iotistic /var/lib/iotistic/agent
