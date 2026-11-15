@@ -137,14 +137,13 @@ describe('catalog.resolve() device+point combination (v3)', () => {
 		expect(identity.normalizedName).toBe('ahu_1_emergency_test_ok');
 	});
 
-	it('known, accepted v3 characteristic: a device name enriched with a UUID suffix downstream (AdapterManager.enrichWithEndpointUuid()) no longer exact-matches the point\'s own un-suffixed prefix, so dedup does not fire and the combined name looks doubled-up', () => {
-		// This is the one case the abandoned v2 design (partial-token
-		// tolerance) specifically handled more gracefully. v3's dedup is a
-		// strict complete-prefix match — intentionally simple, per the
-		// normalize-point-name.ts docstring ("Partial shared-token matching
-		// is intentionally not used") — so this input produces an ugly but
-		// correct, non-colliding, deterministic result. Documented here as
-		// a known characteristic, not something this change fixes.
+	it('catalog still produces doubled-up names when given a UUID-suffixed rawDeviceName directly — but OPC-UA/BACnet adapters now set normalizationDeviceName to the pre-enrichment name, so this input no longer occurs in practice', () => {
+		// The enrichment pipeline (AdapterManager.enrichWithEndpointUuid)
+		// appends a UUID suffix to deviceName, but adapters now set
+		// normalizationDeviceName to the clean pre-enrichment name. The
+		// interceptor reads normalizationDeviceName first, so the catalog
+		// never sees the UUID-suffixed device name. This test documents
+		// what the catalog WOULD produce if given the suffixed name directly.
 		const catalog = getPointNameCatalog();
 		catalog.init();
 

@@ -313,7 +313,7 @@ async function confirmDelete(row: Endpoint) {
     async onOk() {
       await sourcesApi.remove(row.uuid)
       message.success('Deleted')
-      await load()
+      load().catch(() => {})
     },
   })
 }
@@ -337,7 +337,7 @@ async function confirmDeleteAll() {
         const { removed } = await sourcesApi.removeAll()
         selectedUuids.value = []
         message.success(`Deleted ${removed} source${removed !== 1 ? 's' : ''}`)
-        await load()
+        load().catch(() => {})
       } finally {
         deletingAll.value = false
       }
@@ -368,7 +368,7 @@ async function confirmDeleteSelected() {
         selectedUuids.value = failed
         if (failed.length) message.error(`Failed to delete ${failed.length} source${failed.length !== 1 ? 's' : ''}`)
         if (failed.length < count) message.success(`Deleted ${count - failed.length} source${count - failed.length !== 1 ? 's' : ''}`)
-        await load()
+        load().catch(() => {})
       } finally {
         deleting.value = false
       }

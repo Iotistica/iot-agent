@@ -1003,6 +1003,11 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 				const quality = this.determineQuality(dataValue.statusCode);
 				const qualityCode = quality !== 'GOOD' ? this.extractQualityCode(dataValue.statusCode) : undefined;
 
+				const normalizationDeviceName =
+					this.resolvedNodeDisplayNames.get(dp.nodeId) ??
+					this.resolvedDeviceNames.get(owningDeviceName) ??
+					owningDeviceName;
+
 				const dataPoint: DeviceDataPoint = {
 					timestamp: new Date().toISOString(),
 					deviceName: owningDeviceName,
@@ -1014,6 +1019,7 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 					...(qualityCode && { qualityCode }),  // Only include if quality != GOOD
 					protocol: 'opcua',  // For enum namespacing
 					nodeType: 'metric', // Always 'metric' at this point (metadata filtered)
+					normalizationDeviceName,
 					...(this.deviceDisplayNames.get(owningDeviceName)?.get(dp.nodeId) && { deviceDisplayName: this.deviceDisplayNames.get(owningDeviceName)?.get(dp.nodeId) }),
 					...(dp.device_uuid && { device_uuid: dp.device_uuid }),
 					...((this.resolvedNodeDisplayNames.has(dp.nodeId) || this.resolvedDeviceNames.has(owningDeviceName)) && {
@@ -2214,6 +2220,7 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 					qualityCode,
 					nodeType: 'metric',
 					protocol: 'opcua',
+					normalizationDeviceName: this.resolvedNodeDisplayNames.get(dp.nodeId) ?? this.resolvedDeviceNames.get(deviceName) ?? deviceName,
 					...(this.deviceDisplayNames.get(deviceName)?.get(dp.nodeId) && { deviceDisplayName: this.deviceDisplayNames.get(deviceName)?.get(dp.nodeId) }),
 					...(dp.device_uuid && { device_uuid: dp.device_uuid }),
 					...((this.resolvedNodeDisplayNames.has(dp.nodeId) || this.resolvedDeviceNames.has(deviceName)) && {
@@ -2247,6 +2254,7 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 				quality: 'GOOD' as const,
 				nodeType: 'metric',
 				protocol: 'opcua',
+				normalizationDeviceName: this.resolvedNodeDisplayNames.get(dp.nodeId) ?? this.resolvedDeviceNames.get(deviceName) ?? deviceName,
 				...(this.deviceDisplayNames.get(deviceName)?.get(dp.nodeId) && { deviceDisplayName: this.deviceDisplayNames.get(deviceName)?.get(dp.nodeId) }),
 				...(dp.device_uuid && { device_uuid: dp.device_uuid }),
 				...((this.resolvedNodeDisplayNames.has(dp.nodeId) || this.resolvedDeviceNames.has(deviceName)) && {
