@@ -5,7 +5,7 @@ import { getDatabase } from '../db/sqlite.js';
 import { EndpointModel, type Endpoint } from '../db/models/endpoint.model.js';
 import {
 	CANONICAL_ADDRESS_VERSION, canonicalizeAddress,
-	type MqttSelector,
+	type CanonicalAddressResult, type MqttSelector,
 } from '../points/canonical-address.js';
 import { PointIdentityCatalog } from '../points/point-identity-catalog.js';
 import { resolveEndpoint } from '../points/configured-point-resolver.js';
@@ -134,10 +134,7 @@ export function getConfiguredPointRows(
 	const catalog = new PointIdentityCatalog(db);
 
 	// For MQTT endpoints, resolve per-field entries from pointIdentityFields
-	let mqttFieldsByTopic: Map<string, Array<Extract<
-		import('../points/canonical-address.js').CanonicalAddressResult,
-		{ status: 'resolved' }
-	>>> | undefined;
+	let mqttFieldsByTopic: Map<string, Array<Extract<CanonicalAddressResult, { status: 'resolved' }>>> | undefined;
 	if (endpoint.protocol === 'mqtt') {
 		const fieldsResult = resolveMqttConfiguredFields(endpoint.connection ?? {});
 		if (fieldsResult.status === 'resolved' && fieldsResult.fields.length > 0) {
