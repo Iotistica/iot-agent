@@ -173,6 +173,7 @@ export interface KeyExchangeResponse {
 export interface ProtocolAdapterDevice {
 	id: string;
 	uuid?: string;
+	fingerprint?: string;
 	name: string;
 	protocol: string;
 	connectionString: string;
