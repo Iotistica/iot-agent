@@ -98,7 +98,7 @@ describe('MQTT field identities', () => {
 		expect(fieldNames).toEqual(['temperature', 'pressure', 'flow_rate']);
 		for (const row of sourcePoints.slice(0, 3)) {
 			expect(row.canonicalStatus).toBe('resolved');
-			expect(row.protocolAddress).toEqual(expect.objectContaining({ topic, field: row.name }));
+			expect(row.protocolAddress).toBe(`${topic}::${row.name}`);
 		}
 		const perFieldUuids = sourcePoints.slice(0, 3).map(r => r.pointUuid);
 		expect(perFieldUuids).toEqual(uuids);

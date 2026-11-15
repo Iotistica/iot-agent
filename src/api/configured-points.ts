@@ -173,7 +173,7 @@ export function getConfiguredPointRows(
 				const row: ConfiguredPointRow = {
 					name: fieldName || `unnamed-field`,
 					protocolAddress: field.provenance.protocol === 'mqtt'
-						? { topic: field.provenance.topic, field: fieldName }
+						? `${field.provenance.topic}::${fieldName}`
 						: null,
 					canonicalStatus: 'resolved',
 					canonicalReason: null,
