@@ -5,8 +5,8 @@ import { message, Modal } from 'ant-design-vue'
 import type { TableColumnType } from 'ant-design-vue'
 import {
   SaveOutlined, ReloadOutlined, LinkOutlined, CheckCircleOutlined, EditOutlined,
-  QuestionCircleOutlined, CloudDownloadOutlined, ExclamationCircleOutlined,
-  CopyOutlined, CheckOutlined,
+  QuestionCircleOutlined, ExclamationCircleOutlined,
+  CopyOutlined, CheckOutlined, PoweroffOutlined,
 } from '@ant-design/icons-vue'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import { useAuth } from '@/composables/useAuth'
@@ -41,7 +41,7 @@ const settings = ref<AgentSettings>({})
 // Deep clone for "discard changes" reset
 let lastSaved: AgentSettings = {}
 
-onMounted(() => { load(); loadDockerConfig(); loadCustomAliases(); loadAlertConfig(); loadAlertDrift(); loadLicense() })
+onMounted(() => { load(); loadDockerConfig(); loadCustomAliases(); loadAlertConfig(); loadAlertDrift(); loadLicense(); checkForUpdate() })
 
 async function load() {
   loading.value = true
@@ -101,6 +101,7 @@ async function setTargetSync(enabled: boolean) {
 // ── provisioning ───────────────────────────────────────────────────────────────
 
 const provisioning = ref(false)
+const provisionModalVisible = ref(false)
 const provisionForm = ref({ key: '', apiEndpoint: '', deviceName: '' })
 
 async function provision() {
@@ -116,7 +117,7 @@ async function provision() {
       ...(provisionForm.value.deviceName.trim() ? { deviceName: provisionForm.value.deviceName.trim() } : {}),
     })
     message.success('Agent provisioned successfully')
-    // Reload settings so Agent Info reflects the new provisioned state
+    provisionModalVisible.value = false
     await load()
     provisionForm.value = { key: '', apiEndpoint: '', deviceName: '' }
   } catch (e: any) {
@@ -543,6 +544,54 @@ async function triggerUpdate(version: string) {
   } finally { updateTriggering.value = false }
 }
 
+// ── Agent Restart ─────────────────────────────────────────────────────────
+
+const restarting = ref(false)
+
+function confirmRestart() {
+  Modal.confirm({
+    title: 'Restart Agent',
+    icon: h(ExclamationCircleOutlined),
+    content: 'Restart agent services? The agent will briefly stop processing data while it reinitializes.',
+    okText: 'Restart',
+    okType: 'primary',
+    onOk: () => restartAgent(),
+  })
+}
+
+async function restartAgent() {
+  restarting.value = true
+  try {
+    await apiClient.post('/v1/reboot')
+    message.info('Restarting agent services…')
+    await pollReadiness()
+    message.success('Agent restarted successfully')
+    load()
+  } catch (e: unknown) {
+    message.error((e as any)?.response?.data?.error ?? (e as any)?.message ?? 'Restart failed')
+  } finally {
+    restarting.value = false
+  }
+}
+
+async function pollReadiness() {
+  const maxWait = 60_000
+  const interval = 1_500
+  const start = Date.now()
+  let seenNotRunning = false
+
+  while (Date.now() - start < maxWait) {
+    await new Promise(r => setTimeout(r, interval))
+    try {
+      const { data } = await apiClient.get('/v1/readiness')
+      if (data.state !== 'RUNNING') seenNotRunning = true
+      if (seenNotRunning && data.ready && data.state === 'RUNNING') return
+    } catch {
+      seenNotRunning = true
+    }
+  }
+}
+
 async function saveAllAlertConfig() {
   alertConfigSaving.value = true
   try {
@@ -587,7 +636,7 @@ function syntaxHighlight(json: string): string {
     '<span class="json-key">$1</span>:',
   ).replace(
     /:\s*("(?:\\.|[^"\\])*")/g,
-    (m, val) => ': <span class="json-string">' + val + '</span>',
+    (_m, val) => ': <span class="json-string">' + val + '</span>',
   ).replace(
     /:\s*(\d+(?:\.\d+)?)/g,
     ': <span class="json-number">$1</span>',
@@ -700,6 +749,17 @@ watch(activeTab, (tab) => {
 
         <!-- ══ AGENT ══════════════════════════════════════════════════════════ -->
         <a-tab-pane key="agent" tab="Agent">
+          <div v-if="hasRole('admin')" class="state-toolbar">
+            <a-button v-if="!settings.agent?.provisioned" size="small" @click="provisionModalVisible = true">
+              <template #icon><LinkOutlined /></template>
+              Connect
+            </a-button>
+            <a-button size="small" :loading="restarting" @click="confirmRestart">
+              <template #icon><PoweroffOutlined /></template>
+              Restart
+            </a-button>
+          </div>
+
           <a-card size="small" class="settings-card">
             <a-descriptions :column="{ xs: 1, sm: 1, md: 2 }" size="small" bordered class="agent-descriptions">
               <a-descriptions-item label="UUID" :span="2">
@@ -712,6 +772,11 @@ watch(activeTab, (tab) => {
               <a-descriptions-item label="Version">
                 <a-tag v-if="settings.agent?.version" color="blue">v{{ settings.agent.version }}</a-tag>
                 <span v-else>—</span>
+                <template v-if="updateInfo?.updateAvailable">
+                  <a-button size="small" type="link" :loading="updateTriggering" @click="confirmUpdate" style="margin-left: 8px">
+                    v{{ updateInfo.latestVersion }} available — update
+                  </a-button>
+                </template>
               </a-descriptions-item>
               <a-descriptions-item label="Status">
                 <a-badge
@@ -773,24 +838,29 @@ watch(activeTab, (tab) => {
               </template>
             </a-descriptions>
 
-            <template v-if="!settings.agent?.provisioned">
-              <a-divider style="margin: 16px 0 12px" />
-              <p style="margin: 0 0 12px; font-size: 13px; font-weight: 600; color: var(--text-secondary)">
-                Connect to Iotistica
-              </p>
-              <a-form layout="vertical" class="provision-form">
-              <a-row :gutter="[16, 18]">
-                <a-col :span="24">
-                  <a-form-item label="Provisioning key" style="margin-bottom: 0" required>
-                    <a-input-password
-                      v-model:value="provisionForm.key"
-                      placeholder="Paste your provisioning key"
-                      :disabled="provisioning"
-                    />
-                  </a-form-item>
-                </a-col>
-                <a-col :xs="24" :sm="12">
-                  <a-form-item label="API endpoint" style="margin-bottom: 0">
+          </a-card>
+
+          <!-- Provision modal -->
+          <a-modal
+            v-model:open="provisionModalVisible"
+            title="Connect to Iotistica"
+            :confirm-loading="provisioning"
+            ok-text="Connect"
+            :ok-button-props="{ disabled: !provisionForm.key.trim() }"
+            @ok="provision"
+            @cancel="provisionModalVisible = false"
+          >
+            <a-form layout="vertical" style="margin-top: 16px">
+              <a-form-item label="Provisioning key" required>
+                <a-input-password
+                  v-model:value="provisionForm.key"
+                  placeholder="Paste your provisioning key"
+                  :disabled="provisioning"
+                />
+              </a-form-item>
+              <a-row :gutter="16">
+                <a-col :span="12">
+                  <a-form-item label="API endpoint">
                     <a-input
                       v-model:value="provisionForm.apiEndpoint"
                       placeholder="https://api.iotistica.com (optional)"
@@ -798,8 +868,8 @@ watch(activeTab, (tab) => {
                     />
                   </a-form-item>
                 </a-col>
-                <a-col :xs="24" :sm="12">
-                  <a-form-item label="Device name" style="margin-bottom: 0">
+                <a-col :span="12">
+                  <a-form-item label="Device name">
                     <a-input
                       v-model:value="provisionForm.deviceName"
                       placeholder="Optional override"
@@ -807,65 +877,9 @@ watch(activeTab, (tab) => {
                     />
                   </a-form-item>
                 </a-col>
-                <a-col :span="24" style="display: flex; justify-content: flex-end">
-                  <a-button
-                    type="primary"
-                    :loading="provisioning"
-                    :disabled="!provisionForm.key.trim()"
-                    @click="provision"
-                  >
-                    <template #icon><LinkOutlined /></template>
-                    {{ provisioning ? 'Connecting…' : 'Connect to Iotistica' }}
-                  </a-button>
-                </a-col>
               </a-row>
-              </a-form>
-            </template>
-          </a-card>
-
-          <a-card v-if="hasRole('admin')" size="small" class="settings-card" style="margin-top: 16px">
-            <template #title>Agent Update</template>
-            <template #extra>
-              <a-button size="small" :loading="updateChecking" @click="checkForUpdate(true)">
-                <template #icon><ReloadOutlined /></template>
-                Check for Updates
-              </a-button>
-            </template>
-
-            <a-descriptions v-if="updateInfo" :column="1" size="small" bordered>
-              <a-descriptions-item label="Current version">
-                <a-tag color="blue">v{{ updateInfo.currentVersion }}</a-tag>
-              </a-descriptions-item>
-              <a-descriptions-item label="Latest version">
-                <template v-if="updateInfo.latestVersion">
-                  <a-tag :color="updateInfo.updateAvailable ? 'orange' : 'green'">v{{ updateInfo.latestVersion }}</a-tag>
-                </template>
-                <span v-else style="color: var(--text-tertiary)">Unknown</span>
-              </a-descriptions-item>
-              <a-descriptions-item label="Status">
-                <a-badge v-if="updateInfo.updateAvailable" status="warning" text="Update available" />
-                <a-badge v-else-if="updateInfo.error" status="error" :text="updateInfo.error" />
-                <a-badge v-else status="success" text="Up to date" />
-              </a-descriptions-item>
-              <a-descriptions-item v-if="updateInfo.releaseDate" label="Release date">
-                {{ updateInfo.releaseDate }}
-              </a-descriptions-item>
-              <a-descriptions-item v-if="updateInfo.notes" label="Release notes">
-                {{ updateInfo.notes }}
-              </a-descriptions-item>
-            </a-descriptions>
-
-            <div v-if="updateInfo?.updateAvailable" style="margin-top: 16px">
-              <a-button type="primary" :loading="updateTriggering" @click="confirmUpdate">
-                <template #icon><CloudDownloadOutlined /></template>
-                Update to v{{ updateInfo.latestVersion }}
-              </a-button>
-            </div>
-
-            <div v-if="!updateInfo && !updateChecking" style="color: var(--text-tertiary); text-align: center; padding: 24px">
-              Click "Check for Updates" to see if a newer version is available.
-            </div>
-          </a-card>
+            </a-form>
+          </a-modal>
         </a-tab-pane>
 
         <!-- ══ FEATURES ═══════════════════════════════════════════════════════ -->
