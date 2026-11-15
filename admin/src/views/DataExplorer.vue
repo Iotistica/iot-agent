@@ -587,7 +587,7 @@ onUnmounted(() => { if (timer) clearInterval(timer); clearTimeout(persistFavTime
         <div class="filters">
           <a-input v-model:value="search" data-testid="data-search" placeholder="Search source, device, point, destination…" allow-clear class="search" />
           <a-select v-model:value="protocolFilter" :options="protocolOptions" data-testid="data-protocol-filter" placeholder="All protocols" allow-clear class="filter" />
-          <a-select v-model:value="sourceFilter" :options="sourceOptions" data-testid="data-source-filter" show-search option-filter-prop="label" placeholder="All sources" allow-clear class="filter" />
+          <a-select v-model:value="sourceFilter" :options="sourceOptions" data-testid="data-source-filter" show-search option-filter-prop="label" placeholder="All sources" allow-clear class="filter filter--source" />
           <a-select v-if="activeTab === 'configured'" v-model:value="identityFilter" data-testid="data-identity-filter" placeholder="All identities" allow-clear class="filter"
             :options="['Assigned', 'Pending', 'Unresolvable'].map(value => ({ value, label: value }))" />
           <a-select v-else v-model:value="qualityFilter" data-testid="data-quality-filter" placeholder="All states" allow-clear class="filter">
@@ -762,6 +762,7 @@ onUnmounted(() => { if (timer) clearInterval(timer); clearTimeout(persistFavTime
 .filters { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-bottom: 12px; }
 .search { width: 240px; flex-shrink: 0; }
 .filter { width: 160px; flex-shrink: 0; }
+.filter--source { width: 240px; }
 .filter :deep(.ant-select) { width: 100% !important; }
 .filters-actions { display: flex; gap: 8px; margin-left: auto; flex-shrink: 0; }
 .toolbar-info { color: var(--text-tertiary); font-size: 12px; flex-shrink: 0; white-space: nowrap; }

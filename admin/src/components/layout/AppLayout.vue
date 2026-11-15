@@ -202,6 +202,7 @@ onUnmounted(() => {
 
       <!-- Page content -->
       <a-layout-content
+        v-resizable-table
         :class="[
           'page-content',
           { 'page-content--flex': flex },

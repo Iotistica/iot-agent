@@ -776,12 +776,19 @@ export class MqttAdapter extends BaseProtocolAdapter {
 	 * - Use trie-based matching
 	 */
 	private findDeviceForTopic(topic: string): MqttDevice | undefined {
+		let bestDevice: MqttDevice | undefined;
+		let bestSpecificity = -1;
+
 		for (const [filter, device] of this.subscriptions.entries()) {
 			if (mqttPattern.matches(filter, topic)) {
-				return device;
+				const specificity = filter.split("/").filter(s => s !== "#" && s !== "+").length;
+				if (specificity > bestSpecificity) {
+					bestSpecificity = specificity;
+					bestDevice = device;
+				}
 			}
 		}
-		return undefined;
+		return bestDevice;
 	}
 
 	private handleLwtStatus(
@@ -1463,6 +1470,16 @@ export class MqttAdapter extends BaseProtocolAdapter {
 				let singleType = device.dataType;
 				let singleSource: unknown = parsed;
 				let singleSelector: MqttSelector | undefined = { kind: "whole" };
+
+				// Plain string payloads (LWT "online"/"offline", status strings) that
+				// are not valid numbers should be emitted as strings, not coerced to
+				// the device's default numeric type.
+				if (typeof parsed === "string" && !Array.isArray(parsed)) {
+					const trimmed = parsed.trim();
+					if (trimmed === "" || Number.isNaN(Number(trimmed))) {
+						singleType = "string";
+					}
+				}
 
 				if (isBinaryPayload(parsed)) {
 					singleSelector = undefined;
