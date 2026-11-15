@@ -27,7 +27,7 @@ jobs:
           "%PLINK%" %PLINK_ARGS%
           -pw "${{ secrets.PI_SSH_PASS }}"
           ${{ secrets.PI_SSH_USER }}@${{ secrets.PI_SSH_HOST }}
-          "set -e; echo '[install] Downloading installer'; curl -fsSL https://get.iotistica.com/agent/builds/latest/install.sh -o /tmp/iotistica-install.sh; echo '[install] Installing agent and root-owned update service'; sudo -n env IOTISTICA_INSTALL_DOCKER=yes IOTISTICA_INSTALL_MOSQUITTO=yes IOTISTICA_DOWNLOAD_BASE_URL=https://get.iotistica.com/agent/builds/latest sh /tmp/iotistica-install.sh; echo '[install] Agent and updater installation completed'"
+          "set -e; echo '[install] Downloading installer'; curl -fsSL https://get.iotistica.com/agent/builds/latest/install.sh -o /tmp/iotistica-install.sh; echo '[install] Installing agent and root-owned update service'; echo '${{ secrets.PI_SSH_PASS }}' | sudo -S env IOTISTICA_INSTALL_DOCKER=yes IOTISTICA_INSTALL_MOSQUITTO=yes IOTISTICA_DOWNLOAD_BASE_URL=https://get.iotistica.com/agent/builds/latest sh /tmp/iotistica-install.sh; echo '[install] Agent and updater installation completed'"
 
       - name: Verify root-owned updater service
         shell: cmd
@@ -37,7 +37,7 @@ jobs:
           "%PLINK%" %PLINK_ARGS%
           -pw "${{ secrets.PI_SSH_PASS }}"
           ${{ secrets.PI_SSH_USER }}@${{ secrets.PI_SSH_HOST }}
-          "set -e; if [ ! -x /usr/local/sbin/update-runner.sh ] || [ ! -x /usr/local/bin/update.sh ]; then echo '[error] Update runner or update script is missing'; exit 1; fi; if ! systemctl is-enabled --quiet update.path || ! systemctl is-active --quiet update.path; then echo '[error] Update watcher is not enabled and active'; systemctl status update.path --no-pager || true; exit 1; fi; if ! systemctl show update.service --property=User | grep -qx User=root; then echo '[error] Update service is not configured to run as root'; exit 1; fi; echo '[ok] Root-owned updater is installed and watching for requests'"
+          "set -e; if [ ! -x /usr/local/sbin/update-runner.sh ] || [ ! -x /usr/local/bin/update.sh ]; then echo '[error] Update runner or update script is missing'; exit 1; fi; if ! systemctl is-enabled --quiet update.path || ! systemctl is-active --quiet update.path; then echo '[error] Update watcher is not enabled and active'; echo '${{ secrets.PI_SSH_PASS }}' | sudo -S systemctl status update.path --no-pager || true; exit 1; fi; if ! echo '${{ secrets.PI_SSH_PASS }}' | sudo -S systemctl show update.service --property=User | grep -qx User=root; then echo '[error] Update service is not configured to run as root'; exit 1; fi; echo '[ok] Root-owned updater is installed and watching for requests'"
 
       - name: Verify agent version
         shell: cmd
@@ -46,7 +46,7 @@ jobs:
           && "%PLINK%" %PLINK_ARGS%
           -pw "${{ secrets.PI_SSH_PASS }}"
           ${{ secrets.PI_SSH_USER }}@${{ secrets.PI_SSH_HOST }}
-          "sleep 5 && echo Deployed version: $(grep -m1 version /opt/iotistic/agent/package.json | tr -d ' ,') && echo Deployed build: $(sudo -n grep -m1 '^BUILD_ID=' /etc/iotistic/agent.env | cut -d= -f2)"
+          "sleep 5 && echo Deployed version: $(grep -m1 version /opt/iotistic/agent/package.json | tr -d ' ,') && echo Deployed build: $(echo '${{ secrets.PI_SSH_PASS }}' | sudo -S grep -m1 '^BUILD_ID=' /etc/iotistic/agent.env | cut -d= -f2)"
 
       - name: Verify Mosquitto service
         shell: cmd
@@ -54,7 +54,7 @@ jobs:
           "%PLINK%" %PLINK_ARGS%
           -pw "${{ secrets.PI_SSH_PASS }}"
           ${{ secrets.PI_SSH_USER }}@${{ secrets.PI_SSH_HOST }}
-          "sudo -n systemctl is-active --quiet mosquitto && echo Mosquitto is running"
+          "echo '${{ secrets.PI_SSH_PASS }}' | sudo -S systemctl is-active --quiet mosquitto && echo Mosquitto is running"
 
       - name: Show license status and logs
         shell: cmd
@@ -62,4 +62,4 @@ jobs:
           "%PLINK%" %PLINK_ARGS%
           -pw "${{ secrets.PI_SSH_PASS }}"
           ${{ secrets.PI_SSH_USER }}@${{ secrets.PI_SSH_HOST }}
-          "echo '--- License status ---'; sudo -n iotctl license; echo '--- License journal (last 10 minutes) ---'; sudo -n journalctl -u iotistica-agent --since '10 minutes ago' --no-pager | grep -i license || echo 'No licensing journal entries found'"
+          "echo '--- License status ---'; echo '${{ secrets.PI_SSH_PASS }}' | sudo -S iotctl license; echo '--- License journal (last 10 minutes) ---'; echo '${{ secrets.PI_SSH_PASS }}' | sudo -S journalctl -u iotistica-agent --since '10 minutes ago' --no-pager | grep -i license || echo 'No licensing journal entries found'"
