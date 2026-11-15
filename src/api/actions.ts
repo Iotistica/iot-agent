@@ -883,6 +883,16 @@ export const getStateSnapshot = async (type?: 'current' | 'target') => {
 };
 
 /**
+ * Update target state from admin UI
+ * Used by: PUT /v1/state/target
+ */
+export const updateTargetState = async (state: Record<string, unknown>) => {
+	if (!stateManager) throw new Error('State manager not initialized');
+	await stateManager.setTarget(state as any);
+	return { target: stateManager.getTargetState() };
+};
+
+/**
  * Purge volumes for an application
  * Used by: POST /v1/apps/:appId/purge
  */

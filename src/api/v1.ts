@@ -937,6 +937,19 @@ router.get('/v1/state', async (req: Request, res: Response, next: NextFunction) 
 });
 
 /**
+ * PUT /v1/state/target
+ * Update target state from admin UI
+ */
+router.put('/v1/state/target', requireRole('admin'), async (req: Request, res: Response, next: NextFunction) => {
+	try {
+		const result = await actions.updateTargetState(req.body);
+		return res.status(200).json(result);
+	} catch (error) {
+		next(error);
+	}
+});
+
+/**
  * POST /v1/sync/pull
  * Trigger on-demand target-state pull from cloud API
  */

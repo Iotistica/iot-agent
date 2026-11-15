@@ -6,6 +6,7 @@ import type { TableColumnType } from 'ant-design-vue'
 import {
   SaveOutlined, ReloadOutlined, LinkOutlined, CheckCircleOutlined, EditOutlined,
   QuestionCircleOutlined, CloudDownloadOutlined, ExclamationCircleOutlined,
+  CopyOutlined, CheckOutlined,
 } from '@ant-design/icons-vue'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import { useAuth } from '@/composables/useAuth'
@@ -566,6 +567,19 @@ async function saveAllAlertConfig() {
 const stateData = ref<{ current?: any; target?: any } | null>(null)
 const stateLoading = ref(false)
 const stateLoaded = ref(false)
+const targetEditing = ref(false)
+const targetEditText = ref('')
+const targetEditError = ref<string | null>(null)
+const targetSaving = ref(false)
+const copiedCurrent = ref(false)
+const copiedTarget = ref(false)
+
+const currentStateJson = computed(() =>
+  stateData.value?.current ? JSON.stringify(stateData.value.current, null, 2) : '',
+)
+const targetStateJson = computed(() =>
+  stateData.value?.target ? JSON.stringify(stateData.value.target, null, 2) : '',
+)
 
 async function loadState() {
   stateLoading.value = true
@@ -577,6 +591,49 @@ async function loadState() {
   } finally {
     stateLoading.value = false
     stateLoaded.value = true
+  }
+}
+
+function startEditTarget() {
+  targetEditText.value = targetStateJson.value
+  targetEditError.value = null
+  targetEditing.value = true
+}
+
+function cancelEditTarget() {
+  targetEditing.value = false
+  targetEditError.value = null
+}
+
+async function saveTargetState() {
+  targetEditError.value = null
+  let parsed: any
+  try {
+    parsed = JSON.parse(targetEditText.value)
+  } catch {
+    targetEditError.value = 'Invalid JSON'
+    return
+  }
+  targetSaving.value = true
+  try {
+    const { data } = await apiClient.put('/v1/state/target', parsed)
+    stateData.value = { ...stateData.value, target: data.target }
+    targetEditing.value = false
+    message.success('Target state saved — reconciliation will apply changes shortly')
+  } catch (e: any) {
+    targetEditError.value = e?.response?.data?.message ?? e?.message ?? 'Save failed'
+  } finally {
+    targetSaving.value = false
+  }
+}
+
+async function copyJson(text: string, which: 'current' | 'target') {
+  try {
+    await navigator.clipboard.writeText(text)
+    if (which === 'current') { copiedCurrent.value = true; setTimeout(() => { copiedCurrent.value = false }, 2000) }
+    else { copiedTarget.value = true; setTimeout(() => { copiedTarget.value = false }, 2000) }
+  } catch {
+    message.error('Failed to copy to clipboard')
   }
 }
 
@@ -1538,28 +1595,98 @@ watch(activeTab, (tab) => {
 
         <!-- ══ STATE ═════════════════════════════════════════════════════════ -->
         <a-tab-pane key="state" tab="State">
+          <div class="state-toolbar">
+            <a-button size="small" :loading="stateLoading" @click="loadState">
+              <template #icon><ReloadOutlined /></template>
+              Refresh
+            </a-button>
+          </div>
           <a-spin :spinning="stateLoading">
-            <a-card size="small" class="settings-card">
-              <template #title>Current State</template>
-              <template #extra>
-                <a-button size="small" @click="loadState">
-                  <template #icon><ReloadOutlined /></template>
-                  Refresh
-                </a-button>
-              </template>
-              <pre v-if="stateData?.current" class="state-json">{{ JSON.stringify(stateData.current, null, 2) }}</pre>
-              <div v-else style="color: var(--text-tertiary); text-align: center; padding: 24px">
-                No current state available.
+            <div class="state-grid">
+              <!-- Current State -->
+              <div class="state-panel">
+                <div class="state-panel__header">
+                  <span class="state-panel__title">Current State</span>
+                  <a-button
+                    size="small"
+                    :disabled="!currentStateJson"
+                    class="state-panel__copy"
+                    @click="copyJson(currentStateJson, 'current')"
+                  >
+                    <template #icon>
+                      <CheckOutlined v-if="copiedCurrent" style="color: var(--color-success, #52c41a)" />
+                      <CopyOutlined v-else />
+                    </template>
+                    {{ copiedCurrent ? 'Copied' : 'Copy' }}
+                  </a-button>
+                </div>
+                <div class="state-panel__body">
+                  <pre v-if="currentStateJson" class="state-json">{{ currentStateJson }}</pre>
+                  <div v-else class="state-panel__empty">No current state available.</div>
+                </div>
               </div>
-            </a-card>
 
-            <a-card size="small" class="settings-card" style="margin-top: 16px">
-              <template #title>Target State</template>
-              <pre v-if="stateData?.target" class="state-json">{{ JSON.stringify(stateData.target, null, 2) }}</pre>
-              <div v-else style="color: var(--text-tertiary); text-align: center; padding: 24px">
-                No target state available.
+              <!-- Target State -->
+              <div class="state-panel">
+                <div class="state-panel__header">
+                  <span class="state-panel__title">Target State</span>
+                  <div class="state-panel__actions">
+                    <template v-if="targetEditing">
+                      <a-button size="small" :disabled="targetSaving" @click="cancelEditTarget">Cancel</a-button>
+                      <a-button size="small" type="primary" :loading="targetSaving" @click="saveTargetState">
+                        <template #icon><SaveOutlined /></template>
+                        Save
+                      </a-button>
+                    </template>
+                    <template v-else>
+                      <a-button
+                        size="small"
+                        :disabled="!targetStateJson"
+                        class="state-panel__copy"
+                        @click="copyJson(targetStateJson, 'target')"
+                      >
+                        <template #icon>
+                          <CheckOutlined v-if="copiedTarget" style="color: var(--color-success, #52c41a)" />
+                          <CopyOutlined v-else />
+                        </template>
+                        {{ copiedTarget ? 'Copied' : 'Copy' }}
+                      </a-button>
+                      <a-button
+                        v-if="hasRole('admin')"
+                        size="small"
+                        :disabled="!targetStateJson"
+                        @click="startEditTarget"
+                      >
+                        <template #icon><EditOutlined /></template>
+                        Edit
+                      </a-button>
+                    </template>
+                  </div>
+                </div>
+                <div class="state-panel__body">
+                  <template v-if="targetEditing">
+                    <a-alert
+                      v-if="targetEditError"
+                      type="error"
+                      :message="targetEditError"
+                      show-icon
+                      closable
+                      style="margin-bottom: 8px"
+                      @close="targetEditError = null"
+                    />
+                    <textarea
+                      v-model="targetEditText"
+                      class="state-editor"
+                      spellcheck="false"
+                    />
+                  </template>
+                  <template v-else>
+                    <pre v-if="targetStateJson" class="state-json">{{ targetStateJson }}</pre>
+                    <div v-else class="state-panel__empty">No target state available.</div>
+                  </template>
+                </div>
               </div>
-            </a-card>
+            </div>
           </a-spin>
         </a-tab-pane>
 
@@ -1728,17 +1855,91 @@ watch(activeTab, (tab) => {
 .settings-shell :deep(.ant-table-thead > tr > th) { background: var(--bg-table-header); font-weight: 650; font-size: 12px; }
 .settings-shell :deep(.ant-table-tbody > tr:hover > td) { background: var(--bg-table-hover); }
 .drift-alert-on__group { row-gap: 12px; }
+/* ── State tab ──────────────────────────────────────────────────────────────── */
+.state-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 14px;
+}
+.state-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  align-items: start;
+}
+.state-panel {
+  border: 1px solid var(--border-color-card);
+  border-radius: 10px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.state-panel__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 12px 18px;
+  background: var(--bg-card-header);
+  border-bottom: 1px solid var(--border-color);
+  min-height: 49px;
+}
+.state-panel__title {
+  font-size: 14px;
+  font-weight: 650;
+  color: var(--text-heading);
+}
+.state-panel__actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.state-panel__copy {
+  /* button styles come from ant */
+}
+.state-panel__body {
+  padding: 0;
+  flex: 1;
+  min-height: 200px;
+}
+.state-panel__empty {
+  color: var(--text-tertiary);
+  text-align: center;
+  padding: 48px 16px;
+  font-size: 13px;
+}
 .state-json {
   margin: 0;
-  padding: 12px;
-  background: var(--bg-table-header);
-  border-radius: 6px;
+  padding: 16px 18px;
+  background: var(--bg-code);
+  font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
   font-size: 12px;
-  line-height: 1.55;
-  overflow-x: auto;
-  max-height: 600px;
+  line-height: 1.6;
+  color: var(--text-primary);
+  overflow: auto;
+  max-height: 70vh;
   white-space: pre;
   tab-size: 2;
+  border: none;
+}
+.state-editor {
+  width: 100%;
+  min-height: max(300px, 50vh);
+  padding: 16px 18px;
+  background: var(--bg-code);
+  font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-primary);
+  border: none;
+  outline: none;
+  resize: vertical;
+  tab-size: 2;
+  white-space: pre;
+  overflow: auto;
+}
+.state-editor:focus {
+  box-shadow: inset 0 0 0 2px var(--color-primary, #1677ff);
 }
 @media (max-width: 767px) {
   .settings-shell { padding-bottom: 18px; }
@@ -1747,6 +1948,7 @@ watch(activeTab, (tab) => {
   .agent-descriptions :deep(.ant-descriptions-item-label) { min-width: 105px; width: 115px; }
   .save-bar { justify-content: flex-start; }
   .settings-tabs :deep(.ant-tabs-nav) { margin-bottom: 14px; }
+  .state-grid { grid-template-columns: 1fr; }
 }
 
 </style>
