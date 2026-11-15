@@ -1298,8 +1298,10 @@ EOF
     chmod 755 /opt/iotistic
     chown -R iotistic:iotistic /opt/iotistic/agent
     chmod 755 /opt/iotistic/agent
+    chmod 755 /var/lib/iotistic
     chown -R iotistic:iotistic /var/lib/iotistic/agent
     chmod 755 /var/lib/iotistic/agent
+    chmod 755 /var/log/iotistic
     chown -R iotistic:iotistic /var/log/iotistic
     chmod 755 /var/log/iotistic
     chown iotistic:iotistic /etc/iotistic/agent.env
