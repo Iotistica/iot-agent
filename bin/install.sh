@@ -67,7 +67,7 @@ installer_exit() {
     result=$?
     trap - EXIT
     if [ "$result" -ne 0 ]; then
-        installer_message "Installation failed. See the diagnostic log: $INSTALL_LOG"
+        installer_message "Installation failed. See the log: $INSTALL_LOG"
     elif [ "$INSTALL_COMPLETED" != yes ]; then
         installer_message "Installation ended before completion. See: $INSTALL_LOG"
     fi
@@ -805,7 +805,7 @@ echo ""
     fi
     echo "tcpdump: $(tcpdump --version 2>&1 | head -n 1)"
     echo "✓ System dependencies installed"
-    installer_step "System dependencies ready (including tcpdump)."
+    installer_step "System dependencies ready."
 
     # Install Docker (required for agent functionality)docker
     installer_step "Checking Docker and Node.js..."
