@@ -82,7 +82,7 @@ function fmtCount(n: number) {
             :class="{ collapsed: !isExpanded(node) }"
             @click.stop="toggle(node.fullTopic)"
           >▾</span>
-          <span v-else class="leaf-icon" :style="{ background: typeColor(node.messageType) }" />
+          <span v-if="!hasChildren(node) || (node.count > 0 && hasChildren(node))" class="leaf-icon" :style="{ background: typeColor(node.messageType) }" />
         </span>
         <span class="topic-name">{{ node.name }}</span>
         <span v-if="!lazy && node.count > 0" class="topic-count">{{ fmtCount(node.count) }}</span>
@@ -153,10 +153,11 @@ function fmtCount(n: number) {
 }
 
 .topic-icon {
-  width: 14px;
+  min-width: 14px;
   flex-shrink: 0;
   display: flex;
   align-items: center;
+  gap: 3px;
 }
 
 .folder-icon {
