@@ -53,6 +53,8 @@ const pinnedKeys = ref<string[]>([])
 const pinnedPointCache = ref(new Map<string, PointRow>())
 function favKey(p: PointRow): string { return `${p.endpointName}::${p.metric}` }
 const favPointCache = ref(new Map<string, PointRow>())
+const favoritesSet = computed(() => new Set(favorites.value))
+const pinnedSet = computed(() => new Set(pinnedKeys.value))
 type SavedView = SavedViewType
 const savedViews = ref<SavedView[]>([])
 const activeTab = ref('all')
@@ -104,6 +106,29 @@ function sourceFor(row: PointRow) { return sourceLookup.value(row) }
 function sourceName(row: PointRow) { return dataExplorerSourceName(sourceFor(row)) }
 function pointName(row: PointRow) { return dataExplorerPointName(row) }
 function originalName(row: PointRow) { return row.rawPointName || row.rawObjectName || row.metric }
+const pointDisplayNames = computed(() => {
+  const map = new Map<string, { source: string; device: string; point: string }>()
+  function index(p: PointRow) {
+    if (!map.has(p.key)) map.set(p.key, { source: sourceName(p), device: deviceName(p), point: pointName(p) })
+  }
+  for (const p of points.value) index(p)
+  for (const [, p] of favPointCache.value) index(p)
+  for (const [, p] of pinnedPointCache.value) index(p)
+  return map
+})
+const searchIndex = computed(() => {
+  const map = new Map<string, string>()
+  function index(p: PointRow) {
+    if (map.has(p.key)) return
+    const names = pointDisplayNames.value.get(p.key)
+    map.set(p.key, [names?.source, names?.device, p.metric, p.normalizedName, p.rawPointName, p.rawObjectName, p.destinationName, p.pointUuid, p.provisionalPointId]
+      .filter(Boolean).join('\0').toLowerCase())
+  }
+  for (const p of points.value) index(p)
+  for (const [, p] of favPointCache.value) index(p)
+  for (const [, p] of pinnedPointCache.value) index(p)
+  return map
+})
 function valueText(v: unknown) {
   if (v === null || v === undefined) return '—'
   if (typeof v === 'number') return Number.isInteger(v) ? String(v) : v.toFixed(2)
@@ -142,25 +167,30 @@ function persistPinned() {
     localStorage.setItem('iot-explorer-pin-cache', JSON.stringify(cache))
   } catch {}
 }
+let persistFavTimer: ReturnType<typeof setTimeout> | undefined
+let persistPinTimer: ReturnType<typeof setTimeout> | undefined
+function debouncedPersistFavorites() { clearTimeout(persistFavTimer); persistFavTimer = setTimeout(persistFavorites, 2000) }
+function debouncedPersistPinned() { clearTimeout(persistPinTimer); persistPinTimer = setTimeout(persistPinned, 2000) }
 watch([points, favorites], () => {
+  const favSet = favoritesSet.value
   for (const p of points.value) {
     const fk = favKey(p)
-    if (favorites.value.includes(fk)) favPointCache.value.set(fk, p)
+    if (favSet.has(fk)) favPointCache.value.set(fk, p)
   }
   for (const fk of favPointCache.value.keys()) {
-    if (!favorites.value.includes(fk)) favPointCache.value.delete(fk)
+    if (!favSet.has(fk)) favPointCache.value.delete(fk)
   }
-  persistFavorites()
+  debouncedPersistFavorites()
 })
 watch([points, pinnedKeys], () => {
-  const pinned = new Set(pinnedKeys.value)
+  const pinned = pinnedSet.value
   for (const point of points.value) {
     if (pinned.has(point.key)) pinnedPointCache.value.set(point.key, point)
   }
   for (const key of pinnedPointCache.value.keys()) {
     if (!pinned.has(key)) pinnedPointCache.value.delete(key)
   }
-  persistPinned()
+  debouncedPersistPinned()
 })
 const sourceOptions = computed(() => {
   const options = new Map<string, string>()
@@ -181,10 +211,11 @@ const protocolOptions = computed(() => [...new Set([
 function columnSort(a: PointRow, b: PointRow): number {
   const field = tableSortField.value
   const desc = tableSortOrder.value === 'descend' ? -1 : 1
-  if (!field) return Date.parse(b.timestamp) - Date.parse(a.timestamp)
-  if (field === 'source') return desc * sourceName(a).localeCompare(sourceName(b))
-  if (field === 'device') return desc * deviceName(a).localeCompare(deviceName(b))
-  if (field === 'point') return desc * pointName(a).localeCompare(pointName(b))
+  if (!field) return (b._ts ?? Date.parse(b.timestamp)) - (a._ts ?? Date.parse(a.timestamp))
+  const dn = pointDisplayNames.value
+  if (field === 'source') return desc * (dn.get(a.key)?.source ?? '').localeCompare(dn.get(b.key)?.source ?? '')
+  if (field === 'device') return desc * (dn.get(a.key)?.device ?? '').localeCompare(dn.get(b.key)?.device ?? '')
+  if (field === 'point') return desc * (dn.get(a.key)?.point ?? '').localeCompare(dn.get(b.key)?.point ?? '')
   if (field === 'value') {
     const na = typeof a.value === 'number' ? a.value : parseFloat(String(a.value ?? ''))
     const nb = typeof b.value === 'number' ? b.value : parseFloat(String(b.value ?? ''))
@@ -193,7 +224,7 @@ function columnSort(a: PointRow, b: PointRow): number {
     if (isNaN(nb)) return -1
     return desc * (na - nb)
   }
-  if (field === 'updated') return desc * (Date.parse(a.timestamp) - Date.parse(b.timestamp))
+  if (field === 'updated') return desc * ((a._ts ?? Date.parse(a.timestamp)) - (b._ts ?? Date.parse(b.timestamp)))
   return 0
 }
 const pointsMatchingFilters = computed(() => {
@@ -204,21 +235,31 @@ const pointsMatchingFilters = computed(() => {
   }
   source = mergePinnedDataExplorerPoints(source, pinnedKeys.value, pinnedPointCache.value)
   const q = search.value.trim().toLowerCase()
+  const proto = protocolFilter.value
+  const srcUuid = sourceFilter.value
+  const qual = qualityFilter.value
+  if (!q && !proto && srcUuid === undefined && !qual) return source
   return source.filter(p => {
-    return (!q || [sourceName(p), deviceName(p), p.metric, p.normalizedName, p.rawPointName, p.rawObjectName, p.destinationName, p.pointUuid, p.provisionalPointId]
-      .some(v => (v || '').toLowerCase().includes(q)))
-      && (!protocolFilter.value || p.protocol === protocolFilter.value)
-      && (sourceFilter.value === undefined || (sourceFor(p)?.uuid ?? UNKNOWN_SOURCE) === sourceFilter.value)
-      && (!qualityFilter.value || (qualityFilter.value === 'STALE' ? isStale(p.timestamp) : qualityFilter.value === 'BAD' ? p.quality === 'BAD' : p.quality !== 'BAD' && !isStale(p.timestamp)))
+    if (q && !(searchIndex.value.get(p.key) ?? '').includes(q)) return false
+    if (proto && p.protocol !== proto) return false
+    if (srcUuid !== undefined && (sourceFor(p)?.uuid ?? UNKNOWN_SOURCE) !== srcUuid) return false
+    if (qual) {
+      if (qual === 'STALE' && !isStale(p.timestamp)) return false
+      if (qual === 'BAD' && p.quality !== 'BAD') return false
+      if (qual === 'GOOD' && (p.quality === 'BAD' || isStale(p.timestamp))) return false
+    }
+    return true
   })
 })
 const livePointCount = computed(() => pointsMatchingFilters.value.length)
 const filteredPoints = computed(() => {
+  const favSet = favoritesSet.value
   const filtered = pointsMatchingFilters.value.filter(p =>
-    (viewMode.value !== 'favorites' || favorites.value.includes(favKey(p)))
+    (viewMode.value !== 'favorites' || favSet.has(favKey(p)))
     && (!activeSavedView.value || matchesDataExplorerView(p, activeViewIds.value)))
   if (viewMode.value === 'favorites') {
-    return filtered.sort((a, b) => deviceName(a).localeCompare(deviceName(b)) || pointName(a).localeCompare(pointName(b)))
+    const dn = pointDisplayNames.value
+    return filtered.sort((a, b) => (dn.get(a.key)?.device ?? '').localeCompare(dn.get(b.key)?.device ?? '') || (dn.get(a.key)?.point ?? '').localeCompare(dn.get(b.key)?.point ?? ''))
   }
   if (activeSavedView.value && !tableSortField.value) {
     return orderDataExplorerViewPoints(filtered, activeSavedView.value.pointKeys)
@@ -388,8 +429,14 @@ function exportViewCsv(view: SavedView) {
   const viewPoints = points.value.filter(p => matchesDataExplorerView(p, viewKeys))
   downloadCsv(viewPoints, `${view.name.replace(/[^a-zA-Z0-9_-]/g, '_')}.csv`)
 }
-const badCount = computed(() => points.value.filter(p => p.quality === 'BAD').length)
-const staleCount = computed(() => points.value.filter(p => isStale(p.timestamp)).length)
+const qualityCounts = computed(() => {
+  let bad = 0, stale = 0
+  for (const p of points.value) {
+    if (p.quality === 'BAD') bad++
+    else if (isStale(p.timestamp)) stale++
+  }
+  return { bad, stale }
+})
 function sortOrderFor(key: string) { return tableSortField.value === key ? tableSortOrder.value : null }
 const columns = computed<TableColumnType<PointRow>[]>(() => {
   const cols: TableColumnType<PointRow>[] = []
@@ -516,7 +563,7 @@ onMounted(async () => {
   persistFavorites()
   timer = setInterval(() => { now.value = Date.now(); if (!paused.value) poll() }, POLL_MS)
 })
-onUnmounted(() => { if (timer) clearInterval(timer) })
+onUnmounted(() => { if (timer) clearInterval(timer); clearTimeout(persistFavTimer); clearTimeout(persistPinTimer) })
 </script>
 
 <template>
@@ -533,8 +580,8 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
         <a-card size="small" class="metric-card" data-testid="stat-observed-points"><div class="metric-inner"><span class="metric-icon icon-points"><BarChartOutlined /></span><a-statistic title="Observed points" :value="observedPointCount" /></div></a-card>
         <a-card size="small" class="metric-card" data-testid="stat-source-points"><div class="metric-inner" :title="metadataError || configuredCount.error || undefined"><span class="metric-icon icon-points"><DatabaseOutlined /></span><a-statistic title="Source points" :value="configuredTotalLabel" /></div></a-card>
         <a-card size="small" class="metric-card" data-testid="stat-subscriptions"><div class="metric-inner"><span class="metric-icon icon-subscriptions"><WifiOutlined /></span><a-statistic title="Active subscriptions" :value="subscriptions.length" /></div></a-card>
-        <a-card size="small" class="metric-card"><div class="metric-inner"><span class="metric-icon icon-quality"><WarningOutlined /></span><a-statistic title="Bad quality" :value="badCount" /></div></a-card>
-        <a-card size="small" class="metric-card"><div class="metric-inner"><span class="metric-icon icon-stale"><ClockCircleOutlined /></span><a-statistic title="No update in 60s" :value="staleCount" /></div></a-card>
+        <a-card size="small" class="metric-card"><div class="metric-inner"><span class="metric-icon icon-quality"><WarningOutlined /></span><a-statistic title="Bad quality" :value="qualityCounts.bad" /></div></a-card>
+        <a-card size="small" class="metric-card"><div class="metric-inner"><span class="metric-icon icon-stale"><ClockCircleOutlined /></span><a-statistic title="No update in 60s" :value="qualityCounts.stale" /></div></a-card>
       </div>
       <a-card size="small" class="browser-card">
         <div class="filters">
@@ -640,7 +687,7 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
             <template v-else-if="column.key === 'unit'">{{ record.unit || '—' }}</template>
             <template v-else-if="column.key === 'quality'"><a-tag v-if="record.quality === 'BAD'" color="red">BAD</a-tag><a-tag v-else-if="isStale(record.timestamp)" color="orange">STALE</a-tag><a-tag v-else color="green">{{ record.quality || 'CURRENT' }}</a-tag></template>
             <template v-else-if="column.key === 'updated'"><span :class="isStale(record.timestamp) ? 'age stale' : 'age'"><i class="status-dot"></i>{{ age(record.timestamp) }}</span></template>
-            <template v-else-if="column.key === 'action'"><a-button type="link" size="small" title="History" aria-label="History" style="color:#722ed1" @click.stop="openHistory(record)"><template #icon><LineChartOutlined /></template></a-button><a-button type="text" size="small" :title="favorites.includes(favKey(record)) ? 'Remove from Favorites' : 'Add to Favorites'" :aria-label="favorites.includes(favKey(record)) ? 'Remove from Favorites' : 'Add to Favorites'" @click.stop="toggleFavorite(favKey(record))"><span :class="favorites.includes(favKey(record)) ? 'star active' : 'star'">{{ favorites.includes(favKey(record)) ? '★' : '☆' }}</span></a-button><a-button type="text" size="small" :title="pinnedKeys.includes(record.key) ? 'Unpin — remove this point from the Live grid when it is no longer updating' : 'Pin — keep this point in the Live grid across refreshes'" :aria-label="pinnedKeys.includes(record.key) ? 'Unpin point' : 'Pin point'" :class="{ 'pin-active': pinnedKeys.includes(record.key) }" @click.stop="togglePin(record)"><template #icon><PushpinFilled v-if="pinnedKeys.includes(record.key)" /><PushpinOutlined v-else /></template></a-button></template>
+            <template v-else-if="column.key === 'action'"><a-button type="link" size="small" title="History" aria-label="History" style="color:#722ed1" @click.stop="openHistory(record)"><template #icon><LineChartOutlined /></template></a-button><a-button type="text" size="small" :title="favoritesSet.has(favKey(record)) ? 'Remove from Favorites' : 'Add to Favorites'" :aria-label="favoritesSet.has(favKey(record)) ? 'Remove from Favorites' : 'Add to Favorites'" @click.stop="toggleFavorite(favKey(record))"><span :class="favoritesSet.has(favKey(record)) ? 'star active' : 'star'">{{ favoritesSet.has(favKey(record)) ? '★' : '☆' }}</span></a-button><a-button type="text" size="small" :title="pinnedSet.has(record.key) ? 'Unpin — remove this point from the Live grid when it is no longer updating' : 'Pin — keep this point in the Live grid across refreshes'" :aria-label="pinnedSet.has(record.key) ? 'Unpin point' : 'Pin point'" :class="{ 'pin-active': pinnedSet.has(record.key) }" @click.stop="togglePin(record)"><template #icon><PushpinFilled v-if="pinnedSet.has(record.key)" /><PushpinOutlined v-else /></template></a-button></template>
           </template>
           <template #emptyText>No matching recent readings. Check your source, subscription, and destination configuration.</template>
         </a-table>

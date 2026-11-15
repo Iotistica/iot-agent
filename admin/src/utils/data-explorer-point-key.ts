@@ -26,6 +26,7 @@ export interface DataExplorerPointRow extends DataExplorerPointIdentity {
   quality?: string
   unit?: string
   timestamp: string
+  _ts?: number
   destinationName: string
 }
 
@@ -40,9 +41,10 @@ export function dataExplorerPoints(events: ActivityEvent[], subscriptions: Subsc
   function add(row: Omit<DataExplorerPointRow, 'key' | 'legacyKey'>) {
     const key = dataExplorerPointKey(row)
     const legacyKey = dataExplorerPointKey({ ...row, pointIdentityEndpointName: undefined })
+    const ts = Date.parse(row.timestamp)
     const previous = byKey.get(key)
-    if (!previous || Date.parse(row.timestamp) > Date.parse(previous.timestamp)) {
-      byKey.set(key, { ...row, key, legacyKey })
+    if (!previous || ts > (previous._ts ?? 0)) {
+      byKey.set(key, { ...row, key, legacyKey, _ts: ts })
     }
   }
   for (const e of events) {
@@ -66,7 +68,7 @@ export function dataExplorerPoints(events: ActivityEvent[], subscriptions: Subsc
       unit: s.lastUnit, timestamp: s.lastPublishTime, destinationName: s.destinationName,
     })
   }
-  return [...byKey.values()].sort((a, b) => Date.parse(b.timestamp) - Date.parse(a.timestamp))
+  return [...byKey.values()].sort((a, b) => (b._ts ?? 0) - (a._ts ?? 0))
 }
 
 interface ExplorerSource {
@@ -148,5 +150,14 @@ export function matchesDataExplorerView(point: DataExplorerPointRow, keys: Reado
 }
 
 export function missingDataExplorerViewPointCount(points: DataExplorerPointRow[], keys: ReadonlySet<string>): number {
-  return [...keys].filter(key => !points.some(point => point.key === key || point.legacyKey === key)).length
+  const present = new Set<string>()
+  for (const p of points) {
+    present.add(p.key)
+    if (p.legacyKey) present.add(p.legacyKey)
+  }
+  let missing = 0
+  for (const key of keys) {
+    if (!present.has(key)) missing++
+  }
+  return missing
 }
