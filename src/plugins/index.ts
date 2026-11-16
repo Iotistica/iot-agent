@@ -297,7 +297,7 @@ export class AdapterManager extends EventEmitter {
 			const normLogKey = `${point.protocol}:${sourceName}`;
 			if (!this.normNameLoggedSources.has(normLogKey)) {
 				this.normNameLoggedSources.add(normLogKey);
-				this.logger.info(`[norm-source] protocol=${point.protocol} source=${sourceName} metric=${point.metric} fromAdapter=${!!point.normalizationDeviceName} fromDeviceName=${!point.normalizationDeviceName}`);
+				this.logger.debug(`[norm-source] protocol=${point.protocol} source=${sourceName} metric=${point.metric} fromAdapter=${!!point.normalizationDeviceName} fromDeviceName=${!point.normalizationDeviceName}`);
 			}
 
 			const resolved = resolveEnrichedDeviceName(

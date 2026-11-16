@@ -44,7 +44,7 @@ export function createPointNameNormalizationInterceptor(opts: { logger?: Logger;
 
 		if (!seenEndpoints.has(endpointName)) {
 			seenEndpoints.add(endpointName);
-			opts.logger?.info(`[point-norm] first batch from endpoint=${endpointName} messages=${messages.length}`);
+			opts.logger?.debug(`[point-norm] first batch from endpoint=${endpointName} messages=${messages.length}`);
 		}
 
 		for (const message of messages) {

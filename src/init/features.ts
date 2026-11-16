@@ -438,7 +438,7 @@ export class FeatureInitializer {
 			await this.features.devicePublish.start();
 			setDevicePublish(this.features.devicePublish);
 
-			logger.infoSync('Device Publish Feature initialized', {
+			logger.debugSync('Device Publish Feature initialized', {
 				component: LogComponents.agent,
 				pipeCount: devices.length,
 				enabledProtocols: Array.from(enabledDevices),
