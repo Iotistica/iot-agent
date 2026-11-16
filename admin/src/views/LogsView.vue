@@ -243,11 +243,12 @@ onUnmounted(() => { if (refreshTimer) clearInterval(refreshTimer) })
         <div style="min-width: 0">
           <template v-if="getPublishDetails(log)">
             <a-tag color="blue" style="margin: 0 4px 0 0; font-size: 10px; line-height: 16px; padding: 0 4px">{{ getPublishDetails(log)!.protocol }}</a-tag>
-            <span :style="{ color: LEVEL_TEXT_COLOR[log.level] || '#e6edf3' }">{{ getPublishDetails(log)!.source || log.message }}</span>
-            <span v-if="getPublishDetails(log)!.destinations?.length" style="color: #8b949e; margin: 0 4px"> → </span>
-            <span v-if="getPublishDetails(log)!.destinations?.length" style="color: #8b949e">{{ getPublishDetails(log)!.destinations!.join(', ') }}</span>
-            <span v-else-if="getPublishDetails(log)!.destination" style="color: #8b949e; margin: 0 4px"> → </span>
-            <span v-else-if="getPublishDetails(log)!.destination" style="color: #8b949e">{{ getPublishDetails(log)!.destination }}</span>
+            <template v-if="getPublishDetails(log)!.destinations?.length">
+              <span style="color: #8b949e">→ {{ getPublishDetails(log)!.destinations!.join(', ') }}</span>
+            </template>
+            <template v-else-if="getPublishDetails(log)!.destination">
+              <span style="color: #8b949e">→ {{ getPublishDetails(log)!.destination }}</span>
+            </template>
             <span v-if="getPublishDetails(log)!.bytes" style="color: #6e7681; margin-left: 8px; font-size: 11px">{{ fmtBytes(getPublishDetails(log)!.bytes!) }}</span>
             <span v-if="getPublishDetails(log)!.buffered?.length" style="color: #d29922; margin-left: 8px; font-size: 11px">buffered: {{ getPublishDetails(log)!.buffered!.join(', ') }}</span>
           </template>
