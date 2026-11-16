@@ -678,7 +678,7 @@ onUnmounted(() => { if (timer) clearInterval(timer); clearTimeout(persistFavTime
             <template v-if="column.key === 'protocol'"><a-tag :color="protocolColor(record.protocol)">{{ protocolLabel(record.protocol) }}</a-tag></template>
             <template v-else-if="column.key === 'source'">{{ sourceName(record) }}</template>
             <template v-else-if="column.key === 'device'">{{ deviceName(record) }}</template>
-            <template v-else-if="column.key === 'point'"><div class="point-primary" data-testid="point-name" :title="pointName(record)">{{ pointName(record) }}</div><div v-if="record.protocol === 'mqtt' && record.normalizedName && originalName(record) !== pointName(record)" class="point-secondary" :title="originalName(record)">Original: {{ originalName(record) }}</div></template>
+            <template v-else-if="column.key === 'point'"><div class="point-primary" data-testid="point-name" :title="pointName(record)">{{ pointName(record) }}</div><div v-if="record.normalizedName && originalName(record) !== pointName(record)" class="point-secondary" :title="originalName(record)">Original: {{ originalName(record) }}</div></template>
             <template v-else-if="column.key === 'value'"><a-tag v-if="record.quality === 'BAD' && record.value == null" color="red">No Value</a-tag><span v-else>{{ valueText(record.value) }}</span></template>
             <template v-else-if="column.key === 'unit'">{{ record.unit || '—' }}</template>
             <template v-else-if="column.key === 'quality'"><a-tag v-if="record.quality === 'BAD'" color="red">BAD</a-tag><a-tag v-else-if="isStale(record.timestamp)" color="orange">STALE</a-tag><a-tag v-else color="green">{{ record.quality || 'CURRENT' }}</a-tag></template>
