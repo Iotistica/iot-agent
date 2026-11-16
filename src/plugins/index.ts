@@ -431,9 +431,20 @@ export class AdapterManager extends EventEmitter {
 				return { row, connection: value, filter: `${base}/#` };
 			});
 			const target = connections.find(item => item.row === source[0]);
-			if (target?.filter !== reading.subscriptionTopic ||
-				connections.filter(item => mqttPattern.matches(item.filter, reading.topic)).length !== 1) {
-				throw new Error('source subscription is stale or ambiguous');
+			if (target?.filter !== reading.subscriptionTopic) {
+				throw new Error(`source subscription is stale: expected ${target?.filter}, got ${reading.subscriptionTopic}`);
+			}
+			const matchingFilters = connections.filter(item => mqttPattern.matches(item.filter, reading.topic));
+			if (matchingFilters.length === 0) {
+				throw new Error('source subscription does not match topic');
+			}
+			if (matchingFilters.length > 1) {
+				const specificity = (filter: string) => filter.split('/').filter(s => s !== '#' && s !== '+').length;
+				const targetSpec = specificity(target.filter);
+				const bestSpec = Math.max(...matchingFilters.map(f => specificity(f.filter)));
+				if (targetSpec < bestSpec) {
+					throw new Error(`source subscription overlap: topic ${reading.topic} is better matched by a more specific source (${matchingFilters.filter(f => specificity(f.filter) === bestSpec).map(f => f.row.name).join(', ')})`);
+				}
 			}
 			const fields = resolveMqttConfiguredFields(target.connection);
 			if (fields.status === 'invalid') throw new Error(fields.reason);

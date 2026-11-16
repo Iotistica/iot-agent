@@ -22,6 +22,13 @@ const loading = ref(false)
 const error = ref('')
 const search = ref('')
 const status = ref<string | undefined>()
+const drawerOpen = ref(false)
+const selectedPoint = ref<PointRow | null>(null)
+
+function openDrawer(record: PointRow) {
+  selectedPoint.value = record
+  drawerOpen.value = true
+}
 let generation = 0
 
 function identityLabel(point: ConfiguredPoint): string {
@@ -114,7 +121,8 @@ onBeforeUnmount(() => { generation++ })
       <a-button :loading="loading" @click="load">Refresh</a-button>
     </a-space>
     <a-table :columns="columns" :data-source="filtered" :loading="loading" row-key="key" size="small"
-      :scroll="{ x: showSource ? 1135 : 930 }" :pagination="{ pageSize: 20, showSizeChanger: true }">
+      :scroll="{ x: showSource ? 1135 : 930 }" :pagination="{ pageSize: 20, showSizeChanger: true }"
+      :custom-row="(record: PointRow) => ({ onClick: () => openDrawer(record), style: 'cursor: pointer' })">
       <template #bodyCell="{ column, record }">
         <template v-if="column.key === 'protocol'"><a-tag :color="protocolColor(record.source.protocol)">{{ protocolLabel(record.source.protocol) }}</a-tag></template>
         <template v-else-if="column.key === 'source'">{{ record.source.name }}</template>
@@ -140,5 +148,73 @@ onBeforeUnmount(() => { generation++ })
       </template>
       <template #emptyText>No configured points found.</template>
     </a-table>
+
+    <a-drawer
+      v-model:open="drawerOpen"
+      :title="selectedPoint?.name ?? 'Point Details'"
+      :width="480"
+      placement="right"
+    >
+      <template v-if="selectedPoint">
+        <a-descriptions :column="1" size="small" bordered>
+          <a-descriptions-item label="Point name">{{ selectedPoint.name }}</a-descriptions-item>
+          <a-descriptions-item label="Source">{{ selectedPoint.source.name }}</a-descriptions-item>
+          <a-descriptions-item label="Protocol">
+            <a-tag :color="protocolColor(selectedPoint.source.protocol)">{{ protocolLabel(selectedPoint.source.protocol) }}</a-tag>
+          </a-descriptions-item>
+          <a-descriptions-item label="Protocol address">
+            <code style="font-size: 12px; word-break: break-all">{{ addressText(selectedPoint.protocolAddress) }}</code>
+          </a-descriptions-item>
+          <a-descriptions-item label="Address status">
+            <a-badge
+              :status="selectedPoint.canonicalStatus === 'resolved' ? 'success' : selectedPoint.canonicalStatus === 'deferred' ? 'warning' : 'error'"
+              :text="selectedPoint.canonicalStatus"
+            />
+          </a-descriptions-item>
+          <a-descriptions-item v-if="selectedPoint.canonicalReason" label="Address reason">
+            <span style="color: var(--text-tertiary)">{{ selectedPoint.canonicalReason }}</span>
+          </a-descriptions-item>
+          <a-descriptions-item label="Identity">
+            <a-badge
+              :status="identityLabel(selectedPoint) === 'Assigned' ? 'success' : identityLabel(selectedPoint) === 'Pending' ? 'warning' : 'error'"
+              :text="identityLabel(selectedPoint)"
+            />
+          </a-descriptions-item>
+          <a-descriptions-item v-if="selectedPoint.identityReason" label="Identity reason">
+            <span style="color: var(--text-tertiary)">{{ selectedPoint.identityReason }}</span>
+          </a-descriptions-item>
+          <a-descriptions-item label="Point UUID">
+            <template v-if="selectedPoint.pointUuid">
+              <a-typography-text copyable :content="selectedPoint.pointUuid" style="font-size: 12px">
+                {{ selectedPoint.pointUuid }}
+              </a-typography-text>
+            </template>
+            <span v-else style="color: var(--text-tertiary)">Not assigned</span>
+          </a-descriptions-item>
+          <a-descriptions-item label="Device">
+            <template v-if="selectedPoint.deviceName">
+              {{ selectedPoint.deviceName }}
+              <div v-if="selectedPoint.deviceUuid" style="font-size: 11px; color: var(--text-tertiary)">{{ selectedPoint.deviceUuid }}</div>
+            </template>
+            <span v-else style="color: var(--text-tertiary)">—</span>
+          </a-descriptions-item>
+          <a-descriptions-item label="Source UUID">
+            <a-typography-text copyable :content="selectedPoint.source.uuid" style="font-size: 12px">
+              {{ selectedPoint.source.uuid }}
+            </a-typography-text>
+          </a-descriptions-item>
+        </a-descriptions>
+
+        <template v-if="identityLabel(selectedPoint) === 'Pending'">
+          <a-alert
+            type="info"
+            show-icon
+            style="margin-top: 16px"
+            message="Why is this point pending?"
+            description="A point stays Pending until actual data flows through the identity pipeline. Check that this source is receiving messages and that no overlapping subscription on another source is capturing them first."
+          />
+        </template>
+      </template>
+    </a-drawer>
   </div>
 </template>
