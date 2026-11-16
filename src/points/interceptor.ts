@@ -46,14 +46,14 @@ export function createPointNameNormalizationInterceptor(opts: { logger?: Logger;
 				if (Array.isArray(message.readings)) {
 					for (const reading of message.readings) {
 						try {
-							attachIdentity(reading, endpointName, catalog);
+							attachIdentity(reading, endpointName, catalog, opts.logger);
 						} catch (err) {
 							opts.logger?.warn('Point-name normalization failed for a reading, skipping', err);
 						}
 					}
 					continue;
 				}
-				attachIdentity(message, endpointName, catalog);
+				attachIdentity(message, endpointName, catalog, opts.logger);
 			} catch (err) {
 				opts.logger?.warn('Point-name normalization failed for a message, skipping', err);
 			}
@@ -68,7 +68,7 @@ export function createPointNameNormalizationInterceptor(opts: { logger?: Logger;
 	return pointNameNormalizationInterceptor;
 }
 
-function attachIdentity(reading: ProtocolMessage, endpointNameHint: string, catalog: PointNameCatalog): void {
+function attachIdentity(reading: ProtocolMessage, endpointNameHint: string, catalog: PointNameCatalog, logger?: Logger): void {
 	const rawNameCandidate =
 	reading.normalizationName ??
 	reading.metric ??
@@ -117,6 +117,10 @@ function attachIdentity(reading: ProtocolMessage, endpointNameHint: string, cata
 		rawDeviceName,
 		sourceAddress,
 	});
+
+	logger?.debug(
+		`[point-norm] endpoint=${endpointNameHint} raw=${rawName} device=${rawDeviceName ?? '(none)'} normalized=${identity.normalizedName} source=${reading.normalizationDeviceName ?? '(not set)'}`,
+	);
 
 	reading.pointIdentity = identity;
 }
