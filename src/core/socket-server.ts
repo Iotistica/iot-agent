@@ -589,12 +589,6 @@ export class SocketServer {
 							this.subscriptions.set(socket, subscription);
 						}
 
-						// Replay any device-schema declarations an adapter already sent
-						// before this client finished its handshake (see
-						// retainedDeviceSchema's doc comment) — without this, a client
-						// that subscribes even a few ms late silently misses them.
-						this.replayRetainedDeviceSchema(socket, subscription);
-
 						// Confirm effective subscription/routing back to client
 						try {
 							socket.write(
@@ -610,6 +604,11 @@ export class SocketServer {
 						} catch (_ackError) {
 							// Non-fatal: subscription is already active.
 						}
+
+						// Replay any device-schema declarations an adapter already sent
+						// before this client finished its handshake — after the ACK so
+						// the client sees { ok: true } as the first line.
+						this.replayRetainedDeviceSchema(socket, subscription);
 
 						break;
 					}
