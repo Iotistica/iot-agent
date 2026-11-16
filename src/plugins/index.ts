@@ -388,12 +388,19 @@ export class AdapterManager extends EventEmitter {
 				}
 			}
 			if (state?.snapshot !== snapshot || !reading.isCurrent()) return undefined;
-			if (state.filters.filter(filter => mqttPattern.matches(filter, reading.topic)).length !== 1) {
-				if (!state.ambiguityReported) {
-					state.ambiguityReported = true;
-					this.logger.warn(`MQTT identity correlation disabled for overlapping sources: ${reading.deviceName}`);
+			const matchingFilters = state.filters.filter(filter => mqttPattern.matches(filter, reading.topic));
+			if (matchingFilters.length !== 1) {
+				if (matchingFilters.length === 0) return undefined;
+				const specificity = (f: string) => f.split('/').filter(s => s !== '#' && s !== '+').length;
+				const targetSpec = specificity(reading.subscriptionTopic);
+				const bestSpec = Math.max(...matchingFilters.map(f => specificity(f)));
+				if (targetSpec < bestSpec) {
+					if (!state.ambiguityReported) {
+						state.ambiguityReported = true;
+						this.logger.warn(`MQTT identity correlation deferred to more specific source: ${reading.deviceName}`);
+					}
+					return undefined;
 				}
-				return undefined;
 			}
 			const result = canonicalizeAddress({
 				protocol: 'mqtt', topic: reading.topic, selector: reading.selector, selectorSource: 'observed',

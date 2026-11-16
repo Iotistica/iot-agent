@@ -312,11 +312,14 @@ export class MqttAdapter extends BaseProtocolAdapter {
 		const isCurrent = () => {
 			try {
 				if (!this.connected || !device.enabled) return false;
-				const matches = this.config.devices.filter(candidate =>
+				const allMatches = this.config.devices.filter(candidate =>
 					candidate.enabled && mqttPattern.matches(this.resolveSubscriptionTopic(candidate), topic));
-				if (matches.length > 1 && !this.identityAmbiguityReported) {
-					this.identityAmbiguityReported = true;
-					this.logger.warn("MQTT identity correlation disabled for overlapping source subscriptions", { topic });
+				let matches = allMatches;
+				if (allMatches.length > 1) {
+					const spec = (d: MqttDevice) =>
+						this.resolveSubscriptionTopic(d).split('/').filter(s => s !== '#' && s !== '+').length;
+					const bestSpec = Math.max(...allMatches.map(m => spec(m)));
+					matches = allMatches.filter(m => spec(m) === bestSpec);
 				}
 				const configuration = JSON.stringify(device);
 				return matches.length === 1 && JSON.stringify(matches[0]) === configuration &&
@@ -341,12 +344,25 @@ export class MqttAdapter extends BaseProtocolAdapter {
 		if (!this.shadow || !binding || !this.connected || !this.shadowTransportReady || !this.shadowConfigurationValid) return;
 		this.withShadow(() => {
 			if (!topic || topic.includes("+") || topic.includes("#") || topic.includes("\0")) return;
-			const matches = this.config.devices.filter(candidate =>
+			const allShadowMatches = this.config.devices.filter(candidate =>
 				candidate.enabled && mqttPattern.matches(this.resolveSubscriptionTopic(candidate), topic));
-			if (matches.length !== 1 || matches[0] !== device ||
+			let shadowMatches = allShadowMatches;
+			if (allShadowMatches.length > 1) {
+				const spec = (d: MqttDevice) =>
+					this.resolveSubscriptionTopic(d).split('/').filter(s => s !== '#' && s !== '+').length;
+				const bestSpec = Math.max(...allShadowMatches.map(m => spec(m)));
+				shadowMatches = allShadowMatches.filter(m => spec(m) === bestSpec);
+			}
+			if (shadowMatches.length !== 1 || shadowMatches[0] !== device ||
 				this.subscriptions.get(this.resolveSubscriptionTopic(device)) !== device) return;
-			if (this.shadow!.activeFilters &&
-				this.shadow!.activeFilters.filter(filter => mqttPattern.matches(filter, topic)).length !== 1) return;
+			if (this.shadow!.activeFilters) {
+				const allActive = this.shadow!.activeFilters.filter(filter => mqttPattern.matches(filter, topic));
+				if (allActive.length > 1) {
+					const spec = (f: string) => f.split('/').filter(s => s !== '#' && s !== '+').length;
+					const bestSpec = Math.max(...allActive.map(f => spec(f)));
+					if (allActive.filter(f => spec(f) === bestSpec).length !== 1) return;
+				} else if (allActive.length !== 1) return;
+			}
 			this.shadow!.registry.observe(binding, this, device, point, { protocol: "mqtt", topic, selector, origin });
 		});
 	}
