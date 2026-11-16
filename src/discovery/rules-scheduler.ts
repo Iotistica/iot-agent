@@ -3,6 +3,7 @@ import { LogComponents } from '../logging/types';
 import type { DiscoveryService, DiscoveredDevice } from './service';
 import { DiscoveryRuleModel, type DiscoveryRule } from '../db/models/discovery-rule.model';
 import { DiscoveryRunModel } from '../db/models/discovery-run.model';
+import { DiscoveryBlocklistModel } from '../db/models/discovery-blocklist.model';
 
 const POLL_INTERVAL_MS = 30_000;
 // start() only resets a rule stuck at status='running' when the agent process
@@ -104,6 +105,13 @@ export class DiscoveryRulesScheduler {
 		} finally {
 			this.discoveryService.off('discovery-complete', onComplete);
 		}
+
+		try {
+			const blocked = DiscoveryBlocklistModel.getFingerprints();
+			for (const d of devices) {
+				(d as any).blocked = blocked.has(d.fingerprint);
+			}
+		} catch { /* non-fatal: blocklist table may not exist yet */ }
 
 		return { rule: DiscoveryRuleModel.getByUuid(uuid)!, devices, ...pruneResult };
 	}

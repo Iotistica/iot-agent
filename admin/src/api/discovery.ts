@@ -1,5 +1,5 @@
 import { client } from './client'
-import type { DiscoveredDevice, DiscoveryRule, DiscoveryRuleFormData, DiscoveryRun } from '@/types'
+import type { BlockedDevice, DiscoveredDevice, DiscoveryRule, DiscoveryRuleFormData, DiscoveryRun } from '@/types'
 
 export interface DiscoveryOptions {
   protocols?: string[]
@@ -60,5 +60,21 @@ export const discoveryRulesApi = {
 
   getRecentRuns(limit = 20): Promise<DiscoveryRun[]> {
     return client.get<{ runs: DiscoveryRun[] }>('/v1/discovery-runs', { params: { limit } }).then((r) => r.data.runs)
+  },
+}
+
+const BLOCKLIST_BASE = '/v1/discovery-blocklist'
+
+export const discoveryBlocklistApi = {
+  getAll(): Promise<BlockedDevice[]> {
+    return client.get<{ blocked: BlockedDevice[] }>(BLOCKLIST_BASE).then((r) => r.data.blocked)
+  },
+
+  block(data: { fingerprint: string; protocol: string; name: string }): Promise<BlockedDevice> {
+    return client.post<{ blocked: BlockedDevice }>(BLOCKLIST_BASE, data).then((r) => r.data.blocked)
+  },
+
+  unblock(fingerprint: string): Promise<void> {
+    return client.delete(`${BLOCKLIST_BASE}/${encodeURIComponent(fingerprint)}`).then(() => undefined)
   },
 }

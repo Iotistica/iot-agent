@@ -5,7 +5,7 @@ import { CheckCircleOutlined, ThunderboltOutlined, StopOutlined } from '@ant-des
 import type { TableColumnType } from 'ant-design-vue'
 import type { DiscoveredDevice, DiscoveryRule, Endpoint } from '@/types'
 import { useAuth } from '@/composables/useAuth'
-import { discoveryRulesApi } from '@/api/discovery'
+import { discoveryRulesApi, discoveryBlocklistApi } from '@/api/discovery'
 import { sourcesApi } from '@/api/sources'
 import { protocolColor, protocolLabel } from '@/utils/protocol'
 
@@ -27,6 +27,40 @@ const selectedRuleUuid = ref<string | null>(null)
 
 // ── Existing endpoints (loaded on open for "already added" check) ─────────────
 const existingEndpoints = ref<Endpoint[]>([])
+
+// ── Blocklist ─────────────────────────────────────────────────────────────────
+const blockedFingerprints = ref<Set<string>>(new Set())
+const blocking = ref<Set<string>>(new Set())
+
+function isBlocked(device: DiscoveredDevice): boolean {
+  return device.blocked === true || blockedFingerprints.value.has(device.fingerprint)
+}
+
+async function blockDevice(device: DiscoveredDevice) {
+  blocking.value = new Set([...blocking.value, device.fingerprint])
+  try {
+    await discoveryBlocklistApi.block({ fingerprint: device.fingerprint, protocol: device.protocol, name: device.name })
+    blockedFingerprints.value = new Set([...blockedFingerprints.value, device.fingerprint])
+  } catch {
+    message.error('Failed to block device')
+  } finally {
+    blocking.value = new Set([...blocking.value].filter(f => f !== device.fingerprint))
+  }
+}
+
+async function unblockDevice(device: DiscoveredDevice) {
+  blocking.value = new Set([...blocking.value, device.fingerprint])
+  try {
+    await discoveryBlocklistApi.unblock(device.fingerprint)
+    const next = new Set(blockedFingerprints.value)
+    next.delete(device.fingerprint)
+    blockedFingerprints.value = next
+  } catch {
+    message.error('Failed to unblock device')
+  } finally {
+    blocking.value = new Set([...blocking.value].filter(f => f !== device.fingerprint))
+  }
+}
 
 const selectedRule = computed(() =>
   rules.value.find((r) => r.uuid === selectedRuleUuid.value) ?? null,
@@ -119,7 +153,7 @@ const columns: TableColumnType<DiscoveredDevice>[] = [
   { title: 'Name', dataIndex: 'name', key: 'name', ellipsis: true },
   { title: 'Connection', key: 'connection', ellipsis: true },
   { title: 'Confidence', key: 'confidence', width: 100 },
-  { title: '', key: 'actions', width: 80, fixed: 'right' },
+  { title: '', key: 'actions', width: 120, fixed: 'right' },
 ]
 
 function connSummary(d: DiscoveredDevice): string {
@@ -357,11 +391,13 @@ watch(
   () => props.open,
   async (isOpen) => {
     if (isOpen) {
-      const [, endpoints] = await Promise.all([
+      const [, endpoints, blocked] = await Promise.all([
         loadRules(),
         sourcesApi.getAll().catch(() => [] as Endpoint[]),
+        discoveryBlocklistApi.getAll().catch(() => []),
       ])
       existingEndpoints.value = endpoints
+      blockedFingerprints.value = new Set(blocked.map(b => b.fingerprint))
       const targetUuid = props.preSelectedRuleUuid ?? (rules.value.length === 1 ? rules.value[0].uuid : null)
       selectedRuleUuid.value = targetUuid
 
@@ -636,6 +672,7 @@ watch(selectedRuleUuid, () => {
           row-key="fingerprint"
           size="small"
           :scroll="{ x: true }"
+          :row-class-name="(record: DiscoveredDevice) => isBlocked(record) ? 'discovery-blocked-row' : ''"
         >
           <template #bodyCell="{ column, record }">
             <template v-if="column.key === 'protocol'">
@@ -648,19 +685,35 @@ watch(selectedRuleUuid, () => {
               <a-tag :color="CONFIDENCE_COLORS[record.confidence]">{{ record.confidence }}</a-tag>
             </template>
             <template v-else-if="column.key === 'actions'">
-              <a-button v-if="isAlreadyAdded(record)" size="small" disabled>
-                <template #icon><CheckCircleOutlined style="color: #52c41a" /></template>
-              </a-button>
-              <a-button
-                v-else
-                size="small"
-                type="primary"
-                ghost
-                :loading="adding.has(record.fingerprint)"
-                @click="addDevice(record)"
-              >
-                Add
-              </a-button>
+              <template v-if="isBlocked(record)">
+                <a-button size="small" :loading="blocking.has(record.fingerprint)" @click="unblockDevice(record)">
+                  Unblock
+                </a-button>
+              </template>
+              <template v-else-if="isAlreadyAdded(record)">
+                <a-space>
+                  <a-button size="small" disabled>
+                    <template #icon><CheckCircleOutlined style="color: #52c41a" /></template>
+                  </a-button>
+                  <a-tooltip title="Block from discovery">
+                    <a-button size="small" :loading="blocking.has(record.fingerprint)" @click="blockDevice(record)">
+                      <template #icon><StopOutlined /></template>
+                    </a-button>
+                  </a-tooltip>
+                </a-space>
+              </template>
+              <template v-else>
+                <a-space>
+                  <a-button size="small" type="primary" ghost :loading="adding.has(record.fingerprint)" @click="addDevice(record)">
+                    Add
+                  </a-button>
+                  <a-tooltip title="Block from discovery">
+                    <a-button size="small" :loading="blocking.has(record.fingerprint)" @click="blockDevice(record)">
+                      <template #icon><StopOutlined /></template>
+                    </a-button>
+                  </a-tooltip>
+                </a-space>
+              </template>
             </template>
           </template>
         </a-table>
@@ -749,5 +802,12 @@ watch(selectedRuleUuid, () => {
 .conn-default {
   color: var(--text-muted);
   font-style: italic;
+}
+
+:deep(.discovery-blocked-row) td {
+  opacity: 0.45;
+}
+:deep(.discovery-blocked-row) td:last-child {
+  opacity: 1;
 }
 </style>

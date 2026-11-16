@@ -2590,6 +2590,13 @@ export async function runDiscoveryWithPruneResult(options: {
 			...options,
 			protocols: options.protocols as any,
 		});
+		try {
+			const { DiscoveryBlocklistModel } = await import('../db/models/discovery-blocklist.model.js');
+			const blocked = DiscoveryBlocklistModel.getFingerprints();
+			for (const d of devices) {
+				(d as any).blocked = blocked.has(d.fingerprint);
+			}
+		} catch { /* non-fatal */ }
 		return { devices, ...pruneResult };
 	} finally {
 		discoveryService.off('discovery-complete', onComplete);

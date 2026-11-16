@@ -8,6 +8,7 @@ import type { ConfigManager } from '../core/config.js';
 import { normalizeModbusRegisters } from '../plugins/modbus/types.js';
 import { BACnetObjectType, BACnetProperty } from '../plugins/bacnet/types.js';
 import { coerceNodeId } from 'node-opcua-client';
+import { DiscoveryBlocklistModel } from '../db/models/discovery-blocklist.model.js';
 
 // A device must be absent from this many *consecutive* prune-eligible scans before
 // its endpoint is disabled. Protects against a single corrupted/dropped discovery
@@ -161,6 +162,12 @@ export class DiscoveryStore {
 		}
 
 		const existingEndpoints = await EndpointModel.getAll();
+		let blockedFingerprints: Set<string>;
+		try {
+			blockedFingerprints = DiscoveryBlocklistModel.getFingerprints();
+		} catch {
+			blockedFingerprints = new Set();
+		}
 
 		const targetEndpoints = this.configManager?.getTargetConfig().endpoints || [];
 		const targetEndpointByName = new Map(
@@ -440,6 +447,19 @@ export class DiscoveryStore {
 					});
 					skipped++;
 					skippedDevices.push({ name: device.name, protocol: device.protocol, reason: 'update_only_mode' });
+					continue;
+				}
+
+				if (blockedFingerprints.has(device.fingerprint)) {
+					this.logger?.infoSync('Skipping blocked device', {
+						component: LogComponents.discovery,
+						traceId,
+						deviceName: device.name,
+						protocol: device.protocol,
+						fingerprint: device.fingerprint,
+					});
+					skipped++;
+					skippedDevices.push({ name: device.name, protocol: device.protocol, reason: 'blocked' });
 					continue;
 				}
 

@@ -13,7 +13,7 @@ import DiscoveryRuleDrawer, { type DiscoveryRulePrefill } from '@/components/dis
 import type { Endpoint, EndpointCommunicationQuality, EndpointCreateData, DiscoveryRule } from '@/types'
 import { sourcesApi } from '@/api/sources'
 import { subscriptionsApi } from '@/api/subscriptions'
-import { discoveryRulesApi } from '@/api/discovery'
+import { discoveryRulesApi, discoveryBlocklistApi } from '@/api/discovery'
 import { protocolColor, protocolLabel } from '@/utils/protocol'
 
 // Protocols with a real discovery plugin — matches DiscoveryRuleDrawer.vue's
@@ -318,6 +318,22 @@ async function confirmDelete(row: Endpoint) {
   })
 }
 
+function confirmBlock(row: Endpoint) {
+  if (!row.fingerprint) return
+  Modal.confirm({
+    title: `Block "${row.name}" from discovery?`,
+    content: 'This source will be deleted and discovery won\'t re-add it. You can unblock it later from the Discovery page.',
+    okType: 'danger',
+    okText: 'Block',
+    async onOk() {
+      await discoveryBlocklistApi.block({ fingerprint: row.fingerprint!, protocol: row.protocol, name: row.name })
+      await sourcesApi.remove(row.uuid)
+      message.success('Blocked and deleted')
+      load().catch(() => {})
+    },
+  })
+}
+
 async function confirmDeleteAll() {
   let warning: string
   try {
@@ -521,6 +537,11 @@ onUnmounted(() => {
             <a-button size="small" data-testid="source-edit" @click="openEdit(record)">
               <template #icon><EditOutlined /></template>
             </a-button>
+            <a-tooltip v-if="hasRole('operator') && record.fingerprint" title="Block from discovery">
+              <a-button size="small" @click="confirmBlock(record)">
+                <template #icon><StopOutlined /></template>
+              </a-button>
+            </a-tooltip>
             <a-button v-if="hasRole('operator')" size="small" danger @click="confirmDelete(record)">
               <template #icon><DeleteOutlined /></template>
             </a-button>

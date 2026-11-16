@@ -2642,6 +2642,52 @@ router.get('/v1/discovery-runs', async (req: Request, res: Response, next: NextF
 });
 
 /**
+ * GET /v1/discovery-blocklist
+ * List all blocked discovery fingerprints
+ */
+router.get('/v1/discovery-blocklist', requireRole('operator'), async (_req: Request, res: Response, next: NextFunction) => {
+	try {
+		const { DiscoveryBlocklistModel } = await import('../db/models/discovery-blocklist.model.js');
+		return res.status(200).json({ blocked: DiscoveryBlocklistModel.getAll() });
+	} catch (error) {
+		next(error);
+	}
+});
+
+/**
+ * POST /v1/discovery-blocklist
+ * Block a device fingerprint from being added by discovery
+ */
+router.post('/v1/discovery-blocklist', requireRole('operator'), async (req: Request, res: Response, next: NextFunction) => {
+	try {
+		const { fingerprint, protocol, name } = req.body ?? {};
+		if (!fingerprint || !protocol || !name) {
+			return res.status(400).json({ error: 'fingerprint, protocol and name are required' });
+		}
+		const { DiscoveryBlocklistModel } = await import('../db/models/discovery-blocklist.model.js');
+		const blocked = DiscoveryBlocklistModel.add({ fingerprint, protocol, name });
+		return res.status(201).json({ blocked });
+	} catch (error) {
+		next(error);
+	}
+});
+
+/**
+ * DELETE /v1/discovery-blocklist/:fingerprint
+ * Unblock a device fingerprint
+ */
+router.delete('/v1/discovery-blocklist/:fingerprint', requireRole('operator'), async (req: Request, res: Response, next: NextFunction) => {
+	try {
+		const { DiscoveryBlocklistModel } = await import('../db/models/discovery-blocklist.model.js');
+		const removed = DiscoveryBlocklistModel.remove(req.params.fingerprint);
+		if (!removed) return res.status(404).json({ error: 'Fingerprint not found in blocklist' });
+		return res.status(204).send();
+	} catch (error) {
+		next(error);
+	}
+});
+
+/**
  * GET /v1/assets
  * List all assets (with their metric bindings)
  */

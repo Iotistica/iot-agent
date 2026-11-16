@@ -464,7 +464,16 @@ export interface DiscoveredDevice {
   confidence: 'low' | 'medium' | 'high'
   discoveredAt: string
   validated: boolean
+  blocked?: boolean
   metadata?: Record<string, unknown>
+}
+
+export interface BlockedDevice {
+  id: number
+  fingerprint: string
+  protocol: string
+  name: string
+  created_at: string
 }
 
 // ── Agent Settings ────────────────────────────────────────────────────────────
