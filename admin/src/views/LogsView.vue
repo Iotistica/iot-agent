@@ -67,37 +67,10 @@ const statusText = computed(() => {
   return `Showing ${logs.value.length} entries`
 })
 
-function fmtBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`
-  const kb = bytes / 1024
-  if (kb < 1024) return `${kb.toFixed(1)} KB`
-  return `${(kb / 1024).toFixed(1)} MB`
-}
-
-function getPublishDetails(log: LogMessage): {
-  protocol: string;
-  bytes?: number;
-  destinations?: string[];
-  buffered?: string[];
-  destination?: string;
-  saved?: string;
-  source?: string;
-} | null {
-  const ctx = log.context
-  if (!ctx || typeof ctx.protocol !== 'string') return null
-
-  const destinations = Array.isArray(ctx.destinations) ? ctx.destinations as string[] : undefined
-  const destination = !destinations && typeof ctx.destination === 'string' ? ctx.destination as string : undefined
-
-  return {
-    protocol: ctx.protocol as string,
-    bytes: typeof ctx.batchBytes === 'number' ? ctx.batchBytes : undefined,
-    destinations,
-    destination,
-    buffered: Array.isArray(ctx.buffered) ? ctx.buffered as string[] : undefined,
-    saved: typeof ctx.saved === 'string' ? ctx.saved as string : undefined,
-    source: typeof ctx.source === 'string' ? ctx.source as string : undefined,
-  }
+function fmtContext(ctx: Record<string, unknown>): string {
+  const { component: _, ...rest } = ctx
+  if (!Object.keys(rest).length) return ''
+  return JSON.stringify(rest)
 }
 
 function clearFilters() {
@@ -241,20 +214,8 @@ onUnmounted(() => { if (refreshTimer) clearInterval(refreshTimer) })
 
         <!-- Message -->
         <div style="min-width: 0">
-          <template v-if="getPublishDetails(log)">
-            <a-tag color="blue" style="margin: 0 4px 0 0; font-size: 10px; line-height: 16px; padding: 0 4px">{{ getPublishDetails(log)!.protocol }}</a-tag>
-            <template v-if="getPublishDetails(log)!.destinations?.length">
-              <span style="color: #8b949e">→ {{ getPublishDetails(log)!.destinations!.join(', ') }}</span>
-            </template>
-            <template v-else-if="getPublishDetails(log)!.destination">
-              <span style="color: #8b949e">→ {{ getPublishDetails(log)!.destination }}</span>
-            </template>
-            <span v-if="getPublishDetails(log)!.bytes" style="color: #6e7681; margin-left: 8px; font-size: 11px">{{ fmtBytes(getPublishDetails(log)!.bytes!) }}</span>
-            <span v-if="getPublishDetails(log)!.buffered?.length" style="color: #d29922; margin-left: 8px; font-size: 11px">buffered: {{ getPublishDetails(log)!.buffered!.join(', ') }}</span>
-          </template>
-          <span v-else :style="{ color: LEVEL_TEXT_COLOR[log.level] || '#e6edf3', wordBreak: 'break-all' }">
-            {{ log.message }}
-          </span>
+          <span :style="{ color: LEVEL_TEXT_COLOR[log.level] || '#e6edf3', wordBreak: 'break-all' }">{{ log.message }}</span>
+          <span v-if="log.context && Object.keys(log.context).length" style="color: #6e7681; margin-left: 6px; font-size: 11px">{{ fmtContext(log.context) }}</span>
         </div>
       </div>
     </div>
