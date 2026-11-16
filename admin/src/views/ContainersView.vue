@@ -360,6 +360,7 @@ function toggleApp(appId: number) {
 function handleServiceMenu(key: string, app: ContainerApp, svc: ContainerService) {
   if (key === 'details') openServiceDetails(app, svc)
   if (key === 'edit') openEditService(app, svc)
+  if (key === 'clone') cloneService(app, svc)
   if (key === 'update-image') approveImageUpdate(app, svc)
   if (key === 'restart') void doAction(app, svc, 'restart')
   if (key === 'delete') confirmRemoveService(app, svc)
@@ -597,6 +598,38 @@ function openEditService(app: ContainerApp, svc: ContainerService) {
     healthcheckRetries: probe?.failureThreshold ?? 3,
   }
   editSvcDrawerOpen.value = true
+}
+
+function cloneService(app: ContainerApp, svc: ContainerService) {
+  addSvcTargetApp.value = app
+  addSvcSelectedImage.value = '__clone__'
+  const c = svc.config
+  const probe = c.livenessProbe
+  addSvcForm.value = {
+    serviceName: `${svc.serviceName}-copy`,
+    image: svc.imageName,
+    ports: portsToRows(c.ports),
+    envRows: envToRows(c.environment),
+    volumes: formatLines(c.volumes),
+    restart: c.restart ?? '',
+    networkMode: c.networkMode ?? 'bridge',
+    command: (c.command ?? []).join(' '),
+    entrypoint: (c.entrypoint ?? []).join(' '),
+    user: c.user ?? '',
+    cpuLimit: c.resources?.limits?.cpu ?? '',
+    memoryLimit: c.resources?.limits?.memory ?? '',
+    enableSocketDestination: c.enableSocketDestination ?? false,
+    readonlyRootfs: c.readonlyRootfs ?? false,
+    healthcheckType: probe?.type ?? 'none',
+    healthcheckPath: probe?.path ?? '',
+    healthcheckPort: probe?.port,
+    healthcheckCommand: (probe?.command ?? []).join(' '),
+    healthcheckInterval: probe?.periodSeconds ?? 30,
+    healthcheckTimeout: probe?.timeoutSeconds ?? 5,
+    healthcheckRetries: probe?.failureThreshold ?? 3,
+  }
+  addSvcDrawerOpen.value = true
+  if (marketplaceImages.value.length === 0) loadMarketplaceImages()
 }
 
 async function submitEditService() {
@@ -1445,6 +1478,7 @@ async function deploy() {
                   <a-menu @click="handleServiceMenuClick($event, fullApp(app), svc)">
                     <a-menu-item key="details"><EyeOutlined /> View details</a-menu-item>
                     <a-menu-item key="edit" :disabled="isServiceBusy(app.appId, svc.serviceName)"><EditOutlined /> Edit configuration</a-menu-item>
+                    <a-menu-item key="clone"><CopyOutlined /> Clone service</a-menu-item>
                     <a-menu-item v-if="getImageUpdate(app.appId, svc.serviceName)" key="update-image" :disabled="imageUpdateInFlight === imageUpdateKey(app.appId, svc.serviceName)"><CloudUploadOutlined /> Update image</a-menu-item>
                     <a-menu-divider />
                     <a-menu-item key="delete" danger :disabled="isServiceBusy(app.appId, svc.serviceName)"><DeleteOutlined /> Delete service</a-menu-item>
@@ -1480,7 +1514,9 @@ async function deploy() {
     >
       <a-form layout="vertical">
         <a-form-item label="Docker image" required>
+          <a-input v-if="addSvcSelectedImage === '__clone__'" v-model:value="addSvcForm.image" placeholder="e.g. iotistic/sim-mqtt:latest" style="font-family: monospace; font-size: 12px" />
           <a-select
+            v-else
             v-model:value="addSvcSelectedImage"
             show-search
             :filter-option="filterImageOption"
