@@ -36,7 +36,6 @@ const protocolFilter = ref<string | undefined>(undefined)
 const sourceFilter = ref<string | undefined>(undefined)
 const qualityFilter = ref<string | undefined>(undefined)
 const identityFilter = ref<string | undefined>(undefined)
-const showPointUuid = ref(false)
 const configuredRevision = ref(0)
 const configuredCount = ref({ count: 0, total: 0, loading: true, error: '' })
 const configuredCountLabel = computed(() => metadataError.value || configuredCount.value.error ? '!'
@@ -452,7 +451,6 @@ const columns = computed<TableColumnType<PointRow>[]>(() => {
     { title: 'Destination', dataIndex: 'destinationName', key: 'destinationName', width: 150, ellipsis: true },
     { title: '', key: 'action', width: 125 },
   )
-  if (showPointUuid.value) cols.splice(4, 0, { title: 'Point UUID', key: 'pointUuid', width: 260, ellipsis: true })
   return cols
 })
 const viewColumns: TableColumnType<SavedView>[] = [
@@ -596,7 +594,6 @@ onUnmounted(() => { if (timer) clearInterval(timer); clearTimeout(persistFavTime
             <a-select-option value="STALE">No update in 60s</a-select-option>
           </a-select>
           <a-button data-testid="data-clear-filters" @click="resetFilters">Clear</a-button>
-          <a-checkbox v-if="activeTab !== 'configured'" v-model:checked="showPointUuid">Point UUID</a-checkbox>
           <div class="filters-actions">
             <a-button v-if="activeTab !== 'configured'" data-testid="data-pause" @click="paused = !paused">
               <PauseOutlined v-if="!paused" />
@@ -681,8 +678,7 @@ onUnmounted(() => { if (timer) clearInterval(timer); clearTimeout(persistFavTime
             <template v-if="column.key === 'protocol'"><a-tag :color="protocolColor(record.protocol)">{{ protocolLabel(record.protocol) }}</a-tag></template>
             <template v-else-if="column.key === 'source'">{{ sourceName(record) }}</template>
             <template v-else-if="column.key === 'device'">{{ deviceName(record) }}</template>
-            <template v-else-if="column.key === 'point'"><div class="point-primary" data-testid="point-name" :title="pointName(record)">{{ pointName(record) }}</div><div v-if="record.normalizedName && originalName(record) !== pointName(record)" class="point-secondary" :title="originalName(record)">Original: {{ originalName(record) }}</div></template>
-            <template v-else-if="column.key === 'pointUuid'"><span :title="record.pointUuid || record.provisionalPointId || 'No durable UUID reported'">{{ record.pointUuid || (record.provisionalPointId ? 'Provisional' : 'Not assigned') }}</span></template>
+            <template v-else-if="column.key === 'point'"><div class="point-primary" data-testid="point-name" :title="pointName(record)">{{ pointName(record) }}</div><div v-if="record.protocol === 'mqtt' && record.normalizedName && originalName(record) !== pointName(record)" class="point-secondary" :title="originalName(record)">Original: {{ originalName(record) }}</div></template>
             <template v-else-if="column.key === 'value'"><a-tag v-if="record.quality === 'BAD' && record.value == null" color="red">No Value</a-tag><span v-else>{{ valueText(record.value) }}</span></template>
             <template v-else-if="column.key === 'unit'">{{ record.unit || '—' }}</template>
             <template v-else-if="column.key === 'quality'"><a-tag v-if="record.quality === 'BAD'" color="red">BAD</a-tag><a-tag v-else-if="isStale(record.timestamp)" color="orange">STALE</a-tag><a-tag v-else color="green">{{ record.quality || 'CURRENT' }}</a-tag></template>
