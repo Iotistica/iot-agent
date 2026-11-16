@@ -38,9 +38,9 @@ const qualityFilter = ref<string | undefined>(undefined)
 const identityFilter = ref<string | undefined>(undefined)
 const configuredRevision = ref(0)
 const configuredCount = ref({ count: 0, total: 0, loading: true, error: '' })
-const configuredCountLabel = computed(() => metadataError.value || configuredCount.value.error ? '!'
+const configuredCountLabel = computed(() => (!sourceMetadataReady.value && metadataError.value) || configuredCount.value.error ? '!'
   : !sourceMetadataReady.value || configuredCount.value.loading ? '…' : configuredCount.value.count)
-const configuredTotalLabel = computed(() => metadataError.value || configuredCount.value.error ? '!'
+const configuredTotalLabel = computed(() => (!sourceMetadataReady.value && metadataError.value) || configuredCount.value.error ? '!'
   : !sourceMetadataReady.value || configuredCount.value.loading ? '…' : configuredCount.value.total)
 const selected = ref<PointRow | null>(null)
 const drawerOpen = ref(false)
@@ -487,6 +487,7 @@ async function loadSourceMetadata() {
     metadataError.value = ''
   } catch {
     metadataError.value = 'Unable to refresh source and device names. Showing the last available names.'
+    nextMetadataRefresh = Date.now() + 5000
   }
 }
 async function poll() {
