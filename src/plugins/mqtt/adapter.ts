@@ -1279,7 +1279,6 @@ export class MqttAdapter extends BaseProtocolAdapter {
 			quality: retain ? "UNCERTAIN" : "GOOD",
 			...(retain && { qualityCode: "RETAINED_MESSAGE" }),
 			protocol: 'mqtt',
-			normalizationDeviceName: device.displayName || device.name,
 		};
 	}
 

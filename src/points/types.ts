@@ -80,4 +80,4 @@ export interface PointIdentity {
 // computeNew() and normalize-point-name.ts's stripDeviceNamePrefix(). Phase 1
 // never auto-regenerates already-locked mappings computed under v1 — this
 // only affects newly-observed points (or a cleared point_name_mappings table).
-export const CURRENT_POINT_NAME_RULES_VERSION = 'pn-rules-v4';
+export const CURRENT_POINT_NAME_RULES_VERSION = 'pn-rules-v5';

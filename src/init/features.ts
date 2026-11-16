@@ -438,12 +438,11 @@ export class FeatureInitializer {
 			await this.features.devicePublish.start();
 			setDevicePublish(this.features.devicePublish);
 
-			logger.debugSync('Device Publish Feature initialized', {
+			logger.infoSync('Device Publish Feature initialized', {
 				component: LogComponents.agent,
 				pipeCount: devices.length,
 				enabledProtocols: Array.from(enabledDevices),
-				pipes: devices.map(s => s.addr),
-				mqttTopicPattern: MQTT_TOPIC_PATTERNS.tenantScopedEndpoints
+				pipes: devices.map(s => `${s.name} → ${s.addr}`),
 			});
 		} catch (error) {
 			logger.errorSync('Failed to initialize Device Publish Feature', error as Error, {

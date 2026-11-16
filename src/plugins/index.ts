@@ -172,7 +172,7 @@ export function resolveEnrichedDeviceName(
 	resolvedDisplayName: string | undefined,
 	sourceDeviceUuid: string | undefined,
 	endpointUuidByName: Map<string, string>,
-): { deviceName: string; endpoint_uuid?: string; device_uuid: string } | undefined {
+): { deviceName: string; displayBase: string; endpoint_uuid?: string; device_uuid: string } | undefined {
 	const endpointUuid = endpointUuidByName.get(deviceName);
 
 	// endpointUuidByName is keyed by the shared connection's own name (e.g.
@@ -224,7 +224,7 @@ export function resolveEnrichedDeviceName(
 	const finalDeviceName =
 		uuidSuffix.length > 0 ? `${displayBase}-${uuidSuffix}` : displayBase;
 
-	return { deviceName: finalDeviceName, endpoint_uuid: endpointUuid, device_uuid };
+	return { deviceName: finalDeviceName, displayBase, endpoint_uuid: endpointUuid, device_uuid };
 }
 
 export class AdapterManager extends EventEmitter {
@@ -255,6 +255,7 @@ export class AdapterManager extends EventEmitter {
 	private readonly mqttIdentityStates = new WeakMap<MqttAdapter, Map<string, MqttIdentityState>>();
 	private readonly mqttIdentityPending = new WeakMap<MqttAdapter, Set<string>>();
 	private readonly LAST_SEEN_THROTTLE_MS = 5000;
+	private normNameLoggedSources = new Set<string>();
 	private config: AdapterConfig;
 	private deviceUuid: string;
 	private running = false;
@@ -289,6 +290,16 @@ export class AdapterManager extends EventEmitter {
 		const opcuaStates = new Map<string, OpcuaIdentityState | undefined>();
 		const mqttSnapshot: { sources?: MqttSourceRows; value?: string } = {};
 		return dataPoints.map((point) => {
+			// Source name for normalization: adapter-provided override first,
+			// otherwise the raw endpoint/connection name every adapter sets.
+			const sourceName = point.normalizationDeviceName || point.deviceName;
+
+			const normLogKey = `${point.protocol}:${sourceName}`;
+			if (!this.normNameLoggedSources.has(normLogKey)) {
+				this.normNameLoggedSources.add(normLogKey);
+				this.logger.info(`[norm-source] protocol=${point.protocol} source=${sourceName} metric=${point.metric} fromAdapter=${!!point.normalizationDeviceName} fromDeviceName=${!point.normalizationDeviceName}`);
+			}
+
 			const resolved = resolveEnrichedDeviceName(
 				point.deviceName,
 				point.resolvedDisplayName,
@@ -297,11 +308,13 @@ export class AdapterManager extends EventEmitter {
 			);
 			if (!resolved) {
 				if ((point.protocol === "opcua" || point.protocol === "mqtt") && point.pointUuid) {
-					const unverified = { ...point };
+					const unverified = { ...point, normalizationDeviceName: sourceName };
 					delete unverified.pointUuid;
 					return unverified;
 				}
-				return point;
+				return sourceName !== point.normalizationDeviceName
+					? { ...point, normalizationDeviceName: sourceName }
+					: point;
 			}
 
 			let pointUuid: string | undefined;
@@ -327,6 +340,7 @@ export class AdapterManager extends EventEmitter {
 			const clone = {
 				...point,
 				deviceName: resolved.deviceName,
+				normalizationDeviceName: sourceName || resolved.displayBase,
 				sourceEndpointName: point.deviceName,
 				endpoint_uuid: resolved.endpoint_uuid,
 				device_uuid: resolved.device_uuid,

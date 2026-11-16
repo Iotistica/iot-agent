@@ -25,6 +25,7 @@ export function createPointNameNormalizationInterceptor(opts: { logger?: Logger;
 	const catalog = getPointNameCatalog();
 	catalog.init(opts.logger);
 	let enabled = opts.enabled ?? true;
+	const seenEndpoints = new Set<string>();
 
 	const flushTimer = setInterval(() => catalog.flush(), FLUSH_INTERVAL_MS);
 	flushTimer.unref?.();
@@ -40,6 +41,11 @@ export function createPointNameNormalizationInterceptor(opts: { logger?: Logger;
 		// Disabled: pass every reading through raw and untouched — no identity
 		// resolution, no pointIdentity attached.
 		if (!enabled) return messages;
+
+		if (!seenEndpoints.has(endpointName)) {
+			seenEndpoints.add(endpointName);
+			opts.logger?.info(`[point-norm] first batch from endpoint=${endpointName} messages=${messages.length}`);
+		}
 
 		for (const message of messages) {
 			try {
