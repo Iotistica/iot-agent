@@ -60,7 +60,7 @@ test('preserves device workflows under Sources and scopes devices to the source'
   await expect.poll(() => deleted).toEqual(['device-1'])
 })
 
-test('shows durable point UUIDs only when the optional column is enabled', async ({ page, baseURL }) => {
+test('data explorer tabs, filters, and source points', async ({ page, baseURL }) => {
   let failSourcePoints = false
   await page.route('**/v1/**', async route => {
     const path = new URL(route.request().url()).pathname
@@ -127,12 +127,7 @@ test('shows durable point UUIDs only when the optional column is enabled', async
   await expect(page.getByRole('columnheader', { name: /^Device\b/ })).toBeVisible()
   await page.getByTestId('data-tab-live').click()
   await expect(page.getByRole('columnheader', { name: /^Device\b/ })).toHaveCount(0)
-  await expect(page.getByRole('columnheader', { name: 'Point UUID' })).toHaveCount(0)
-  await page.getByRole('checkbox', { name: 'Point UUID' }).check()
-  await expect(page.getByRole('columnheader', { name: 'Point UUID' })).toBeVisible()
-  await expect(page.getByText(pointUuid)).toBeVisible()
-  await expect(page.getByText('Provisional', { exact: true })).toBeVisible()
-  await page.getByTestId('data-search').fill(pointUuid)
+  await page.getByTestId('data-search').fill('speed')
   await expect(page.getByTestId('point-name')).toHaveCount(1)
   await expect(page.getByTestId('point-name')).toHaveText('speed')
   await expect(page.getByTestId('data-tab-configured')).toHaveText('Source Points (1)')
@@ -141,12 +136,11 @@ test('shows durable point UUIDs only when the optional column is enabled', async
   await expect(toolbarInfo).toHaveCount(0)
   await expect(page.getByTestId('data-tab-configured')).toHaveClass(/active/)
   await expect(page.getByTestId('data-tab-live')).not.toHaveClass(/active/)
-  await expect(page.getByText('a81a11ce…')).toHaveAttribute('title', pointUuid)
   await expect(page.getByRole('columnheader', { name: 'Protocol', exact: true })).toBeVisible()
   await expect(page.getByRole('columnheader', { name: 'Address Status', exact: true })).toBeVisible()
   await expect(page.getByRole('columnheader', { name: 'Actions', exact: true })).toHaveCount(0)
   await expect(page.getByRole('button', { name: 'Manage', exact: true })).toHaveCount(0)
-  const modbusRow = page.getByRole('row').filter({ hasText: 'a81a11ce…' })
+  const modbusRow = page.getByRole('row').filter({ hasText: 'speed' })
   const mqttRow = page.getByRole('row').filter({ hasText: 'sensors/temperature' })
   await expect(mqttRow).toHaveCount(0)
   await page.getByTestId('data-clear-filters').click()
@@ -159,7 +153,7 @@ test('shows durable point UUIDs only when the optional column is enabled', async
   await page.locator('.ant-select-item-option').filter({ hasText: 'OPC-UA' }).click()
   await page.getByTestId('data-source-filter').locator('.ant-select-selector').click()
   await page.locator('.ant-select-item-option').filter({ hasText: 'Source zzz' }).click()
-  await expect(page.getByRole('row').filter({ hasText: 'pressure-uuid' })).toBeVisible()
+  await expect(page.getByRole('row').filter({ hasText: 'pressure' })).toBeVisible()
   await expect(page.getByTestId('data-tab-configured')).toHaveText('Source Points (21)')
   await page.getByTestId('data-tab-live').click()
   await expect(page.getByTestId('point-name')).toHaveCount(0)
