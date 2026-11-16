@@ -236,10 +236,6 @@ function close() {
         </a-select>
       </a-form-item>
 
-      <a-form-item label="Enabled" name="enabled">
-        <a-switch v-model:checked="form.enabled" />
-      </a-form-item>
-
       <!-- ── Per-protocol scan targets ──────────────────────────────── -->
       <template v-if="hasParamFields">
         <a-divider orientation="left" style="font-size: 13px; color: var(--text-tertiary)">Scan targets (optional — uses global config if empty)</a-divider>
