@@ -25,7 +25,7 @@ test('falls back to the metric when no normalized name is available', () => {
   )
 })
 
-test('displays the raw MQTT point name instead of its device-prefixed normalized name', () => {
+test('prefers normalizedName for all protocols including MQTT', () => {
   assert.equal(
     dataExplorerPointName({
       protocol: 'mqtt',
@@ -33,7 +33,7 @@ test('displays the raw MQTT point name instead of its device-prefixed normalized
       normalizedName: 'mqtt_factory_sim_004_status',
       rawPointName: 'status',
     }),
-    'status',
+    'mqtt_factory_sim_004_status',
   )
   assert.equal(
     dataExplorerPointName({
@@ -43,6 +43,14 @@ test('displays the raw MQTT point name instead of its device-prefixed normalized
       rawPointName: 'temperature',
     }),
     'boiler_temperature',
+  )
+  assert.equal(
+    dataExplorerPointName({
+      protocol: 'mqtt',
+      metric: 'humidity',
+      rawPointName: 'humidity',
+    }),
+    'humidity',
   )
 })
 

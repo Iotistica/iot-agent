@@ -32,7 +32,6 @@ export interface DataExplorerPointRow extends DataExplorerPointIdentity {
 
 export function dataExplorerPointName(point: Pick<DataExplorerPointRow, 'protocol' | 'metric' | 'normalizedName' | 'rawPointName' | 'rawObjectName'>): string {
   const rawName = point.rawPointName || point.rawObjectName
-  if (point.protocol === 'mqtt' && rawName) return rawName
   return point.normalizedName || rawName || point.metric
 }
 
