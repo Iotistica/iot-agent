@@ -65,7 +65,6 @@ const columns = computed<TableColumnType<PointRow>[]>(() => [
   { title: 'Address Status', key: 'canonical', width: 130 },
   { title: 'Identity', key: 'identity', width: 120 },
   { title: 'Point UUID', key: 'uuid', width: 150 },
-  { title: 'Device', key: 'device', width: 110 },
 ])
 
 async function copyPointUuid(uuid: string) {
@@ -144,7 +143,6 @@ onBeforeUnmount(() => { generation++ })
           </template>
           <span v-else>—</span>
         </template>
-        <template v-else-if="column.key === 'device'"><span :title="record.deviceUuid">{{ record.deviceName || '—' }}</span></template>
       </template>
       <template #emptyText>No configured points found.</template>
     </a-table>

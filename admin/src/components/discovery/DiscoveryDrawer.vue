@@ -309,7 +309,7 @@ const connParams = computed((): Record<string, any> | null =>
   selectedRule.value?.params_json ?? null,
 )
 
-const pendingDevices = computed(() => results.value.filter((d) => !isAlreadyAdded(d)))
+const pendingDevices = computed(() => results.value.filter((d) => !isAlreadyAdded(d) && !isBlocked(d)))
 
 const ADD_ALL_BATCH_SIZE = 20
 
