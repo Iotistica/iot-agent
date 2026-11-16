@@ -241,18 +241,19 @@ onUnmounted(() => { if (refreshTimer) clearInterval(refreshTimer) })
 
         <!-- Message -->
         <div style="min-width: 0">
-          <span :style="{ color: LEVEL_TEXT_COLOR[log.level] || '#e6edf3', wordBreak: 'break-all' }">
+          <template v-if="getPublishDetails(log)">
+            <a-tag color="blue" style="margin: 0 4px 0 0; font-size: 10px; line-height: 16px; padding: 0 4px">{{ getPublishDetails(log)!.protocol }}</a-tag>
+            <span :style="{ color: LEVEL_TEXT_COLOR[log.level] || '#e6edf3' }">{{ getPublishDetails(log)!.source || log.message }}</span>
+            <span v-if="getPublishDetails(log)!.destinations?.length" style="color: #8b949e; margin: 0 4px"> → </span>
+            <span v-if="getPublishDetails(log)!.destinations?.length" style="color: #8b949e">{{ getPublishDetails(log)!.destinations!.join(', ') }}</span>
+            <span v-else-if="getPublishDetails(log)!.destination" style="color: #8b949e; margin: 0 4px"> → </span>
+            <span v-else-if="getPublishDetails(log)!.destination" style="color: #8b949e">{{ getPublishDetails(log)!.destination }}</span>
+            <span v-if="getPublishDetails(log)!.bytes" style="color: #6e7681; margin-left: 8px; font-size: 11px">{{ fmtBytes(getPublishDetails(log)!.bytes!) }}</span>
+            <span v-if="getPublishDetails(log)!.buffered?.length" style="color: #d29922; margin-left: 8px; font-size: 11px">buffered: {{ getPublishDetails(log)!.buffered!.join(', ') }}</span>
+          </template>
+          <span v-else :style="{ color: LEVEL_TEXT_COLOR[log.level] || '#e6edf3', wordBreak: 'break-all' }">
             {{ log.message }}
           </span>
-          <div v-if="getPublishDetails(log)" style="color: #6e7681; font-size: 11px; margin-top: 1px">
-            <a-tag color="blue" style="margin: 0 4px 0 0; font-size: 10px; line-height: 16px; padding: 0 4px">{{ getPublishDetails(log)!.protocol }}</a-tag>
-            <span v-if="getPublishDetails(log)!.source" style="margin-right: 6px; color: #8b949e">{{ getPublishDetails(log)!.source }}</span>
-            <span v-if="getPublishDetails(log)!.bytes" style="margin-right: 6px">{{ fmtBytes(getPublishDetails(log)!.bytes!) }}</span>
-            <span v-if="getPublishDetails(log)!.saved" style="margin-right: 6px; color: #3fb950">({{ getPublishDetails(log)!.saved }} saved)</span>
-            <span v-if="getPublishDetails(log)!.destinations?.length" style="color: #484f58">→ {{ getPublishDetails(log)!.destinations!.join(', ') }}</span>
-            <span v-else-if="getPublishDetails(log)!.destination" style="color: #484f58">→ {{ getPublishDetails(log)!.destination }}</span>
-            <span v-if="getPublishDetails(log)!.buffered?.length" style="color: #d29922; margin-left: 6px">buffered: {{ getPublishDetails(log)!.buffered!.join(', ') }}</span>
-          </div>
         </div>
       </div>
     </div>
