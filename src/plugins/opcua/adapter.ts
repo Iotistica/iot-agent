@@ -729,7 +729,7 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 			resultOffset += 4;
 
 			// Check if reads were successful
-			if (!valueResult || !valueResult.statusCode.isGood()) {
+			if (!valueResult?.statusCode.isGood()) {
 				invalid.push(dp.nodeId);
 				if (valueResult) {
 					this.logger.warn(`NodeID validation failed: ${dp.nodeId} (${dp.name}) status=${valueResult.statusCode.name}`, {
