@@ -1222,6 +1222,7 @@ DEVICE_API_PORT=${DEVICE_API_PORT}
 DEVICE_UUID=${DEVICE_UUID}
 NODE_ENV=production
 LOG_LEVEL=debug
+LOG_FILE_PERSISTENCE=true
 API_SECURITY_MODE=${API_SECURITY_MODE_VALUE}
 DATA_DIR=/var/lib/iotistic/agent
 STATE_FILE=/var/lib/iotistic/agent/target-state.json

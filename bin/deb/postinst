@@ -54,6 +54,7 @@ PROVISIONING_KEY=
 
 # Logging
 LOG_LEVEL=debug
+LOG_FILE_PERSISTENCE=true
 DATA_DIR=/var/lib/iotistic/agent
 LOG_DIR=/var/log/iotistic
 

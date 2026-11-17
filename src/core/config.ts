@@ -596,7 +596,7 @@ export class ConfigManager extends EventEmitter {
 				cloudLogging?.maxLogFileSize ??
 				cloudSettings?.maxLogFileSize ??
 				5242880,
-			enableFilePersistence: cloudLogging?.enableFilePersistence ?? false,
+			enableFilePersistence: cloudLogging?.enableFilePersistence ?? process.env.LOG_FILE_PERSISTENCE === 'true',
 			enableCompression: cloudLogging?.enableCompression ?? true,
 			logBatchSize: cloudLogging?.logBatchSize ?? 500,
 			logFlushIntervalMs: cloudLogging?.logFlushIntervalMs ?? 30000,
