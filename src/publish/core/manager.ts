@@ -704,12 +704,14 @@ export class PublishManager extends EventEmitter {
 		if (this.needStop) return;
 		if (this.batcher.messageCount === 0) return;
 		if (this.publishing) {
+			this.logger?.debug('Publish batch skipped: previous cycle still running', {
+				pendingMessages: this.batcher.messageCount,
+				elapsedMs: this.publishingStartedAt > 0 ? Date.now() - this.publishingStartedAt : 0,
+			});
 			if (this.publishingStartedAt > 0 && Date.now() - this.publishingStartedAt > 60_000) {
-				this.logger?.warn(`Publish cycle stuck for >${Math.round((Date.now() - this.publishingStartedAt) / 1000)}s, force-resetting`);
-				this.publishing = false;
-			} else {
-				return;
+				this.logger?.warn(`Publish cycle exceeded 60s (${Math.round((Date.now() - this.publishingStartedAt) / 1000)}s elapsed), waiting for completion`);
 			}
+			return;
 		}
 
 		if (this.bindings.length === 0) {
@@ -728,9 +730,10 @@ export class PublishManager extends EventEmitter {
 			} catch {
 				topic = `local/${this.deviceUuid}/${this.config.mqttTopic || 'data'}`;
 			}
-			const messageCount = this.batcher.messageCount;
-			const batchBytes = this.batcher.totalBytes;
-			let messages = [...this.batcher.messages] as ProtocolMessage[];
+			const batch = this.batcher.take();
+			const messageCount = batch.messageCount;
+			const batchBytes = batch.totalBytes;
+			let messages = batch.messages as ProtocolMessage[];
 
 			if (this.liveDataInterceptor) {
 				try {
@@ -753,7 +756,7 @@ export class PublishManager extends EventEmitter {
 
 			const driftMessages =this.projectMessagesForSchemaDrift(messages);
 
-			this.driftAccumulator.push(...driftMessages);
+			for (const msg of driftMessages) this.driftAccumulator.push(msg);
 
 			if (this.driftAccumulator.length > DRIFT_ACCUMULATOR_MAX_MESSAGES) {
 				this.driftAccumulator = this.driftAccumulator.slice(-DRIFT_ACCUMULATOR_MAX_MESSAGES);
@@ -783,6 +786,10 @@ export class PublishManager extends EventEmitter {
 
 			await this.publishOnline(topic, data, msgId, baselineSize, messageCount, batchBytes, enriched, name);
 		} finally {
+			const durationMs = Date.now() - this.publishingStartedAt;
+			if (durationMs > 5_000) {
+				this.logger?.warn(`Publish cycle took ${durationMs}ms`, { source: this.config.name || 'unknown' });
+			}
 			this.publishing = false;
 			this.publishingStartedAt = 0;
 		}
@@ -1097,7 +1104,7 @@ export class PublishManager extends EventEmitter {
 		const tagRecords: ProtocolMessage[] = [];
 		for (const message of messages) {
 			if (Array.isArray(message.readings)) {
-				tagRecords.push(...message.readings);
+				for (const reading of message.readings) tagRecords.push(reading);
 				continue;
 			}
 
@@ -1561,7 +1568,6 @@ export class PublishManager extends EventEmitter {
 			if (this.needStop) {
 				const MessageBufferModel = await this.getMessageBufferModel();
 				MessageBufferModel.markRetryFailed(claimed.id, 'Publish interrupted during shutdown');
-				this.batcher.reset();
 				return;
 			}
 
@@ -1569,7 +1575,6 @@ export class PublishManager extends EventEmitter {
 			if (this.needStop) {
 				const MessageBufferModel = await this.getMessageBufferModel();
 				MessageBufferModel.markRetryFailed(claimed.id, 'Publish interrupted during shutdown');
-				this.batcher.reset();
 				return;
 			}
 
@@ -1598,7 +1603,6 @@ export class PublishManager extends EventEmitter {
 					...(cloudLinkMode && cloudLinkMode !== 'direct' ? { cloudLinkMode } : {}),
 				});
 			}
-			this.batcher.reset();
 		} catch (err) {
 			this.logger?.error('Publish batch failed', err, { source: endpointName, protocol: this.protocol, ...destinationContext });
 			await this.handlePublishFailure(endpointName, err, bufferedRecordId, publishConfirmed, topic, data, msgId, messageCount);
@@ -1617,7 +1621,6 @@ export class PublishManager extends EventEmitter {
 	): Promise<void> {
 		try {
 			if (publishConfirmed) {
-				this.batcher.reset();
 				this.logger?.error('Durable buffer cleanup failed after publish', {
 					source: endpointName,
 					error: err instanceof Error ? err.message : String(err),
@@ -1631,7 +1634,6 @@ export class PublishManager extends EventEmitter {
 					bufferedRecordId,
 					err instanceof Error ? err.message : String(err),
 				);
-				this.batcher.reset();
 				this.logger?.warn('Queued failed publish for durable retry', { source: endpointName });
 				return;
 			}
@@ -1694,7 +1696,6 @@ export class PublishManager extends EventEmitter {
 		this.logger?.warn('Buffering messages (destination offline)', { source: name, messages: messageCount });
 		try {
 			await this.persistQueuedBatch(topic, data, msgId);
-			this.batcher.reset();
 		} catch (err) {
 			this.logger?.error('Buffer messages failed', err, { source: name, messages: messageCount });
 		}

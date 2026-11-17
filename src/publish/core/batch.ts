@@ -87,6 +87,14 @@ export class MessageBatcher extends EventEmitter {
 		this.parseFrames();
 	}
 
+	take(): { messages: any[]; totalBytes: number; messageCount: number } {
+		const snapshot = { messages: this._messages, totalBytes: this._totalBytes, messageCount: this._messages.length };
+		this._messages = [];
+		this._totalBytes = 0;
+		this._firstMessageTime = Date.now();
+		return snapshot;
+	}
+
 	reset(): void {
 		this._messages.length = 0;
 		this._totalBytes = 0;
