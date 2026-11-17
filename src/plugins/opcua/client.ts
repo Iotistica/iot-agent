@@ -48,6 +48,7 @@ export interface OPCUASession {
 	validatedNodes: Set<string>;
 	reconnecting: boolean;
 	reconnectTimer?: NodeJS.Timeout;
+	coalescingTimer?: NodeJS.Timeout;
 	currentRetryDelay: number;
 	consecutiveFailures: number;
 	clientAlarmList?: ClientAlarmList | null;
@@ -252,6 +253,10 @@ implements IProtocolClient<ReadValueIdOptions[], DataValue[]>
 		if (clearTimer && sessionWrapper.reconnectTimer) {
 			clearTimeout(sessionWrapper.reconnectTimer);
 			sessionWrapper.reconnectTimer = undefined;
+		}
+		if (sessionWrapper.coalescingTimer) {
+			clearInterval(sessionWrapper.coalescingTimer);
+			sessionWrapper.coalescingTimer = undefined;
 		}
 
 		try {

@@ -905,6 +905,88 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 
 		sessionWrapper.subscriptions = [];
 
+		// Coalescing buffer shared across all subscriptions for this device.
+		// Each 'changed' event writes a lightweight entry keyed by nodeId;
+		// a single timer flushes the buffer periodically, building DataPoints
+		// and running evidence/shadow in one batch. This reduces per-event
+		// work from ~80 lines (DataPoint construction + evidence + shadow +
+		// IPC emit) to a single Map.set(), preventing event-loop starvation
+		// on devices with thousands of monitored items.
+		const coalescingBuffer = new Map<string, {
+			dataValue: DataValue;
+			dp: OPCUADataPoint;
+			monitoredItem: unknown;
+			monitoredItemRef: unknown;
+			itemNodeId: any;
+		}>();
+		const coalesceMs = Math.max(connection.publishingInterval || 1000, 200);
+
+		const flushCoalescingBuffer = () => {
+			if (coalescingBuffer.size === 0) return;
+			const entries = Array.from(coalescingBuffer.values());
+			coalescingBuffer.clear();
+
+			const batch: DeviceDataPoint[] = [];
+			for (const entry of entries) {
+				const owningDevice = nodeIdToDevice.get(entry.dp.nodeId) ?? device;
+				const owningDeviceName = owningDevice.name;
+
+				const quality = this.determineQuality(entry.dataValue.statusCode);
+				const qualityCode = quality !== 'GOOD' ? this.extractQualityCode(entry.dataValue.statusCode) : undefined;
+
+				const normalizationDeviceName =
+					this.resolvedNodeDisplayNames.get(entry.dp.nodeId) ??
+					this.resolvedDeviceNames.get(owningDeviceName) ??
+					owningDeviceName;
+
+				const dataPoint: DeviceDataPoint = {
+					timestamp: new Date().toISOString(),
+					deviceName: owningDeviceName,
+					deviceId: this.buildStableNodeDeviceId(owningDevice, entry.dp),
+					metric: entry.dp.name,
+					value: entry.dataValue.value?.value ?? null,
+					unit: entry.dp.unit || '',
+					quality,
+					...(qualityCode && { qualityCode }),
+					protocol: 'opcua',
+					nodeType: 'metric',
+					normalizationDeviceName,
+					...(this.deviceDisplayNames.get(owningDeviceName)?.get(entry.dp.nodeId) && { deviceDisplayName: this.deviceDisplayNames.get(owningDeviceName)?.get(entry.dp.nodeId) }),
+					...(entry.dp.device_uuid && { device_uuid: entry.dp.device_uuid }),
+					...((this.resolvedNodeDisplayNames.has(entry.dp.nodeId) || this.resolvedDeviceNames.has(owningDeviceName)) && {
+						resolvedDisplayName: this.resolvedNodeDisplayNames.get(entry.dp.nodeId) ?? this.resolvedDeviceNames.get(owningDeviceName),
+					}),
+					...(entry.dp.browseName && { rawObjectName: entry.dp.browseName }),
+					...(entry.dp.writable && { writable: true }),
+				};
+
+				const operationNodeId = entry.dp.nodeId;
+				const matchesOperation = this.matchesOperationNodeId(entry.itemNodeId, operationNodeId);
+				const activeGroupKey = this.deviceGroupKey.get(owningDeviceName);
+				const activeGroup = activeGroupKey ? this.groups.get(activeGroupKey) : undefined;
+				if (activeGroup?.session === sessionWrapper && matchesOperation &&
+					entry.monitoredItem === entry.monitoredItemRef &&
+					sessionWrapper.session === session && !sessionWrapper.reconnecting &&
+					this.sessions.get(owningDeviceName) === sessionWrapper && owningDevice.dataPoints.includes(entry.dp)) {
+					this.recordReadingEvidence(dataPoint, owningDeviceName, operationNodeId, activeGroup);
+				}
+				if (this.shadow && matchesOperation &&
+					!ambiguousNodeIds.has(operationNodeId) && entry.monitoredItem === entry.monitoredItemRef &&
+					sessionWrapper.session === session && !sessionWrapper.reconnecting &&
+					this.sessions.get(owningDeviceName) === sessionWrapper &&
+					owningDevice.dataPoints.includes(entry.dp)) {
+					this.captureShadow(owningDevice, dataPoint, operationNodeId);
+				}
+
+				batch.push(dataPoint);
+			}
+			if (batch.length > 0) this.emit('data', batch);
+		};
+
+		const coalescingTimer = setInterval(flushCoalescingBuffer, coalesceMs);
+		coalescingTimer.unref();
+		sessionWrapper.coalescingTimer = coalescingTimer;
+
 		// Create subscriptions (one or more depending on node count)
 		for (let subIdx = 0; subIdx < subscriptionCount; subIdx++) {
 			const startIdx = subIdx * maxItemsPerSub;
@@ -922,7 +1004,7 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 			});
 
 			sessionWrapper.subscriptions.push(subscription);
-      
+
 			// Set legacy field for backwards compatibility (first subscription)
 			if (subIdx === 0) {
 				sessionWrapper.subscription = subscription;
@@ -937,14 +1019,7 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 
 			// Create every monitored item for this subscription's batch in ONE network
 			// round-trip via ClientMonitoredItemGroup, instead of one subscription.monitor()
-			// call per node. The previous per-item loop meant one createMonitoredItems
-			// request per node (e.g. 665 sequential round-trips for a 665-node device) —
-			// this had never actually run against a real device before useSubscription
-			// worked correctly, and turned out to stall the event loop badly once it did.
-			// See node-opcua-client's ClientMonitoredItemToolbox._toolbox_monitor: it
-			// builds one CreateMonitoredItemsRequest covering the whole array and maps
-			// response.results[i] back to monitoredItems[i] in order — per-item status
-			// codes are preserved exactly as before, just from one batched response.
+			// call per node.
 			const parameters = {
 				samplingInterval: connection.samplingInterval || 500,
 				discardOldest: true,
@@ -966,119 +1041,35 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 			} catch (error) {
 				this.logger.error(`Failed to create monitored item group for ${deviceName}: ${error}`, { deviceName, itemCount: batchDataPoints.length });
 				for (const dp of batchDataPoints) {
-					// TEMPORARY diagnostics — see diagnostics.ts.
 					this.diagnostics.recordMonitorAttempt(deviceName, dp.nodeId, false, error instanceof Error ? error.message : String(error));
 				}
 				continue;
 			}
 
-			// One handler for the whole batch — index maps back to batchDataPoints
-			// (ClientMonitoredItemGroup preserves the order itemsToMonitor was built in).
-			//
-			// A single OPC-UA PublishResponse can report many nodes changed at once —
-			// node-opcua delivers that as one 'changed' event per node, all firing
-			// synchronously back-to-back in the same tick. Emitting 'data' immediately
-			// per node (as this used to, matching the pre-batching monitor() code)
-			// meant up to one emit per node per publish cycle — hundreds/sec for a
-			// large device — each cascading into its own IPC socket send, DB write,
-			// etc. downstream. Buffer same-tick changes and flush once via
-			// setImmediate instead: real-time streaming is unaffected (flush happens
-			// as soon as the current synchronous burst of 'changed' events ends, not
-			// on a fixed delay), but downstream consumers get one batch instead of N
-			// individual events.
-			let pendingDataPoints: DeviceDataPoint[] = [];
-			const flushPendingDataPoints = () => {
-				if (pendingDataPoints.length === 0) return;
-				const batch = pendingDataPoints;
-				pendingDataPoints = [];
-				this.emit('data', batch);
-			};
-
+			// Lightweight handler: just write to the shared coalescing buffer.
+			// DataPoint construction, evidence, shadow, and emit all happen in
+			// the timer-based flushCoalescingBuffer() above.
 			group.on('changed', (_monitoredItem: unknown, dataValue: DataValue, index: number) => {
 				const dp = batchDataPoints[index];
 				if (!dp) {
 					this.logger.warn(`OPC UA subscription returned an unknown monitored-item index for ${deviceName}`);
 					return;
 				}
+				if (dp.nodeType !== 'metric') return;
 
-				// Resolve the REAL owning device for this node — when `device`
-				// is a pooled composite spanning multiple configured devices
-				// sharing one endpoint (see buildCompositeDevice(), GitHub
-				// issue #11), `deviceName`/`device` above are the composite's
-				// (primary member's), not necessarily this specific node's own
-				// device. nodeIdToDevice always has an entry for every node in
-				// this composite's dataPoints; falls back to the outer device
-				// for the ordinary (ungrouped, or group-of-one) case.
-				const owningDevice = nodeIdToDevice.get(dp.nodeId) ?? device;
-				const owningDeviceName = owningDevice.name;
-
-				// Hard gate: Never emit metadata nodes
-				if (dp.nodeType !== 'metric') {
-					this.logger.warn(`Blocked metadata node emission: ${dp.name}`, { deviceName: owningDeviceName });
-					return;
-				}
-
-				const quality = this.determineQuality(dataValue.statusCode);
-				const qualityCode = quality !== 'GOOD' ? this.extractQualityCode(dataValue.statusCode) : undefined;
-
-				const normalizationDeviceName =
-					this.resolvedNodeDisplayNames.get(dp.nodeId) ??
-					this.resolvedDeviceNames.get(owningDeviceName) ??
-					owningDeviceName;
-
-				const dataPoint: DeviceDataPoint = {
-					timestamp: new Date().toISOString(),
-					deviceName: owningDeviceName,
-					deviceId: this.buildStableNodeDeviceId(owningDevice, dp),
-					metric: dp.name,
-					value: dataValue.value?.value ?? null,
-					unit: dp.unit || '',
-					quality,
-					...(qualityCode && { qualityCode }),  // Only include if quality != GOOD
-					protocol: 'opcua',  // For enum namespacing
-					nodeType: 'metric', // Always 'metric' at this point (metadata filtered)
-					normalizationDeviceName,
-					...(this.deviceDisplayNames.get(owningDeviceName)?.get(dp.nodeId) && { deviceDisplayName: this.deviceDisplayNames.get(owningDeviceName)?.get(dp.nodeId) }),
-					...(dp.device_uuid && { device_uuid: dp.device_uuid }),
-					...((this.resolvedNodeDisplayNames.has(dp.nodeId) || this.resolvedDeviceNames.has(owningDeviceName)) && {
-						resolvedDisplayName: this.resolvedNodeDisplayNames.get(dp.nodeId) ?? this.resolvedDeviceNames.get(owningDeviceName),
-					}),
-					// dp.name is truncated to the pre-underscore prefix for use as the metric tag
-					// (see discovery.ts); dp.browseName (when discovery captured one) is the true
-					// server-reported name — surfaced for accurate display only, see types.ts.
-					...(dp.browseName && { rawObjectName: dp.browseName }),
-					...(dp.writable && { writable: true }),
-				};
-
-				const operationNodeId = dp.nodeId;
-				const matchesOperation = this.matchesOperationNodeId(itemsToMonitor[index]?.nodeId, operationNodeId);
-				const activeGroupKey = this.deviceGroupKey.get(owningDeviceName);
-				const activeGroup = activeGroupKey ? this.groups.get(activeGroupKey) : undefined;
-				if (activeGroup?.session === sessionWrapper && matchesOperation &&
-					_monitoredItem === group.monitoredItems[index] &&
-					sessionWrapper.session === session && !sessionWrapper.reconnecting &&
-					this.sessions.get(owningDeviceName) === sessionWrapper && owningDevice.dataPoints.includes(dp)) {
-					this.recordReadingEvidence(dataPoint, owningDeviceName, operationNodeId, activeGroup);
-				}
-				if (this.shadow && matchesOperation &&
-					!ambiguousNodeIds.has(operationNodeId) && _monitoredItem === group.monitoredItems[index] &&
-					sessionWrapper.session === session && !sessionWrapper.reconnecting &&
-					this.sessions.get(owningDeviceName) === sessionWrapper &&
-					owningDevice.dataPoints.includes(dp)) {
-					this.captureShadow(owningDevice, dataPoint, operationNodeId);
-				}
-				if (pendingDataPoints.length === 0) {
-					setImmediate(flushPendingDataPoints);
-				}
-				pendingDataPoints.push(dataPoint);
+				coalescingBuffer.set(dp.nodeId, {
+					dataValue,
+					dp,
+					monitoredItem: _monitoredItem,
+					monitoredItemRef: group.monitoredItems[index],
+					itemNodeId: itemsToMonitor[index]?.nodeId,
+				});
 			});
 
-			// Per-item creation result + per-item ongoing error handling — same
-			// granularity the previous one-monitor()-call-per-item loop had.
+			// Per-item creation result + per-item ongoing error handling
 			group.monitoredItems.forEach((monitoredItem, index) => {
 				const dp = batchDataPoints[index];
 
-				// TEMPORARY diagnostics — see diagnostics.ts.
 				this.diagnostics.recordMonitorAttempt(deviceName, dp.nodeId, true, monitoredItem.statusCode?.toString());
 
 				monitoredItem.on('err', (errorMessage: string) => {
@@ -1094,7 +1085,6 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 			// Handle subscription errors
 			subscription.on('terminated', () => {
 				this.logger.warn(`Subscription ${subIdx + 1} terminated for ${deviceName}`);
-				// TEMPORARY diagnostics — see diagnostics.ts.
 				this.diagnostics.recordSubscriptionTerminated(deviceName);
 			});
 
@@ -2010,7 +2000,11 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 			clearTimeout(sessionWrapper.reconnectTimer);
 			sessionWrapper.reconnectTimer = undefined;
 		}
-    
+		if (sessionWrapper.coalescingTimer) {
+			clearInterval(sessionWrapper.coalescingTimer);
+			sessionWrapper.coalescingTimer = undefined;
+		}
+
 		try {
 			// Clear validated nodes cache
 			sessionWrapper.validatedNodes.clear();
