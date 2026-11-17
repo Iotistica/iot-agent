@@ -157,11 +157,11 @@ class PointNameCatalog {
 				rawDeviceName,
 			);
 
-		if (existing && !usableExisting) {
-			this.logger?.debug(
-				`[point-norm] replacing stale mapping: key=${key} old=${existing.normalizedName} (${existing.rulesVersion}) → new=${mapping.normalizedName} (${mapping.rulesVersion})`,
-			);
-		}
+		// if (existing && !usableExisting) {
+		// 	this.logger?.debug(
+		// 		`[point-norm] replacing stale mapping: key=${key} old=${existing.normalizedName} (${existing.rulesVersion}) → new=${mapping.normalizedName} (${mapping.rulesVersion})`,
+		// 	);
+		// }
 		if (!usableExisting) {
 			this.byNaturalKey.set(key, mapping);
 			this.enqueueForPersistence(mapping);
