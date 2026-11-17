@@ -1011,7 +1011,7 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 			processedInFlush += batch.length;
 			const emitStarted = performance.now();
 			try {
-				//if (batch.length > 0) this.emit('data', batch);
+				if (batch.length > 0) this.emit('data', batch);
 			} catch (error) {
 				this.logger.error(`OPC-UA data emission failed for ${deviceName}: ${error instanceof Error ? error.message : String(error)}`);
 			} finally {
