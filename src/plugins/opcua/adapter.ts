@@ -917,17 +917,44 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 			dp: OPCUADataPoint;
 			monitoredItem: unknown;
 			monitoredItemRef: unknown;
-			itemNodeId: any;
+			matchesOperation: boolean;
 		}>();
 		const coalesceMs = Math.max(connection.publishingInterval || 1000, 200);
-
-		const flushCoalescingBuffer = () => {
-			if (coalescingBuffer.size === 0) return;
-			const entries = Array.from(coalescingBuffer.values());
-			coalescingBuffer.clear();
-
+		// Use object identity just as the previous Array.includes checks did, but O(1).
+		const ownerPointSets = new Map<OPCUADeviceConfig, Set<OPCUADataPoint>>();
+		for (const owner of new Set(nodeIdToDevice.values())) {
+			ownerPointSets.set(owner, new Set(owner.dataPoints));
+		}
+		ownerPointSets.set(device, new Set(device.dataPoints));
+		const FLUSH_CHUNK_SIZE = 100;
+		let draining = false;
+		let flushStartedAt = 0;
+		let processedInFlush = 0;
+		let buildTimeMs = 0;
+		let emitTimeMs = 0;
+		let lastPerfLog = Date.now();
+		let pendingEntries: Array<{
+			dataValue: DataValue;
+			dp: OPCUADataPoint;
+			monitoredItem: unknown;
+			monitoredItemRef: unknown;
+			matchesOperation: boolean;
+		}> = [];
+		let pendingOffset = 0;
+		// Only one snapshot is processed at a time. New notifications continue
+		// coalescing in the Map, so there is no unbounded FIFO of snapshots.
+		const processChunk = () => {
+			if (sessionWrapper.coalescingTimer !== coalescingTimer ||
+				sessionWrapper.session !== session || sessionWrapper.reconnecting) {
+				pendingEntries = [];
+				draining = false;
+				return;
+			}
+			const chunkStarted = performance.now();
+			const end = Math.min(pendingOffset + FLUSH_CHUNK_SIZE, pendingEntries.length);
 			const batch: DeviceDataPoint[] = [];
-			for (const entry of entries) {
+			for (; pendingOffset < end; pendingOffset++) {
+				const entry = pendingEntries[pendingOffset];
 				const owningDevice = nodeIdToDevice.get(entry.dp.nodeId) ?? device;
 				const owningDeviceName = owningDevice.name;
 
@@ -961,28 +988,65 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 				};
 
 				const operationNodeId = entry.dp.nodeId;
-				const matchesOperation = this.matchesOperationNodeId(entry.itemNodeId, operationNodeId);
+				const matchesOperation = entry.matchesOperation;
 				const activeGroupKey = this.deviceGroupKey.get(owningDeviceName);
 				const activeGroup = activeGroupKey ? this.groups.get(activeGroupKey) : undefined;
 				if (activeGroup?.session === sessionWrapper && matchesOperation &&
 					entry.monitoredItem === entry.monitoredItemRef &&
 					sessionWrapper.session === session && !sessionWrapper.reconnecting &&
-					this.sessions.get(owningDeviceName) === sessionWrapper && owningDevice.dataPoints.includes(entry.dp)) {
+					this.sessions.get(owningDeviceName) === sessionWrapper && ownerPointSets.get(owningDevice)?.has(entry.dp) === true) {
 					this.recordReadingEvidence(dataPoint, owningDeviceName, operationNodeId, activeGroup);
 				}
 				if (this.shadow && matchesOperation &&
 					!ambiguousNodeIds.has(operationNodeId) && entry.monitoredItem === entry.monitoredItemRef &&
 					sessionWrapper.session === session && !sessionWrapper.reconnecting &&
 					this.sessions.get(owningDeviceName) === sessionWrapper &&
-					owningDevice.dataPoints.includes(entry.dp)) {
+					ownerPointSets.get(owningDevice)?.has(entry.dp) === true) {
 					this.captureShadow(owningDevice, dataPoint, operationNodeId);
 				}
 
 				batch.push(dataPoint);
 			}
-			if (batch.length > 0) this.emit('data', batch);
+			buildTimeMs += performance.now() - chunkStarted;
+			processedInFlush += batch.length;
+			const emitStarted = performance.now();
+			try {
+				if (batch.length > 0) this.emit('data', batch);
+			} catch (error) {
+				this.logger.error(`OPC-UA data emission failed for ${deviceName}: ${error instanceof Error ? error.message : String(error)}`);
+			} finally {
+				emitTimeMs += performance.now() - emitStarted;
+			}
+			if (pendingOffset < pendingEntries.length) {
+				setImmediate(processChunk); // allow API/HTTP callbacks to run between chunks
+				return;
+			}
+			pendingEntries = [];
+			pendingOffset = 0;
+			draining = false;
+			if (Date.now() - lastPerfLog >= 5000) {
+				this.logger.info(`OPC-UA flush perf ${deviceName}`, {
+					points: processedInFlush,
+					buildMs: Math.round(buildTimeMs),
+					emitMs: Math.round(emitTimeMs),
+					elapsedMs: Math.round(performance.now() - flushStartedAt),
+					coalescedPending: coalescingBuffer.size,
+				});
+				lastPerfLog = Date.now();
+			}
 		};
-
+		const flushCoalescingBuffer = () => {
+			if (draining || coalescingBuffer.size === 0) return;
+			draining = true;
+			flushStartedAt = performance.now();
+			processedInFlush = 0;
+			buildTimeMs = 0;
+			emitTimeMs = 0;
+			pendingEntries = Array.from(coalescingBuffer.values());
+			pendingOffset = 0;
+			coalescingBuffer.clear();
+			processChunk();
+		};
 		const coalescingTimer = setInterval(flushCoalescingBuffer, coalesceMs);
 		coalescingTimer.unref();
 		sessionWrapper.coalescingTimer = coalescingTimer;
@@ -1049,6 +1113,8 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 			// Lightweight handler: just write to the shared coalescing buffer.
 			// DataPoint construction, evidence, shadow, and emit all happen in
 			// the timer-based flushCoalescingBuffer() above.
+			const itemMatches = batchDataPoints.map((dp, index) =>
+				this.matchesOperationNodeId(itemsToMonitor[index]?.nodeId, dp.nodeId));
 			group.on('changed', (_monitoredItem: unknown, dataValue: DataValue, index: number) => {
 				const dp = batchDataPoints[index];
 				if (!dp) {
@@ -1062,7 +1128,7 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 					dp,
 					monitoredItem: _monitoredItem,
 					monitoredItemRef: group.monitoredItems[index],
-					itemNodeId: itemsToMonitor[index]?.nodeId,
+					matchesOperation: itemMatches[index],
 				});
 			});
 
