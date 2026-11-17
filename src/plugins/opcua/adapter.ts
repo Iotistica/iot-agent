@@ -20,6 +20,7 @@
 import {
 	type ClientSession,
 	type ClientMonitoredItem,
+	type ClientSubscription,
 	type DataValue,
 	AttributeIds,
 	TimestampsToReturn,
@@ -232,6 +233,7 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
   
 	// Subscription splitting (many PLCs struggle with 200+ monitored items)
 	private readonly MAX_MONITORED_ITEMS_PER_SUBSCRIPTION = 100; // Split subscriptions beyond this
+	private readonly DEFAULT_MONITORED_ITEMS_SAFETY_CEILING = 500;
 
 	// Validation burst management — cap per-request reads so simple servers
 	// (asyncua-based simulators, embedded PLCs) aren't overwhelmed.
@@ -344,6 +346,9 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 	 */
 	private buildCompositeDevice(members: OPCUADeviceConfig[]): { device: OPCUADeviceConfig; nodeIdToDevice: Map<string, OPCUADeviceConfig> } {
 		const primary = members[0];
+		const subscriptionMembers = members.filter(m => m.connection.useSubscription);
+		const subscriptionPrimary = subscriptionMembers[0] ?? primary;
+		const sizingMembers = subscriptionMembers.length > 0 ? subscriptionMembers : members;
 		const nodeIdToDevice = new Map<string, OPCUADeviceConfig>();
 		const mergedDataPoints: OPCUADataPoint[] = [];
 		for (const m of members) {
@@ -356,20 +361,48 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 		// Reconcile a per-group policy for members that configure this
 		// differently — minimum across the group, so no server ever receives
 		// a subscription batch larger than any single member asked for.
-		const configuredMax = members
+		const configuredMax = sizingMembers
 			.map(m => m.connection.maxMonitoredItemsPerSubscription)
 			.filter((v): v is number => typeof v === 'number' && v > 0);
 		const reconciledMax = configuredMax.length ? Math.min(...configuredMax) : this.MAX_MONITORED_ITEMS_PER_SUBSCRIPTION;
+		const configuredCeilings = sizingMembers
+			.map(m => m.connection.maxMonitoredItemsPerSubscriptionCeiling)
+			.filter((v): v is number => typeof v === 'number' && v > 0);
+		const reconciledCeiling = configuredCeilings.length
+			? Math.min(...configuredCeilings)
+			: this.DEFAULT_MONITORED_ITEMS_SAFETY_CEILING;
+		const settingMismatches = (['publishingInterval', 'samplingInterval', 'queueSize'] as const)
+			.filter(key => {
+				const defaultValue = key === 'publishingInterval' ? 1000 : key === 'samplingInterval' ? 500 : 1;
+				return new Set(subscriptionMembers.map(m => m.connection[key] ?? defaultValue)).size > 1;
+			})
+			.map(key => {
+				const defaultValue = key === 'publishingInterval' ? 1000 : key === 'samplingInterval' ? 500 : 1;
+				return `${key} (${[...new Set(subscriptionMembers.map(m => m.connection[key] ?? defaultValue))].join(', ')})`;
+			});
 		if (new Set(configuredMax).size > 1) {
 			this.logger.warn(
 				`OPC-UA group ${primary.connection.endpointUrl}: members configure different maxMonitoredItemsPerSubscription values (${configuredMax.join(', ')}); using minimum (${reconciledMax})`
+			);
+		}
+		if (settingMismatches.length > 0) {
+			this.logger.warn(
+				`OPC-UA group ${primary.connection.endpointUrl}: subscription settings differ (${settingMismatches.join('; ')}); using the first subscription-enabled member's settings`
 			);
 		}
 
 		const device: OPCUADeviceConfig = {
 			...primary,
 			dataPoints: mergedDataPoints,
-			connection: { ...primary.connection, maxMonitoredItemsPerSubscription: reconciledMax },
+			connection: {
+				...primary.connection,
+				useSubscription: subscriptionMembers.length > 0,
+				publishingInterval: subscriptionPrimary.connection.publishingInterval,
+				samplingInterval: subscriptionPrimary.connection.samplingInterval,
+				queueSize: subscriptionPrimary.connection.queueSize,
+				maxMonitoredItemsPerSubscription: reconciledMax,
+				maxMonitoredItemsPerSubscriptionCeiling: reconciledCeiling || this.DEFAULT_MONITORED_ITEMS_SAFETY_CEILING,
+			},
 		};
 		return { device, nodeIdToDevice };
 	}
@@ -934,10 +967,14 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 		const { session } = sessionWrapper;
 		const { connection, dataPoints } = device;
 
+		// A repeated initialization must not leave the old subscription tree alive.
+		await this.terminateSubscriptions(sessionWrapper);
+
 		// Filter to only validated metric nodes (exclude metadata)
 		const validDataPoints = dataPoints.filter(dp => 
 			sessionWrapper.validatedNodes.has(dp.nodeId) && 
-      (dp).nodeType === 'metric'
+      (dp).nodeType === 'metric' &&
+			(nodeIdToDevice.get(dp.nodeId)?.connection.useSubscription ?? connection.useSubscription)
 		);
 
 		if (validDataPoints.length === 0) {
@@ -945,21 +982,23 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 			return;
 		}
 
-		// PERFORMANCE: Split into multiple subscriptions if node count exceeds limit
-		// Many PLCs struggle with 200+ monitored items per subscription
-		// Symptoms: missed publishes, queue overflows, silent throttling
-		const maxItemsPerSub = connection.maxMonitoredItemsPerSubscription || this.MAX_MONITORED_ITEMS_PER_SUBSCRIPTION;
-		const subscriptionCount = Math.ceil(validDataPoints.length / maxItemsPerSub);
+		const configuredMax = connection.maxMonitoredItemsPerSubscription > 0
+			? connection.maxMonitoredItemsPerSubscription
+			: this.MAX_MONITORED_ITEMS_PER_SUBSCRIPTION;
+		const safetyCeiling = connection.maxMonitoredItemsPerSubscriptionCeiling || this.DEFAULT_MONITORED_ITEMS_SAFETY_CEILING;
+		const serverMax = await this.readMaxMonitoredItemsPerSubscription(session, deviceName);
+		const maxItemsPerSub = Math.max(1, Math.min(configuredMax, safetyCeiling, serverMax ?? configuredMax));
+		const initialSubscriptionCount = Math.ceil(validDataPoints.length / maxItemsPerSub);
+		let totalMonitoredItems = 0;
     
-		if (subscriptionCount > 1) {
-			this.logger.debug(`Splitting ${validDataPoints.length} nodes into ${subscriptionCount} subscriptions`, {
+		if (initialSubscriptionCount > 1) {
+			this.logger.debug(`Splitting ${validDataPoints.length} nodes into ${initialSubscriptionCount} subscriptions`, {
 				deviceName,
 				maxItemsPerSub,
-				reason: 'plc_load_distribution'
+				serverMaxItems: serverMax ?? 'unknown',
+				reason: 'server_and_configured_limits',
 			});
 		}
-
-		sessionWrapper.subscriptions = [];
 
 		// Coalescing buffer shared across all subscriptions for this device.
 		// Each 'changed' event writes a lightweight entry keyed by nodeId;
@@ -1106,37 +1145,70 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 			coalescingBuffer.clear();
 			processChunk();
 		};
-		const coalescingTimer = setInterval(flushCoalescingBuffer, coalesceMs);
-		coalescingTimer.unref();
-		sessionWrapper.coalescingTimer = coalescingTimer;
+		const maxBatchSplitRetries = 3;
+		const pendingBatches: Array<{ dataPoints: OPCUADataPoint[]; splitDepth: number }> = [];
+		for (let startIdx = 0; startIdx < validDataPoints.length; startIdx += maxItemsPerSub) {
+			pendingBatches.push({ dataPoints: validDataPoints.slice(startIdx, startIdx + maxItemsPerSub), splitDepth: 0 });
+		}
+		let attemptedSubscriptions = 0;
+		const splitBatchForRetry = (dataPoints: OPCUADataPoint[], splitDepth: number): boolean => {
+			if (dataPoints.length < 2 || splitDepth >= maxBatchSplitRetries) return false;
+			const midpoint = Math.ceil(dataPoints.length / 2);
+			pendingBatches.unshift(
+				{ dataPoints: dataPoints.slice(midpoint), splitDepth: splitDepth + 1 },
+				{ dataPoints: dataPoints.slice(0, midpoint), splitDepth: splitDepth + 1 },
+			);
+			return true;
+		};
 
-		// Create subscriptions (one or more depending on node count)
-		for (let subIdx = 0; subIdx < subscriptionCount; subIdx++) {
-			const startIdx = subIdx * maxItemsPerSub;
-			const endIdx = Math.min(startIdx + maxItemsPerSub, validDataPoints.length);
-			const batchDataPoints = validDataPoints.slice(startIdx, endIdx);
+		// Retry a rejected group as smaller groups, isolating unsupported nodes
+		// with a fixed retry-depth bound to avoid a request storm on constrained servers.
+		while (pendingBatches.length > 0) {
+			const { dataPoints: batchDataPoints, splitDepth } = pendingBatches.shift()!;
+			const subIdx = attemptedSubscriptions++;
 
 			// Create subscription
 			const subStarted = performance.now();
 			this.perfInc('subscriptionCreateAttempts');
-			const subscription = await session.createSubscription2({
-				requestedPublishingInterval: connection.publishingInterval || 1000,
-				requestedLifetimeCount: 100,
-				requestedMaxKeepAliveCount: 10,
-				maxNotificationsPerPublish: 100,
-				publishingEnabled: true,
-				priority: 10,
-			});
+			let subscription: ClientSubscription;
+			try {
+				subscription = await session.createSubscription2({
+					requestedPublishingInterval: connection.publishingInterval || 1000,
+					requestedLifetimeCount: 100,
+					requestedMaxKeepAliveCount: 10,
+					maxNotificationsPerPublish: 100,
+					publishingEnabled: true,
+					priority: 10,
+				});
+			} catch (error) {
+				const message = error instanceof Error ? error.message : String(error);
+				this.logger.error(`Failed to create subscription for ${deviceName}: ${message}`, {
+					deviceName, itemCount: batchDataPoints.length,
+				});
+				for (const dp of batchDataPoints) this.diagnostics.recordMonitorAttempt(deviceName, dp.nodeId, false, message);
+				await this.terminateSubscriptions(sessionWrapper);
+				throw new Error(`Failed to create OPC-UA subscription for ${deviceName}: ${message}`);
+			}
 
-			this.logger.info('[OPCUA_PERF] subscription created', { deviceName, index: subIdx + 1, total: subscriptionCount, subscriptionId: subscription.subscriptionId, durationMs: Math.round(performance.now() - subStarted), requestedItems: batchDataPoints.length });
+			this.logger.info('[OPCUA_PERF] subscription created', {
+				deviceName,
+				index: subIdx + 1,
+				subscriptionId: subscription.subscriptionId,
+				durationMs: Math.round(performance.now() - subStarted),
+				requestedItems: batchDataPoints.length,
+				revisedPublishingInterval: subscription.publishingInterval,
+				revisedLifetimeCount: subscription.lifetimeCount,
+				revisedMaxKeepAliveCount: subscription.maxKeepAliveCount,
+				requestedMaxNotificationsPerPublish: 100,
+			});
 			sessionWrapper.subscriptions.push(subscription);
 
 			// Set legacy field for backwards compatibility (first subscription)
-			if (subIdx === 0) {
+			if (!sessionWrapper.subscription) {
 				sessionWrapper.subscription = subscription;
 			}
 
-			this.logger.debug(`Created subscription ${subIdx + 1}/${subscriptionCount} for ${deviceName}`, {
+			this.logger.debug(`Created subscription batch ${subIdx + 1} for ${deviceName}`, {
 				publishingInterval: connection.publishingInterval || 1000,
 				samplingInterval: connection.samplingInterval || 500,
 				itemCount: batchDataPoints.length,
@@ -1159,22 +1231,57 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 
 			const monitorStarted = performance.now();
 			this.perfInc('monitorGroupAttempts');
-			const group = ClientMonitoredItemGroup.create(subscription, itemsToMonitor, parameters, TimestampsToReturn.Both);
-
+			let group: ReturnType<typeof ClientMonitoredItemGroup.create>;
 			try {
+				group = ClientMonitoredItemGroup.create(subscription, itemsToMonitor, parameters, TimestampsToReturn.Both);
 				await new Promise<void>((resolve, reject) => {
 					group.once('initialized', () => resolve());
 					group.once('err', (message: string) => reject(new Error(message)));
 				});
 			} catch (error) {
-				this.logger.error(`Failed to create monitored item group for ${deviceName}: ${error}`, { deviceName, itemCount: batchDataPoints.length });
+				const message = error instanceof Error ? error.message : String(error);
+				this.logger.error(`Failed to create monitored item group for ${deviceName}: ${message}`, { deviceName, itemCount: batchDataPoints.length });
 				for (const dp of batchDataPoints) {
-					this.diagnostics.recordMonitorAttempt(deviceName, dp.nodeId, false, error instanceof Error ? error.message : String(error));
+					this.diagnostics.recordMonitorAttempt(deviceName, dp.nodeId, false, message);
 				}
+				await this.terminateSubscription(sessionWrapper, subscription);
+				splitBatchForRetry(batchDataPoints, splitDepth);
 				continue;
 			}
 
-			this.logger.info('[OPCUA_PERF] monitored group initialized', { deviceName, index: subIdx + 1, total: subscriptionCount, durationMs: Math.round(performance.now() - monitorStarted), monitoredItems: group.monitoredItems.length });
+			const failedItems: Array<{ index: number; statusCode?: string }> = [];
+			for (let index = 0; index < batchDataPoints.length; index++) {
+				const statusCode = group.monitoredItems[index]?.statusCode;
+				if (!statusCode?.isGood()) {
+					failedItems.push({ index, statusCode: statusCode?.toString() });
+				}
+			}
+			if (failedItems.length > 0 || group.monitoredItems.length !== batchDataPoints.length) {
+				const failedIndices = new Set(failedItems.map(item => item.index));
+				for (let index = 0; index < batchDataPoints.length; index++) {
+					const dp = batchDataPoints[index];
+					const statusCode = group.monitoredItems[index]?.statusCode;
+					const success = index < group.monitoredItems.length && !failedIndices.has(index);
+					this.diagnostics.recordMonitorAttempt(
+						deviceName,
+						dp.nodeId,
+						success,
+						success ? statusCode?.toString() : statusCode?.toString() ?? 'No monitored-item result'
+					);
+				}
+				this.logger.warn(`Partial monitored-item failure for ${deviceName}`, {
+					deviceName,
+					requestedItems: batchDataPoints.length,
+					createdItems: group.monitoredItems.length,
+					failedItems: failedItems.length + Math.max(0, batchDataPoints.length - group.monitoredItems.length),
+					retryingSmallerBatches: batchDataPoints.length > 1 && splitDepth < maxBatchSplitRetries,
+				});
+				await this.terminateSubscription(sessionWrapper, subscription);
+				splitBatchForRetry(batchDataPoints, splitDepth);
+				continue;
+			}
+
+			this.logger.info('[OPCUA_PERF] monitored group initialized', { deviceName, index: subIdx + 1, durationMs: Math.round(performance.now() - monitorStarted), monitoredItems: group.monitoredItems.length });
 			// Lightweight handler: just write to the shared coalescing buffer.
 			// DataPoint construction, evidence, shadow, and emit all happen in
 			// the timer-based flushCoalescingBuffer() above.
@@ -1213,12 +1320,26 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 
 				sessionWrapper.monitoredItems.set(dp.nodeId, monitoredItem as ClientMonitoredItem);
 			});
+			totalMonitoredItems += group.monitoredItems.length;
 
 			// Handle subscription errors
 			subscription.on('terminated', () => {
+				const trackedIndex = sessionWrapper.subscriptions.indexOf(subscription);
+				if (trackedIndex < 0) return;
+				sessionWrapper.subscriptions.splice(trackedIndex, 1);
+				if (sessionWrapper.subscription === subscription) {
+					sessionWrapper.subscription = sessionWrapper.subscriptions[0] ?? null;
+				}
+				for (let index = 0; index < batchDataPoints.length; index++) {
+					const dp = batchDataPoints[index];
+					if (sessionWrapper.monitoredItems.get(dp.nodeId) === group.monitoredItems[index]) {
+						sessionWrapper.monitoredItems.delete(dp.nodeId);
+					}
+				}
 				this.logger.warn(`Subscription ${subIdx + 1} terminated for ${deviceName}`);
 				this.perfInc('subscriptionTerminations');
 				this.diagnostics.recordSubscriptionTerminated(deviceName);
+				this.scheduleReconnect(device, sessionWrapper, 'subscription_terminated');
 			});
 
 			subscription.on('keepalive', () => {
@@ -1227,10 +1348,79 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 			});
 		}
 
+		if (totalMonitoredItems === 0) {
+			await this.terminateSubscriptions(sessionWrapper);
+			throw new Error(`No monitored items were created for ${deviceName}`);
+		}
+
+		const coalescingTimer = setInterval(flushCoalescingBuffer, coalesceMs);
+		coalescingTimer.unref();
+		sessionWrapper.coalescingTimer = coalescingTimer;
+
 		// TEMPORARY diagnostics — see diagnostics.ts. Reaching here means every
-		// batch above completed without createSubscription2() itself throwing —
-		// individual monitor() failures are already tracked per-item above.
+		// successful batch has been reconciled with per-item creation statuses.
+		this.logger.info('[OPCUA_PERF] subscription summary', {
+			deviceName,
+			subscriptions: sessionWrapper.subscriptions.length,
+			monitoredItems: totalMonitoredItems,
+			requestedItems: validDataPoints.length,
+			serverMaxItems: serverMax ?? 'unknown',
+			configuredMaxItems: configuredMax,
+			safetyCeiling,
+			effectiveMaxItems: maxItemsPerSub,
+		});
 		this.diagnostics.recordSubscriptionResult(deviceName, true, sessionWrapper.subscriptions.map(s => s.subscriptionId));
+	}
+
+	private async readMaxMonitoredItemsPerSubscription(session: ClientSession, deviceName: string): Promise<number | undefined> {
+		try {
+			const [value] = await session.read([{
+				nodeId: 'ns=0;i=24104',
+				attributeId: AttributeIds.Value,
+			}]);
+			const limit = value?.statusCode?.isGood() ? Number(value.value?.value) : 0;
+			return Number.isSafeInteger(limit) && limit > 0 ? limit : undefined;
+		} catch (error) {
+			this.logger.debug(`Unable to read MaxMonitoredItemsPerSubscription for ${deviceName}; using configured fallback: ${error instanceof Error ? error.message : String(error)}`);
+			return undefined;
+		}
+	}
+
+	private async terminateSubscription(
+		sessionWrapper: OPCUASession,
+		subscription: OPCUASession['subscriptions'][number]
+	): Promise<void> {
+		const index = sessionWrapper.subscriptions.indexOf(subscription);
+		if (index >= 0) sessionWrapper.subscriptions.splice(index, 1);
+		if (sessionWrapper.subscription === subscription) {
+			sessionWrapper.subscription = sessionWrapper.subscriptions[0] ?? null;
+		}
+		try {
+			await subscription.terminate();
+		} catch (error) {
+			this.logger.warn(`Failed to terminate OPC-UA subscription ${subscription.subscriptionId}: ${error instanceof Error ? error.message : String(error)}`);
+		}
+	}
+
+	private async terminateSubscriptions(sessionWrapper: OPCUASession): Promise<void> {
+		if (sessionWrapper.coalescingTimer) {
+			clearInterval(sessionWrapper.coalescingTimer);
+			sessionWrapper.coalescingTimer = undefined;
+		}
+		const subscriptions = [...new Set([
+			...sessionWrapper.subscriptions,
+			...(sessionWrapper.subscription ? [sessionWrapper.subscription] : []),
+		])];
+		sessionWrapper.subscriptions = [];
+		sessionWrapper.subscription = null;
+		sessionWrapper.monitoredItems.clear();
+		await Promise.all(subscriptions.map(async subscription => {
+			try {
+				await subscription.terminate();
+			} catch (error) {
+				this.logger.warn(`Failed to terminate OPC-UA subscription ${subscription.subscriptionId}: ${error instanceof Error ? error.message : String(error)}`);
+			}
+		}));
 	}
 
 	/**
@@ -2156,37 +2346,11 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 			clearTimeout(sessionWrapper.reconnectTimer);
 			sessionWrapper.reconnectTimer = undefined;
 		}
-		if (sessionWrapper.coalescingTimer) {
-			clearInterval(sessionWrapper.coalescingTimer);
-			sessionWrapper.coalescingTimer = undefined;
-		}
-
 		try {
 			// Clear validated nodes cache
 			sessionWrapper.validatedNodes.clear();
       
-			// Clear monitored items
-			sessionWrapper.monitoredItems.clear();
-      
-			// Close all subscriptions
-			for (const subscription of sessionWrapper.subscriptions) {
-				try {
-					await subscription.terminate();
-				} catch (_error) {
-					// Ignore individual subscription errors
-				}
-			}
-			sessionWrapper.subscriptions = [];
-      
-			// Close legacy subscription field
-			if (sessionWrapper.subscription) {
-				try {
-					await sessionWrapper.subscription.terminate();
-				} catch (_error) {
-					// Ignore
-				}
-				sessionWrapper.subscription = null;
-			}
+			await this.terminateSubscriptions(sessionWrapper);
       
 			// Close session
 			if (sessionWrapper.session) {
