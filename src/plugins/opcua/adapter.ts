@@ -214,6 +214,11 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
   
 	// Subscription splitting (many PLCs struggle with 200+ monitored items)
 	private readonly MAX_MONITORED_ITEMS_PER_SUBSCRIPTION = 100; // Split subscriptions beyond this
+
+	// Validation burst management — cap per-request reads so simple servers
+	// (asyncua-based simulators, embedded PLCs) aren't overwhelmed.
+	// 200 nodes × 4 attributes = 800 reads per request.
+	private static readonly VALIDATION_BATCH_SIZE = 200;
   
 	// Reconnection settings
 	private readonly MIN_RETRY_DELAY = 5000;   // 5 seconds
@@ -591,35 +596,44 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 		if (candidates.length === 0) return units;
 
 		try {
-			const browsePaths = candidates.map((dp) => new BrowsePath({
-				startingNode: dp.nodeId,
-				relativePath: {
-					elements: [{
-						includeSubtypes: false,
-						isInverse: false,
-						referenceTypeId: OPCUAAdapter.HAS_PROPERTY_REF_ID,
-						targetName: { namespaceIndex: 0, name: 'EngineeringUnits' },
-					}],
-				},
-			}));
-
-			const browsePathResults = await session.translateBrowsePath(browsePaths);
-
 			const propertyNodeIds: string[] = [];
 			const ownerDataPoints: OPCUADataPoint[] = [];
-			browsePathResults.forEach((result: BrowsePathResult, i: number) => {
-				if (result.statusCode.isGood() && result.targets && result.targets.length > 0) {
-					propertyNodeIds.push(result.targets[0].targetId.toString());
-					ownerDataPoints.push(candidates[i]);
-				}
-			});
+
+			for (let start = 0; start < candidates.length; start += OPCUAAdapter.VALIDATION_BATCH_SIZE) {
+				const batch = candidates.slice(start, start + OPCUAAdapter.VALIDATION_BATCH_SIZE);
+				const browsePaths = batch.map((dp) => new BrowsePath({
+					startingNode: dp.nodeId,
+					relativePath: {
+						elements: [{
+							includeSubtypes: false,
+							isInverse: false,
+							referenceTypeId: OPCUAAdapter.HAS_PROPERTY_REF_ID,
+							targetName: { namespaceIndex: 0, name: 'EngineeringUnits' },
+						}],
+					},
+				}));
+
+				const browsePathResults = await session.translateBrowsePath(browsePaths);
+
+				browsePathResults.forEach((result: BrowsePathResult, i: number) => {
+					if (result.statusCode.isGood() && result.targets && result.targets.length > 0) {
+						propertyNodeIds.push(result.targets[0].targetId.toString());
+						ownerDataPoints.push(batch[i]);
+					}
+				});
+			}
 			if (propertyNodeIds.length === 0) return units;
 
-			const values = await session.read(
-				propertyNodeIds.map((nodeId) => ({ nodeId, attributeId: AttributeIds.Value }))
-			);
+			const allValues: DataValue[] = [];
+			for (let start = 0; start < propertyNodeIds.length; start += OPCUAAdapter.VALIDATION_BATCH_SIZE) {
+				const batch = propertyNodeIds.slice(start, start + OPCUAAdapter.VALIDATION_BATCH_SIZE);
+				const batchValues = await session.read(
+					batch.map((nodeId) => ({ nodeId, attributeId: AttributeIds.Value }))
+				);
+				for (const v of batchValues) allValues.push(v);
+			}
 
-			values.forEach((result: DataValue, i: number) => {
+			allValues.forEach((result: DataValue, i: number) => {
 				if (!result.statusCode.isGood()) return;
 				const euInfo = result.value?.value as { displayName?: { text?: string } | string } | undefined;
 				const displayName = euInfo?.displayName;
@@ -666,29 +680,41 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 
 		this.logger.debug(`Validating ${dataPoints.length} NodeIDs for ${deviceName}...`);
 
-		// PERFORMANCE: Batch all reads into single request
-		// Before: 4 RTTs per node (Value, NodeClass, DataType, Description)
-		// After: 1 RTT for all nodes × all attributes
-		// Impact: 1000 nodes = 4000 RTTs → 1 RTT (4000x faster!)
-		const nodesToRead: ReadValueIdOptions[] = [];
-    
-		for (const dp of dataPoints) {
-			nodesToRead.push(
-				{ nodeId: dp.nodeId, attributeId: AttributeIds.Value },
-				{ nodeId: dp.nodeId, attributeId: AttributeIds.NodeClass },
-				{ nodeId: dp.nodeId, attributeId: AttributeIds.DataType },
-				{ nodeId: dp.nodeId, attributeId: AttributeIds.Description }
-			);
-		}
-    
 		const validationStart = Date.now();
-		const results = await session.read(nodesToRead);
+		const results: DataValue[] = [];
+		const totalBatches = Math.ceil(dataPoints.length / OPCUAAdapter.VALIDATION_BATCH_SIZE);
+
+		for (let start = 0; start < dataPoints.length; start += OPCUAAdapter.VALIDATION_BATCH_SIZE) {
+			const batch = dataPoints.slice(start, start + OPCUAAdapter.VALIDATION_BATCH_SIZE);
+			const nodesToRead: ReadValueIdOptions[] = [];
+
+			for (const dp of batch) {
+				nodesToRead.push(
+					{ nodeId: dp.nodeId, attributeId: AttributeIds.Value },
+					{ nodeId: dp.nodeId, attributeId: AttributeIds.NodeClass },
+					{ nodeId: dp.nodeId, attributeId: AttributeIds.DataType },
+					{ nodeId: dp.nodeId, attributeId: AttributeIds.Description }
+				);
+			}
+
+			const batchResults = await session.read(nodesToRead);
+			for (const r of batchResults) results.push(r);
+
+			if (totalBatches > 1) {
+				this.logger.debug(`Validation batch ${Math.floor(start / OPCUAAdapter.VALIDATION_BATCH_SIZE) + 1}/${totalBatches}`, {
+					deviceName,
+					batchNodes: batch.length,
+					elapsed: Date.now() - validationStart
+				});
+			}
+		}
+
 		const validationTime = Date.now() - validationStart;
-    
+
 		this.logger.debug(`Batch validation completed in ${validationTime}ms`, {
 			deviceName,
 			nodeCount: dataPoints.length,
-			readCount: nodesToRead.length,
+			readCount: dataPoints.length * 4,
 			avgTimePerNode: Math.round(validationTime / dataPoints.length)
 		});
 
