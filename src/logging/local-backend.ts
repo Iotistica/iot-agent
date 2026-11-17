@@ -47,7 +47,7 @@ export class LocalLogBackend implements LogBackend {
 			await fs.mkdir(this.options.logDir, { recursive: true });
 			this.currentLogFile = path.join(
 				this.options.logDir,
-				`container-manager-${Date.now()}.log`,
+				`agent-${Date.now()}.log`,
 			);
 		}
 
@@ -197,7 +197,7 @@ export class LocalLogBackend implements LogBackend {
 	private async rotateLogFile(): Promise<void> {
 		this.currentLogFile = path.join(
 			this.options.logDir,
-			`container-manager-${Date.now()}.log`,
+			`agent-${Date.now()}.log`,
 		);
 		this.currentLogFileSize = 0;
 	}
