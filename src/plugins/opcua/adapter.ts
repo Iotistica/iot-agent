@@ -13,44 +13,6 @@
  * - Automatic reconnection with exponential backoff
  * - Data type conversion and scaling
  * 
- * Example OPC-UA device configuration (stored in SQLite devices table):
- * {
- *   "name": "plc-001",
- *   "protocol": "opcua",
- *   "enabled": true,
- *   "pollInterval": 5000,
- *   "connection": {
- *     "endpointUrl": "opc.tcp://10.0.0.60:4840",
- *     "username": "admin",
- *     "password": "password",
- *     "securityMode": "None",
- *     "securityPolicy": "None",
- *     "connectionTimeout": 10000,
- *     "sessionTimeout": 60000,
- *     "keepAliveInterval": 5000
- *   },
- *   "dataPoints": [
- *     {
- *       "name": "temperature",
- *       "nodeId": "ns=2;s=Temperature",
- *       "unit": "°C",
- *       "dataType": "number"
- *     },
- *     {
- *       "name": "pressure",
- *       "nodeId": "ns=2;s=Pressure",
- *       "unit": "bar",
- *       "dataType": "number",
- *       "scalingFactor": 0.01
- *     }
- *   ],
- *   "metadata": {
- *     "manufacturer": "Siemens",
- *     "model": "S7-1500",
- *     "applicationUri": "urn:example:plc001"
- *   }
- * }
- * 
  * @module opcua-adapter
  */
 
@@ -218,7 +180,7 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 	// Validation burst management — cap per-request reads so simple servers
 	// (asyncua-based simulators, embedded PLCs) aren't overwhelmed.
 	// 200 nodes × 4 attributes = 800 reads per request.
-	private static readonly VALIDATION_BATCH_SIZE = 200;
+	private static readonly VALIDATION_BATCH_SIZE = 50;
   
 	// Reconnection settings
 	private readonly MIN_RETRY_DELAY = 5000;   // 5 seconds
@@ -736,7 +698,7 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 			// Check if reads were successful
 			if (!valueResult.statusCode.isGood()) {
 				invalid.push(dp.nodeId);
-				this.logger.warn(`NodeID validation failed: ${dp.nodeId} (${dp.name})`, {
+				this.logger.warn(`NodeID validation failed: ${dp.nodeId} (${dp.name}) status=${valueResult.statusCode.name}`, {
 					deviceName,
 					statusCode: valueResult.statusCode.name,
 					description: valueResult.statusCode.description
