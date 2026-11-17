@@ -124,9 +124,6 @@ function attachIdentity(reading: ProtocolMessage, endpointNameHint: string, cata
 		sourceAddress,
 	});
 
-	// logger?.debug(
-	// 	`[point-norm] endpoint=${endpointNameHint} raw=${rawName} device=${rawDeviceName ?? '(none)'} normalized=${identity.normalizedName} source=${reading.normalizationDeviceName ?? '(not set)'}`,
-	// );
 
 	reading.pointIdentity = identity;
 }
