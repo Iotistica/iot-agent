@@ -92,6 +92,9 @@ export const OPCUAConnectionSchema = z.object({
 	/** Many PLCs struggle with 200+ items - this auto-splits subscriptions for load distribution */
 	maxMonitoredItemsPerSubscription: z.number().int().positive().default(100),
 
+	/** Absolute safety ceiling for subscription batches (default: 500) */
+	maxMonitoredItemsPerSubscriptionCeiling: z.number().int().positive().optional(),
+
 	/**
 	 * Per-monitored-item notification queue size (only if useSubscription=true).
 	 * Default 1: only the latest value matters for real-time telemetry — a

@@ -312,8 +312,8 @@ describe('OPCUAAdapter session pooling (issue #11)', () => {
 	describe('buildCompositeDevice (pure logic)', () => {
 		it('reconciles maxMonitoredItemsPerSubscription to the minimum across the group, with a warning on mismatch', () => {
 			const logger = silentLogger();
-			const a = makeDevice('dev-a', { maxMonitoredItemsPerSubscription: 50 });
-			const b = makeDevice('dev-b', { maxMonitoredItemsPerSubscription: 20 });
+			const a = makeDevice('dev-a', { useSubscription: true, maxMonitoredItemsPerSubscription: 50 });
+			const b = makeDevice('dev-b', { useSubscription: true, maxMonitoredItemsPerSubscription: 20 });
 			const adapter = new OPCUAAdapter([a, b], logger);
 
 			const { device: composite } = (adapter as any).buildCompositeDevice([a, b]);
@@ -324,8 +324,8 @@ describe('OPCUAAdapter session pooling (issue #11)', () => {
 
 		it('does not warn when every member configures the same maxMonitoredItemsPerSubscription', () => {
 			const logger = silentLogger();
-			const a = makeDevice('dev-a', { maxMonitoredItemsPerSubscription: 100 });
-			const b = makeDevice('dev-b', { maxMonitoredItemsPerSubscription: 100 });
+			const a = makeDevice('dev-a', { useSubscription: true, maxMonitoredItemsPerSubscription: 100 });
+			const b = makeDevice('dev-b', { useSubscription: true, maxMonitoredItemsPerSubscription: 100 });
 			const adapter = new OPCUAAdapter([a, b], logger);
 
 			const { device: composite } = (adapter as any).buildCompositeDevice([a, b]);
