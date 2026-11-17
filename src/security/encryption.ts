@@ -47,7 +47,9 @@ export class MasterKeyManager {
 	*/
 	static initialize(dataDir?: string, logger?: AgentLogger): void {
 		const baseDir = dataDir || path.join(process.env.HOME || process.env.USERPROFILE || '/root', '.iotistic');
-		this.keyPath = path.join(baseDir, '.master.key');
+		const resolved = path.join(baseDir, '.master.key');
+		if (this.keyPath === resolved) return;
+		this.keyPath = resolved;
 		this.logger = logger;
 		this.debug('Master key manager initialized', { dataDir, keyPath: this.keyPath });
 	}

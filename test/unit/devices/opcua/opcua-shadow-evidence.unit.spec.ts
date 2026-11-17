@@ -556,17 +556,23 @@ describe('OPC UA private shadow integration', () => {
 	});
 
 	it('correlates subscription item identity and rejects a mismatched item', async () => {
-		const { adapter, socket } = await start([endpoint(1, 'source-1', 'plc', ['ns=2;s=a', 'ns=2;s=b'], true)]);
-		const observed: any[] = [];
-		socket.sendData.mockImplementation((points: object[]) => observed.push(points.map(inspect)));
-		const data = { statusCode: good, value: { value: 10 } };
-		groups[0].emit('changed', groups[0].monitoredItems[1], data, 1);
-		groups[0].emit('changed', groups[0].monitoredItems[1], data, 0);
-		await tick();
-		expect(observed[0][0]).toMatchObject({ observed: { nodeId: 'ns=2;s=b' }, phase: 'adapter-dispatched' });
-		expect(observed[0][1]).toMatchObject({ reason: 'correlation-missing' });
-		expect(socket.sendData.mock.calls[0][0]).toHaveLength(2);
-		expect(adapter).toBeDefined();
+		jest.useFakeTimers({ doNotFake: ['setImmediate'] });
+		try {
+			const { adapter, socket } = await start([endpoint(1, 'source-1', 'plc', ['ns=2;s=a', 'ns=2;s=b'], true)]);
+			const observed: any[] = [];
+			socket.sendData.mockImplementation((points: object[]) => observed.push(points.map(inspect)));
+			const data = { statusCode: good, value: { value: 10 } };
+			groups[0].emit('changed', groups[0].monitoredItems[1], data, 1);
+			groups[0].emit('changed', groups[0].monitoredItems[1], data, 0);
+			jest.advanceTimersByTime(1100);
+			await tick();
+			expect(observed[0][0]).toMatchObject({ observed: { nodeId: 'ns=2;s=b' }, phase: 'adapter-dispatched' });
+			expect(observed[0][1]).toMatchObject({ reason: 'correlation-missing' });
+			expect(socket.sendData.mock.calls[0][0]).toHaveLength(2);
+			expect(adapter).toBeDefined();
+		} finally {
+			jest.useRealTimers();
+		}
 	});
 
 	it('invalidates old observations on reconnect and disposal without retaining capacity', async () => {
@@ -591,16 +597,22 @@ describe('OPC UA private shadow integration', () => {
 	});
 
 	it('leaves old subscription callbacks unresolved after session replacement', async () => {
-		const { adapter, device, socket } = await start([endpoint(1, 'source-1', 'plc', ['ns=2;s=a'], true)]);
-		const oldGroup = groups[0];
-		const observed: any[] = [];
-		socket.sendData.mockImplementation((points: object[]) => observed.push(points.map(inspect)));
-		wrappers[0].client.emit('connection_lost');
-		clearTimeout(wrappers[0].reconnectTimer);
-		await adapter.attemptReconnect(device, wrappers[0]);
-		oldGroup.emit('changed', oldGroup.monitoredItems[0], { statusCode: good, value: { value: 10 } }, 0);
-		await tick();
-		expect(observed[0][0]).toMatchObject({ reason: 'correlation-missing' });
+		jest.useFakeTimers({ doNotFake: ['setImmediate'] });
+		try {
+			const { adapter, device, socket } = await start([endpoint(1, 'source-1', 'plc', ['ns=2;s=a'], true)]);
+			const oldGroup = groups[0];
+			const observed: any[] = [];
+			socket.sendData.mockImplementation((points: object[]) => observed.push(points.map(inspect)));
+			wrappers[0].client.emit('connection_lost');
+			clearTimeout(wrappers[0].reconnectTimer);
+			await adapter.attemptReconnect(device, wrappers[0]);
+			oldGroup.emit('changed', oldGroup.monitoredItems[0], { statusCode: good, value: { value: 10 } }, 0);
+			jest.advanceTimersByTime(1100);
+			await tick();
+			expect(observed[0][0]).toMatchObject({ reason: 'correlation-missing' });
+		} finally {
+			jest.useRealTimers();
+		}
 	});
 
 	it('invalidates observations on adapter replacement and session repair', async () => {

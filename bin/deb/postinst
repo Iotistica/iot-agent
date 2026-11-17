@@ -53,7 +53,7 @@ IOTISTICA_API=
 PROVISIONING_KEY=
 
 # Logging
-LOG_LEVEL=info
+LOG_LEVEL=debug
 DATA_DIR=/var/lib/iotistic/agent
 LOG_DIR=/var/log/iotistic
 
