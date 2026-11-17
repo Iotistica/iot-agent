@@ -841,7 +841,7 @@ router.post('/v1/discover/opcua/browse', requireRole('operator'), async (req: Re
 		if (nodeId !== undefined && (typeof nodeId !== 'string' || !nodeId.trim())) {
 			return res.status(400).json({ error: 'nodeId must be a non-empty string' });
 		}
-		const { OPCUADeviceIdentificationSchema } = await import('../plugins/opcua/device-identification-config.js');
+		const { OPCUADeviceIdentificationSchema } = await import('../plugins/opcua/device-identity.js');
 		const validation = identifierValidation === undefined ? undefined : OPCUADeviceIdentificationSchema.safeParse(identifierValidation);
 		if (validation && !validation.success) return res.status(400).json({ error: 'Invalid device identification configuration' });
 
