@@ -1116,20 +1116,7 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 			const itemMatches = batchDataPoints.map((dp, index) =>
 				this.matchesOperationNodeId(itemsToMonitor[index]?.nodeId, dp.nodeId));
 			group.on('changed', (_monitoredItem: unknown, dataValue: DataValue, index: number) => {
-				const dp = batchDataPoints[index];
-				if (!dp) {
-					this.logger.warn(`OPC UA subscription returned an unknown monitored-item index for ${deviceName}`);
-					return;
-				}
-				if (dp.nodeType !== 'metric') return;
-
-				coalescingBuffer.set(dp.nodeId, {
-					dataValue,
-					dp,
-					monitoredItem: _monitoredItem,
-					monitoredItemRef: group.monitoredItems[index],
-					matchesOperation: itemMatches[index],
-				});
+				return; // DIAGNOSTIC ONLY
 			});
 
 			// Per-item creation result + per-item ongoing error handling
