@@ -165,7 +165,6 @@ export async function configureAnomalyFeed(ctx: AgentInitContext): Promise<void>
 	configureSystemMetrics(ctx.anomalyService, reportIntervalMs);
 
 	ctx.featureInitializer?.setAnomalyService?.(ctx.anomalyService);
-	ctx.featureInitializer?.getFeatures()?.devicePublish?.setAnomalyService?.(ctx.anomalyService);
 
 	ctx.agentLogger?.debugSync('Anomaly detection configured for system metrics and endpoints', {
 		component: LogComponents.agent,
