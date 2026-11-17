@@ -311,14 +311,20 @@ describe('OPC UA private shadow integration', () => {
 				setImmediate(() => group.emit('initialized'));
 				return group;
 			});
-			const { socket } = await start([row], undefined, false);
-			await waitForCount(2);
-			const identities = identityMap();
-			groups[0].emit('changed', groups[0].monitoredItems[1], { statusCode: good, value: { value: 42 } }, 1);
-			await tick();
-			expect(socket.sendData.mock.calls[0][0][0]).toMatchObject({
-				metric: 'same-name', value: 42, pointUuid: identities.get('b'),
-			});
+			jest.useFakeTimers({ doNotFake: ['setImmediate'] });
+			try {
+				const { socket } = await start([row], undefined, false);
+				await waitForCount(2);
+				const identities = identityMap();
+				groups[0].emit('changed', groups[0].monitoredItems[1], { statusCode: good, value: { value: 42 } }, 1);
+				jest.advanceTimersByTime(1100);
+				await tick();
+				expect(socket.sendData.mock.calls[0][0][0]).toMatchObject({
+					metric: 'same-name', value: 42, pointUuid: identities.get('b'),
+				});
+			} finally {
+				jest.useRealTimers();
+			}
 		});
 
 		it('does not attach a new-session UUID to a poll result from before session repair', async () => {

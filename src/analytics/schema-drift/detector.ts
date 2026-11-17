@@ -702,7 +702,7 @@ export class SchemaDriftDetector {
 	 */
 	declareDeviceSchema(deviceId: string, fields: string[]): void {
 		// TEMPORARY diagnostic — see issue #17 follow-up investigation.
-		this.logger?.debug(`[SCHEMA_DECLARE_DIAG] declareDeviceSchema called: endpoint=${this.endpointName} deviceId=${deviceId} enabled=${this.options.enabled} fieldCount=${fields.length}`);
+	
 
 		if (!this.options.enabled || fields.length === 0) {
 			return;
@@ -761,8 +761,6 @@ export class SchemaDriftDetector {
 			state.tombstones.delete(key);
 		}
 
-		// TEMPORARY diagnostic — see issue #17 follow-up investigation.
-		this.logger?.debug(`[SCHEMA_DECLARE_DIAG] declareDeviceSchema for "${normalizedDeviceId}": declaredCount=${declaredCount}, baselineFields=${JSON.stringify([...state.baseline])}`);
 
 		if (declaredCount === 0 && !resetAnyMissingStreak) {
 			return;
