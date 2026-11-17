@@ -179,8 +179,9 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 
 	// Validation burst management — cap per-request reads so simple servers
 	// (asyncua-based simulators, embedded PLCs) aren't overwhelmed.
-	// 200 nodes × 4 attributes = 800 reads per request.
-	private static readonly VALIDATION_BATCH_SIZE = 50;
+	// 20 nodes × 4 attributes = 80 reads per request.
+	private static readonly VALIDATION_BATCH_SIZE = 20;
+	private static readonly VALIDATION_BATCH_PACE_MS = 10;
   
 	// Reconnection settings
 	private readonly MIN_RETRY_DELAY = 5000;   // 5 seconds
@@ -645,8 +646,10 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 		const validationStart = Date.now();
 		const results: DataValue[] = [];
 		const totalBatches = Math.ceil(dataPoints.length / OPCUAAdapter.VALIDATION_BATCH_SIZE);
+		let batchFailures = 0;
 
 		for (let start = 0; start < dataPoints.length; start += OPCUAAdapter.VALIDATION_BATCH_SIZE) {
+			const batchIdx = Math.floor(start / OPCUAAdapter.VALIDATION_BATCH_SIZE);
 			const batch = dataPoints.slice(start, start + OPCUAAdapter.VALIDATION_BATCH_SIZE);
 			const nodesToRead: ReadValueIdOptions[] = [];
 
@@ -659,26 +662,50 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 				);
 			}
 
-			const batchResults = await session.read(nodesToRead);
-			for (const r of batchResults) results.push(r);
+			if (batchIdx > 0 && OPCUAAdapter.VALIDATION_BATCH_PACE_MS > 0) {
+				await new Promise(resolve => setTimeout(resolve, OPCUAAdapter.VALIDATION_BATCH_PACE_MS));
+			}
 
-			if (totalBatches > 1) {
-				this.logger.debug(`Validation batch ${Math.floor(start / OPCUAAdapter.VALIDATION_BATCH_SIZE) + 1}/${totalBatches}`, {
+			const batchStart = Date.now();
+			try {
+				const batchResults = await session.read(nodesToRead);
+				for (const r of batchResults) results.push(r);
+			} catch (error) {
+				batchFailures++;
+				this.logger.warn(`Validation batch ${batchIdx + 1}/${totalBatches} failed for ${deviceName}`, {
 					deviceName,
 					batchNodes: batch.length,
-					elapsed: Date.now() - validationStart
+					startIndex: start,
+					error: error instanceof Error ? error.message : String(error),
+				});
+				for (const dp of batch) invalid.push(dp.nodeId);
+				continue;
+			}
+
+			if (totalBatches > 1 && (batchIdx + 1) % 10 === 0) {
+				this.logger.debug(`Validation progress ${batchIdx + 1}/${totalBatches} (${Date.now() - batchStart}ms)`, {
+					deviceName,
+					batchNodes: batch.length,
+					elapsed: Date.now() - validationStart,
 				});
 			}
 		}
 
 		const validationTime = Date.now() - validationStart;
 
-		this.logger.debug(`Batch validation completed in ${validationTime}ms`, {
+		this.logger.info(`Validation completed for ${deviceName}: ${dataPoints.length} nodes in ${totalBatches} batches, ${validationTime}ms${batchFailures > 0 ? `, ${batchFailures} batch failures` : ''}`, {
 			deviceName,
 			nodeCount: dataPoints.length,
-			readCount: dataPoints.length * 4,
-			avgTimePerNode: Math.round(validationTime / dataPoints.length)
+			batchCount: totalBatches,
+			batchSize: OPCUAAdapter.VALIDATION_BATCH_SIZE,
+			batchFailures,
+			durationMs: validationTime,
 		});
+
+		// Nodes whose entire batch request threw are already in `invalid` and
+		// have no entries in `results` — build a set so the parse loop can skip
+		// them and keep the result-index aligned.
+		const batchFailedNodeIds = new Set(invalid);
 
 		// Standard EngineeringUnits property is the authoritative unit source when
 		// present (real unit symbol, e.g. "°C") — resolved for the whole batch in
@@ -686,23 +713,31 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 		// only runs for nodes this doesn't find anything for.
 		const engineeringUnits = await this.readEngineeringUnits(session, dataPoints, deviceName);
 
-		// Parse results (4 consecutive results per data point)
+		// Parse results (4 consecutive results per data point).
+		// `resultOffset` tracks position in `results` independently of data point
+		// index because batch-failed nodes have no entries in the array.
+		let resultOffset = 0;
 		for (let i = 0; i < dataPoints.length; i++) {
 			const dp = dataPoints[i];
-			const baseIdx = i * 4;
-			const valueResult = results[baseIdx];
-			const nodeClassResult = results[baseIdx + 1];
-			const dataTypeResult = results[baseIdx + 2];
-			const descriptionResult = results[baseIdx + 3];
+
+			if (batchFailedNodeIds.has(dp.nodeId)) continue;
+
+			const valueResult = results[resultOffset];
+			const nodeClassResult = results[resultOffset + 1];
+			const dataTypeResult = results[resultOffset + 2];
+			const descriptionResult = results[resultOffset + 3];
+			resultOffset += 4;
 
 			// Check if reads were successful
-			if (!valueResult.statusCode.isGood()) {
+			if (!valueResult || !valueResult.statusCode.isGood()) {
 				invalid.push(dp.nodeId);
-				this.logger.warn(`NodeID validation failed: ${dp.nodeId} (${dp.name}) status=${valueResult.statusCode.name}`, {
-					deviceName,
-					statusCode: valueResult.statusCode.name,
-					description: valueResult.statusCode.description
-				});
+				if (valueResult) {
+					this.logger.warn(`NodeID validation failed: ${dp.nodeId} (${dp.name}) status=${valueResult.statusCode.name}`, {
+						deviceName,
+						statusCode: valueResult.statusCode.name,
+						description: valueResult.statusCode.description
+					});
+				}
 				continue;
 			}
 
@@ -753,12 +788,7 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 			}
 		}
 
-		// Log summary
-		this.logger.debug(`NodeID validation complete: ${valid.length} metrics, ${invalid.length} invalid`, {
-			deviceName,
-			validNodes: valid.map(dp => dp.nodeId),
-			invalidNodes: invalid
-		});
+		this.logger.info(`NodeID validation result for ${deviceName}: ${valid.length} valid metrics, ${invalid.length} invalid out of ${dataPoints.length} total`);
 
 		return { valid, invalid };
 	}
@@ -1693,13 +1723,18 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 				});
 				if (check.status !== 'resolved') throw new Error(`Invalid NamespaceArray: ${check.reason}`);
 				const nodeIds = [...group.session.validatedNodes].filter(nodeId => !group.ambiguousNodeIds.has(nodeId));
-				const values = nodeIds.length
-					? await session.read(nodeIds.map(nodeId => ({ nodeId, attributeId: AttributeIds.Value })))
-					: [];
-				if (!isCurrent()) return;
-				if (!Array.isArray(values) || values.length !== nodeIds.length) {
-					throw new Error('OPC UA node validation returned an unexpected number of results');
+				const EVIDENCE_CHUNK = 100;
+				const values: DataValue[] = [];
+				for (let start = 0; start < nodeIds.length; start += EVIDENCE_CHUNK) {
+					if (!isCurrent()) return;
+					const chunk = nodeIds.slice(start, start + EVIDENCE_CHUNK);
+					const chunkValues = await session.read(chunk.map(nodeId => ({ nodeId, attributeId: AttributeIds.Value })));
+					if (!Array.isArray(chunkValues) || chunkValues.length !== chunk.length) {
+						throw new Error('OPC UA node validation returned an unexpected number of results');
+					}
+					for (const v of chunkValues) values.push(v);
 				}
+				if (!isCurrent()) return;
 				const confirmedUris = await readNamespaceArray();
 				if (!isCurrent()) return;
 				if (JSON.stringify(confirmedUris) !== JSON.stringify(namespaceArray)) {
