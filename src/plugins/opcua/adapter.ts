@@ -31,6 +31,7 @@ import {
 	ClientMonitoredItemGroup,
 	coerceNodeId,
 } from 'node-opcua-client';
+import { monitorEventLoopDelay, performance } from 'node:perf_hooks';
 import { BaseProtocolAdapter, type GenericDeviceConfig } from '../base.js';
 import { type DeviceDataPoint, type Logger, type IProtocolAdapter as _IProtocolAdapter } from '../types.js';
 import { ConsoleLogger } from '../logger.js';
@@ -139,6 +140,61 @@ interface OPCUAConnectionGroup {
  * Manages OPC-UA client connections, sessions, and data reading.
  */
 export class OPCUAAdapter extends BaseProtocolAdapter  {
+	// Temporary, low-volume diagnostics. Disable with OPCUA_PERF_DIAG=0.
+	private readonly perfEnabled = process.env.OPCUA_PERF_DIAG !== '0';
+	private perfTimer?: ReturnType<typeof setInterval>;
+	private perfLag?: ReturnType<typeof monitorEventLoopDelay>;
+	private perfPreviousELU = performance.eventLoopUtilization();
+	private readonly perfCounters = new Map<string, number>();
+	private readonly perfStarted = new Map<string, number>();
+	private perfInc(name: string, value = 1): void {
+		if (this.perfEnabled) this.perfCounters.set(name, (this.perfCounters.get(name) ?? 0) + value);
+	}
+	private perfBegin(name: string): void {
+		if (this.perfEnabled) this.perfStarted.set(name, performance.now());
+	}
+	private perfEnd(name: string, details: Record<string, unknown> = {}): void {
+		if (!this.perfEnabled) return;
+		const started = this.perfStarted.get(name);
+		this.perfStarted.delete(name);
+		this.logger.info(`[OPCUA_PERF] ${name}`, {
+			durationMs: started === undefined ? null : Math.round(performance.now() - started), ...details,
+		});
+	}
+	private startPerfDiagnostics(): void {
+		if (!this.perfEnabled || this.perfTimer) return;
+		this.perfLag = monitorEventLoopDelay({ resolution: 20 });
+		this.perfLag.enable();
+		this.perfPreviousELU = performance.eventLoopUtilization();
+		this.perfTimer = setInterval(() => {
+			const current = performance.eventLoopUtilization();
+			const delta = performance.eventLoopUtilization(current, this.perfPreviousELU);
+			this.perfPreviousELU = current;
+			const lag = this.perfLag;
+			const counters = Object.fromEntries(this.perfCounters);
+			this.perfCounters.clear();
+			const sessions = new Set(this.sessions.values());
+			this.logger.info('[OPCUA_PERF] heartbeat', {
+				eventLoopP99Ms: lag ? Math.round(lag.percentile(99) / 1e6) : null,
+				eventLoopMaxMs: lag ? Math.round(lag.max / 1e6) : null,
+				eventLoopUtilization: Number(delta.utilization.toFixed(3)),
+				rssMB: Math.round(process.memoryUsage().rss / 1048576),
+				heapUsedMB: Math.round(process.memoryUsage().heapUsed / 1048576),
+				groups: this.groups.size, sessions: sessions.size,
+				subscriptions: [...sessions].reduce((n, session) => n + (session.subscriptions?.length ?? 0), 0),
+				monitoredItems: [...sessions].reduce((n, session) => n + (session.monitoredItems?.size ?? 0), 0),
+				counters,
+			});
+			lag?.reset();
+		}, 5000);
+		this.perfTimer.unref();
+	}
+	private stopPerfDiagnostics(): void {
+		if (this.perfTimer) clearInterval(this.perfTimer);
+		this.perfTimer = undefined;
+		this.perfLag?.disable();
+		this.perfLag = undefined;
+	}
 	private clients: Map<string, OPCUADeviceClient> = new Map();
 	private sessions: Map<string, OPCUASession> = new Map();
 	private readonly shadowBindings = new WeakMap<OPCUADeviceConfig, SourceBindingRef>();
@@ -1009,6 +1065,7 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 			}
 			buildTimeMs += performance.now() - chunkStarted;
 			processedInFlush += batch.length;
+			this.perfInc('coalescedPointsProcessed', batch.length);
 			const emitStarted = performance.now();
 			try {
 				if (batch.length > 0) this.emit('data', batch);
@@ -1036,7 +1093,9 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 			}
 		};
 		const flushCoalescingBuffer = () => {
-			if (draining || coalescingBuffer.size === 0) return;
+			if (draining) { this.perfInc('coalescingFlushSkippedBusy'); return; }
+			if (coalescingBuffer.size === 0) return;
+			this.perfInc('coalescingFlushes');
 			draining = true;
 			flushStartedAt = performance.now();
 			processedInFlush = 0;
@@ -1058,6 +1117,8 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 			const batchDataPoints = validDataPoints.slice(startIdx, endIdx);
 
 			// Create subscription
+			const subStarted = performance.now();
+			this.perfInc('subscriptionCreateAttempts');
 			const subscription = await session.createSubscription2({
 				requestedPublishingInterval: connection.publishingInterval || 1000,
 				requestedLifetimeCount: 100,
@@ -1067,6 +1128,7 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 				priority: 10,
 			});
 
+			this.logger.info('[OPCUA_PERF] subscription created', { deviceName, index: subIdx + 1, total: subscriptionCount, subscriptionId: subscription.subscriptionId, durationMs: Math.round(performance.now() - subStarted), requestedItems: batchDataPoints.length });
 			sessionWrapper.subscriptions.push(subscription);
 
 			// Set legacy field for backwards compatibility (first subscription)
@@ -1095,6 +1157,8 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 				attributeId: AttributeIds.Value,
 			}));
 
+			const monitorStarted = performance.now();
+			this.perfInc('monitorGroupAttempts');
 			const group = ClientMonitoredItemGroup.create(subscription, itemsToMonitor, parameters, TimestampsToReturn.Both);
 
 			try {
@@ -1110,13 +1174,28 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 				continue;
 			}
 
+			this.logger.info('[OPCUA_PERF] monitored group initialized', { deviceName, index: subIdx + 1, total: subscriptionCount, durationMs: Math.round(performance.now() - monitorStarted), monitoredItems: group.monitoredItems.length });
 			// Lightweight handler: just write to the shared coalescing buffer.
 			// DataPoint construction, evidence, shadow, and emit all happen in
 			// the timer-based flushCoalescingBuffer() above.
 			const itemMatches = batchDataPoints.map((dp, index) =>
 				this.matchesOperationNodeId(itemsToMonitor[index]?.nodeId, dp.nodeId));
 			group.on('changed', (_monitoredItem: unknown, dataValue: DataValue, index: number) => {
-				return; // DIAGNOSTIC ONLY
+				const dp = batchDataPoints[index];
+				if (!dp) {
+					this.logger.warn(`OPC UA subscript ion returned an unknown monitored-item index for ${deviceName}`);
+					return;
+				}
+				if (dp.nodeType !== 'metric') return;
+
+				this.perfInc('changedNotifications');
+				coalescingBuffer.set(dp.nodeId, {
+					dataValue,
+					dp,
+					monitoredItem: _monitoredItem,
+					monitoredItemRef: group.monitoredItems[index],
+					matchesOperation: itemMatches[index],
+				});
 			});
 
 			// Per-item creation result + per-item ongoing error handling
@@ -1138,10 +1217,12 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 			// Handle subscription errors
 			subscription.on('terminated', () => {
 				this.logger.warn(`Subscription ${subIdx + 1} terminated for ${deviceName}`);
+				this.perfInc('subscriptionTerminations');
 				this.diagnostics.recordSubscriptionTerminated(deviceName);
 			});
 
 			subscription.on('keepalive', () => {
+				this.perfInc('subscriptionKeepalives');
 				// keepalive: subscription is healthy, no action needed
 			});
 		}
@@ -1409,7 +1490,9 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 		if (ambiguousNodeIds.size > 0) {
 			this.logger.warn(`OPC UA identity resolution deferred for ${ambiguousNodeIds.size} ambiguous or invalid NodeIds in ${compositeDevice.name}`);
 		}
+		this.perfBegin(`connectGroup:${compositeDevice.name}`);
 		const sessionWrapper = await this.doConnectDevice(compositeDevice, nodeIdToDevice, ambiguousNodeIds, members);
+		this.perfEnd(`connectGroup:${compositeDevice.name}`, { members: members.length, configuredPoints: compositeDevice.dataPoints.length });
 		const client = this.clients.get(compositeDevice.name)!;
 
 		const group: OPCUAConnectionGroup = {
@@ -1493,7 +1576,9 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 		};
 
 		try {
+			this.perfBegin(`clientConnect:${device.name}`);
 			await runtimeClient.connect();
+			this.perfEnd(`clientConnect:${device.name}`);
 			const sessionWrapper = runtimeClient.getSessionWrapper();
 			if (!sessionWrapper?.session) {
 				throw new Error(`Failed to establish OPC-UA session for ${device.name}`);
@@ -1556,12 +1641,14 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 			}
 
 			// Validate NodeIDs before creating subscription or reads
+			this.perfBegin(`validate:${device.name}`);
 			const { valid: validDataPoints, invalid: invalidNodeIds } = await this.validateNodeIds(
 				session,
 				device.dataPoints,
 				device.name
 			);
 
+			this.perfEnd(`validate:${device.name}`, { valid: validDataPoints.length, invalid: invalidNodeIds.length });
 			// Cache validated NodeIDs (only metrics)
 			validDataPoints.forEach(dp => sessionWrapper.validatedNodes.add(dp.nodeId));
 
@@ -1625,7 +1712,9 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 			}
 
 			// Read metadata nodes once on connect (separate from time-series)
+			this.perfBegin(`metadata:${device.name}`);
 			await this.readMetadata(session, device.dataPoints, device.name);
+			this.perfEnd(`metadata:${device.name}`);
 
 			// Prefer the friendly device name already captured at discovery time
 			// (discovery.ts's folderDeviceName — the browseName of the folder that
@@ -1641,7 +1730,9 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 				}
 			}
 
+			this.perfBegin(`displayNames:${device.name}`);
 			const displayNames = await resolveDeviceDisplayNames(session, validDataPoints.filter(dp => !dp.device_name?.trim()).map(dp => dp.nodeId), this.logger);
+			this.perfEnd(`displayNames:${device.name}`, { lookupCount: validDataPoints.filter(dp => !dp.device_name?.trim()).length });
 			for (const dp of validDataPoints) {
 				const owner = nodeIdToDevice.get(dp.nodeId)?.name ?? device.name;
 				if (!this.deviceDisplayNames.has(owner)) this.deviceDisplayNames.set(owner, new Map());
@@ -1691,7 +1782,9 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 			// Create subscription if enabled (real-time streaming)
 			if (device.connection.useSubscription && validDataPoints.length > 0) {
 				try {
+					this.perfBegin(`subscriptions:${device.name}`);
 					await this.createSubscription(device.name, device, sessionWrapper, nodeIdToDevice, ambiguousNodeIds);
+					this.perfEnd(`subscriptions:${device.name}`, { subscriptions: sessionWrapper.subscriptions.length, monitoredItems: sessionWrapper.monitoredItems.size });
 					this.logger.debug(`Subscription mode enabled for ${device.name} - using real-time streaming`);
 				} catch (error) {
 					this.logger.error(`Failed to create subscription for ${device.name}: ${error}`);
@@ -1725,7 +1818,9 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 	}
 
 	private refreshNamespaceEvidence(group: OPCUAConnectionGroup): void {
+		this.perfInc('namespaceRefreshes');
 		this.invalidateNamespaceEvidence(group);
+		const evidenceStarted = performance.now();
 		const epoch = {};
 		group.identityEpoch = epoch;
 		const session = group.session.session;
@@ -1771,7 +1866,10 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 				for (let start = 0; start < nodeIds.length; start += EVIDENCE_CHUNK) {
 					if (!isCurrent()) return;
 					const chunk = nodeIds.slice(start, start + EVIDENCE_CHUNK);
+					const chunkStarted = performance.now();
 					const chunkValues = await session.read(chunk.map(nodeId => ({ nodeId, attributeId: AttributeIds.Value })));
+					this.perfInc('namespaceReadChunks');
+					if (performance.now() - chunkStarted > 250) this.logger.warn('[OPCUA_PERF] slow namespace read', { deviceName: group.compositeDevice.name, durationMs: Math.round(performance.now() - chunkStarted), chunkSize: chunk.length });
 					if (!Array.isArray(chunkValues) || chunkValues.length !== chunk.length) {
 						throw new Error('OPC UA node validation returned an unexpected number of results');
 					}
@@ -1800,9 +1898,11 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 					};
 					this.emit('namespace-ready', evidence);
 				}
+				this.logger.info('[OPCUA_PERF] namespace verification complete', { deviceName: group.compositeDevice.name, durationMs: Math.round(performance.now() - evidenceStarted), verifiedNodes: verifiedNodes.size, checkedNodes: nodeIds.length });
 				if (verifiedNodes.size !== nodeIds.length) retry();
 			} catch (error) {
 				if (!isCurrent()) return;
+				this.perfInc('namespaceVerificationFailures');
 				this.logger.warn(`OPC UA identity evidence unavailable for ${group.compositeDevice.name}: ${error instanceof Error ? error.message : String(error)}`);
 				retry();
 			}
@@ -1920,10 +2020,13 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
    * Schedule reconnection with exponential backoff
    */
 	private scheduleReconnect(device: OPCUADeviceConfig, sessionWrapper: OPCUASession, reason: string): void {
+		this.perfInc('reconnectRequests');
 		// Skip if already reconnecting
 		if (sessionWrapper.reconnecting) {
 			return;
 		}
+		this.perfInc('reconnectScheduled');
+		this.logger.warn('[OPCUA_PERF] reconnect scheduled', { deviceName: device.name, reason });
 		this.invalidateShadowTransport(sessionWrapper);
 		const groupKey = this.deviceGroupKey.get(device.name);
 		const group = groupKey ? this.groups.get(groupKey) : undefined;
@@ -2218,6 +2321,7 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 
 		// If subscription is active, data comes via events - skip polling
 		if (sessionWrapper.subscription && device.connection.useSubscription) {
+			this.perfInc('subscriptionPollSkips');
 			this.logger.debug(`Subscription active for ${deviceName} - skipping poll`);
 			// Keep runtime health fresh in subscription mode. Without this, lastSeen and
 			// communicationQuality stay stale even when monitored item updates are flowing.
@@ -2245,6 +2349,7 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 		}));
 		const requestedNodeIds = validDataPoints.map(dp => dp.nodeId);
 
+		this.perfInc('fullPollReads');
 		const readStartedAt = Date.now();
 
 		// Read all nodes with automatic retry for transient errors
@@ -2372,13 +2477,16 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
    * Override start to store sessions in map
    */
 	public async start(): Promise<void> {
-		await super.start();
+		this.startPerfDiagnostics();
+		try { await super.start(); }
+		catch (error) { this.stopPerfDiagnostics(); throw error; }
 	}
 
 	/**
    * Override stop to clean up sessions
    */
 	public async stop(): Promise<void> {
+		this.stopPerfDiagnostics();
 		if (this.shadow) this.withShadow(() => { this.shadow!.registry.disposeAdapter(this); });
 		for (const group of this.groups.values()) this.invalidateNamespaceEvidence(group);
 		await super.stop();
