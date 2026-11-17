@@ -7,7 +7,7 @@
  */
 
 import { z } from 'zod';
-import { OPCUADeviceIdentificationSchema } from './device-identification-config.js';
+import { OPCUADeviceIdentificationSchema } from './device-identity.js';
 
 /**
  * OPC-UA Security Mode

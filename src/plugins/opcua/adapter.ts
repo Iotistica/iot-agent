@@ -43,7 +43,7 @@ import {
 import { OPCUADeviceClient, type OPCUASession } from './client.js';
 import { OpcuaStartupDiagnostics } from './diagnostics.js';
 import { looksLikeEngineeringUnit, normalizeForUnitNameCompare } from './discovery.js';
-import { resolveDeviceDisplayNames } from './device-display.js';
+import { resolveDeviceDisplayNames } from './device-identity.js';
 import type { PrivateEvidenceRegistry } from '../../points/private-evidence-registry.js';
 import type { PrivateShadowObserver } from '../../points/private-shadow-observer.js';
 import type { ObservationRef, SourceBindingRef } from '../../points/private-evidence-types.js';

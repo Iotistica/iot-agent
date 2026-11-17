@@ -12,10 +12,11 @@ import { LogComponents } from '../../logging/types';
 import { BaseDiscovery } from '../base';
 import { withDiscoveryScanStatus, type DiscoveredDevice, type DiscoveryDeviceList } from '../types';
 import type { ConfigManager } from '../../core/config.js';
-import { browseHierarchicalReferences, identifyDevices } from './device-identification.js';
-import { OPCUADeviceIdentificationSchema, type OPCUADeviceIdentification } from './device-identification-config.js';
+import {
+	browseHierarchicalReferences, identifyDevices, OPCUADeviceIdentificationSchema,
+	collectOpcuaDeviceSnapshot, type OPCUADeviceIdentification,
+} from './device-identity.js';
 import { toDeviceUuid } from '../../db/models/device.model.js';
-import { collectOpcuaDeviceSnapshot } from './device-snapshot.js';
 import type { DiscoverySnapshot } from '../../discovery/device-candidates.js';
 import type { ClientSession } from 'node-opcua-client';
 

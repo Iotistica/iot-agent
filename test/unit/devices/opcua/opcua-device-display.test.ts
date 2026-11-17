@@ -1,7 +1,7 @@
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 import { BrowseDirection, type ClientSession } from 'node-opcua-client';
-import { resolveDeviceDisplayNames } from '../../../../src/plugins/opcua/device-display';
+import { resolveDeviceDisplayNames } from '../../../../src/plugins/opcua/device-identity';
 import type { Logger } from '../../../../src/plugins/types';
 
 const good = { isGood: () => true, name: 'Good' };

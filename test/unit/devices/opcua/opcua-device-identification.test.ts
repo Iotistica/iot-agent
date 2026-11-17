@@ -1,8 +1,7 @@
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 import { NodeClass, type ClientSession } from 'node-opcua-client';
-import { identifyDevices } from '../../../../src/plugins/opcua/device-identification';
-import type { OPCUADeviceIdentification } from '../../../../src/plugins/opcua/device-identification-config';
+import { identifyDevices, type OPCUADeviceIdentification } from '../../../../src/plugins/opcua/device-identity';
 
 const good = { isGood: () => true, name: 'Good' };
 const id = (value: string) => ({ toString: () => value, serverIndex: 0, namespaceUri: null });

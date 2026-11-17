@@ -1,7 +1,7 @@
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 import { AttributeIds, BrowseDirection, NodeClass, type ClientSession } from 'node-opcua-client';
-import { collectOpcuaDeviceSnapshot } from '../../../../src/plugins/opcua/device-snapshot';
+import { collectOpcuaDeviceSnapshot } from '../../../../src/plugins/opcua/device-identity';
 import { generateDeviceCandidates } from '../../../../src/discovery/device-candidates';
 
 const good = { isGood: () => true };
