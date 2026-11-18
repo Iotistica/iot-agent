@@ -127,13 +127,10 @@ function registerRuntimeHealthSubsystems(): void {
 			return false;
 		}
 	}, {
-		// For provisioned devices (state loaded from SQLite), local API loss is degraded mode only.
-		// For unprovisioned devices, keep critical so setup/provisioning remains restartable.
-		// minFailuresBeforeLatch=2: the immediate startup check may fail transiently (busy event loop);
-		// require a periodic check to confirm before permanently latching.
-		critical: !isProvisioned,
+		critical: !agent.isProvisioned(),
 		description: 'Local Agent API ping check',
-		minFailuresBeforeLatch: 2,
+		minFailuresBeforeLatch: 3,
+		recoverySuccessThreshold: 3,
 	});
 
 	health.registerSubsystem('mqtt', async () => {
