@@ -46,7 +46,7 @@ export class ConfiguredPointVerifier implements CatalogEvidenceVerifier {
 			if (cached === null) return undefined;
 			this.stmtRevision ??= this.db.prepare('SELECT revision FROM endpoints WHERE uuid = ? AND enabled = 1 LIMIT 1');
 			const rev = this.stmtRevision.get(endpointUuid) as { revision: number } | undefined;
-			if (rev && rev.revision === cached.revision) return cached.row;
+			if (rev?.revision === cached.revision) return cached.row;
 			this.endpointCache.delete(endpointUuid);
 		}
 		this.stmtEndpoint ??= this.db.prepare('SELECT uuid, protocol, connection, revision FROM endpoints WHERE uuid = ? AND enabled = 1 LIMIT 1');

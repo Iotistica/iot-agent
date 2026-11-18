@@ -401,4 +401,27 @@ describe('isolated point identity catalog', () => {
 			other.close();
 		}
 	});
+
+	it('detects stale configuration via revision trigger during identity resolution', async () => {
+		const created = await catalog.createIdentityIfAbsent(address, 'fixture');
+		expect(created.status).toBe('resolved');
+
+		const staleCatalog = new PointIdentityCatalog(db, verifier);
+		const initial = staleCatalog.resolveExistingIdentity(address, [alias], 'fixture');
+		expect(initial.status).toBe('resolved');
+
+		const rev0 = db.prepare('SELECT revision FROM endpoints WHERE uuid = ?').get('source-1') as { revision: number };
+		expect(rev0.revision).toBe(0);
+
+		db.prepare('UPDATE endpoints SET connection = ? WHERE uuid = ?').run('{"url":"changed"}', 'source-1');
+		const rev1 = db.prepare('SELECT revision FROM endpoints WHERE uuid = ?').get('source-1') as { revision: number };
+		expect(rev1.revision).toBe(1);
+
+		const staleResult = staleCatalog.resolveExistingIdentity(address, [alias], 'fixture');
+		expect(staleResult).toMatchObject({ status: 'unresolved', reason: 'stale-configuration' });
+
+		const freshCatalog = new PointIdentityCatalog(db, verifier);
+		const freshResult = freshCatalog.resolveExistingIdentity(address, [alias], 'fixture');
+		expect(freshResult.status).toBe('resolved');
+	});
 });

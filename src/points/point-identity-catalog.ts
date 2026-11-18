@@ -193,7 +193,7 @@ export class PointIdentityCatalog {
 	private revisionMatches(endpointUuid: string, expected: number): boolean {
 		const row = this.stmt('SELECT revision FROM endpoints WHERE uuid = ? LIMIT 1')
 			.get(endpointUuid) as { revision: number } | undefined;
-		if (!row || row.revision !== expected) {
+		if (row?.revision !== expected) {
 			this.sourceCache.delete(endpointUuid);
 			return false;
 		}
