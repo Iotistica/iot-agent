@@ -251,7 +251,8 @@ const pointsMatchingFilters = computed(() => {
   })
 })
 const livePointCount = computed(() => pointsMatchingFilters.value.length)
-const filteredPoints = computed(() => {
+const TABLE_LIMIT = 1000
+const allFilteredPoints = computed(() => {
   const favSet = favoritesSet.value
   const filtered = pointsMatchingFilters.value.filter(p =>
     (viewMode.value !== 'favorites' || favSet.has(favKey(p)))
@@ -265,6 +266,8 @@ const filteredPoints = computed(() => {
   }
   return filtered.sort(columnSort)
 })
+const filteredPoints = computed(() => allFilteredPoints.value.slice(0, TABLE_LIMIT))
+const isTruncated = computed(() => allFilteredPoints.value.length > TABLE_LIMIT)
 const favoriteCount = computed(() => favorites.value.length)
 const missingViewCount = computed(() => missingDataExplorerViewPointCount(points.value, activeViewIds.value))
 const candidateViewPoints = computed(() =>
@@ -619,7 +622,7 @@ onUnmounted(() => { if (timer) clearInterval(timer); clearTimeout(persistFavTime
             <button type="button" data-testid="data-tab-views" :class="['view-tab', { active: activeTab === 'views' }]" @click="activateTab('views')">Views ({{ savedViews.length }})</button>
             <button type="button" data-testid="data-tab-datasets" :class="['view-tab', { active: activeTab === 'datasets' }]" @click="activateTab('datasets')">Datasets ({{ datasets.length }})</button>
           </div>
-          <span v-if="activeTab !== 'configured'" class="toolbar-info" data-testid="data-toolbar-info">Showing {{ activeTab === 'datasets' ? datasets.length + ' datasets' : activeTab === 'views' ? savedViews.length + ' views' : filteredPoints.length + ' points' }}<template v-if="lastSync"> · Last sync {{ lastSync }}</template></span>
+          <span v-if="activeTab !== 'configured'" class="toolbar-info" data-testid="data-toolbar-info">Showing {{ activeTab === 'datasets' ? datasets.length + ' datasets' : activeTab === 'views' ? savedViews.length + ' views' : isTruncated ? filteredPoints.length + ' of ' + allFilteredPoints.length + ' points' : filteredPoints.length + ' points' }}<template v-if="isTruncated && activeTab !== 'datasets' && activeTab !== 'views'"> · Search to narrow results</template><template v-if="lastSync"> · Last sync {{ lastSync }}</template></span>
         </div>
         <a-alert v-if="viewError" type="warning" show-icon :message="viewError" style="margin-bottom: 10px" />
         <a-alert v-if="activeSavedView && missingViewCount" type="info" show-icon :message="`${missingViewCount} saved point(s) are not in the recent sample. They remain saved in this view.`" style="margin-bottom: 10px" />
@@ -674,7 +677,7 @@ onUnmounted(() => { if (timer) clearInterval(timer); clearTimeout(persistFavTime
         </template>
 
         <!-- Points table -->
-        <a-table v-else-if="activeTab !== 'configured'" :columns="columns" :data-source="filteredPoints" :loading="loading" row-key="key" :row-selection="rowSelection" :customRow="(record: PointRow) => ({ onClick: (e: MouseEvent) => { if (!(e.target as HTMLElement).closest('.ant-checkbox-wrapper')) openPointDrawer(record) }, style: 'cursor: pointer' })" size="small" :pagination="{ pageSize, showSizeChanger: true, pageSizeOptions: ['10', '20', '50'], onShowSizeChange: (_: number, size: number) => { pageSize = size } }" :scroll="{ x: activeTab === 'all' ? 1390 : 1570 }" table-layout="fixed" @change="onTableChange">
+        <a-table v-else-if="activeTab !== 'configured'" :columns="columns" :data-source="filteredPoints" :loading="loading" row-key="key" :row-selection="rowSelection" :customRow="(record: PointRow) => ({ onClick: (e: MouseEvent) => { if (!(e.target as HTMLElement).closest('.ant-checkbox-wrapper')) openPointDrawer(record) }, style: 'cursor: pointer' })" size="small" :pagination="{ pageSize, showSizeChanger: true, pageSizeOptions: ['20', '50', '100'], onShowSizeChange: (_: number, size: number) => { pageSize = size } }" :scroll="{ x: activeTab === 'all' ? 1390 : 1570 }" table-layout="fixed" @change="onTableChange">
           <template #bodyCell="{ column, record }">
             <template v-if="column.key === 'protocol'"><a-tag :color="protocolColor(record.protocol)">{{ protocolLabel(record.protocol) }}</a-tag></template>
             <template v-else-if="column.key === 'source'">{{ sourceName(record) }}</template>
@@ -693,7 +696,7 @@ onUnmounted(() => { if (timer) clearInterval(timer); clearTimeout(persistFavTime
     </div>
     <CreateViewDrawer
       v-model:open="viewDrawerOpen"
-      :point-rows="selectedPointKeys.length ? candidateViewPoints : filteredPoints"
+      :point-rows="selectedPointKeys.length ? candidateViewPoints : allFilteredPoints"
       :editing-view="editingView"
       @saved="onViewSaved"
     />
