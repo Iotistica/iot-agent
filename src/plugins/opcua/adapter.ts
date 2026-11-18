@@ -1203,60 +1203,76 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 						draining = false;
 						return;
 					}
-					const evidenceStarted = performance.now();
-					for (let i = 0; i < builtPoints.length; i++) {
-						const entry = snapshotEntries[i];
-						const operationNodeId = entry.dp.nodeId;
-						const matchesOperation = entry.matchesOperation;
-						const owningDevice = nodeIdToDevice.get(operationNodeId) ?? device;
-						const owningDeviceName = owningDevice.name;
-						const activeGroupKey = this.deviceGroupKey.get(owningDeviceName);
-						const activeGroup = activeGroupKey ? this.groups.get(activeGroupKey) : undefined;
-						if (activeGroup?.session === sessionWrapper && matchesOperation &&
-							entry.monitoredItem === entry.monitoredItemRef &&
-							sessionWrapper.session === session && !sessionWrapper.reconnecting &&
-							this.sessions.get(owningDeviceName) === sessionWrapper && ownerPointSets.get(owningDevice)?.has(entry.dp) === true) {
-							this.recordReadingEvidence(builtPoints[i], owningDeviceName, operationNodeId, activeGroup);
+					let workerOffset = 0;
+					const processWorkerChunk = () => {
+						if (sessionWrapper.coalescingTimer !== coalescingTimer ||
+							sessionWrapper.session !== session || sessionWrapper.reconnecting) {
+							draining = false;
+							return;
 						}
-						if (this.shadow && matchesOperation &&
-							!ambiguousNodeIds.has(operationNodeId) && entry.monitoredItem === entry.monitoredItemRef &&
-							sessionWrapper.session === session && !sessionWrapper.reconnecting &&
-							this.sessions.get(owningDeviceName) === sessionWrapper &&
-							ownerPointSets.get(owningDevice)?.has(entry.dp) === true) {
-							const lastShadow = shadowLastFlush.get(operationNodeId) ?? 0;
-							if (flushGeneration - lastShadow >= SHADOW_THROTTLE_INTERVAL) {
-								shadowLastFlush.set(operationNodeId, flushGeneration);
-								this.captureShadow(owningDevice, builtPoints[i], operationNodeId);
+						const chunkStart = performance.now();
+						const end = Math.min(workerOffset + FLUSH_CHUNK_SIZE, builtPoints.length);
+						const batch: DeviceDataPoint[] = [];
+						for (; workerOffset < end; workerOffset++) {
+							const entry = snapshotEntries[workerOffset];
+							const operationNodeId = entry.dp.nodeId;
+							const matchesOperation = entry.matchesOperation;
+							const owningDevice = nodeIdToDevice.get(operationNodeId) ?? device;
+							const owningDeviceName = owningDevice.name;
+							const activeGroupKey = this.deviceGroupKey.get(owningDeviceName);
+							const activeGroup = activeGroupKey ? this.groups.get(activeGroupKey) : undefined;
+							if (activeGroup?.session === sessionWrapper && matchesOperation &&
+								entry.monitoredItem === entry.monitoredItemRef &&
+								sessionWrapper.session === session && !sessionWrapper.reconnecting &&
+								this.sessions.get(owningDeviceName) === sessionWrapper && ownerPointSets.get(owningDevice)?.has(entry.dp) === true) {
+								this.recordReadingEvidence(builtPoints[workerOffset], owningDeviceName, operationNodeId, activeGroup);
 							}
+							if (this.shadow && matchesOperation &&
+								!ambiguousNodeIds.has(operationNodeId) && entry.monitoredItem === entry.monitoredItemRef &&
+								sessionWrapper.session === session && !sessionWrapper.reconnecting &&
+								this.sessions.get(owningDeviceName) === sessionWrapper &&
+								ownerPointSets.get(owningDevice)?.has(entry.dp) === true) {
+								const lastShadow = shadowLastFlush.get(operationNodeId) ?? 0;
+								if (flushGeneration - lastShadow >= SHADOW_THROTTLE_INTERVAL) {
+									shadowLastFlush.set(operationNodeId, flushGeneration);
+									this.captureShadow(owningDevice, builtPoints[workerOffset], operationNodeId);
+								}
+							}
+							batch.push(builtPoints[workerOffset]);
 						}
-					}
-					buildTimeMs = performance.now() - evidenceStarted;
-					processedInFlush = builtPoints.length;
-					this.perfInc('coalescedPointsProcessed', builtPoints.length);
-					const emitStarted = performance.now();
-					try {
-						if (builtPoints.length > 0) {
-							this.emit('data', builtPoints);
-							this.perfMonitor.recordEmitted(deviceName, builtPoints.length);
+						buildTimeMs += performance.now() - chunkStart;
+						processedInFlush += batch.length;
+						this.perfInc('coalescedPointsProcessed', batch.length);
+						const emitStarted = performance.now();
+						try {
+							if (batch.length > 0) {
+								this.emit('data', batch);
+								this.perfMonitor.recordEmitted(deviceName, batch.length);
+							}
+						} catch (error) {
+							this.logger.error(`OPC-UA data emission failed for ${deviceName}: ${error instanceof Error ? error.message : String(error)}`);
+						} finally {
+							emitTimeMs += performance.now() - emitStarted;
 						}
-					} catch (error) {
-						this.logger.error(`OPC-UA data emission failed for ${deviceName}: ${error instanceof Error ? error.message : String(error)}`);
-					} finally {
-						emitTimeMs = performance.now() - emitStarted;
-					}
-					draining = false;
-					this.perfMonitor.recordBatchDuration(deviceName, performance.now() - flushStartedAt);
-					if (Date.now() - lastPerfLog >= 5000) {
-						this.logger.info(`OPC-UA flush perf ${deviceName}`, {
-							points: processedInFlush,
-							buildMs: Math.round(buildTimeMs),
-							emitMs: Math.round(emitTimeMs),
-							elapsedMs: Math.round(performance.now() - flushStartedAt),
-							coalescedPending: coalescingBuffer.size,
-							workerBacked: true,
-						});
-						lastPerfLog = Date.now();
-					}
+						if (workerOffset < builtPoints.length) {
+							setImmediate(processWorkerChunk);
+							return;
+						}
+						draining = false;
+						this.perfMonitor.recordBatchDuration(deviceName, performance.now() - flushStartedAt);
+						if (Date.now() - lastPerfLog >= 5000) {
+							this.logger.info(`OPC-UA flush perf ${deviceName}`, {
+								points: processedInFlush,
+								buildMs: Math.round(buildTimeMs),
+								emitMs: Math.round(emitTimeMs),
+								elapsedMs: Math.round(performance.now() - flushStartedAt),
+								coalescedPending: coalescingBuffer.size,
+								workerBacked: true,
+							});
+							lastPerfLog = Date.now();
+						}
+					};
+					processWorkerChunk();
 				});
 				return;
 			}
