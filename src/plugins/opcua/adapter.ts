@@ -44,6 +44,7 @@ import { OPCUADeviceClient, type OPCUASession } from './client.js';
 import { OpcuaStartupDiagnostics } from './diagnostics.js';
 import { looksLikeEngineeringUnit, normalizeForUnitNameCompare } from './discovery.js';
 import { resolveDeviceDisplayNames } from './device-identity.js';
+import { OpcuaPerfMonitor } from './perf-monitor.js';
 import type { PrivateEvidenceRegistry } from '../../points/private-evidence-registry.js';
 import type { PrivateShadowObserver } from '../../points/private-shadow-observer.js';
 import type { ObservationRef, SourceBindingRef } from '../../points/private-evidence-types.js';
@@ -219,6 +220,7 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 	// TEMPORARY — see diagnostics.ts. Remove once the monitored-item-count
 	// investigation is done.
 	private diagnostics: OpcuaStartupDiagnostics;
+	private readonly perfMonitor: OpcuaPerfMonitor;
 
 	// Human-readable names resolved from the OPC-UA server at connect time.
 	// Populated from: metadata.displayName (config override) > server DisplayName attribute > unset
@@ -440,6 +442,7 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 	constructor(devices: OPCUADeviceConfig[], logger?: Logger, shadow?: OpcuaShadowOptions) {
 		super(devices as GenericDeviceConfig[], logger || new ConsoleLogger('debug'));
 		this.diagnostics = new OpcuaStartupDiagnostics(this.logger);
+		this.perfMonitor = new OpcuaPerfMonitor(this.logger);
 		this.shadow = shadow;
 		if (shadow) {
 			for (const source of shadow.sources) {
@@ -1107,7 +1110,10 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 			this.perfInc('coalescedPointsProcessed', batch.length);
 			const emitStarted = performance.now();
 			try {
-				if (batch.length > 0) this.emit('data', batch);
+				if (batch.length > 0) {
+					this.emit('data', batch);
+					this.perfMonitor.recordEmitted(deviceName, batch.length);
+				}
 			} catch (error) {
 				this.logger.error(`OPC-UA data emission failed for ${deviceName}: ${error instanceof Error ? error.message : String(error)}`);
 			} finally {
@@ -1120,6 +1126,7 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 			pendingEntries = [];
 			pendingOffset = 0;
 			draining = false;
+			this.perfMonitor.recordBatchDuration(deviceName, performance.now() - flushStartedAt);
 			if (Date.now() - lastPerfLog >= 5000) {
 				this.logger.info(`OPC-UA flush perf ${deviceName}`, {
 					points: processedInFlush,
@@ -1296,6 +1303,7 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 				if (dp.nodeType !== 'metric') return;
 
 				this.perfInc('changedNotifications');
+				this.perfMonitor.recordReceived(deviceName, 1);
 				coalescingBuffer.set(dp.nodeId, {
 					dataValue,
 					dp,
@@ -2642,8 +2650,9 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
    */
 	public async start(): Promise<void> {
 		this.startPerfDiagnostics();
+		this.perfMonitor.start();
 		try { await super.start(); }
-		catch (error) { this.stopPerfDiagnostics(); throw error; }
+		catch (error) { this.stopPerfDiagnostics(); this.perfMonitor.stop(); throw error; }
 	}
 
 	/**
@@ -2651,6 +2660,7 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
    */
 	public async stop(): Promise<void> {
 		this.stopPerfDiagnostics();
+		this.perfMonitor.stop();
 		if (this.shadow) this.withShadow(() => { this.shadow!.registry.disposeAdapter(this); });
 		for (const group of this.groups.values()) this.invalidateNamespaceEvidence(group);
 		await super.stop();
