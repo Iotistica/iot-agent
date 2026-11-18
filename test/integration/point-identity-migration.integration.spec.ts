@@ -19,12 +19,13 @@ describe('point identity migration', () => {
 	let existingRows: Record<string, unknown[]>;
 
 	function migrateBaseline(database: DatabaseSync): void {
-		const migration = migrations.pop();
-		expect(migration?.name).toBe(migrationName);
+		const idx = migrations.findIndex(m => m.name === migrationName);
+		expect(idx).toBeGreaterThanOrEqual(0);
+		const removed = migrations.splice(idx);
 		try {
 			runMigrations(database);
 		} finally {
-			if (migration) migrations.push(migration);
+			migrations.push(...removed);
 		}
 	}
 

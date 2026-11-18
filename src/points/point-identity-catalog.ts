@@ -52,6 +52,7 @@ type SourceRow = Record<string, unknown> & {
 	id: number;
 	uuid: string;
 	protocol: string;
+	revision: number;
 };
 type IdentityRow = { point_uuid: string | null; endpoint_uuid: string | null; protocol: string | null; device_uuid: string | null };
 type AliasRow = { alias_kind: string; alias_key: string; evidence: string };
@@ -144,10 +145,21 @@ function storedMqttSelector(key: string): 'whole' | 'path' | undefined {
  * callers without one cannot create, attach, reconcile or change associations.
  */
 export class PointIdentityCatalog {
+	private stmts = new Map<string, ReturnType<DatabaseSync['prepare']>>();
+	private sourceCache = new Map<string, SourceRow>();
+
 	constructor(private readonly db: DatabaseSync, private readonly verifier?: CatalogEvidenceVerifier) {}
 
+	private stmt(sql: string): ReturnType<DatabaseSync['prepare']> {
+		const cached = this.stmts.get(sql);
+		if (cached) return cached;
+		const s = this.db.prepare(sql);
+		this.stmts.set(sql, s);
+		return s;
+	}
+
 	private foreignKeysEnabled(): boolean {
-		return this.db.prepare('PRAGMA foreign_keys').get()?.foreign_keys === 1;
+		return this.stmt('PRAGMA foreign_keys').get()?.foreign_keys === 1;
 	}
 
 	private verify(request: CatalogEvidenceRequest): CatalogResult<true> {
@@ -164,18 +176,34 @@ export class PointIdentityCatalog {
 
 	private source(scope: PointScope): CatalogResult<SourceRow> {
 		if (!validScope(scope)) return unresolved('invalid-input');
-		const rows = this.db.prepare('SELECT * FROM endpoints WHERE uuid = ? LIMIT 2')
+		const cached = this.sourceCache.get(scope.endpointUuid);
+		if (cached) {
+			if (cached.protocol !== scope.protocol) return unresolved('protocol-mismatch');
+			return resolved(cached);
+		}
+		const rows = this.stmt('SELECT * FROM endpoints WHERE uuid = ? LIMIT 2')
 			.all(scope.endpointUuid) as SourceRow[];
 		if (rows.length === 0) return unresolved('source-missing');
 		if (rows.length !== 1) return unresolved('source-ambiguous');
 		if (rows[0].protocol !== scope.protocol) return unresolved('protocol-mismatch');
+		this.sourceCache.set(scope.endpointUuid, rows[0]);
 		return resolved(rows[0]);
 	}
 
+	private revisionMatches(endpointUuid: string, expected: number): boolean {
+		const row = this.stmt('SELECT revision FROM endpoints WHERE uuid = ? LIMIT 1')
+			.get(endpointUuid) as { revision: number } | undefined;
+		if (!row || row.revision !== expected) {
+			this.sourceCache.delete(endpointUuid);
+			return false;
+		}
+		return true;
+	}
+
 	private point(pointUuid: string, scope: PointScope): CatalogResult<PointIdentityRecord> {
-		const row = this.db.prepare(`
-			SELECT point_uuid, endpoint_uuid, protocol, device_uuid FROM point_identity WHERE point_uuid = ?
-		`).get(pointUuid) as IdentityRow | undefined;
+		const row = this.stmt(
+			'SELECT point_uuid, endpoint_uuid, protocol, device_uuid FROM point_identity WHERE point_uuid = ?'
+		).get(pointUuid) as IdentityRow | undefined;
 		if (!row) return unresolved('not-found');
 		const result = identity(row);
 		if (!sameScope(result, scope)) return unresolved('protocol-mismatch');
@@ -183,7 +211,7 @@ export class PointIdentityCatalog {
 	}
 
 	private addressOwner(address: PointAddress): PointIdentityRecord | undefined {
-		const row = this.db.prepare(`
+		const row = this.stmt(`
 			SELECT p.point_uuid, p.endpoint_uuid, p.protocol, p.device_uuid
 			FROM point_identity_address a LEFT JOIN point_identity p ON p.point_uuid = a.point_uuid
 			WHERE a.endpoint_uuid = ? AND a.protocol = ? AND a.address_version = ? AND a.address_key = ?
@@ -193,7 +221,7 @@ export class PointIdentityCatalog {
 	}
 
 	private aliasOwner(alias: PointAlias): PointIdentityRecord | undefined {
-		const row = this.db.prepare(`
+		const row = this.stmt(`
 			SELECT p.point_uuid, p.endpoint_uuid, p.protocol, p.device_uuid
 			FROM point_identity_alias a LEFT JOIN point_identity p ON p.point_uuid = a.point_uuid
 			WHERE a.endpoint_uuid = ? AND a.alias_kind = ? AND a.alias_key = ?
@@ -220,7 +248,7 @@ export class PointIdentityCatalog {
 		if (source.status === 'unresolved') return source;
 		const point = this.point(pointUuid, scope);
 		if (point.status === 'unresolved') return point;
-		const rows = this.db.prepare(`
+		const rows = this.stmt(`
 			SELECT alias_kind, alias_key, evidence FROM point_identity_alias
 			WHERE endpoint_uuid = ? AND point_uuid = ? ORDER BY alias_kind, alias_key
 		`).all(scope.endpointUuid, pointUuid) as AliasRow[];
@@ -244,9 +272,7 @@ export class PointIdentityCatalog {
 		if (!this.foreignKeysEnabled()) return unresolved('foreign-keys-disabled');
 		if (this.db.isTransaction === true) return unresolved('transaction-active');
 		return transact(this.db, () => {
-			const current = this.source(address);
-			if (current.status === 'unresolved') return current;
-			if (JSON.stringify(source.value) !== JSON.stringify(current.value)) return unresolved('stale-configuration');
+			if (!this.revisionMatches(address.endpointUuid, source.value.revision)) return unresolved('stale-configuration');
 			const addressOwner = this.addressOwner(address);
 			if (addressOwner && !sameScope(addressOwner, address)) return unresolved('identity-ambiguous');
 			const owners = [addressOwner, ...aliases.map(alias => this.aliasOwner(alias))].filter(
@@ -268,7 +294,7 @@ export class PointIdentityCatalog {
 			if (address.protocol === 'mqtt') {
 				const kind = storedMqttSelector(address.key);
 				if (kind === 'path') {
-					const rows = this.db.prepare(`
+					const rows = this.stmt(`
 						SELECT address_key FROM point_identity_address WHERE endpoint_uuid = ? AND protocol = 'mqtt'
 					`).all(address.endpointUuid) as Array<{ address_key: string }>;
 					let count = 0;
@@ -280,14 +306,14 @@ export class PointIdentityCatalog {
 					if (count >= MAX_MQTT_FIELD_IDENTITIES) return unresolved('field-capacity-exceeded');
 				}
 			}
-			const otherVersion = this.db.prepare(`
+			const otherVersion = this.stmt(`
 				SELECT 1 FROM point_identity_address WHERE endpoint_uuid = ? AND protocol = ? AND address_version != ? LIMIT 1
 			`).get(address.endpointUuid, address.protocol, address.version);
 			if (otherVersion) return unresolved('version-unreconciled');
 			const pointUuid = randomUUID();
-			this.db.prepare('INSERT INTO point_identity (point_uuid, endpoint_uuid, protocol) VALUES (?, ?, ?)')
+			this.stmt('INSERT INTO point_identity (point_uuid, endpoint_uuid, protocol) VALUES (?, ?, ?)')
 				.run(pointUuid, address.endpointUuid, address.protocol);
-			this.db.prepare(`
+			this.stmt(`
 				INSERT INTO point_identity_address (endpoint_uuid, protocol, address_version, address_key, point_uuid)
 				VALUES (?, ?, ?, ?, ?)
 			`).run(address.endpointUuid, address.protocol, address.version, address.key, pointUuid);
@@ -304,11 +330,11 @@ export class PointIdentityCatalog {
 			if (point.status === 'unresolved') return point;
 			const owner = this.addressOwner(address);
 			if (owner) return owner.pointUuid === pointUuid ? resolved(owner) : unresolved('address-conflict');
-			const sameVersion = this.db.prepare(`
+			const sameVersion = this.stmt(`
 				SELECT 1 FROM point_identity_address WHERE point_uuid = ? AND address_version = ? LIMIT 1
 			`).get(pointUuid, address.version);
 			if (sameVersion) return unresolved('address-conflict');
-			this.db.prepare(`
+			this.stmt(`
 				INSERT INTO point_identity_address (endpoint_uuid, protocol, address_version, address_key, point_uuid)
 				VALUES (?, ?, ?, ?, ?)
 			`).run(address.endpointUuid, address.protocol, address.version, address.key, pointUuid);
@@ -324,7 +350,7 @@ export class PointIdentityCatalog {
 			if (point.status === 'unresolved') return point;
 			const owner = this.aliasOwner(alias);
 			if (owner) return owner.pointUuid === pointUuid && sameScope(owner, alias) ? resolved(owner) : unresolved('alias-conflict');
-			this.db.prepare(`
+			this.stmt(`
 				INSERT INTO point_identity_alias (endpoint_uuid, alias_kind, alias_key, point_uuid, evidence)
 				VALUES (?, ?, ?, ?, ?)
 			`).run(alias.endpointUuid, alias.kind, alias.key, pointUuid, alias.evidence);
@@ -344,17 +370,17 @@ export class PointIdentityCatalog {
 			if (point.status === 'unresolved') return point;
 			if (point.value.deviceUuid !== expectedDeviceUuid) return unresolved('association-conflict');
 			if (deviceUuid !== null) {
-				const confirmed = this.db.prepare(`
+				const confirmed = this.stmt(`
 					SELECT 1 FROM devices d WHERE d.uuid = ? AND d.endpoint_id = ? AND d.protocol = ?
 					AND (EXISTS (SELECT 1 FROM device_resolution_keys k WHERE k.endpoint_id = d.endpoint_id AND k.device_uuid = d.uuid)
 						OR EXISTS (SELECT 1 FROM device_resolution_points p WHERE p.endpoint_id = d.endpoint_id AND p.device_uuid = d.uuid))
 				`).get(deviceUuid, source.id, scope.protocol);
 				if (!confirmed) return unresolved('association-conflict');
 			}
-			const current = this.db.prepare('SELECT association_source FROM point_identity WHERE point_uuid = ?')
+			const current = this.stmt('SELECT association_source FROM point_identity WHERE point_uuid = ?')
 				.get(pointUuid) as { association_source: string | null };
 			if (point.value.deviceUuid === deviceUuid && current.association_source === associationSource) return point;
-			this.db.prepare(`
+			this.stmt(`
 				UPDATE point_identity SET device_uuid = ?, association_source = ?, updated_at = CURRENT_TIMESTAMP
 				WHERE point_uuid = ? AND endpoint_uuid = ? AND protocol = ?
 			`).run(deviceUuid, associationSource, pointUuid, scope.endpointUuid, scope.protocol);
@@ -366,26 +392,23 @@ export class PointIdentityCatalog {
 		scope: PointScope, request: CatalogEvidenceRequest, operation: (source: SourceRow) => CatalogResult<T>,
 	): Promise<CatalogResult<T>> {
 		if (!this.foreignKeysEnabled()) return unresolved('foreign-keys-disabled');
-		if (this.db.prepare('PRAGMA query_only').get()?.query_only === 1) return unresolved('read-only');
+		if (this.stmt('PRAGMA query_only').get()?.query_only === 1) return unresolved('read-only');
 		const before = this.source(scope);
 		if (before.status === 'unresolved') return before;
 		const verification = this.verify(request);
 		if (verification.status === 'unresolved') return verification;
 		for (let attempt = 0; attempt < busyAttempts; attempt++) {
 			if (!this.foreignKeysEnabled()) return unresolved('foreign-keys-disabled');
-			if (this.db.prepare('PRAGMA query_only').get()?.query_only === 1) return unresolved('read-only');
+			if (this.stmt('PRAGMA query_only').get()?.query_only === 1) return unresolved('read-only');
 			if (this.db.isTransaction === true) return unresolved('transaction-active');
 			try {
 				if (attempt > 0) {
-					// Evidence can expire while waiting for the write lock.
 					const currentVerification = this.verify(request);
 					if (currentVerification.status === 'unresolved') return currentVerification;
 				}
 				return transact(this.db, () => {
-					const current = this.source(scope);
-					if (current.status === 'unresolved') return current;
-					if (JSON.stringify(current.value) !== JSON.stringify(before.value)) return unresolved('stale-configuration');
-					return operation(current.value);
+					if (!this.revisionMatches(scope.endpointUuid, before.value.revision)) return unresolved('stale-configuration');
+					return operation(before.value);
 				}, 'IMMEDIATE');
 			} catch (error) {
 				if (!isBusy(error)) throw error;

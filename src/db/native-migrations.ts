@@ -54,6 +54,7 @@ import { migration as addPointIdentity } from './migrations/20261114000000_add_p
 import { migration as unifyStateSnapshots } from './migrations/20261115000000_unify_state_snapshots.js';
 import { migration as subscriptionSources } from './migrations/20261116000000_subscription_sources.js';
 import { migration as addDiscoveryBlocklist } from './migrations/20261117000000_add_discovery_blocklist.js';
+import { migration as addEndpointRevision } from './migrations/20261118000000_add_endpoint_revision.js';
 import type { NativeSqliteMigration } from './migration-types.js';
 
 export const nativeMigrations: NativeSqliteMigration[] = [
@@ -113,4 +114,5 @@ export const nativeMigrations: NativeSqliteMigration[] = [
 	unifyStateSnapshots,
 	subscriptionSources,
 	addDiscoveryBlocklist,
+	addEndpointRevision,
 ];

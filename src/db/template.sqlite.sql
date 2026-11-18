@@ -160,8 +160,16 @@ CREATE TABLE IF NOT EXISTS "endpoints" (
 	"updated_at"	datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
 	"lastSeenAt"	datetime,
 	"fingerprint"	varchar(255),
+	"revision"	integer NOT NULL DEFAULT 0,
 	PRIMARY KEY("id" AUTOINCREMENT)
 );
+CREATE TRIGGER IF NOT EXISTS endpoints_bump_revision
+AFTER UPDATE ON endpoints
+FOR EACH ROW
+WHEN OLD.revision = NEW.revision
+BEGIN
+	UPDATE endpoints SET revision = OLD.revision + 1 WHERE rowid = NEW.rowid;
+END;
 CREATE TABLE IF NOT EXISTS "enum_devices" (
 	"id"	integer NOT NULL,
 	"protocol"	varchar(32) NOT NULL,

@@ -786,18 +786,24 @@ export class AdapterManager extends EventEmitter {
 		try {
 			if (!evidence.isCurrent()) return;
 			const db = getDatabase();
-			const readSource = () => db.prepare(`
-				SELECT id, uuid, name, protocol, enabled, connection, data_points,
+			const stmtSource = db.prepare(`
+				SELECT id, uuid, name, protocol, enabled, connection, data_points, revision,
 					(SELECT count(*) FROM endpoints other WHERE other.name = ? AND other.protocol = 'opcua' AND other.enabled = 1) AS name_count
 				FROM endpoints WHERE uuid = ? LIMIT 2
-			`).all(evidence.deviceName, endpointUuid);
-			const rows = readSource();
+			`);
+			const stmtRevisionCheck = db.prepare(`
+				SELECT revision,
+					(SELECT count(*) FROM endpoints WHERE name = ? AND protocol = 'opcua' AND enabled = 1) AS name_count
+				FROM endpoints WHERE uuid = ? LIMIT 1
+			`);
+			const rows = stmtSource.all(evidence.deviceName, endpointUuid) as Array<Record<string, unknown>>;
 			if (rows.length !== 1 || rows[0].name !== evidence.deviceName ||
 				rows[0].protocol !== 'opcua' || rows[0].enabled !== 1 || rows[0].name_count !== 1) {
 				this.logger.warn(`OPC UA identity source is missing or ambiguous: ${evidence.deviceName}`);
 				return;
 			}
-			const snapshot = JSON.stringify(rows);
+			const snapshotRevision = rows[0].revision as number;
+			const snapshotNameCount = rows[0].name_count as number;
 			const endpoint = await EndpointModel.getByUuid(endpointUuid);
 			if (!evidence.isCurrent() || endpoint?.protocol !== 'opcua') return;
 			const configuredPoints = Array.isArray(endpoint.data_points) ? endpoint.data_points : [];
@@ -814,7 +820,8 @@ export class AdapterManager extends EventEmitter {
 				isCurrent: () => {
 					if (!evidence.isCurrent() || this.opcuaIdentityStates.get(endpointUuid) !== state) return false;
 					try {
-						const current = JSON.stringify(readSource()) === snapshot;
+						const check = stmtRevisionCheck.get(evidence.deviceName, endpointUuid) as { revision: number; name_count: number } | undefined;
+						const current = !!check && check.revision === snapshotRevision && check.name_count === snapshotNameCount;
 						snapshotErrorReported = false;
 						if (!current && !staleConfigurationReported) {
 							this.logger.warn(`OPC UA identity source changed for ${evidence.deviceName}; waiting for adapter reload`);
