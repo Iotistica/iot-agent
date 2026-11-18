@@ -45,7 +45,8 @@ function addressText(address: ConfiguredPoint['protocolAddress']): string {
   return address === null ? '—' : typeof address === 'string' ? address : JSON.stringify(address)
 }
 
-const filtered = computed(() => {
+const TABLE_LIMIT = 1000
+const allFiltered = computed(() => {
   const q = (props.filters ? props.filters.search : search.value).trim().toLowerCase()
   const identity = props.filters ? props.filters.identity : status.value
   return rows.value.filter(row => (!identity || identityLabel(row) === identity)
@@ -54,6 +55,8 @@ const filtered = computed(() => {
     && (!q || [row.name, row.source.name, row.source.protocol, addressText(row.protocolAddress), row.pointUuid, row.deviceName, row.deviceUuid]
       .some(value => value?.toLowerCase().includes(q))))
 })
+const filtered = computed(() => allFiltered.value.slice(0, TABLE_LIMIT))
+const isTruncated = computed(() => allFiltered.value.length > TABLE_LIMIT)
 
 const columns = computed<TableColumnType<PointRow>[]>(() => [
   ...(props.showSource ? [{ title: 'Protocol', key: 'protocol', width: 105 }] : []),
@@ -93,7 +96,7 @@ async function load() {
 }
 
 watch(() => [props.sources.map(source => source.uuid).join('\0'), props.revision], () => { void load() }, { immediate: true })
-watch([() => filtered.value.length, () => rows.value.length, loading, error], ([count, total, isLoading, loadError]) => {
+watch([() => allFiltered.value.length, () => rows.value.length, loading, error], ([count, total, isLoading, loadError]) => {
   emit('countChange', { count, total, loading: isLoading, error: loadError })
 }, { immediate: true })
 onBeforeUnmount(() => { generation++ })
@@ -108,8 +111,11 @@ onBeforeUnmount(() => { generation++ })
         :options="['Assigned', 'Pending', 'Unresolvable'].map(value => ({ value, label: value }))" />
       <a-button :loading="loading" @click="load">Refresh</a-button>
     </a-space>
+    <p v-if="isTruncated" style="margin-bottom: 8px; color: var(--text-tertiary); font-size: 13px">
+      Showing {{ filtered.length }} of {{ allFiltered.length }} points · Search to narrow results
+    </p>
     <a-table :columns="columns" :data-source="filtered" :loading="loading" row-key="key" size="small"
-      :scroll="{ x: showSource ? 1135 : 930 }" :pagination="{ pageSize: 20, showSizeChanger: true }"
+      :scroll="{ x: showSource ? 1135 : 930 }" :pagination="{ pageSize: 20, showSizeChanger: true, pageSizeOptions: ['20', '50', '100'] }"
       :custom-row="(record: PointRow) => ({ onClick: () => openDrawer(record), style: 'cursor: pointer' })">
       <template #bodyCell="{ column, record }">
         <template v-if="column.key === 'protocol'"><a-tag :color="protocolColor(record.source.protocol)">{{ protocolLabel(record.source.protocol) }}</a-tag></template>
