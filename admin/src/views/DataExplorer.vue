@@ -579,7 +579,7 @@ onUnmounted(() => { if (timer) clearInterval(timer); clearTimeout(persistFavTime
       <a-alert v-if="metadataError" type="warning" show-icon :message="metadataError" style="margin-bottom: 14px" />
       <a-alert v-if="configuredCount.error && activeTab !== 'configured'" type="warning" show-icon :message="configuredCount.error" style="margin-bottom: 14px" />
       <div class="stats">
-        <a-card size="small" class="metric-card" data-testid="stat-observed-points"><div class="metric-inner"><span class="metric-icon icon-points"><BarChartOutlined /></span><a-statistic title="Observed points" :value="observedPointCount" /></div></a-card>
+        <a-card size="small" class="metric-card" data-testid="stat-observed-points"><div class="metric-inner"><span class="metric-icon icon-points"><BarChartOutlined /></span><a-statistic title="Live points" :value="observedPointCount" /></div></a-card>
         <a-card size="small" class="metric-card" data-testid="stat-source-points"><div class="metric-inner" :title="metadataError || configuredCount.error || undefined"><span class="metric-icon icon-points"><DatabaseOutlined /></span><a-statistic title="Source points" :value="configuredTotalLabel" /></div></a-card>
         <a-card size="small" class="metric-card" data-testid="stat-subscriptions"><div class="metric-inner"><span class="metric-icon icon-subscriptions"><WifiOutlined /></span><a-statistic title="Active subscriptions" :value="subscriptions.length" /></div></a-card>
         <a-card size="small" class="metric-card"><div class="metric-inner"><span class="metric-icon icon-quality"><WarningOutlined /></span><a-statistic title="Bad quality" :value="qualityCounts.bad" /></div></a-card>

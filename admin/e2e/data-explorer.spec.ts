@@ -7,7 +7,7 @@ test.describe('Data Explorer', () => {
   })
 
   test('stat cards render with correct titles', async ({ page }) => {
-    await expect(page.getByTestId('stat-observed-points').locator('.ant-statistic-title')).toHaveText('Observed points')
+    await expect(page.getByTestId('stat-observed-points').locator('.ant-statistic-title')).toHaveText('Live points')
     await expect(page.getByTestId('stat-subscriptions').locator('.ant-statistic-title')).toHaveText('Active subscriptions')
 
     const badQualityCard = page.locator('.metric-card', { hasText: 'Bad quality' })
