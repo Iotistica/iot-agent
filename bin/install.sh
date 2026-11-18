@@ -28,9 +28,11 @@ set -e
 #   MQTT_PASSWORD                  - MQTT broker password (default: auto-generated; prompted interactively on first install)
 #   AGENT_SHELL_HMAC_KEY           - HMAC secret for remote shell command verification
 #   AGENT_STARTUP_TIMEOUT          - systemd startup timeout in seconds (default: 300, range: 30-900)
-#   AGENT_CPU_QUOTA                - systemd CPUQuota for the agent service (default: 100%, format: <number>%)
+#   AGENT_CPU_QUOTA                - systemd CPUQuota for the agent service (default: 400% with worker threads, 100% without)
 #   AGENT_MEMORY_HIGH              - systemd MemoryHigh soft limit (default: 250M, format: <number>[K|M|G|T])
 #   AGENT_MEMORY_LIMIT             - systemd MemoryMax hard limit (default: 300M, format: <number>[K|M|G|T])
+#   OPCUA_WORKER_THREADS           - Enable multi-threaded OPC-UA telemetry pipeline (default: 1). Uses worker threads
+#                                    for DataPoint construction and IPC serialization across multiple CPU cores.
 #   FORCE_INSTALL                  - Legacy opt-in flag; set to 1 to allow automatic Docker installation
 
 # Note: This script is POSIX-compliant and works with both sh and bash
@@ -1199,15 +1201,18 @@ echo ""
         ENV_BACKUP="/etc/iotistic/agent.env.bak.$(date -u +%Y%m%dT%H%M%SZ)"
         cp -p "$ENV_FILE" "$ENV_BACKUP"
         ENV_TMP=$(mktemp /etc/iotistic/.agent.env.XXXXXX)
-        # Update only release metadata, retaining all other lines byte-for-byte.
-        awk -v version="$AGENT_VERSION" -v build="$BUILD_ID" '
-            BEGIN { seen_version=0; seen_build=0 }
+        # Update release metadata and ensure new defaults exist, retaining all other lines.
+        _DEFAULT_WORKER_THREADS="${OPCUA_WORKER_THREADS:-1}"
+        awk -v version="$AGENT_VERSION" -v build="$BUILD_ID" -v wt="$_DEFAULT_WORKER_THREADS" '
+            BEGIN { seen_version=0; seen_build=0; seen_wt=0 }
             /^AGENT_VERSION=/ { if (!seen_version++) print "AGENT_VERSION=" version; next }
             /^BUILD_ID=/ { if (!seen_build++) print "BUILD_ID=" build; next }
+            /^OPCUA_WORKER_THREADS=/ { seen_wt=1; print; next }
             { print }
             END {
                 if (!seen_version) print "AGENT_VERSION=" version
                 if (!seen_build) print "BUILD_ID=" build
+                if (!seen_wt) print "OPCUA_WORKER_THREADS=" wt
             }
         ' "$ENV_FILE" > "$ENV_TMP"
         chown --reference="$ENV_FILE" "$ENV_TMP"
@@ -1277,6 +1282,9 @@ EOF
         # Enable all features (pro features gated by license check)
         echo "PRO_FORCE=true" >> /etc/iotistic/agent.env
 
+        # Multi-threaded OPC-UA telemetry pipeline (default: enabled)
+        echo "OPCUA_WORKER_THREADS=${OPCUA_WORKER_THREADS:-1}" >> /etc/iotistic/agent.env
+
         if [ "$EXISTING_INSTALL" = no ] && [ -n "${INITIAL_ADMIN_PASSWORD:-}" ]; then
             echo "INITIAL_ADMIN_PASSWORD=${INITIAL_ADMIN_PASSWORD}" >> /etc/iotistic/agent.env
         fi
@@ -1325,7 +1333,16 @@ EOF
     # Resource and timeout defaults (overridable via environment variables).
     AGENT_MEMORY_LIMIT="${AGENT_MEMORY_LIMIT:-300M}"
     AGENT_MEMORY_HIGH="${AGENT_MEMORY_HIGH:-250M}"
-    AGENT_CPU_QUOTA="${AGENT_CPU_QUOTA:-100%}"
+    # Worker threads use multiple cores: default to 400% (4 cores) when enabled.
+    if [ -z "${AGENT_CPU_QUOTA:-}" ]; then
+        _WORKER_THREADS=$(grep '^OPCUA_WORKER_THREADS=' /etc/iotistic/agent.env 2>/dev/null | tail -1 | cut -d= -f2-)
+        [ -z "$_WORKER_THREADS" ] && _WORKER_THREADS="${OPCUA_WORKER_THREADS:-1}"
+        if [ "$_WORKER_THREADS" = "1" ]; then
+            AGENT_CPU_QUOTA="400%"
+        else
+            AGENT_CPU_QUOTA="100%"
+        fi
+    fi
     AGENT_STARTUP_TIMEOUT="${AGENT_STARTUP_TIMEOUT:-300}"
 
     # Validate all resource/timeout values before generating the unit file.

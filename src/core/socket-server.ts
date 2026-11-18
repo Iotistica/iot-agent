@@ -1,7 +1,15 @@
 import * as net from "net";
 import * as fs from "fs";
 import * as path from "path";
+import { Worker } from "node:worker_threads";
 import { type DeviceDataPoint, type SocketOutput, type Logger } from "../plugins/types.js";
+
+export interface ISocketServer {
+	start(): Promise<void>;
+	stop(): Promise<void>;
+	sendData(dataPoints: DeviceDataPoint[], topic?: string): void;
+	sendControl(payload: Record<string, unknown>, topic?: string): void;
+}
 
 interface ClientSubscription {
 	socket: net.Socket;
@@ -47,7 +55,7 @@ interface ClientRoutingRules {
  * 3. Server confirms: {"ok": true, "subscribed_to": [...]}
  * 4. Server sends data only to subscribed clients
  */
-export class SocketServer {
+export class SocketServer implements ISocketServer {
 	private server?: net.Server;
 	private subscriptions: Map<net.Socket, ClientSubscription> = new Map();
 	private pendingSubscriptions: Set<net.Socket> = new Set(); // Sockets waiting for subscription handshake
@@ -960,5 +968,77 @@ export class SocketServer {
 		}
 
 		return rows.join("\n");
+	}
+}
+
+export class WorkerBackedSocketServer implements ISocketServer {
+	private worker: Worker;
+	private logger: Logger;
+	private ready = false;
+
+	constructor(config: SocketOutput, logger: Logger) {
+		this.logger = logger;
+		this.worker = new Worker(path.join(__dirname, 'ipc-writer-worker.js'), {
+			workerData: { config },
+		});
+		this.worker.on('message', (msg: { type: string; level?: string; msg?: string; error?: string }) => {
+			if (msg.type === 'ready') {
+				this.ready = true;
+			} else if (msg.type === 'log' && msg.level && msg.msg) {
+				const logFn = this.logger[msg.level as keyof Logger];
+				if (typeof logFn === 'function') (logFn as (m: string) => void).call(this.logger, `[IPC-Worker] ${msg.msg}`);
+			} else if (msg.type === 'error') {
+				this.logger.error(`[IPC-Worker] startup error: ${msg.error}`);
+			}
+		});
+		this.worker.on('error', (err) => {
+			this.logger.error(`[IPC-Worker] worker error: ${err.message}`);
+		});
+		this.worker.on('exit', (code) => {
+			if (code !== 0) this.logger.error(`[IPC-Worker] worker exited with code ${code}`);
+			this.ready = false;
+		});
+	}
+
+	async start(): Promise<void> {
+		if (this.ready) return;
+		await new Promise<void>((resolve, reject) => {
+			const onMessage = (msg: { type: string; error?: string }) => {
+				if (msg.type === 'ready') {
+					this.worker.off('message', onMessage);
+					resolve();
+				} else if (msg.type === 'error') {
+					this.worker.off('message', onMessage);
+					reject(new Error(msg.error));
+				}
+			};
+			this.worker.on('message', onMessage);
+		});
+	}
+
+	sendData(dataPoints: DeviceDataPoint[], topic?: string): void {
+		if (!this.ready) return;
+		this.worker.postMessage({ type: 'data', points: dataPoints, topic });
+	}
+
+	sendControl(payload: Record<string, unknown>, topic?: string): void {
+		if (!this.ready) return;
+		this.worker.postMessage({ type: 'control', payload, topic });
+	}
+
+	async stop(): Promise<void> {
+		if (!this.ready) return;
+		this.worker.postMessage({ type: 'stop' });
+		await new Promise<void>((resolve) => {
+			const timeout = setTimeout(() => {
+				this.worker.terminate();
+				resolve();
+			}, 5000);
+			this.worker.on('exit', () => {
+				clearTimeout(timeout);
+				resolve();
+			});
+		});
+		this.ready = false;
 	}
 }

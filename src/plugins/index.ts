@@ -9,7 +9,7 @@ import { ModbusAdapter } from "./modbus/adapter.js";
 import { type ModbusAdapterConfig, normalizeModbusRegisters } from "./modbus/types.js";
 import { MqttAdapter, type MqttReadingEvidence, type MqttShadowOptions } from "./mqtt/adapter.js";
 import { type MqttAdapterConfig } from "./mqtt/types.js";
-import { SocketServer } from "../core/socket-server.js";
+import { SocketServer, WorkerBackedSocketServer, type ISocketServer } from "../core/socket-server.js";
 import {
 	type DeviceDataPoint,
 	type ExternalPluginConfig,
@@ -229,7 +229,7 @@ export function resolveEnrichedDeviceName(
 
 export class AdapterManager extends EventEmitter {
 	private adapters: Map<string, IProtocolAdapter> = new Map();
-	private socketServers: Map<string, SocketServer> = new Map();
+	private socketServers: Map<string, ISocketServer> = new Map();
 	private adapterStarters: Map<string, ProtocolAdapterStarter> = new Map();
 	// groupName -> protocol, so reloadAdapterGroup() can find every running group
 	// (single-instance and multi-instance) that belongs to one protocol without
@@ -525,7 +525,7 @@ export class AdapterManager extends EventEmitter {
 	}
 
 	/** Load output config and start a protocol socket server. */
-	private async createSocketServer(protocol: string): Promise<SocketServer> {
+	private async createSocketServer(protocol: string): Promise<ISocketServer> {
 		const dbOutput = await EndpointOutputModel.getOutput(protocol);
 		if (!dbOutput)
 			throw new Error(`${protocol} output configuration not found in database`);
@@ -536,7 +536,10 @@ export class AdapterManager extends EventEmitter {
 			includeTimestamp: dbOutput.include_timestamp,
 			includeDeviceName: dbOutput.include_device_name,
 		};
-		const socket = new SocketServer(outputConfig, this.logger);
+		const useWorker = process.env.OPCUA_WORKER_THREADS === '1' && protocol === 'opcua';
+		const socket: ISocketServer = useWorker
+			? new WorkerBackedSocketServer(outputConfig, this.logger)
+			: new SocketServer(outputConfig, this.logger);
 		await socket.start();
 		this.socketServers.set(protocol, socket);
 		return socket;
@@ -546,7 +549,7 @@ export class AdapterManager extends EventEmitter {
 	private wireAdapterEvents(
 		protocol: string,
 		adapter: IProtocolAdapter,
-		socket: SocketServer,
+		socket: ISocketServer,
 		uuidMap: Map<string, string>,
 		shadow?: Omit<OpcuaShadowOptions, "sources">,
 	): void {

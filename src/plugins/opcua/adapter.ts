@@ -45,6 +45,8 @@ import { OpcuaStartupDiagnostics } from './diagnostics.js';
 import { looksLikeEngineeringUnit, normalizeForUnitNameCompare } from './discovery.js';
 import { resolveDeviceDisplayNames } from './device-identity.js';
 import { OpcuaPerfMonitor } from './perf-monitor.js';
+import { TransformPool } from './transform-pool.js';
+import type { PrimitiveEntry } from './transform-shared.js';
 import type { PrivateEvidenceRegistry } from '../../points/private-evidence-registry.js';
 import type { PrivateShadowObserver } from '../../points/private-shadow-observer.js';
 import type { ObservationRef, SourceBindingRef } from '../../points/private-evidence-types.js';
@@ -267,6 +269,7 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 	// changes at all.
 	private groups: Map<string, OPCUAConnectionGroup> = new Map();
 	private deviceGroupKey: Map<string, string> = new Map();
+	private transformPool: TransformPool | undefined;
 
 	private extractNodeScope(nodeId: string): string {
 		const stringNodeMatch = nodeId.match(/^ns=(\d+);s=(.+)$/);
@@ -302,12 +305,17 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 	 * shared by buildStableNodeDeviceId() (anomaly/metric device scoping) and
 	 * computeGroupKey() (session-pooling grouping, GitHub issue #11), so the
 	 * two features can't silently drift on what counts as "the same endpoint." */
+	private endpointKeyCache = new Map<string, string>();
 	private normalizeEndpointKey(endpointUrl: string): string {
-		return endpointUrl
+		let cached = this.endpointKeyCache.get(endpointUrl);
+		if (cached !== undefined) return cached;
+		cached = endpointUrl
 			.trim()
 			.replace(/^opc\.tcp:\/\//i, '')
 			.toLowerCase()
 			.replace(/\/+$/, '');
+		this.endpointKeyCache.set(endpointUrl, cached);
+		return cached;
 	}
 
 	/**
@@ -409,7 +417,11 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 		return { device, nodeIdToDevice };
 	}
 
+	private stableIdCache = new Map<string, string>();
 	private buildStableNodeDeviceId(device: OPCUADeviceConfig, dataPoint: OPCUADataPoint): string {
+		const cached = this.stableIdCache.get(dataPoint.nodeId);
+		if (cached !== undefined) return cached;
+
 		const endpointKey = this.normalizeEndpointKey(device.connection.endpointUrl);
 
 		// Prefer the data point's own device identity (device_uuid, then
@@ -425,12 +437,15 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 		// structure (see discovery.ts's folderDeviceName) and stay reliably
 		// distinct per device even when the node ID itself gives no clue.
 		const deviceScope = dataPoint.device_uuid || dataPoint.device_name;
+		let result: string;
 		if (deviceScope) {
-			return `opcua:${endpointKey}:${deviceScope.toLowerCase()}`;
+			result = `opcua:${endpointKey}:${deviceScope.toLowerCase()}`;
+		} else {
+			const nodeScope = this.extractNodeScope(dataPoint.nodeId);
+			result = `opcua:${endpointKey}:${nodeScope}`;
 		}
-
-		const nodeScope = this.extractNodeScope(dataPoint.nodeId);
-		return `opcua:${endpointKey}:${nodeScope}`;
+		this.stableIdCache.set(dataPoint.nodeId, result);
+		return result;
 	}
 
 	/**
@@ -443,6 +458,9 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 		super(devices as GenericDeviceConfig[], logger || new ConsoleLogger('debug'));
 		this.diagnostics = new OpcuaStartupDiagnostics(this.logger);
 		this.perfMonitor = new OpcuaPerfMonitor(this.logger);
+		if (process.env.OPCUA_WORKER_THREADS === '1') {
+			this.transformPool = new TransformPool(2, this.logger);
+		}
 		this.shadow = shadow;
 		if (shadow) {
 			for (const source of shadow.sources) {
@@ -1011,7 +1029,9 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 		// IPC emit) to a single Map.set(), preventing event-loop starvation
 		// on devices with thousands of monitored items.
 		const coalescingBuffer = new Map<string, {
-			dataValue: DataValue;
+			value: number | boolean | string | null;
+			isGood: boolean;
+			statusCodeName: string;
 			dp: OPCUADataPoint;
 			monitoredItem: unknown;
 			monitoredItemRef: unknown;
@@ -1031,13 +1051,19 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 		let buildTimeMs = 0;
 		let emitTimeMs = 0;
 		let lastPerfLog = Date.now();
-		let pendingEntries: Array<{
-			dataValue: DataValue;
+		const SHADOW_THROTTLE_INTERVAL = 30;
+		const shadowLastFlush = new Map<string, number>();
+		let flushGeneration = 0;
+		type CoalescedEntry = {
+			value: number | boolean | string | null;
+			isGood: boolean;
+			statusCodeName: string;
 			dp: OPCUADataPoint;
 			monitoredItem: unknown;
 			monitoredItemRef: unknown;
 			matchesOperation: boolean;
-		}> = [];
+		};
+		let pendingEntries: CoalescedEntry[] = [];
 		let pendingOffset = 0;
 		// Only one snapshot is processed at a time. New notifications continue
 		// coalescing in the Map, so there is no unbounded FIFO of snapshots.
@@ -1056,31 +1082,28 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 				const owningDevice = nodeIdToDevice.get(entry.dp.nodeId) ?? device;
 				const owningDeviceName = owningDevice.name;
 
-				const quality = this.determineQuality(entry.dataValue.statusCode);
-				const qualityCode = quality !== 'GOOD' ? this.extractQualityCode(entry.dataValue.statusCode) : undefined;
+				const quality: 'GOOD' | 'UNCERTAIN' | 'BAD' = entry.isGood ? 'GOOD' : this.classifyQualityFromName(entry.statusCodeName);
+				const qualityCode = quality !== 'GOOD' ? this.extractQualityCode(entry.statusCodeName) : undefined;
 
-				const normalizationDeviceName =
-					this.resolvedNodeDisplayNames.get(entry.dp.nodeId) ??
-					this.resolvedDeviceNames.get(owningDeviceName) ??
-					owningDeviceName;
+				const normalizationDeviceName = precomputedNormNames.get(entry.dp.nodeId) ?? owningDeviceName;
+				const deviceDisplayName = precomputedDisplayNames.get(entry.dp.nodeId);
+				const resolvedDisplayName = precomputedResolvedDisplayNames.get(entry.dp.nodeId);
 
 				const dataPoint: DeviceDataPoint = {
 					timestamp: new Date().toISOString(),
 					deviceName: owningDeviceName,
 					deviceId: this.buildStableNodeDeviceId(owningDevice, entry.dp),
 					metric: entry.dp.name,
-					value: entry.dataValue.value?.value ?? null,
+					value: entry.value,
 					unit: entry.dp.unit || '',
 					quality,
 					...(qualityCode && { qualityCode }),
 					protocol: 'opcua',
 					nodeType: 'metric',
 					normalizationDeviceName,
-					...(this.deviceDisplayNames.get(owningDeviceName)?.get(entry.dp.nodeId) && { deviceDisplayName: this.deviceDisplayNames.get(owningDeviceName)?.get(entry.dp.nodeId) }),
+					...(deviceDisplayName && { deviceDisplayName }),
 					...(entry.dp.device_uuid && { device_uuid: entry.dp.device_uuid }),
-					...((this.resolvedNodeDisplayNames.has(entry.dp.nodeId) || this.resolvedDeviceNames.has(owningDeviceName)) && {
-						resolvedDisplayName: this.resolvedNodeDisplayNames.get(entry.dp.nodeId) ?? this.resolvedDeviceNames.get(owningDeviceName),
-					}),
+					...(resolvedDisplayName !== undefined && { resolvedDisplayName }),
 					...(entry.dp.browseName && { rawObjectName: entry.dp.browseName }),
 					...(entry.dp.writable && { writable: true }),
 				};
@@ -1100,7 +1123,11 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 					sessionWrapper.session === session && !sessionWrapper.reconnecting &&
 					this.sessions.get(owningDeviceName) === sessionWrapper &&
 					ownerPointSets.get(owningDevice)?.has(entry.dp) === true) {
-					this.captureShadow(owningDevice, dataPoint, operationNodeId);
+					const lastShadow = shadowLastFlush.get(operationNodeId) ?? 0;
+					if (flushGeneration - lastShadow >= SHADOW_THROTTLE_INTERVAL) {
+						shadowLastFlush.set(operationNodeId, flushGeneration);
+						this.captureShadow(owningDevice, dataPoint, operationNodeId);
+					}
 				}
 
 				batch.push(dataPoint);
@@ -1147,9 +1174,95 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 			processedInFlush = 0;
 			buildTimeMs = 0;
 			emitTimeMs = 0;
-			pendingEntries = Array.from(coalescingBuffer.values());
-			pendingOffset = 0;
+
+			const snapshotEntries = Array.from(coalescingBuffer.values());
 			coalescingBuffer.clear();
+			flushGeneration++;
+
+			if (this.transformPool) {
+				const primitives: PrimitiveEntry[] = new Array(snapshotEntries.length);
+				for (let i = 0; i < snapshotEntries.length; i++) {
+					const e = snapshotEntries[i];
+					const owningDevice = nodeIdToDevice.get(e.dp.nodeId) ?? device;
+					primitives[i] = {
+						nodeId: e.dp.nodeId,
+						value: e.value,
+						isGood: e.isGood,
+						statusCodeName: e.statusCodeName,
+						metric: e.dp.name,
+						unit: e.dp.unit || '',
+						deviceName: owningDevice.name,
+						device_uuid: e.dp.device_uuid,
+						browseName: e.dp.browseName,
+						writable: e.dp.writable,
+					};
+				}
+				this.transformPool.dispatch(primitives, (builtPoints) => {
+					if (sessionWrapper.coalescingTimer !== coalescingTimer ||
+						sessionWrapper.session !== session || sessionWrapper.reconnecting) {
+						draining = false;
+						return;
+					}
+					const evidenceStarted = performance.now();
+					for (let i = 0; i < builtPoints.length; i++) {
+						const entry = snapshotEntries[i];
+						const operationNodeId = entry.dp.nodeId;
+						const matchesOperation = entry.matchesOperation;
+						const owningDevice = nodeIdToDevice.get(operationNodeId) ?? device;
+						const owningDeviceName = owningDevice.name;
+						const activeGroupKey = this.deviceGroupKey.get(owningDeviceName);
+						const activeGroup = activeGroupKey ? this.groups.get(activeGroupKey) : undefined;
+						if (activeGroup?.session === sessionWrapper && matchesOperation &&
+							entry.monitoredItem === entry.monitoredItemRef &&
+							sessionWrapper.session === session && !sessionWrapper.reconnecting &&
+							this.sessions.get(owningDeviceName) === sessionWrapper && ownerPointSets.get(owningDevice)?.has(entry.dp) === true) {
+							this.recordReadingEvidence(builtPoints[i], owningDeviceName, operationNodeId, activeGroup);
+						}
+						if (this.shadow && matchesOperation &&
+							!ambiguousNodeIds.has(operationNodeId) && entry.monitoredItem === entry.monitoredItemRef &&
+							sessionWrapper.session === session && !sessionWrapper.reconnecting &&
+							this.sessions.get(owningDeviceName) === sessionWrapper &&
+							ownerPointSets.get(owningDevice)?.has(entry.dp) === true) {
+							const lastShadow = shadowLastFlush.get(operationNodeId) ?? 0;
+							if (flushGeneration - lastShadow >= SHADOW_THROTTLE_INTERVAL) {
+								shadowLastFlush.set(operationNodeId, flushGeneration);
+								this.captureShadow(owningDevice, builtPoints[i], operationNodeId);
+							}
+						}
+					}
+					buildTimeMs = performance.now() - evidenceStarted;
+					processedInFlush = builtPoints.length;
+					this.perfInc('coalescedPointsProcessed', builtPoints.length);
+					const emitStarted = performance.now();
+					try {
+						if (builtPoints.length > 0) {
+							this.emit('data', builtPoints);
+							this.perfMonitor.recordEmitted(deviceName, builtPoints.length);
+						}
+					} catch (error) {
+						this.logger.error(`OPC-UA data emission failed for ${deviceName}: ${error instanceof Error ? error.message : String(error)}`);
+					} finally {
+						emitTimeMs = performance.now() - emitStarted;
+					}
+					draining = false;
+					this.perfMonitor.recordBatchDuration(deviceName, performance.now() - flushStartedAt);
+					if (Date.now() - lastPerfLog >= 5000) {
+						this.logger.info(`OPC-UA flush perf ${deviceName}`, {
+							points: processedInFlush,
+							buildMs: Math.round(buildTimeMs),
+							emitMs: Math.round(emitTimeMs),
+							elapsedMs: Math.round(performance.now() - flushStartedAt),
+							coalescedPending: coalescingBuffer.size,
+							workerBacked: true,
+						});
+						lastPerfLog = Date.now();
+					}
+				});
+				return;
+			}
+
+			pendingEntries = snapshotEntries;
+			pendingOffset = 0;
 			processChunk();
 		};
 		const maxBatchSplitRetries = 3;
@@ -1304,8 +1417,11 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 
 				this.perfInc('changedNotifications');
 				this.perfMonitor.recordReceived(deviceName, 1);
+				const rawValue = dataValue.value?.value;
 				coalescingBuffer.set(dp.nodeId, {
-					dataValue,
+					value: (rawValue === undefined ? null : rawValue) as number | boolean | string | null,
+					isGood: dataValue.statusCode?.isGood?.() ?? false,
+					statusCodeName: dataValue.statusCode?.name ?? 'Unknown',
 					dp,
 					monitoredItem: _monitoredItem,
 					monitoredItemRef: group.monitoredItems[index],
@@ -1359,6 +1475,34 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 		if (totalMonitoredItems === 0) {
 			await this.terminateSubscriptions(sessionWrapper);
 			throw new Error(`No monitored items were created for ${deviceName}`);
+		}
+
+		const precomputedNormNames = new Map<string, string>();
+		const precomputedDisplayNames = new Map<string, string | undefined>();
+		const precomputedResolvedDisplayNames = new Map<string, string | undefined>();
+		const precomputedStableIds = new Map<string, string>();
+		for (const dp of validDataPoints) {
+			const owningDevice = nodeIdToDevice.get(dp.nodeId) ?? device;
+			precomputedNormNames.set(dp.nodeId,
+				this.resolvedNodeDisplayNames.get(dp.nodeId) ??
+				this.resolvedDeviceNames.get(owningDevice.name) ??
+				owningDevice.name);
+			precomputedDisplayNames.set(dp.nodeId,
+				this.deviceDisplayNames.get(owningDevice.name)?.get(dp.nodeId));
+			if (this.resolvedNodeDisplayNames.has(dp.nodeId) || this.resolvedDeviceNames.has(owningDevice.name)) {
+				precomputedResolvedDisplayNames.set(dp.nodeId,
+					this.resolvedNodeDisplayNames.get(dp.nodeId) ?? this.resolvedDeviceNames.get(owningDevice.name));
+			}
+			precomputedStableIds.set(dp.nodeId, this.buildStableNodeDeviceId(owningDevice, dp));
+		}
+
+		if (this.transformPool) {
+			this.transformPool.syncLookups({
+				normalizationNames: Object.fromEntries(precomputedNormNames),
+				displayNames: Object.fromEntries(precomputedDisplayNames),
+				resolvedDisplayNames: Object.fromEntries(precomputedResolvedDisplayNames),
+				stableDeviceIds: Object.fromEntries(precomputedStableIds),
+			});
 		}
 
 		const coalescingTimer = setInterval(flushCoalescingBuffer, coalesceMs);
@@ -1438,74 +1582,44 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
    * @param statusCode - OPC-UA status code or error message
    * @returns Normalized quality code string
    */
+	private qualityCodeCache = new Map<string, string>();
 	protected extractQualityCode(statusCode: any): string {
 		if (!statusCode) {
 			return 'UNKNOWN_ERROR';
 		}
-    
-		const statusName = statusCode.name || statusCode.toString();
-    
+
+		const statusName: string = typeof statusCode === 'string' ? statusCode : (statusCode.name || statusCode.toString());
+		const cached = this.qualityCodeCache.get(statusName);
+		if (cached !== undefined) return cached;
+
+		const result = this.mapQualityCode(statusName);
+		this.qualityCodeCache.set(statusName, result);
+		return result;
+	}
+
+	private mapQualityCode(statusName: string): string {
 		// Session/Connection errors
-		if (statusName.includes('BadSessionClosed') || statusName.includes('BadSessionIdInvalid')) {
-			return 'SESSION_CLOSED';
-		}
-		if (statusName.includes('BadSecureChannelClosed') || statusName.includes('BadSecureChannelIdInvalid')) {
-			return 'SECURE_CHANNEL_CLOSED';
-		}
-		if (statusName.includes('BadConnectionClosed') || statusName.includes('BadConnectionRejected')) {
-			return 'CONNECTION_REFUSED';
-		}
-		if (statusName.includes('BadCommunicationError')) {
-			return 'COMMUNICATION_ERROR';
-		}
-		if (statusName.includes('BadServerHalted') || statusName.includes('BadServerNotConnected')) {
-			return 'DEVICE_OFFLINE';
-		}
-    
+		if (statusName.includes('BadSessionClosed') || statusName.includes('BadSessionIdInvalid')) return 'SESSION_CLOSED';
+		if (statusName.includes('BadSecureChannelClosed') || statusName.includes('BadSecureChannelIdInvalid')) return 'SECURE_CHANNEL_CLOSED';
+		if (statusName.includes('BadConnectionClosed') || statusName.includes('BadConnectionRejected')) return 'CONNECTION_REFUSED';
+		if (statusName.includes('BadCommunicationError')) return 'COMMUNICATION_ERROR';
+		if (statusName.includes('BadServerHalted') || statusName.includes('BadServerNotConnected')) return 'DEVICE_OFFLINE';
 		// Timeout errors
-		if (statusName.includes('BadTimeout') || statusName.includes('BadRequestTimeout')) {
-			return 'TIMEOUT';
-		}
-    
+		if (statusName.includes('BadTimeout') || statusName.includes('BadRequestTimeout')) return 'TIMEOUT';
 		// Node/Data errors
-		if (statusName.includes('BadNodeIdUnknown') || statusName.includes('BadNodeIdInvalid')) {
-			return 'INVALID_NODE_ID';
-		}
-		if (statusName.includes('BadAttributeIdInvalid')) {
-			return 'INVALID_ATTRIBUTE';
-		}
-		if (statusName.includes('BadDataUnavailable') || statusName.includes('BadWaitingForInitialData')) {
-			return 'DATA_UNAVAILABLE';
-		}
-    
+		if (statusName.includes('BadNodeIdUnknown') || statusName.includes('BadNodeIdInvalid')) return 'INVALID_NODE_ID';
+		if (statusName.includes('BadAttributeIdInvalid')) return 'INVALID_ATTRIBUTE';
+		if (statusName.includes('BadDataUnavailable') || statusName.includes('BadWaitingForInitialData')) return 'DATA_UNAVAILABLE';
 		// Security/Authentication errors
-		if (statusName.includes('BadIdentityTokenInvalid') || statusName.includes('BadIdentityTokenRejected')) {
-			return 'AUTHENTICATION_FAILED';
-		}
-		if (statusName.includes('BadUserAccessDenied') || statusName.includes('BadNotReadable')) {
-			return 'ACCESS_DENIED';
-		}
-		if (statusName.includes('BadCertificate')) {
-			return 'CERTIFICATE_ERROR';
-		}
-    
+		if (statusName.includes('BadIdentityTokenInvalid') || statusName.includes('BadIdentityTokenRejected')) return 'AUTHENTICATION_FAILED';
+		if (statusName.includes('BadUserAccessDenied') || statusName.includes('BadNotReadable')) return 'ACCESS_DENIED';
+		if (statusName.includes('BadCertificate')) return 'CERTIFICATE_ERROR';
 		// Data quality errors
-		if (statusName.includes('BadOutOfRange')) {
-			return 'VALUE_OUT_OF_RANGE';
-		}
-		if (statusName.includes('BadTypeMismatch')) {
-			return 'TYPE_MISMATCH';
-		}
-    
+		if (statusName.includes('BadOutOfRange')) return 'VALUE_OUT_OF_RANGE';
+		if (statusName.includes('BadTypeMismatch')) return 'TYPE_MISMATCH';
 		// Generic errors
-		if (statusName.includes('BadUnexpectedError') || statusName.includes('BadInternalError')) {
-			return 'INTERNAL_ERROR';
-		}
-		if (statusName.includes('BadNotSupported')) {
-			return 'NOT_SUPPORTED';
-		}
-    
-		// Return raw status name if no mapping found
+		if (statusName.includes('BadUnexpectedError') || statusName.includes('BadInternalError')) return 'INTERNAL_ERROR';
+		if (statusName.includes('BadNotSupported')) return 'NOT_SUPPORTED';
 		return statusName;
 	}
   
@@ -1540,6 +1654,13 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 		}
     
 		// BAD: Data invalid or unavailable
+		return 'BAD';
+	}
+
+	private classifyQualityFromName(statusName: string): 'UNCERTAIN' | 'BAD' {
+		if (statusName.includes('Uncertain') || statusName.includes('BadWaitingForInitialData') || statusName.includes('BadDataUnavailable')) {
+			return 'UNCERTAIN';
+		}
 		return 'BAD';
 	}
   
@@ -2651,6 +2772,7 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 	public async start(): Promise<void> {
 		this.startPerfDiagnostics();
 		this.perfMonitor.start();
+		if (this.transformPool) await this.transformPool.start();
 		try { await super.start(); }
 		catch (error) { this.stopPerfDiagnostics(); this.perfMonitor.stop(); throw error; }
 	}
@@ -2661,11 +2783,14 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 	public async stop(): Promise<void> {
 		this.stopPerfDiagnostics();
 		this.perfMonitor.stop();
+		if (this.transformPool) await this.transformPool.stop();
 		if (this.shadow) this.withShadow(() => { this.shadow!.registry.disposeAdapter(this); });
 		for (const group of this.groups.values()) this.invalidateNamespaceEvidence(group);
 		await super.stop();
 		this.clients.clear();
 		this.sessions.clear();
+		this.stableIdCache.clear();
+		this.endpointKeyCache.clear();
 	}
 
 	/**
