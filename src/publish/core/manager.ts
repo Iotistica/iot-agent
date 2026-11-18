@@ -1982,6 +1982,8 @@ export class PublishManager extends EventEmitter {
 
 		const batchesByPlugin = new Map<IPublishPlugin, PublishBatchItem[]>();
 		const eventRecordedPoints = new Set<string>();
+		const flushDate = new Date();
+		activityMonitor.setFlushTimestamp(flushDate.toISOString(), flushDate.getTime());
 		for (const binding of this.bindings) {
 			const destinationTopic = this.resolveDestinationTopic(binding, sourceTopic);
 			if (destinationTopic === null) {
@@ -2072,7 +2074,7 @@ export class PublishManager extends EventEmitter {
 							...(rawObjectName && { rawObjectName }),
 							...(rawPointName && { rawPointName }),
 						};
-						const eventKey = JSON.stringify([this.protocol, sourceName, metric]);
+						const eventKey = `${this.protocol}\0${sourceName}\0${metric}`;
 						if (eventRecordedPoints.has(eventKey)) {
 							activityMonitor.recordSubscriptionOnly(params);
 						} else {
@@ -2193,7 +2195,7 @@ export class PublishManager extends EventEmitter {
 						...(rawPointName && { rawPointName }),
 					};
 
-					const eventKey = JSON.stringify([this.protocol, sourceName, metric]);
+					const eventKey = `${this.protocol}\0${sourceName}\0${metric}`;
 					if (eventRecordedPoints.has(eventKey)) {
 						activityMonitor.recordSubscriptionOnly(params);
 					} else {
@@ -2220,6 +2222,7 @@ export class PublishManager extends EventEmitter {
 			}
 		}
 
+		activityMonitor.clearFlushTimestamp();
 		return Array.from(batchesByPlugin.entries());
 	}
 

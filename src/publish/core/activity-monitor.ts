@@ -8,6 +8,16 @@
  * with many points each.
  */
 
+const displayNameCache = new Map<string, string>();
+function displayEndpointName(endpointName: string): string {
+	let cached = displayNameCache.get(endpointName);
+	if (cached === undefined) {
+		cached = endpointName.replace(/(?:^|[-_\s])pipe$/i, '').replace(/[-_\s]+$/g, '') || endpointName;
+		displayNameCache.set(endpointName, cached);
+	}
+	return cached;
+}
+
 export interface SubscriptionActivity {
 	key: string;
 	subscriptionId: number | null;
@@ -87,6 +97,40 @@ const MAX_EVENTS_PER_PROTOCOL = 2000;
 const MAX_HISTORY_SAMPLES_PER_POINT = 720;
 const HISTORY_WINDOW_MS = 60 * 60 * 1000;
 const MAX_HISTORY_POINTS = 5000;
+const EVICTION_HEADROOM = 500;
+
+class EventRing {
+	private buf: (ActivityEvent | undefined)[];
+	private head = 0;
+	private count = 0;
+	constructor(private capacity: number) {
+		this.buf = new Array(capacity);
+	}
+	push(event: ActivityEvent): void {
+		this.buf[this.head] = event;
+		this.head = (this.head + 1) % this.capacity;
+		if (this.count < this.capacity) this.count++;
+	}
+	toArray(): ActivityEvent[] {
+		if (this.count === 0) return [];
+		const result = new Array<ActivityEvent>(this.count);
+		const start = (this.head - this.count + this.capacity) % this.capacity;
+		for (let i = 0; i < this.count; i++) {
+			result[i] = this.buf[(start + i) % this.capacity]!;
+		}
+		return result;
+	}
+	tail(n: number): ActivityEvent[] {
+		const len = Math.min(n, this.count);
+		if (len === 0) return [];
+		const result = new Array<ActivityEvent>(len);
+		for (let i = 0; i < len; i++) {
+			result[i] = this.buf[(this.head - len + i + this.capacity) % this.capacity]!;
+		}
+		return result;
+	}
+	get length(): number { return this.count; }
+}
 
 export interface PointHistorySample { ts: number; value: unknown }
 
@@ -118,15 +162,6 @@ interface RecordParams {
 	rawPointName?: string;
 }
 
-// Endpoint names are generated internally as "{protocol}-pipe" (see
-// init/features.ts) — "pipe" reflects internal plumbing (the endpoint's
-// buffered read pipeline), not something an operator recognizes. Same
-// stripping PublishManager.normalizeExternalGroupName() already does for
-// outbound MQTT group naming; applied here too since this is the other place
-// the raw internal name reaches something operator-facing (the Data Flow UI).
-function displayEndpointName(endpointName: string): string {
-	return endpointName.replace(/(?:^|[-_\s])pipe$/i, '').replace(/[-_\s]+$/g, '') || endpointName;
-}
 
 class ActivityMonitor {
 	private bySubscription = new Map<string, SubscriptionActivity>();
@@ -138,9 +173,11 @@ class ActivityMonitor {
 	// never evict a quieter protocol's history. `id` stays a single monotonic
 	// counter across all buckets so the no-filter view can still merge them back
 	// into one correctly-ordered feed.
-	private eventsByProtocol = new Map<string, ActivityEvent[]>();
+	private eventsByProtocol = new Map<string, EventRing>();
 	private nextEventId = 1;
 	private historyByPoint = new Map<string, PointHistorySample[]>();
+	private _flushNow: string | undefined;
+	private _flushNowMs: number | undefined;
 	// Monotonic, never-evicted point counter per protocol (unlike eventsByProtocol,
 	// which is capped and rolls off old entries) — lets a poller compute a
 	// points/sec rate by diffing two snapshots, the same way the dashboard derives
@@ -191,45 +228,94 @@ class ActivityMonitor {
 	private _updateSnapshot(params: RecordParams, now: string, nowMs: number): void {
 		const key = `${params.subscriptionId ?? 'default'}:${params.destinationId}`;
 		const existing = this.bySubscription.get(key);
-		this.bySubscription.set(key, {
-			key,
-			subscriptionId: params.subscriptionId,
-			destinationId: params.destinationId,
-			destinationName: params.destinationName,
-			destinationType: params.destinationType,
-			protocol: params.protocol,
-			endpointName: params.endpointName,
-			sourceEndpointUuid: params.sourceEndpointUuid,
-			deviceUuid: params.deviceUuid,
-			deviceDisplayName: params.deviceDisplayName,
-			lastMetric: params.metric,
-			lastValue: params.value,
-			lastUnit: params.unit,
-			lastQuality: params.quality,
-			pointCount: params.pointCount,
-			totalBatches: (existing?.totalBatches ?? 0) + 1,
-			lastPublishTime: now,
-			normalizedName: params.normalizedName,
-			pointIdentityEndpointName: params.pointIdentityEndpointName,
-			provisionalPointId: params.provisionalPointId,
-			pointUuid: params.pointUuid,
-			rulesVersion: params.rulesVersion,
-			rawObjectName: params.rawObjectName,
-			rawPointName: params.rawPointName,
-		});
+		if (existing) {
+			existing.subscriptionId = params.subscriptionId;
+			existing.destinationId = params.destinationId;
+			existing.destinationName = params.destinationName;
+			existing.destinationType = params.destinationType;
+			existing.protocol = params.protocol;
+			existing.endpointName = params.endpointName;
+			existing.sourceEndpointUuid = params.sourceEndpointUuid;
+			existing.deviceUuid = params.deviceUuid;
+			existing.deviceDisplayName = params.deviceDisplayName;
+			existing.lastMetric = params.metric;
+			existing.lastValue = params.value;
+			existing.lastUnit = params.unit;
+			existing.lastQuality = params.quality;
+			existing.pointCount = params.pointCount;
+			existing.totalBatches++;
+			existing.lastPublishTime = now;
+			existing.normalizedName = params.normalizedName;
+			existing.pointIdentityEndpointName = params.pointIdentityEndpointName;
+			existing.provisionalPointId = params.provisionalPointId;
+			existing.pointUuid = params.pointUuid;
+			existing.rulesVersion = params.rulesVersion;
+			existing.rawObjectName = params.rawObjectName;
+			existing.rawPointName = params.rawPointName;
+		} else {
+			this.bySubscription.set(key, {
+				key,
+				subscriptionId: params.subscriptionId,
+				destinationId: params.destinationId,
+				destinationName: params.destinationName,
+				destinationType: params.destinationType,
+				protocol: params.protocol,
+				endpointName: params.endpointName,
+				sourceEndpointUuid: params.sourceEndpointUuid,
+				deviceUuid: params.deviceUuid,
+				deviceDisplayName: params.deviceDisplayName,
+				lastMetric: params.metric,
+				lastValue: params.value,
+				lastUnit: params.unit,
+				lastQuality: params.quality,
+				pointCount: params.pointCount,
+				totalBatches: 1,
+				lastPublishTime: now,
+				normalizedName: params.normalizedName,
+				pointIdentityEndpointName: params.pointIdentityEndpointName,
+				provisionalPointId: params.provisionalPointId,
+				pointUuid: params.pointUuid,
+				rulesVersion: params.rulesVersion,
+				rawObjectName: params.rawObjectName,
+				rawPointName: params.rawPointName,
+			});
+		}
 
 		const protocolKey = params.protocol.toLowerCase();
-		this.lastSeenByPoint.set(`${protocolKey}:${params.endpointName}:${params.metric}`, {
-			protocol: protocolKey,
-			deviceName: params.endpointName,
-			lastSeen: nowMs,
-		});
+		const lsKey = `${protocolKey}:${params.endpointName}:${params.metric}`;
+		const lsExisting = this.lastSeenByPoint.get(lsKey);
+		if (lsExisting) {
+			lsExisting.lastSeen = nowMs;
+		} else {
+			this.lastSeenByPoint.set(lsKey, {
+				protocol: protocolKey,
+				deviceName: params.endpointName,
+				lastSeen: nowMs,
+			});
+		}
+	}
+
+	setFlushTimestamp(now: string, nowMs: number): void {
+		this._flushNow = now;
+		this._flushNowMs = nowMs;
+	}
+
+	clearFlushTimestamp(): void {
+		this._flushNow = undefined;
+		this._flushNowMs = undefined;
 	}
 
 	record(params: RecordParams): void {
-		const nowDate = new Date();
-		const now = nowDate.toISOString();
-		const nowMs = nowDate.getTime();
+		let now: string;
+		let nowMs: number;
+		if (this._flushNow !== undefined && this._flushNowMs !== undefined) {
+			now = this._flushNow;
+			nowMs = this._flushNowMs;
+		} else {
+			const d = new Date();
+			now = d.toISOString();
+			nowMs = d.getTime();
+		}
 
 		this._updateSnapshot(params, now, nowMs);
 
@@ -259,23 +345,30 @@ class ActivityMonitor {
 		};
 
 		const protocolKey = params.protocol.toLowerCase();
-		this.latestByPoint.set(
-			JSON.stringify([protocolKey, params.endpointName, params.metric]),
-			event,
-		);
+		this.latestByPoint.set(`${protocolKey}\0${params.endpointName}\0${params.metric}`, event);
 		this._recordHistory(event, nowMs);
-		const bucket = this.eventsByProtocol.get(protocolKey) ?? [];
-		bucket.push(event);
-		if (bucket.length > MAX_EVENTS_PER_PROTOCOL) {
-			bucket.splice(0, bucket.length - MAX_EVENTS_PER_PROTOCOL);
+		let ring = this.eventsByProtocol.get(protocolKey);
+		if (!ring) {
+			ring = new EventRing(MAX_EVENTS_PER_PROTOCOL);
+			this.eventsByProtocol.set(protocolKey, ring);
 		}
-		this.eventsByProtocol.set(protocolKey, bucket);
+		ring.push(event);
 
 		this.totalPointsByProtocol.set(protocolKey, (this.totalPointsByProtocol.get(protocolKey) ?? 0) + 1);
 	}
 
 	recordSubscriptionOnly(params: RecordParams): void {
-		this._updateSnapshot(params, new Date().toISOString(), Date.now());
+		let now: string;
+		let nowMs: number;
+		if (this._flushNow !== undefined && this._flushNowMs !== undefined) {
+			now = this._flushNow;
+			nowMs = this._flushNowMs;
+		} else {
+			const d = new Date();
+			now = d.toISOString();
+			nowMs = d.getTime();
+		}
+		this._updateSnapshot(params, now, nowMs);
 	}
 
 	getSubscriptions(): SubscriptionActivity[] {
@@ -287,9 +380,10 @@ class ActivityMonitor {
 	getRecentEvents(limit = 100, protocol?: string): ActivityEvent[] {
 		let merged: ActivityEvent[];
 		if (protocol) {
-			merged = this.eventsByProtocol.get(protocol.toLowerCase()) ?? [];
+			const ring = this.eventsByProtocol.get(protocol.toLowerCase());
+			merged = ring ? ring.tail(limit) : [];
 		} else {
-			merged = Array.from(this.eventsByProtocol.values()).flat();
+			merged = Array.from(this.eventsByProtocol.values()).flatMap((ring) => ring.toArray());
 			merged.sort((a, b) => a.id - b.id);
 		}
 		return merged.slice(-limit).reverse()
@@ -297,17 +391,22 @@ class ActivityMonitor {
 	}
 
 	private _recordHistory(event: ActivityEvent, nowMs: number): void {
-		const key = pointHistoryKey({ ...event, endpointName: displayEndpointName(event.endpointName) });
+		const ep = displayEndpointName(event.endpointName);
+		const resolvedEp = event.pointIdentityEndpointName || ep;
+		const resolvedMetric = event.normalizedName || event.metric;
+		const key = JSON.stringify([event.protocol, resolvedEp, resolvedMetric]);
 		const samples = this.historyByPoint.get(key);
 		if (!samples) {
 			if (this.historyByPoint.size >= MAX_HISTORY_POINTS) {
-				const oldest = this.historyByPoint.keys().next().value;
-				if (oldest !== undefined) this.historyByPoint.delete(oldest);
+				let toEvict = EVICTION_HEADROOM;
+				for (const k of this.historyByPoint.keys()) {
+					if (toEvict-- <= 0) break;
+					this.historyByPoint.delete(k);
+				}
 			}
 			this.historyByPoint.set(key, [{ ts: nowMs, value: event.value }]);
 			return;
 		}
-		// record() fires once per destination binding for the same reading — collapse those.
 		const last = samples[samples.length - 1];
 		if (last && nowMs - last.ts < 1000 && last.value === event.value) return;
 		samples.push({ ts: nowMs, value: event.value });
@@ -315,7 +414,6 @@ class ActivityMonitor {
 		let drop = Math.max(0, samples.length - MAX_HISTORY_SAMPLES_PER_POINT);
 		while (drop < samples.length && samples[drop].ts < cutoff) drop++;
 		if (drop > 0) samples.splice(0, drop);
-		// Refresh insertion order so active points are evicted last.
 		this.historyByPoint.delete(key);
 		this.historyByPoint.set(key, samples);
 	}
@@ -326,7 +424,8 @@ class ActivityMonitor {
 	}
 
 	getLatestPoints(): ActivityEvent[] {
-		const staleBefore = Date.now() - 60 * 60 * 1000;
+		const now = Date.now();
+		const staleBefore = now - 60 * 60 * 1000;
 		const points: ActivityEvent[] = [];
 		for (const [key, event] of this.latestByPoint) {
 			if (Date.parse(event.timestamp) < staleBefore) {
