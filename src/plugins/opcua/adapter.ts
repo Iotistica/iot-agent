@@ -2238,6 +2238,11 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 			} catch (error) {
 				if (!isCurrent()) return;
 				this.perfInc('namespaceVerificationFailures');
+				if (this.isSessionFatalError(error)) {
+					this.logger.warn(`OPC UA session unusable for ${group.compositeDevice.name}, triggering reconnect: ${error instanceof Error ? error.message : String(error)}`);
+					this.scheduleReconnect(group.compositeDevice, group.session, 'session_not_activated');
+					return;
+				}
 				this.logger.warn(`OPC UA identity evidence unavailable for ${group.compositeDevice.name}: ${error instanceof Error ? error.message : String(error)}`);
 				retry();
 			}
@@ -2351,6 +2356,11 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 		});
 	}
   
+	private isSessionFatalError(error: unknown): boolean {
+		const message = error instanceof Error ? error.message : String(error);
+		return /BadSessionNotActivated|BadSessionClosed|BadSessionIdInvalid/.test(message);
+	}
+
 	/**
    * Schedule reconnection with exponential backoff
    */
