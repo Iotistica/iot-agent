@@ -228,7 +228,7 @@ export async function createIdentities(
 	let created = 0;
 	let failed = 0;
 
-	const BATCH_SIZE = 200;
+	const BATCH_SIZE = 20;
 
 	for (const ep of resolverResult.endpoints) {
 		if (!ep.endpointUuid) continue;
