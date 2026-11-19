@@ -159,7 +159,7 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 		if (!this.perfEnabled) return;
 		const started = this.perfStarted.get(name);
 		this.perfStarted.delete(name);
-		this.logger.info(`[OPCUA_PERF] ${name}`, {
+		this.logger.debug(`[OPCUA_PERF] ${name}`, {
 			durationMs: started === undefined ? null : Math.round(performance.now() - started), ...details,
 		});
 	}
@@ -176,7 +176,7 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 			const counters = Object.fromEntries(this.perfCounters);
 			this.perfCounters.clear();
 			const sessions = new Set(this.sessions.values());
-			this.logger.info('[OPCUA_PERF] heartbeat', {
+			this.logger.debug('[OPCUA_PERF] heartbeat', {
 				eventLoopP99Ms: lag ? Math.round(lag.percentile(99) / 1e6) : null,
 				eventLoopMaxMs: lag ? Math.round(lag.max / 1e6) : null,
 				eventLoopUtilization: Number(delta.utilization.toFixed(3)),
@@ -1239,7 +1239,7 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 				throw new Error(`Failed to create OPC-UA subscription for ${deviceName}: ${message}`);
 			}
 
-			this.logger.info('[OPCUA_PERF] subscription created', {
+			this.logger.debug('[OPCUA_PERF] subscription created', {
 				deviceName,
 				index: subIdx + 1,
 				subscriptionId: subscription.subscriptionId,
@@ -1330,7 +1330,7 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 				continue;
 			}
 
-			this.logger.info('[OPCUA_PERF] monitored group initialized', { deviceName, index: subIdx + 1, durationMs: Math.round(performance.now() - monitorStarted), monitoredItems: group.monitoredItems.length });
+			this.logger.debug('[OPCUA_PERF] monitored group initialized', { deviceName, index: subIdx + 1, durationMs: Math.round(performance.now() - monitorStarted), monitoredItems: group.monitoredItems.length });
 			// Lightweight handler: just write to the shared coalescing buffer.
 			// DataPoint construction, evidence, shadow, and emit all happen in
 			// the timer-based flushCoalescingBuffer() above.
@@ -1431,7 +1431,7 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 
 		// TEMPORARY diagnostics — see diagnostics.ts. Reaching here means every
 		// successful batch has been reconciled with per-item creation statuses.
-		this.logger.info('[OPCUA_PERF] subscription summary', {
+		this.logger.debug('[OPCUA_PERF] subscription summary', {
 			deviceName,
 			subscriptions: sessionWrapper.subscriptions.length,
 			monitoredItems: totalMonitoredItems,
@@ -2137,7 +2137,7 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 					};
 					this.emit('namespace-ready', evidence);
 				}
-				this.logger.info('[OPCUA_PERF] namespace verification complete', { deviceName: group.compositeDevice.name, durationMs: Math.round(performance.now() - evidenceStarted), verifiedNodes: verifiedNodes.size, checkedNodes: nodeIds.length });
+				this.logger.debug('[OPCUA_PERF] namespace verification complete', { deviceName: group.compositeDevice.name, durationMs: Math.round(performance.now() - evidenceStarted), verifiedNodes: verifiedNodes.size, checkedNodes: nodeIds.length });
 				if (verifiedNodes.size !== nodeIds.length) retry();
 			} catch (error) {
 				if (!isCurrent()) return;

@@ -476,25 +476,6 @@ async function applyConfigUpdate(mutator: (config: Record<string, any>) => void)
 
 		const nextConfig = { ...(currentTarget.config || {}) };
 
-		// Merge any endpoints that exist in the DB but are missing from target state.
-		// DiscoveryStore.save() writes to the endpoints table directly (bypassing
-		// setTarget) so the target state can lag behind the DB.  Without this merge,
-		// calling setTarget here would cause ConfigManager to unregister — and delete —
-		// every endpoint that was discovered but not yet in the target state.
-		try {
-			const dbEndpoints = await EndpointModel.getAll();
-			const targetById = new Map<string, any>(
-				(nextConfig.endpoints || []).map((e: any) => [e.uuid ?? e.id, e])
-			);
-			for (const ep of dbEndpoints) {
-				const id = ep.uuid;
-				if (id && !targetById.has(id)) targetById.set(id, ep);
-			}
-			if (targetById.size > 0) nextConfig.endpoints = Array.from(targetById.values());
-		} catch {
-			// non-fatal — if DB read fails, proceed with target state as-is
-		}
-
 		mutator(nextConfig);
 		await stateManager.setTarget({
 			apps: currentTarget.apps || {},

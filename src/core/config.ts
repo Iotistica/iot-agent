@@ -1440,19 +1440,6 @@ export class ConfigManager extends EventEmitter {
 			}
 
 			if (!targetMap.has(currentDeviceId)) {
-				// Discovery-created endpoints (have a fingerprint) are not managed by
-				// target-state reconciliation — skip them so adding/removing a container
-				// service doesn't wipe discovered sources.
-				if ((device as any).fingerprint) {
-					this.logger?.debugSync("Skipping discovery-created endpoint (not target-managed)", {
-						component: LogComponents.configManager,
-						operation: "calculateSteps",
-						deviceId: currentDeviceId,
-						deviceName: device.name,
-					});
-					continue;
-				}
-
 				this.logger?.debugSync("Device needs to be unregistered", {
 					component: LogComponents.configManager,
 					operation: "calculateSteps",
