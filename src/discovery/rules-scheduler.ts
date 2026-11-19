@@ -35,6 +35,20 @@ export class DiscoveryRulesScheduler {
 			});
 		}
 
+		// Reschedule any rules that became "due" during downtime so they don't
+		// all fire on the first tick. They'll run at their normal interval from now.
+		const due = DiscoveryRuleModel.getDue();
+		for (const rule of due) {
+			const next = new Date(Date.now() + rule.interval_seconds * 1000).toISOString();
+			DiscoveryRuleModel.update(rule.uuid, { next_run_at: next });
+			this.logger?.infoSync('Rescheduled discovery rule (was due during downtime)', {
+				component: LogComponents.agent,
+				ruleUuid: rule.uuid,
+				ruleName: rule.name,
+				nextRunAt: next,
+			});
+		}
+
 		this.timer = setInterval(() => this.tick(), POLL_INTERVAL_MS);
 		this.logger?.infoSync('Discovery rules scheduler started', {
 			component: LogComponents.agent,

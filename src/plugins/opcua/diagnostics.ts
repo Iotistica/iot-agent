@@ -84,19 +84,19 @@ export class OpcuaStartupDiagnostics {
 
 	recordConnectAttempt(deviceId: string, endpointUrl: string, useSubscription: boolean): void {
 		this.getOrCreate(deviceId, endpointUrl, useSubscription);
-		this.logger.info(`[OPCUA_DIAG] connect attempt ${fmt({ deviceId, endpointUrl, useSubscription })}`);
+		this.logger.debug(`[OPCUA_DIAG] connect attempt ${fmt({ deviceId, endpointUrl, useSubscription })}`);
 	}
 
 	recordSessionEstablished(deviceId: string, sessionId: string | null): void {
 		const record = this.records.get(deviceId);
 		if (record) record.sessionId = sessionId;
-		this.logger.info(`[OPCUA_DIAG] session established ${fmt({ deviceId, sessionId })}`);
+		this.logger.debug(`[OPCUA_DIAG] session established ${fmt({ deviceId, sessionId })}`);
 	}
 
 	recordValidatedNodes(deviceId: string, count: number): void {
 		const record = this.records.get(deviceId);
 		if (record) record.validatedNodeCount = count;
-		this.logger.info(`[OPCUA_DIAG] validated nodes ${fmt({ deviceId, validatedNodeCount: count })}`);
+		this.logger.debug(`[OPCUA_DIAG] validated nodes ${fmt({ deviceId, validatedNodeCount: count })}`);
 	}
 
 	recordSubscriptionResult(deviceId: string, success: boolean, subscriptionIds: number[] = [], error?: string): void {
@@ -116,7 +116,7 @@ export class OpcuaStartupDiagnostics {
 		// monitor() call for this device happens before the subscription-result
 		// call at the end of createSubscription()) — fold them into this one
 		// line instead of a separate line per node (see recordMonitorAttempt).
-		this.logger.info(`[OPCUA_DIAG] subscription creation ${success ? 'succeeded' : 'failed'} ${fmt({
+		this.logger.debug(`[OPCUA_DIAG] subscription creation ${success ? 'succeeded' : 'failed'} ${fmt({
 			deviceId,
 			subscriptionIds,
 			monitorAttempts: record?.monitorAttempts ?? 0,
@@ -144,26 +144,26 @@ export class OpcuaStartupDiagnostics {
 			}
 		}
 		if (!success) {
-			this.logger.info(`[OPCUA_DIAG] monitor() failed ${fmt({ deviceId, nodeId, ...(statusCode && { statusCode }) })}`);
+			this.logger.debug(`[OPCUA_DIAG] monitor() failed ${fmt({ deviceId, nodeId, ...(statusCode && { statusCode }) })}`);
 		}
 	}
 
 	recordPollingFallback(deviceId: string): void {
 		const record = this.records.get(deviceId);
 		if (record) record.pollingFallbackActive = true;
-		this.logger.info(`[OPCUA_DIAG] polling fallback activated ${fmt({ deviceId })}`);
+		this.logger.debug(`[OPCUA_DIAG] polling fallback activated ${fmt({ deviceId })}`);
 	}
 
 	recordSubscriptionTerminated(deviceId: string): void {
 		const record = this.records.get(deviceId);
 		if (record) record.subscriptionTerminations++;
-		this.logger.info(`[OPCUA_DIAG] subscription terminated ${fmt({ deviceId })}`);
+		this.logger.debug(`[OPCUA_DIAG] subscription terminated ${fmt({ deviceId })}`);
 	}
 
 	recordSubscriptionRecreated(deviceId: string): void {
 		const record = this.records.get(deviceId);
 		if (record) record.subscriptionRecreations++;
-		this.logger.info(`[OPCUA_DIAG] subscription recreated ${fmt({ deviceId })}`);
+		this.logger.debug(`[OPCUA_DIAG] subscription recreated ${fmt({ deviceId })}`);
 	}
 
 	/**
@@ -194,9 +194,9 @@ export class OpcuaStartupDiagnostics {
 			failedMonitoredItems: allRecords.reduce((sum, r) => sum + r.monitorFailures, 0),
 		};
 
-		this.logger.info(`[OPCUA_DIAG] ==== aggregate snapshot ==== ${fmt(totals)}`);
+		this.logger.debug(`[OPCUA_DIAG] ==== aggregate snapshot ==== ${fmt(totals)}`);
 		for (const record of allRecords) {
-			this.logger.info(`[OPCUA_DIAG] device record ${fmt({ ...record })}`);
+			this.logger.debug(`[OPCUA_DIAG] device record ${fmt({ ...record })}`);
 		}
 	}
 }
