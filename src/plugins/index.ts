@@ -9,7 +9,7 @@ import { ModbusAdapter } from "./modbus/adapter.js";
 import { type ModbusAdapterConfig, normalizeModbusRegisters } from "./modbus/types.js";
 import { MqttAdapter, type MqttReadingEvidence, type MqttShadowOptions } from "./mqtt/adapter.js";
 import { type MqttAdapterConfig } from "./mqtt/types.js";
-import { SocketServer, WorkerBackedSocketServer, type ISocketServer } from "../core/socket-server.js";
+import { SocketServer, type ISocketServer } from "../core/socket-server.js";
 import {
 	type DeviceDataPoint,
 	type ExternalPluginConfig,
@@ -536,10 +536,7 @@ export class AdapterManager extends EventEmitter {
 			includeTimestamp: dbOutput.include_timestamp,
 			includeDeviceName: dbOutput.include_device_name,
 		};
-		const useWorker = process.env.OPCUA_WORKER_THREADS === '1' && protocol === 'opcua';
-		const socket: ISocketServer = useWorker
-			? new WorkerBackedSocketServer(outputConfig, this.logger)
-			: new SocketServer(outputConfig, this.logger);
+		const socket: ISocketServer = new SocketServer(outputConfig, this.logger);
 		await socket.start();
 		this.socketServers.set(protocol, socket);
 		return socket;
