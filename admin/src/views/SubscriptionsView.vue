@@ -41,7 +41,8 @@ const destFilter = ref<number | undefined>(undefined)
 const filteredRows = computed(() => rows.value.filter(r => {
   const q = search.value.trim().toLowerCase()
   const destName = destMap.value[r.publish_destination_id]?.name ?? ''
-  return (!q || [destName, r.route_json?.topic, r.payload_format].some(v => (v || '').toLowerCase().includes(q)))
+  const routingText = [...(r.route_json?.includeMetrics ?? []), ...(r.route_json?.excludeMetrics ?? [])].join(' ')
+  return (!q || [destName, r.route_json?.topic, r.payload_format, routingText].some(v => (v || '').toLowerCase().includes(q)))
     && (!destFilter.value || r.publish_destination_id === destFilter.value)
 }))
 const destOptions = computed(() => destinations.value.map(d => ({ value: d.id, label: d.name })))
@@ -52,6 +53,7 @@ const columns: TableColumnType<Subscription>[] = [
   { title: 'Type', key: 'dest_type', width: 120 },
   { title: 'Topic', key: 'topic', sorter: (a, b) => (a.route_json?.topic ?? '').localeCompare(b.route_json?.topic ?? '') },
   { title: 'Sources', dataIndex: 'topics', key: 'topics', width: 200 },
+  { title: 'Routing', key: 'routing', width: 200 },
   { title: 'Format', dataIndex: 'payload_format', key: 'payload_format', width: 100, sorter: (a, b) => (a.payload_format ?? '').localeCompare(b.payload_format ?? '') },
   { title: 'Compression', dataIndex: 'compression', key: 'compression', width: 160 },
   { title: 'Enabled', dataIndex: 'enabled', key: 'enabled', width: 90, sorter: (a, b) => Number(a.enabled) - Number(b.enabled) },
@@ -234,6 +236,20 @@ onMounted(load)
             <a-tag v-for="t in record.topics" :key="t" :color="protocolColor(t)" style="margin-bottom: 2px">{{ t }}</a-tag>
           </template>
           <span v-else style="color: var(--text-muted)">all</span>
+        </template>
+
+        <template v-else-if="column.key === 'routing'">
+          <template v-if="record.route_json?.includeMetrics?.length || record.route_json?.excludeMetrics?.length">
+            <template v-if="record.route_json?.includeMetrics?.length">
+              <a-tag v-for="m in record.route_json.includeMetrics.slice(0, 3)" :key="'i-' + m" color="green" style="margin-bottom: 2px; font-size: 11px">+ {{ m }}</a-tag>
+              <a-tag v-if="record.route_json.includeMetrics.length > 3" style="margin-bottom: 2px; font-size: 11px">+{{ record.route_json.includeMetrics.length - 3 }} more</a-tag>
+            </template>
+            <template v-if="record.route_json?.excludeMetrics?.length">
+              <a-tag v-for="m in record.route_json.excludeMetrics.slice(0, 3)" :key="'e-' + m" color="red" style="margin-bottom: 2px; font-size: 11px">− {{ m }}</a-tag>
+              <a-tag v-if="record.route_json.excludeMetrics.length > 3" style="margin-bottom: 2px; font-size: 11px">−{{ record.route_json.excludeMetrics.length - 3 }} more</a-tag>
+            </template>
+          </template>
+          <span v-else style="color: var(--text-muted)">all points</span>
         </template>
 
         <template v-else-if="column.key === 'payload_format'">
