@@ -557,7 +557,7 @@ implements IProtocolClient<ReadValueIdOptions[], DataValue[]>
 			applicationUri: 'urn:iotistica:agent',
 			connectionStrategy: {
 				initialDelay: 1000,
-				maxRetry: 3,
+				maxRetry: 0,
 				maxDelay: connection.connectionTimeout || 10000,
 			},
 			securityMode: this.convertSecurityMode(connection.securityMode),
@@ -621,8 +621,9 @@ implements IProtocolClient<ReadValueIdOptions[], DataValue[]>
 		connection: OPCUAConnection,
 		deviceName: string
 	): Promise<any | null> {
+		let discoveryClient: OPCUAClient | undefined;
 		try {
-			const discoveryClient = OPCUAClientFactory.create(await this.createClientOptions(connection));
+			discoveryClient = OPCUAClientFactory.create(await this.createClientOptions(connection));
 			await discoveryClient.connect(baseUrl);
 			const allEndpoints = await discoveryClient.getEndpoints();
 			await discoveryClient.disconnect();
@@ -653,6 +654,9 @@ implements IProtocolClient<ReadValueIdOptions[], DataValue[]>
 
 			return bestEndpoint;
 		} catch (error) {
+			if (discoveryClient) {
+				try { await discoveryClient.disconnect(); } catch { /* best-effort */ }
+			}
 			this.logger.warn('Endpoint discovery failed', {
 				error: error instanceof Error ? error.message : String(error)
 			});

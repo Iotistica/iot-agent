@@ -88,11 +88,10 @@ export const OPCUAConnectionSchema = z.object({
 	/** Subscription sampling interval in milliseconds (only if useSubscription=true) */
 	samplingInterval: z.number().int().positive().default(500),
   
-	/** Maximum monitored items per subscription (default: 100) */
-	/** Many PLCs struggle with 200+ items - this auto-splits subscriptions for load distribution */
-	maxMonitoredItemsPerSubscription: z.number().int().positive().default(100),
+	/** Maximum monitored items per subscription (default: 1000) */
+	maxMonitoredItemsPerSubscription: z.number().int().positive().default(1000),
 
-	/** Absolute safety ceiling for subscription batches (default: 500) */
+	/** Absolute safety ceiling for subscription batches (default: 5000) */
 	maxMonitoredItemsPerSubscriptionCeiling: z.number().int().positive().optional(),
 
 	/**

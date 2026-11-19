@@ -3,9 +3,15 @@ import path from 'node:path';
 import type { DeviceDataPoint, Logger } from '../types.js';
 import type { PrimitiveEntry, TransformLookups, TransformResponse } from './transform-shared.js';
 
-interface PendingBatch {
-	batchId: number;
-	entries: PrimitiveEntry[];
+interface PendingChunk {
+	superBatchId: number;
+	chunkIndex: number;
+}
+
+interface SuperBatch {
+	totalChunks: number;
+	receivedChunks: number;
+	results: (DeviceDataPoint[] | undefined)[];
 	callback: (points: DeviceDataPoint[]) => void;
 }
 
@@ -14,11 +20,15 @@ interface WorkerSlot {
 	busy: boolean;
 }
 
+const CHUNK_SIZE = 1000;
+
 export class TransformPool {
 	private workers: WorkerSlot[] = [];
 	private nextWorker = 0;
 	private batchIdCounter = 0;
-	private pending = new Map<number, PendingBatch>();
+	private superBatchIdCounter = 0;
+	private pending = new Map<number, PendingChunk>();
+	private superBatches = new Map<number, SuperBatch>();
 	private lookups: TransformLookups = {
 		normalizationNames: {},
 		displayNames: {},
@@ -91,13 +101,26 @@ export class TransformPool {
 			return;
 		}
 
-		const batchId = this.batchIdCounter++;
-		this.pending.set(batchId, { batchId, entries, callback });
+		const totalChunks = Math.ceil(entries.length / CHUNK_SIZE);
+		const superBatchId = this.superBatchIdCounter++;
+		const superBatch: SuperBatch = {
+			totalChunks,
+			receivedChunks: 0,
+			results: new Array(totalChunks),
+			callback,
+		};
+		this.superBatches.set(superBatchId, superBatch);
 
-		const slot = this.workers[this.nextWorker];
-		this.nextWorker = (this.nextWorker + 1) % this.workers.length;
-		slot.busy = true;
-		slot.worker.postMessage({ type: 'transform', batchId, entries });
+		for (let i = 0; i < totalChunks; i++) {
+			const chunk = entries.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE);
+			const batchId = this.batchIdCounter++;
+			this.pending.set(batchId, { superBatchId, chunkIndex: i });
+
+			const slot = this.workers[this.nextWorker];
+			this.nextWorker = (this.nextWorker + 1) % this.workers.length;
+			slot.busy = true;
+			slot.worker.postMessage({ type: 'transform', batchId, entries: chunk });
+		}
 	}
 
 	async stop(): Promise<void> {
@@ -114,19 +137,33 @@ export class TransformPool {
 		await Promise.all(exits);
 		this.workers = [];
 		this.pending.clear();
+		this.superBatches.clear();
 		this.started = false;
 		this.stopping = false;
 	}
 
 	private handleResult(batchId: number, points: DeviceDataPoint[]): void {
-		const batch = this.pending.get(batchId);
-		if (!batch) return;
+		const chunk = this.pending.get(batchId);
+		if (!chunk) return;
 		this.pending.delete(batchId);
 
 		const workerIdx = this.workers.findIndex((s) => s.busy);
 		if (workerIdx >= 0) this.workers[workerIdx].busy = false;
 
-		batch.callback(points);
+		const superBatch = this.superBatches.get(chunk.superBatchId);
+		if (!superBatch) return;
+
+		superBatch.results[chunk.chunkIndex] = points;
+		superBatch.receivedChunks++;
+
+		if (superBatch.receivedChunks === superBatch.totalChunks) {
+			this.superBatches.delete(chunk.superBatchId);
+			const allPoints: DeviceDataPoint[] = [];
+			for (const r of superBatch.results) {
+				if (r) allPoints.push(...r);
+			}
+			superBatch.callback(allPoints);
+		}
 	}
 
 	private restartWorker(index: number): void {

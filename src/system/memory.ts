@@ -399,6 +399,11 @@ const MIN_SURVIVOR_UPTIME_SECONDS = 30 * 60; // 30 minutes
 // (30 min, the stronger signal) still catches real leaks after its own window opens.
 const MIN_HEAP_RATE_UPTIME_SECONDS = 20 * 60; // 20 minutes
 
+// External memory (Buffers, ArrayBuffers) needs a warmup window too:
+// node-opcua allocates binary protocol buffers during subscription setup.
+// At 50k+ monitored items the working-set allocation phase lasts ~10 minutes.
+const MIN_EXTERNAL_RATE_UPTIME_SECONDS = 15 * 60; // 15 minutes
+
 /**
  * Calculate adaptive survivor monotonic tolerance
  * Small heaps: 3% (stricter - less noise)
@@ -1171,7 +1176,11 @@ export async function healthcheck(
 	}
 	
 	// Fail if sustained external memory growth detected (Buffers, crypto, native)
-	if (externalGrowthRate !== null && externalGrowthRate > externalThreshold) {
+	if (
+		externalGrowthRate !== null &&
+		externalGrowthRate > externalThreshold &&
+		processUptime() >= MIN_EXTERNAL_RATE_UPTIME_SECONDS
+	) {
 		// Don't log here - caller decides whether to alert
 		return false;
 	}

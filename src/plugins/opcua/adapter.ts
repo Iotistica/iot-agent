@@ -45,8 +45,6 @@ import { OpcuaStartupDiagnostics } from './diagnostics.js';
 import { looksLikeEngineeringUnit, normalizeForUnitNameCompare } from './discovery.js';
 import { resolveDeviceDisplayNames } from './device-identity.js';
 import { OpcuaPerfMonitor } from './perf-monitor.js';
-import { TransformPool } from './transform-pool.js';
-import type { PrimitiveEntry } from './transform-shared.js';
 import type { PrivateEvidenceRegistry } from '../../points/private-evidence-registry.js';
 import type { PrivateShadowObserver } from '../../points/private-shadow-observer.js';
 import type { ObservationRef, SourceBindingRef } from '../../points/private-evidence-types.js';
@@ -235,9 +233,10 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 	private resolvedNodeDisplayNames: Map<string, string> = new Map();
 	private deviceDisplayNames = new Map<string, Map<string, string>>();
   
-	// Subscription splitting (many PLCs struggle with 200+ monitored items)
-	private readonly MAX_MONITORED_ITEMS_PER_SUBSCRIPTION = 100; // Split subscriptions beyond this
-	private readonly DEFAULT_MONITORED_ITEMS_SAFETY_CEILING = 500;
+	// Subscription splitting — fewer, larger subscriptions reduce publish-engine
+	// overhead in node-opcua (each subscription runs its own request pipeline).
+	private readonly MAX_MONITORED_ITEMS_PER_SUBSCRIPTION = 1000;
+	private readonly DEFAULT_MONITORED_ITEMS_SAFETY_CEILING = 5000;
 
 	// Validation burst management — cap per-request reads so simple servers
 	// (asyncua-based simulators, embedded PLCs) aren't overwhelmed.
@@ -269,8 +268,6 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 	// changes at all.
 	private groups: Map<string, OPCUAConnectionGroup> = new Map();
 	private deviceGroupKey: Map<string, string> = new Map();
-	private transformPool: TransformPool | undefined;
-
 	private extractNodeScope(nodeId: string): string {
 		const stringNodeMatch = nodeId.match(/^ns=(\d+);s=(.+)$/);
 		if (stringNodeMatch) {
@@ -458,9 +455,6 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 		super(devices as GenericDeviceConfig[], logger || new ConsoleLogger('debug'));
 		this.diagnostics = new OpcuaStartupDiagnostics(this.logger);
 		this.perfMonitor = new OpcuaPerfMonitor(this.logger);
-		if (process.env.OPCUA_WORKER_THREADS === '1') {
-			this.transformPool = new TransformPool(2, this.logger);
-		}
 		this.shadow = shadow;
 		if (shadow) {
 			for (const source of shadow.sources) {
@@ -1008,7 +1002,11 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 			: this.MAX_MONITORED_ITEMS_PER_SUBSCRIPTION;
 		const safetyCeiling = connection.maxMonitoredItemsPerSubscriptionCeiling || this.DEFAULT_MONITORED_ITEMS_SAFETY_CEILING;
 		const serverMax = await this.readMaxMonitoredItemsPerSubscription(session, deviceName);
-		const maxItemsPerSub = Math.max(1, Math.min(configuredMax, safetyCeiling, serverMax ?? configuredMax));
+		// Server-reported limit is advisory — log it but don't let it override
+		// the operator's configured value. Many servers (asyncua, etc.) report
+		// a low default that creates too many subscriptions, overwhelming the
+		// client's publish-engine pipeline and causing OOM under high item counts.
+		const maxItemsPerSub = Math.max(1, Math.min(configuredMax, safetyCeiling));
 		const initialSubscriptionCount = Math.ceil(validDataPoints.length / maxItemsPerSub);
 		let totalMonitoredItems = 0;
     
@@ -1038,6 +1036,8 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 			matchesOperation: boolean;
 		}>();
 		const coalesceMs = Math.max(connection.publishingInterval || 1000, 200);
+		const BACKPRESSURE_WARN_THRESHOLD = 50_000;
+		let lastBackpressureWarn = 0;
 		// Use object identity just as the previous Array.includes checks did, but O(1).
 		const ownerPointSets = new Map<OPCUADeviceConfig, Set<OPCUADataPoint>>();
 		for (const owner of new Set(nodeIdToDevice.values())) {
@@ -1065,6 +1065,7 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 		};
 		let pendingEntries: CoalescedEntry[] = [];
 		let pendingOffset = 0;
+		let flushSnapshotSize = 0;
 		// Only one snapshot is processed at a time. New notifications continue
 		// coalescing in the Map, so there is no unbounded FIFO of snapshots.
 		const processChunk = () => {
@@ -1157,6 +1158,7 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 			if (Date.now() - lastPerfLog >= 5000) {
 				this.logger.info(`OPC-UA flush perf ${deviceName}`, {
 					points: processedInFlush,
+					snapshotSize: flushSnapshotSize,
 					buildMs: Math.round(buildTimeMs),
 					emitMs: Math.round(emitTimeMs),
 					elapsedMs: Math.round(performance.now() - flushStartedAt),
@@ -1166,7 +1168,15 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 			}
 		};
 		const flushCoalescingBuffer = () => {
-			if (draining) { this.perfInc('coalescingFlushSkippedBusy'); return; }
+			if (draining) {
+				this.perfInc('coalescingFlushSkippedBusy');
+				const now = Date.now();
+				if (coalescingBuffer.size >= BACKPRESSURE_WARN_THRESHOLD && now - lastBackpressureWarn >= 10_000) {
+					lastBackpressureWarn = now;
+					this.logger.warn(`OPC-UA backpressure: ${coalescingBuffer.size} values coalescing while flush drains for ${deviceName}`);
+				}
+				return;
+			}
 			if (coalescingBuffer.size === 0) return;
 			this.perfInc('coalescingFlushes');
 			draining = true;
@@ -1175,107 +1185,10 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 			buildTimeMs = 0;
 			emitTimeMs = 0;
 
+			flushSnapshotSize = coalescingBuffer.size;
 			const snapshotEntries = Array.from(coalescingBuffer.values());
 			coalescingBuffer.clear();
 			flushGeneration++;
-
-			if (this.transformPool) {
-				const primitives: PrimitiveEntry[] = new Array(snapshotEntries.length);
-				for (let i = 0; i < snapshotEntries.length; i++) {
-					const e = snapshotEntries[i];
-					const owningDevice = nodeIdToDevice.get(e.dp.nodeId) ?? device;
-					primitives[i] = {
-						nodeId: e.dp.nodeId,
-						value: e.value,
-						isGood: e.isGood,
-						statusCodeName: e.statusCodeName,
-						metric: e.dp.name,
-						unit: e.dp.unit || '',
-						deviceName: owningDevice.name,
-						device_uuid: e.dp.device_uuid,
-						browseName: e.dp.browseName,
-						writable: e.dp.writable,
-					};
-				}
-				this.transformPool.dispatch(primitives, (builtPoints) => {
-					if (sessionWrapper.coalescingTimer !== coalescingTimer ||
-						sessionWrapper.session !== session || sessionWrapper.reconnecting) {
-						draining = false;
-						return;
-					}
-					let workerOffset = 0;
-					const processWorkerChunk = () => {
-						if (sessionWrapper.coalescingTimer !== coalescingTimer ||
-							sessionWrapper.session !== session || sessionWrapper.reconnecting) {
-							draining = false;
-							return;
-						}
-						const chunkStart = performance.now();
-						const end = Math.min(workerOffset + FLUSH_CHUNK_SIZE, builtPoints.length);
-						const batch: DeviceDataPoint[] = [];
-						for (; workerOffset < end; workerOffset++) {
-							const entry = snapshotEntries[workerOffset];
-							const operationNodeId = entry.dp.nodeId;
-							const matchesOperation = entry.matchesOperation;
-							const owningDevice = nodeIdToDevice.get(operationNodeId) ?? device;
-							const owningDeviceName = owningDevice.name;
-							const activeGroupKey = this.deviceGroupKey.get(owningDeviceName);
-							const activeGroup = activeGroupKey ? this.groups.get(activeGroupKey) : undefined;
-							if (activeGroup?.session === sessionWrapper && matchesOperation &&
-								entry.monitoredItem === entry.monitoredItemRef &&
-								sessionWrapper.session === session && !sessionWrapper.reconnecting &&
-								this.sessions.get(owningDeviceName) === sessionWrapper && ownerPointSets.get(owningDevice)?.has(entry.dp) === true) {
-								this.recordReadingEvidence(builtPoints[workerOffset], owningDeviceName, operationNodeId, activeGroup);
-							}
-							if (this.shadow && matchesOperation &&
-								!ambiguousNodeIds.has(operationNodeId) && entry.monitoredItem === entry.monitoredItemRef &&
-								sessionWrapper.session === session && !sessionWrapper.reconnecting &&
-								this.sessions.get(owningDeviceName) === sessionWrapper &&
-								ownerPointSets.get(owningDevice)?.has(entry.dp) === true) {
-								const lastShadow = shadowLastFlush.get(operationNodeId) ?? 0;
-								if (flushGeneration - lastShadow >= SHADOW_THROTTLE_INTERVAL) {
-									shadowLastFlush.set(operationNodeId, flushGeneration);
-									this.captureShadow(owningDevice, builtPoints[workerOffset], operationNodeId);
-								}
-							}
-							batch.push(builtPoints[workerOffset]);
-						}
-						buildTimeMs += performance.now() - chunkStart;
-						processedInFlush += batch.length;
-						this.perfInc('coalescedPointsProcessed', batch.length);
-						const emitStarted = performance.now();
-						try {
-							if (batch.length > 0) {
-								this.emit('data', batch);
-								this.perfMonitor.recordEmitted(deviceName, batch.length);
-							}
-						} catch (error) {
-							this.logger.error(`OPC-UA data emission failed for ${deviceName}: ${error instanceof Error ? error.message : String(error)}`);
-						} finally {
-							emitTimeMs += performance.now() - emitStarted;
-						}
-						if (workerOffset < builtPoints.length) {
-							setImmediate(processWorkerChunk);
-							return;
-						}
-						draining = false;
-						this.perfMonitor.recordBatchDuration(deviceName, performance.now() - flushStartedAt);
-						if (Date.now() - lastPerfLog >= 5000) {
-							this.logger.info(`OPC-UA flush perf ${deviceName}`, {
-								points: processedInFlush,
-								buildMs: Math.round(buildTimeMs),
-								emitMs: Math.round(emitTimeMs),
-								elapsedMs: Math.round(performance.now() - flushStartedAt),
-								coalescedPending: coalescingBuffer.size,
-								workerBacked: true,
-							});
-							lastPerfLog = Date.now();
-						}
-					};
-					processWorkerChunk();
-				});
-				return;
-			}
 
 			pendingEntries = snapshotEntries;
 			pendingOffset = 0;
@@ -1510,15 +1423,6 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 					this.resolvedNodeDisplayNames.get(dp.nodeId) ?? this.resolvedDeviceNames.get(owningDevice.name));
 			}
 			precomputedStableIds.set(dp.nodeId, this.buildStableNodeDeviceId(owningDevice, dp));
-		}
-
-		if (this.transformPool) {
-			this.transformPool.syncLookups({
-				normalizationNames: Object.fromEntries(precomputedNormNames),
-				displayNames: Object.fromEntries(precomputedDisplayNames),
-				resolvedDisplayNames: Object.fromEntries(precomputedResolvedDisplayNames),
-				stableDeviceIds: Object.fromEntries(precomputedStableIds),
-			});
 		}
 
 		const coalescingTimer = setInterval(flushCoalescingBuffer, coalesceMs);
@@ -2798,7 +2702,6 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 	public async start(): Promise<void> {
 		this.startPerfDiagnostics();
 		this.perfMonitor.start();
-		if (this.transformPool) await this.transformPool.start();
 		try { await super.start(); }
 		catch (error) { this.stopPerfDiagnostics(); this.perfMonitor.stop(); throw error; }
 	}
@@ -2809,7 +2712,6 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 	public async stop(): Promise<void> {
 		this.stopPerfDiagnostics();
 		this.perfMonitor.stop();
-		if (this.transformPool) await this.transformPool.stop();
 		if (this.shadow) this.withShadow(() => { this.shadow!.registry.disposeAdapter(this); });
 		for (const group of this.groups.values()) this.invalidateNamespaceEvidence(group);
 		await super.stop();
