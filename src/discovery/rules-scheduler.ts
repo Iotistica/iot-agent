@@ -202,7 +202,7 @@ export class DiscoveryRulesScheduler {
 			const durationMs = Date.now() - new Date(startedAt).getTime();
 			const next = new Date(Date.now() + rule.interval_seconds * 1000).toISOString();
 
-			const deviceMeta = devices[0]?.metadata as Record<string, any> | undefined;
+			const deviceMeta = devices[0]?.metadata;
 			const mode = deviceMeta?.discoveryMode as string | undefined;
 			const cached_nodes = deviceMeta?.cachedNodeCount as number | undefined;
 			const new_nodes = deviceMeta?.newNodeCount as number | undefined;

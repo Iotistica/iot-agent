@@ -74,7 +74,7 @@ export function createPointNameNormalizationInterceptor(opts: { logger?: Logger;
 	return pointNameNormalizationInterceptor;
 }
 
-function attachIdentity(reading: ProtocolMessage, endpointNameHint: string, catalog: PointNameCatalog, logger?: Logger): void {
+function attachIdentity(reading: ProtocolMessage, endpointNameHint: string, catalog: PointNameCatalog, _logger?: Logger): void {
 	const rawNameCandidate =
 	reading.normalizationName ??
 	reading.metric ??

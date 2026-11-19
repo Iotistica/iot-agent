@@ -232,11 +232,11 @@ export class DiscoveryService extends EventEmitter {
 						component: LogComponents.discovery,
 						traceId,
 						hasBaseOptions: baseOptions !== undefined,
-						baseTopics: (baseOptions as any)?.topics,
+						baseTopics: baseOptions?.topics,
 						hasOverride: override !== undefined,
 						overrideKeys: override ? Object.keys(override) : [],
-						overrideTopics: (override as any)?.topics,
-						mergedTopics: (pluginOptions as any)?.topics,
+						overrideTopics: override?.topics,
+						mergedTopics: pluginOptions?.topics,
 						mergedPluginOptions: pluginOptions ? Object.keys(pluginOptions) : undefined,
 					});
 				}
@@ -253,7 +253,7 @@ export class DiscoveryService extends EventEmitter {
 				}
 
 				if (options.onProgress && pluginOptions) {
-					(pluginOptions as any).onProgress = options.onProgress;
+					pluginOptions.onProgress = options.onProgress;
 				}
 				const discovered = await plugin.discover(pluginOptions);
 				const status = discovered.scanStatus;

@@ -26,7 +26,7 @@ import { AgentFirewall } from '../network/firewall.js';
 import { CaptureEngine } from '../network/capture.js';
 import { setDevicePublish, setDiscoveryRulesScheduler, setFirewall, setCaptureEngine } from '../api/actions.js';
 import { type CloudMqttClient } from '../mqtt/manager.js';
-import { MQTT_TOPIC_PATTERNS, agentTopic } from '../mqtt/topics.js';
+import { agentTopic } from '../mqtt/topics.js';
 import { type StateManager } from '../core/state.js';
 import { isStandaloneMode } from '../utils/env.js';
 import { composeInterceptors } from '../publish/core/interceptor-chain.js';

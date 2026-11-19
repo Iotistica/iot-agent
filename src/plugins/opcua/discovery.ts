@@ -19,7 +19,7 @@ import {
 import { toDeviceUuid } from '../../db/models/device.model.js';
 import {
 	getDiscoveryCache, setDiscoveryCache, computeStructuralHash,
-	type DiscoveryCache, type DiscoveryCacheEntry,
+	type DiscoveryCacheEntry,
 } from './discovery-cache.js';
 import type { DiscoverySnapshot } from '../../discovery/device-candidates.js';
 import type { ClientSession } from 'node-opcua-client';
@@ -692,7 +692,7 @@ export class OPCUADiscovery extends BaseDiscovery {
 
 					// ── Incremental discovery ──────────────────────────────────
 					const forceFullBrowse = options?.forceFullBrowse ?? false;
-					let cachedIndex: Record<string, DiscoveryCacheEntry> | undefined;
+					let _cachedIndex: Record<string, DiscoveryCacheEntry> | undefined;
 
 					if (!forceFullBrowse) {
 						try {
@@ -727,7 +727,7 @@ export class OPCUADiscovery extends BaseDiscovery {
 									}
 									newNodeCount = newIds.size;
 									cachedNodeCount = currentNodeIds.size - newNodeCount;
-									cachedIndex = cache.nodeIndex;
+									_cachedIndex = cache.nodeIndex;
 									discoveryMode = 'delta';
 									this.logger?.infoSync(`Incremental discovery: delta detected — ${newNodeCount} new, ${cachedNodeCount} cached`, {
 										component: LogComponents.discovery, endpointUrl: url,
@@ -743,239 +743,239 @@ export class OPCUADiscovery extends BaseDiscovery {
 					}
 
 					if (discoveryMode !== 'cached') {
-					// ── Full or delta browse ───────────────────────────────────
+						// ── Full or delta browse ───────────────────────────────────
 
-					const visitedDevices = new Set<string>();
-					// Recursive tree browsing function
-					const browseRecursive = async (
-						nodeId: string,
-						pathSegments: string[] = [],
-						depth: number = 0,
-						maxDepth: number = 10,
-						inheritedDeviceUuid?: string,  // UUID from parent folder's DeviceUUID node
-						inheritedDeviceName?: string   // Friendly name of the folder that owns that DeviceUUID node
-					): Promise<void> => {
-						// Protection against infinite loops
-						if (depth > maxDepth) {
-							status.complete = false;
-							dataPointsComplete = false;
-							this.logger?.warnSync(`Max depth ${maxDepth} reached, stopping recursion`, {
-								component: LogComponents.discovery + "] [" + this.protocol as any,
-								path: pathSegments.join('/')
-							});
-							return;
-						}
-						
-						try {
-							let refs;
-							if (identifiedDevices) {
-								refs = await browseHierarchicalReferences(session, nodeId);
-							} else {
-								let result = await session.browse(nodeId);
-								refs = [];
-								for (;;) {
-									if (!result.statusCode.isGood()) throw new Error(`Browse failed for ${nodeId}: ${result.statusCode.name}`);
-									refs.push(...(result.references || []));
-									if (!result.continuationPoint) break;
-									result = await session.browseNext(result.continuationPoint, false);
-								}
+						const visitedDevices = new Set<string>();
+						// Recursive tree browsing function
+						const browseRecursive = async (
+							nodeId: string,
+							pathSegments: string[] = [],
+							depth: number = 0,
+							maxDepth: number = 10,
+							inheritedDeviceUuid?: string,  // UUID from parent folder's DeviceUUID node
+							inheritedDeviceName?: string   // Friendly name of the folder that owns that DeviceUUID node
+						): Promise<void> => {
+							// Protection against infinite loops
+							if (depth > maxDepth) {
+								status.complete = false;
+								dataPointsComplete = false;
+								this.logger?.warnSync(`Max depth ${maxDepth} reached, stopping recursion`, {
+									component: LogComponents.discovery + "] [" + this.protocol as any,
+									path: pathSegments.join('/')
+								});
+								return;
 							}
+						
+							try {
+								let refs;
+								if (identifiedDevices) {
+									refs = await browseHierarchicalReferences(session, nodeId);
+								} else {
+									let result = await session.browse(nodeId);
+									refs = [];
+									for (;;) {
+										if (!result.statusCode.isGood()) throw new Error(`Browse failed for ${nodeId}: ${result.statusCode.name}`);
+										refs.push(...(result.references || []));
+										if (!result.continuationPoint) break;
+										result = await session.browseNext(result.continuationPoint, false);
+									}
+								}
 
-							// Pre-scan: look for a DeviceUUID variable in this folder to stamp on siblings
-							const configuredDevice = identifiedDevices?.get(nodeId);
-							if (configuredDevice) visitedDevices.add(nodeId);
-							let folderDeviceUuid: string | undefined = configuredDevice
-								? toDeviceUuid(`${sourceUuid}\0${configuredDevice.identifier}`)
-								: unidentifiedDevices.has(nodeId) ? undefined : inheritedDeviceUuid;
-							// The folder that directly owns the DeviceUUID marker IS the device —
-							// its own browseName (last segment of pathSegments, e.g. "FCU-11A") is
-							// the human-friendly name the device actually reports, as opposed to
-							// the technical endpoint-name+uuid-suffix fallback device.model.ts
-							// otherwise has to construct.
-							let folderDeviceName: string | undefined = configuredDevice?.name ?? (unidentifiedDevices.has(nodeId) ? undefined : inheritedDeviceName);
-							for (const ref of identifiedDevices ? [] : refs) {
-								if (ref.browseName?.name === 'DeviceUUID') {
-									folderDeviceUuid = undefined;
-									folderDeviceName = undefined;
-									try {
-										const val = await session.read({
-											nodeId: ref.nodeId.toString(),
-											attributeId: 13 // Value attribute
-										});
-										if (val.statusCode.isGood() && typeof val.value?.value === 'string' && val.value.value.trim()) {
-											folderDeviceUuid = val.value.value;
-											folderDeviceName = pathSegments[pathSegments.length - 1] || folderDeviceName;
-										} else {
-											this.logger?.warnSync('OPC UA DeviceUUID is missing or unreadable', {
+								// Pre-scan: look for a DeviceUUID variable in this folder to stamp on siblings
+								const configuredDevice = identifiedDevices?.get(nodeId);
+								if (configuredDevice) visitedDevices.add(nodeId);
+								let folderDeviceUuid: string | undefined = configuredDevice
+									? toDeviceUuid(`${sourceUuid}\0${configuredDevice.identifier}`)
+									: unidentifiedDevices.has(nodeId) ? undefined : inheritedDeviceUuid;
+								// The folder that directly owns the DeviceUUID marker IS the device —
+								// its own browseName (last segment of pathSegments, e.g. "FCU-11A") is
+								// the human-friendly name the device actually reports, as opposed to
+								// the technical endpoint-name+uuid-suffix fallback device.model.ts
+								// otherwise has to construct.
+								let folderDeviceName: string | undefined = configuredDevice?.name ?? (unidentifiedDevices.has(nodeId) ? undefined : inheritedDeviceName);
+								for (const ref of identifiedDevices ? [] : refs) {
+									if (ref.browseName?.name === 'DeviceUUID') {
+										folderDeviceUuid = undefined;
+										folderDeviceName = undefined;
+										try {
+											const val = await session.read({
+												nodeId: ref.nodeId.toString(),
+												attributeId: 13 // Value attribute
+											});
+											if (val.statusCode.isGood() && typeof val.value?.value === 'string' && val.value.value.trim()) {
+												folderDeviceUuid = val.value.value;
+												folderDeviceName = pathSegments[pathSegments.length - 1] || folderDeviceName;
+											} else {
+												this.logger?.warnSync('OPC UA DeviceUUID is missing or unreadable', {
+													component: LogComponents.discovery, endpointUrl: url, nodeId: ref.nodeId.toString(),
+												});
+											}
+										} catch (error) {
+											this.logger?.warnSync('Failed to read OPC UA DeviceUUID', {
 												component: LogComponents.discovery, endpointUrl: url, nodeId: ref.nodeId.toString(),
+												error: error instanceof Error ? error.message : String(error),
 											});
 										}
-									} catch (error) {
-										this.logger?.warnSync('Failed to read OPC UA DeviceUUID', {
-											component: LogComponents.discovery, endpointUrl: url, nodeId: ref.nodeId.toString(),
-											error: error instanceof Error ? error.message : String(error),
-										});
+										break;
 									}
-									break;
-								}
-							}
-
-							// Reads the OPC-UA standard EngineeringUnits property (Part 8) — a
-							// child Property node (browseName "EngineeringUnits") of an
-							// AnalogItemType Variable, holding an EUInformation struct whose
-							// displayName.text is the actual unit string (e.g. "°C"). Only
-							// analog-style variables expose this at all, so a miss is the
-							// common case, not an error — best-effort like the DeviceUUID
-							// pre-scan above, silently returning undefined on any failure.
-							const readEngineeringUnits = async (variableNodeId: string): Promise<string | undefined> => {
-								try {
-									const propBrowse = await session.browse(variableNodeId);
-									const euRef = (propBrowse.references || []).find(
-										(r: any) => r.browseName?.name === 'EngineeringUnits'
-									);
-									if (!euRef) return undefined;
-
-									const euValue = await session.read({
-										nodeId: euRef.nodeId.toString(),
-										attributeId: AttributeIds.Value,
-									});
-									const euInfo = euValue.value?.value as { displayName?: { text?: string } } | string | undefined;
-									if (typeof euInfo === 'string') {
-										const trimmed = euInfo.trim();
-										return trimmed || undefined;
-									}
-									const text = euInfo?.displayName?.text;
-									return typeof text === 'string' && text.trim() ? text.trim() : undefined;
-								} catch (_) {
-									return undefined;
-								}
-							};
-
-							for (const ref of refs) {
-								const nodeName = ref.browseName?.name || '';
-								const childNodeId = ref.nodeId.toString();
-								const currentPath = [...pathSegments, nodeName];
-								
-								// Skip standard OPC UA system folders at root level (IEC 62541)
-								// ServerInfo contains metadata like ProfileName, deviceCount which pollute data_points
-								if (depth === 0 && ['Server', 'ServerInfo', 'Types', 'Views', 'Aliases'].includes(nodeName)) {
-									continue;
 								}
 
-								// Skip the DeviceUUID node itself — it's metadata, not a device reading
-								if (nodeName === 'DeviceUUID' || identifierNodeIds.has(childNodeId)) {
-									continue;
-								}
-								
-								// NodeClass: 1 = Object/Folder, 2 = Variable
-								// Verify the actual NodeClass by reading node attributes. Also read
-								// AccessLevel/UserAccessLevel here (same attributes browseOPCUATree()
-								// uses to compute `writable`) — this recursive scan is what periodically
-								// overwrites the endpoint's persisted data_points wholesale on rediscovery
-								// (see DiscoveryStore.save()), so if it doesn't report writable itself,
-								// any previously-known writable flag silently disappears on every rescan.
-								try {
-									const [nodeClass, accessLevelResult, userAccessLevelResult, descriptionResult] = await session.read([
-										{ nodeId: childNodeId, attributeId: AttributeIds.NodeClass },
-										{ nodeId: childNodeId, attributeId: AttributeIds.AccessLevel },
-										{ nodeId: childNodeId, attributeId: AttributeIds.UserAccessLevel },
-										{ nodeId: childNodeId, attributeId: AttributeIds.Description },
-									]);
+								// Reads the OPC-UA standard EngineeringUnits property (Part 8) — a
+								// child Property node (browseName "EngineeringUnits") of an
+								// AnalogItemType Variable, holding an EUInformation struct whose
+								// displayName.text is the actual unit string (e.g. "°C"). Only
+								// analog-style variables expose this at all, so a miss is the
+								// common case, not an error — best-effort like the DeviceUUID
+								// pre-scan above, silently returning undefined on any failure.
+								const readEngineeringUnits = async (variableNodeId: string): Promise<string | undefined> => {
+									try {
+										const propBrowse = await session.browse(variableNodeId);
+										const euRef = (propBrowse.references || []).find(
+											(r: any) => r.browseName?.name === 'EngineeringUnits'
+										);
+										if (!euRef) return undefined;
 
-									if (!nodeClass.statusCode.isGood()) throw new Error(`NodeClass read failed: ${nodeClass.statusCode.name}`);
-									const actualNodeClass = nodeClass.value.value;
-
-									if (actualNodeClass === 2) {
-										// Lowercase the full browseName — no truncation. This used to
-										// keep only the text before the first underscore (e.g.
-										// "Temperature_device1" -> "temperature"), silently discarding
-										// everything after it before the real point-name normalizer
-										// (src/points/normalize-point-name.ts) ever got a chance to
-										// handle it properly. The untruncated raw name is what should
-										// reach that normalizer — browseName itself is preserved
-										// separately below for display regardless.
-										const metricName = nodeName.toLowerCase();
-
-										const accessLevel = Number(accessLevelResult?.value?.value ?? 0);
-										const userAccessLevel = Number(userAccessLevelResult?.value?.value ?? accessLevel);
-										const writable = ((accessLevel | userAccessLevel) & 0x02) !== 0;
-										// Prefer the real EngineeringUnits property (compliant AnalogItemType
-										// servers); fall back to the Description attribute — some lightweight
-										// OPC-UA servers/simulators stash the unit string there instead of
-										// implementing the full EngineeringUnits/EUInformation structure.
-										const descriptionText = (descriptionResult?.value?.value as { text?: string } | undefined)?.text;
-										const unit = (await readEngineeringUnits(childNodeId))
-											?? (typeof descriptionText === 'string' && looksLikeEngineeringUnit(descriptionText, nodeName) ? descriptionText.trim() : undefined);
-
-										dataPoints.push({
-											nodeId: childNodeId,
-											name: metricName,
-											// Raw OPC-UA browseName as reported by the server (e.g. "SpaceTemp_device1").
-											// `name` above is lowercased and truncated to the pre-underscore prefix for
-											// use as the metric tag — preserved separately here for accurate display.
-											browseName: nodeName,
-											writable,
-											...(folderDeviceUuid && { device_uuid: folderDeviceUuid }),
-											...(folderDeviceName && { device_name: folderDeviceName }),
-											...(unit && { unit }),
+										const euValue = await session.read({
+											nodeId: euRef.nodeId.toString(),
+											attributeId: AttributeIds.Value,
 										});
-										
-										if (onProgress) {
-											const now = Date.now();
-											if (now - lastProgressReport > 1000) {
-												lastProgressReport = now;
-												onProgress({ found: dataPoints.length, phase: 'browsing', target: url });
-											}
+										const euInfo = euValue.value?.value as { displayName?: { text?: string } } | string | undefined;
+										if (typeof euInfo === 'string') {
+											const trimmed = euInfo.trim();
+											return trimmed || undefined;
 										}
-
-										this.logger?.debugSync(`Discovered variable: ${currentPath.join('/')}`, {
-											component: LogComponents.discovery + "] [" + this.protocol as any,
-											nodeId: childNodeId,
-											browseName: nodeName,
-											metricName,
-											depth,
-											...(folderDeviceUuid && { device_uuid: folderDeviceUuid }),
-										});
-									} else if (actualNodeClass === 1) {
-										// Verified folder - recurse into it, propagating any UUID/name found
-										this.logger?.debugSync(`Browsing into folder: ${currentPath.join('/')}`, {
-											component: LogComponents.discovery + "] [" + this.protocol as any,
-											nodeId: childNodeId,
-											depth
-										});
-
-										await browseRecursive(childNodeId, currentPath, depth + 1, maxDepth, folderDeviceUuid, folderDeviceName);
+										const text = euInfo?.displayName?.text;
+										return typeof text === 'string' && text.trim() ? text.trim() : undefined;
+									} catch (_) {
+										return undefined;
 									}
-								} catch (readError) {
-									if (identifiedDevices) throw readError;
-									status.complete = false;
-									dataPointsComplete = false;
-									// If we can't read NodeClass, skip this node
-									this.logger?.warnSync(`Skipping node (cannot read NodeClass): ${currentPath.join('/')}`, {
-										component: LogComponents.discovery + "] [" + this.protocol as any,
-										nodeId: childNodeId,
-										error: readError instanceof Error ? readError.message : String(readError)
-									});
+								};
+
+								for (const ref of refs) {
+									const nodeName = ref.browseName?.name || '';
+									const childNodeId = ref.nodeId.toString();
+									const currentPath = [...pathSegments, nodeName];
+								
+									// Skip standard OPC UA system folders at root level (IEC 62541)
+									// ServerInfo contains metadata like ProfileName, deviceCount which pollute data_points
+									if (depth === 0 && ['Server', 'ServerInfo', 'Types', 'Views', 'Aliases'].includes(nodeName)) {
+										continue;
+									}
+
+									// Skip the DeviceUUID node itself — it's metadata, not a device reading
+									if (nodeName === 'DeviceUUID' || identifierNodeIds.has(childNodeId)) {
+										continue;
+									}
+								
+									// NodeClass: 1 = Object/Folder, 2 = Variable
+									// Verify the actual NodeClass by reading node attributes. Also read
+									// AccessLevel/UserAccessLevel here (same attributes browseOPCUATree()
+									// uses to compute `writable`) — this recursive scan is what periodically
+									// overwrites the endpoint's persisted data_points wholesale on rediscovery
+									// (see DiscoveryStore.save()), so if it doesn't report writable itself,
+									// any previously-known writable flag silently disappears on every rescan.
+									try {
+										const [nodeClass, accessLevelResult, userAccessLevelResult, descriptionResult] = await session.read([
+											{ nodeId: childNodeId, attributeId: AttributeIds.NodeClass },
+											{ nodeId: childNodeId, attributeId: AttributeIds.AccessLevel },
+											{ nodeId: childNodeId, attributeId: AttributeIds.UserAccessLevel },
+											{ nodeId: childNodeId, attributeId: AttributeIds.Description },
+										]);
+
+										if (!nodeClass.statusCode.isGood()) throw new Error(`NodeClass read failed: ${nodeClass.statusCode.name}`);
+										const actualNodeClass = nodeClass.value.value;
+
+										if (actualNodeClass === 2) {
+											// Lowercase the full browseName — no truncation. This used to
+											// keep only the text before the first underscore (e.g.
+											// "Temperature_device1" -> "temperature"), silently discarding
+											// everything after it before the real point-name normalizer
+											// (src/points/normalize-point-name.ts) ever got a chance to
+											// handle it properly. The untruncated raw name is what should
+											// reach that normalizer — browseName itself is preserved
+											// separately below for display regardless.
+											const metricName = nodeName.toLowerCase();
+
+											const accessLevel = Number(accessLevelResult?.value?.value ?? 0);
+											const userAccessLevel = Number(userAccessLevelResult?.value?.value ?? accessLevel);
+											const writable = ((accessLevel | userAccessLevel) & 0x02) !== 0;
+											// Prefer the real EngineeringUnits property (compliant AnalogItemType
+											// servers); fall back to the Description attribute — some lightweight
+											// OPC-UA servers/simulators stash the unit string there instead of
+											// implementing the full EngineeringUnits/EUInformation structure.
+											const descriptionText = (descriptionResult?.value?.value as { text?: string } | undefined)?.text;
+											const unit = (await readEngineeringUnits(childNodeId))
+												?? (typeof descriptionText === 'string' && looksLikeEngineeringUnit(descriptionText, nodeName) ? descriptionText.trim() : undefined);
+
+											dataPoints.push({
+												nodeId: childNodeId,
+												name: metricName,
+												// Raw OPC-UA browseName as reported by the server (e.g. "SpaceTemp_device1").
+												// `name` above is lowercased and truncated to the pre-underscore prefix for
+												// use as the metric tag — preserved separately here for accurate display.
+												browseName: nodeName,
+												writable,
+												...(folderDeviceUuid && { device_uuid: folderDeviceUuid }),
+												...(folderDeviceName && { device_name: folderDeviceName }),
+												...(unit && { unit }),
+											});
+										
+											if (onProgress) {
+												const now = Date.now();
+												if (now - lastProgressReport > 1000) {
+													lastProgressReport = now;
+													onProgress({ found: dataPoints.length, phase: 'browsing', target: url });
+												}
+											}
+
+											this.logger?.debugSync(`Discovered variable: ${currentPath.join('/')}`, {
+												component: LogComponents.discovery + "] [" + this.protocol as any,
+												nodeId: childNodeId,
+												browseName: nodeName,
+												metricName,
+												depth,
+												...(folderDeviceUuid && { device_uuid: folderDeviceUuid }),
+											});
+										} else if (actualNodeClass === 1) {
+											// Verified folder - recurse into it, propagating any UUID/name found
+											this.logger?.debugSync(`Browsing into folder: ${currentPath.join('/')}`, {
+												component: LogComponents.discovery + "] [" + this.protocol as any,
+												nodeId: childNodeId,
+												depth
+											});
+
+											await browseRecursive(childNodeId, currentPath, depth + 1, maxDepth, folderDeviceUuid, folderDeviceName);
+										}
+									} catch (readError) {
+										if (identifiedDevices) throw readError;
+										status.complete = false;
+										dataPointsComplete = false;
+										// If we can't read NodeClass, skip this node
+										this.logger?.warnSync(`Skipping node (cannot read NodeClass): ${currentPath.join('/')}`, {
+											component: LogComponents.discovery + "] [" + this.protocol as any,
+											nodeId: childNodeId,
+											error: readError instanceof Error ? readError.message : String(readError)
+										});
+									}
 								}
+							} catch (browseError) {
+								if (identifiedDevices) throw browseError;
+								status.complete = false;
+								dataPointsComplete = false;
+								this.logger?.warnSync(`Failed to browse node: ${pathSegments.join('/')}`, {
+									component: LogComponents.discovery + "] [" + this.protocol as any,
+									error: browseError instanceof Error ? browseError.message : String(browseError),
+									depth
+								});
 							}
-						} catch (browseError) {
-							if (identifiedDevices) throw browseError;
-							status.complete = false;
-							dataPointsComplete = false;
-							this.logger?.warnSync(`Failed to browse node: ${pathSegments.join('/')}`, {
-								component: LogComponents.discovery + "] [" + this.protocol as any,
-								error: browseError instanceof Error ? browseError.message : String(browseError),
-								depth
-							});
-						}
-					};
+						};
 					
-					// Start recursive browsing from Objects folder
-					const ObjectsNodeId = 'ns=0;i=85'; // Standard Objects folder
-					await browseRecursive(ObjectsNodeId, [], 0);
-					if (identifiedDevices && visitedDevices.size !== identifiedDevices.size) {
-						throw new Error('Some identified devices could not be reached within the discovery depth limit');
-					}
+						// Start recursive browsing from Objects folder
+						const ObjectsNodeId = 'ns=0;i=85'; // Standard Objects folder
+						await browseRecursive(ObjectsNodeId, [], 0);
+						if (identifiedDevices && visitedDevices.size !== identifiedDevices.size) {
+							throw new Error('Some identified devices could not be reached within the discovery depth limit');
+						}
 
 					} // end if (discoveryMode !== 'cached')
 
