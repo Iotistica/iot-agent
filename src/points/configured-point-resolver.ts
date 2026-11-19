@@ -228,19 +228,23 @@ export async function createIdentities(
 	let created = 0;
 	let failed = 0;
 
+	const BATCH_SIZE = 200;
+
 	for (const ep of resolverResult.endpoints) {
 		if (!ep.endpointUuid) continue;
 		const protocol = ep.protocol as AddressProtocol;
 		const ambiguousKeys = findAmbiguousKeys(ep);
-		let processed = 0;
+		let batchCount = 0;
 
 		for (const p of ep.points) {
 			if (p.result.status !== 'resolved') continue;
-			if (processed > 0 && processed % 500 === 0) {
+
+			if (batchCount === 0) {
 				if (isCurrent && !isCurrent()) return { identities, lookup, pointNameLookup, summary: { created, failed } };
-				await new Promise<void>(resolve => setImmediate(resolve));
+				db.exec('BEGIN IMMEDIATE');
+				catalog.enterBatchMode();
 			}
-			processed++;
+
 			const addressKey = p.result.addressKey;
 
 			const evidence: VerifierEvidence = {
@@ -268,6 +272,20 @@ export async function createIdentities(
 			} else {
 				failed++;
 			}
+
+			batchCount++;
+			if (batchCount >= BATCH_SIZE) {
+				catalog.exitBatchMode();
+				db.exec('COMMIT');
+				batchCount = 0;
+				await new Promise<void>(resolve => setImmediate(resolve));
+			}
+		}
+
+		if (batchCount > 0) {
+			catalog.exitBatchMode();
+			db.exec('COMMIT');
+			await new Promise<void>(resolve => setImmediate(resolve));
 		}
 	}
 

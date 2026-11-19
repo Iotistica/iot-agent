@@ -147,8 +147,12 @@ function storedMqttSelector(key: string): 'whole' | 'path' | undefined {
 export class PointIdentityCatalog {
 	private stmts = new Map<string, ReturnType<DatabaseSync['prepare']>>();
 	private sourceCache = new Map<string, SourceRow>();
+	private batchMode = false;
 
 	constructor(private readonly db: DatabaseSync, private readonly verifier?: CatalogEvidenceVerifier) {}
+
+	enterBatchMode(): void { this.batchMode = true; }
+	exitBatchMode(): void { this.batchMode = false; }
 
 	private stmt(sql: string): ReturnType<DatabaseSync['prepare']> {
 		const cached = this.stmts.get(sql);
@@ -163,7 +167,7 @@ export class PointIdentityCatalog {
 	}
 
 	private verify(request: CatalogEvidenceRequest): CatalogResult<true> {
-		if (this.db.isTransaction === true) return unresolved('transaction-active');
+		if (!this.batchMode && this.db.isTransaction === true) return unresolved('transaction-active');
 		if (verifyingConnections.has(this.db)) return unresolved('reentrant-operation');
 		if (!this.verifier) return unresolved('evidence-missing');
 		verifyingConnections.add(this.db);
@@ -391,12 +395,18 @@ export class PointIdentityCatalog {
 	private async write<T>(
 		scope: PointScope, request: CatalogEvidenceRequest, operation: (source: SourceRow) => CatalogResult<T>,
 	): Promise<CatalogResult<T>> {
-		if (!this.foreignKeysEnabled()) return unresolved('foreign-keys-disabled');
-		if (this.stmt('PRAGMA query_only').get()?.query_only === 1) return unresolved('read-only');
+		if (!this.batchMode) {
+			if (!this.foreignKeysEnabled()) return unresolved('foreign-keys-disabled');
+			if (this.stmt('PRAGMA query_only').get()?.query_only === 1) return unresolved('read-only');
+		}
 		const before = this.source(scope);
 		if (before.status === 'unresolved') return before;
 		const verification = this.verify(request);
 		if (verification.status === 'unresolved') return verification;
+		if (this.batchMode) {
+			if (!this.revisionMatches(scope.endpointUuid, before.value.revision)) return unresolved('stale-configuration');
+			return operation(before.value);
+		}
 		for (let attempt = 0; attempt < busyAttempts; attempt++) {
 			if (!this.foreignKeysEnabled()) return unresolved('foreign-keys-disabled');
 			if (this.stmt('PRAGMA query_only').get()?.query_only === 1) return unresolved('read-only');
