@@ -66,10 +66,6 @@ const editingView = ref<SavedView | null>(null)
 const viewMode = computed(() => activeTab.value === 'favorites' ? 'favorites' : 'all')
 const activeSavedView = computed(() => savedViews.value.find(v => v.id === activeTab.value))
 const activeViewIds = computed(() => new Set((activeSavedView.value?.pointKeys || []).map(normalizeDataExplorerPointKey)))
-const rowSelection = computed(() => ({
-  selectedRowKeys: selectedPointKeys.value,
-  onChange: (keys: (string | number)[]) => { selectedPointKeys.value = keys.map(String) },
-}))
 const pageSize = ref(20)
 const tableSortField = ref<string | null>(null)
 const tableSortOrder = ref<'ascend' | 'descend' | null>(null)
