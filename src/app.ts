@@ -61,6 +61,23 @@ const health = new HealthArbiter();
 health.registerSubsystem('memory', async () => {
 	const ok = await healthcheck();
 	if (!ok) {
+		// Discovery browses thousands of OPC UA nodes, creating sustained heap
+		// growth that looks identical to a real leak over the 10-minute regression
+		// window. Suppress the fatal action while any discovery rule is running —
+		// the heap settles once the browse completes.
+		try {
+			const { DiscoveryRuleModel } = await import('./db/models/discovery-rule.model.js');
+			const running = DiscoveryRuleModel.getAll().some((r) => r.status === 'running');
+			if (running) {
+				agent.agentLogger?.warnSync('Memory health check failed but discovery is running — deferring fatal action', {
+					component: 'main',
+					operation: 'memoryHealth',
+					action: 'deferred',
+				});
+				return false;
+			}
+		} catch { /* DB not ready — fall through to fatal */ }
+
 		// Memory leaks on edge devices are non-recoverable → latch fatal immediately
 		agent.agentLogger?.errorSync('Memory health check failed - marking fatal', undefined, {
 			component: 'main',
