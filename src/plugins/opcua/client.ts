@@ -557,7 +557,7 @@ implements IProtocolClient<ReadValueIdOptions[], DataValue[]>
 			applicationUri: 'urn:iotistica:agent',
 			connectionStrategy: {
 				initialDelay: 1000,
-				maxRetry: 0,
+				maxRetry: 3,
 				maxDelay: connection.connectionTimeout || 10000,
 			},
 			securityMode: this.convertSecurityMode(connection.securityMode),
