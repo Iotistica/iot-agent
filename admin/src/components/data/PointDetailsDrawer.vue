@@ -83,7 +83,7 @@ function close() {
       </a-descriptions-item>
       <a-descriptions-item label="Destination" :span="2">{{ point.destinationName }}</a-descriptions-item>
       <a-descriptions-item label="Metric key" :span="2"><span class="mono-text">{{ point.metric }}</span></a-descriptions-item>
-      <a-descriptions-item label="Point UUID" :span="2"><span class="mono-text">{{ point.pointUuid || (point.provisionalPointId ? `Provisional: ${point.provisionalPointId}` : 'Not assigned') }}</span></a-descriptions-item>
+      <a-descriptions-item v-if="point.pointUuid" label="Point UUID" :span="2"><span class="mono-text">{{ point.pointUuid }}</span></a-descriptions-item>
     </a-descriptions>
   </a-drawer>
 </template>

@@ -65,7 +65,7 @@ export class DiscoveryRulesScheduler {
 
 	async runNow(
 		uuid: string,
-		pruneOptions?: { prune?: boolean; pruneDryRun?: boolean }
+		pruneOptions?: { prune?: boolean; pruneDryRun?: boolean; forceFullBrowse?: boolean }
 	): Promise<{
 		rule: DiscoveryRule;
 		devices: DiscoveredDevice[];
@@ -115,7 +115,7 @@ export class DiscoveryRulesScheduler {
 
 		let devices: DiscoveredDevice[];
 		try {
-			devices = await this.executeRule(rule, 'manual', pruneOptions);
+			devices = await this.executeRule(rule, 'manual', pruneOptions, pruneOptions?.forceFullBrowse);
 		} finally {
 			this.discoveryService.off('discovery-complete', onComplete);
 		}
@@ -140,7 +140,8 @@ export class DiscoveryRulesScheduler {
 	private async executeRule(
 		rule: DiscoveryRule,
 		trigger: 'scheduled' | 'manual',
-		pruneOptions?: { prune?: boolean; pruneDryRun?: boolean }
+		pruneOptions?: { prune?: boolean; pruneDryRun?: boolean },
+		forceFullBrowse?: boolean,
 	): Promise<DiscoveredDevice[]> {
 		const startedAt = new Date().toISOString();
 		DiscoveryRuleModel.update(rule.uuid, { status: 'running', last_run_at: startedAt });
@@ -166,6 +167,14 @@ export class DiscoveryRulesScheduler {
 			trigger,
 		});
 
+		const onProgress = (progress: { found: number; phase: string; target?: string }) => {
+			try {
+				DiscoveryRuleModel.update(rule.uuid, {
+					last_result_json: { found: progress.found, saved: 0, skipped: 0, in_progress: true },
+				});
+			} catch { /* non-fatal */ }
+		};
+
 		let devices: DiscoveredDevice[] = [];
 		try {
 			devices = await this.discoveryService.runDiscovery({
@@ -180,8 +189,11 @@ export class DiscoveryRulesScheduler {
 				// (used by config.ts for the reconcile-owns-creation case) and must
 				// never be derived from auto_enable.
 				autoEnableNew: rule.auto_enable,
-				...(rule.params_json ? { optionOverrides: { [rule.protocol]: rule.params_json } } : {}),
+				...(rule.params_json || forceFullBrowse
+					? { optionOverrides: { [rule.protocol]: { ...(rule.params_json || {}), ...(forceFullBrowse ? { forceFullBrowse: true } : {}) } } }
+					: {}),
 				...(pruneOptions?.prune ? { prune: true, pruneDryRun: pruneOptions.pruneDryRun ?? false } : {}),
+				onProgress,
 			});
 
 			const found = devices.length;
@@ -190,9 +202,19 @@ export class DiscoveryRulesScheduler {
 			const durationMs = Date.now() - new Date(startedAt).getTime();
 			const next = new Date(Date.now() + rule.interval_seconds * 1000).toISOString();
 
+			const deviceMeta = devices[0]?.metadata as Record<string, any> | undefined;
+			const mode = deviceMeta?.discoveryMode as string | undefined;
+			const cached_nodes = deviceMeta?.cachedNodeCount as number | undefined;
+			const new_nodes = deviceMeta?.newNodeCount as number | undefined;
+
 			DiscoveryRuleModel.update(rule.uuid, {
 				status: 'ok',
-				last_result_json: { found, saved, skipped: 0 },
+				last_result_json: {
+					found, saved, skipped: 0,
+					...(mode && { mode }),
+					...(cached_nodes && { cached_nodes }),
+					...(new_nodes && { new_nodes }),
+				},
 				next_run_at: next,
 			});
 			if (runId !== null) {

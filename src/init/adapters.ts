@@ -376,6 +376,7 @@ export class AdapterInitializer {
 									username: data.connection?.username,
 									password: data.connection?.password,
 									deviceIdentification: data.connection?.deviceIdentification,
+									forceFullBrowse: true,
 								},
 							},
 						}

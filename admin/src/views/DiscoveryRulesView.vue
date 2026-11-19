@@ -108,9 +108,12 @@ function fmtDate(iso: string | null): string {
 }
 
 function resultSummary(rule: DiscoveryRule): string {
-  const r = rule.last_result_json
+  const r = rule.last_result_json as any
   if (!r) return '—'
+  if (r.in_progress) return `browsing… ${r.found} found`
   if (r.error) return `Error: ${r.error.slice(0, 40)}`
+  if (r.mode === 'cached') return `${r.found} (cached)`
+  if (r.mode === 'delta' && r.new_nodes) return `${r.found} (+${r.new_nodes} new)`
   return `${r.found}`
 }
 

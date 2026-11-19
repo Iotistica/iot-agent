@@ -611,7 +611,7 @@ onUnmounted(() => { if (timer) clearInterval(timer); clearTimeout(persistFavTime
         </div>
         <div class="views-bar">
           <div class="views-list">
-            <button type="button" data-testid="data-tab-live" :class="['view-tab', { active: activeTab === 'all' }]" @click="activateTab('all')">Data Points ({{ livePointCount }})</button>
+            <button type="button" data-testid="data-tab-live" :class="['view-tab', { active: activeTab === 'all' }]" @click="activateTab('all')">Live Points ({{ livePointCount }})</button>
             <button type="button" data-testid="data-tab-configured" :class="['view-tab', { active: activeTab === 'configured' }]"
               :title="metadataError || configuredCount.error || undefined" @click="activateTab('configured')">Source Points ({{ configuredCountLabel }})</button>
             <button type="button" data-testid="data-tab-favorites" :class="['view-tab', { active: activeTab === 'favorites' }]" @click="activateTab('favorites')"> Favorites ({{ favoriteCount }})</button>
@@ -677,7 +677,7 @@ onUnmounted(() => { if (timer) clearInterval(timer); clearTimeout(persistFavTime
         </template>
 
         <!-- Points table -->
-        <a-table v-else-if="activeTab !== 'configured'" :columns="columns" :data-source="filteredPoints" :loading="loading" row-key="key" :row-selection="rowSelection" :customRow="(record: PointRow) => ({ onClick: (e: MouseEvent) => { if (!(e.target as HTMLElement).closest('.ant-checkbox-wrapper')) openPointDrawer(record) }, style: 'cursor: pointer' })" size="small" :pagination="{ pageSize, showSizeChanger: true, pageSizeOptions: ['20', '50', '100'], onShowSizeChange: (_: number, size: number) => { pageSize = size } }" :scroll="{ x: activeTab === 'all' ? 1390 : 1570 }" table-layout="fixed" @change="onTableChange">
+        <a-table v-else-if="activeTab !== 'configured'" :columns="columns" :data-source="filteredPoints" :loading="loading" row-key="key" :customRow="(record: PointRow) => ({ onClick: () => openPointDrawer(record), style: 'cursor: pointer' })" size="small" :pagination="{ pageSize, showSizeChanger: true, pageSizeOptions: ['20', '50', '100'], onShowSizeChange: (_: number, size: number) => { pageSize = size } }" :scroll="{ x: activeTab === 'all' ? 1390 : 1570 }" table-layout="fixed" @change="onTableChange">
           <template #bodyCell="{ column, record }">
             <template v-if="column.key === 'protocol'"><a-tag :color="protocolColor(record.protocol)">{{ protocolLabel(record.protocol) }}</a-tag></template>
             <template v-else-if="column.key === 'source'">{{ sourceName(record) }}</template>

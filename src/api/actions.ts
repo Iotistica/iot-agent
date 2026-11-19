@@ -2971,7 +2971,7 @@ export const testDockerConnection = async (cfg: DockerConnectionConfig): Promise
  */
 export const runDiscoveryRule = async (
 	uuid: string,
-	pruneOptions?: { prune?: boolean; pruneDryRun?: boolean }
+	pruneOptions?: { prune?: boolean; pruneDryRun?: boolean; forceFullBrowse?: boolean }
 ) => {
 	if (!discoveryRulesScheduler) {
 		throw new Error('Discovery rules scheduler not initialized');

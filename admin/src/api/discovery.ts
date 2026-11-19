@@ -38,7 +38,7 @@ export const discoveryRulesApi = {
   run(
     uuid: string,
     signal?: AbortSignal,
-    pruneOptions?: { prune?: boolean; pruneDryRun?: boolean },
+    options?: { prune?: boolean; pruneDryRun?: boolean; forceFullBrowse?: boolean },
   ): Promise<{
     rule: DiscoveryRule
     devices: DiscoveredDevice[]
@@ -46,11 +46,8 @@ export const discoveryRulesApi = {
     prunedDevices?: Array<{ name: string; protocol: string }>
     pruneDryRun?: boolean
   }> {
-    // A full scan+validate+reconcile pass scales with device count — at a few
-    // hundred devices this can comfortably exceed a minute, so this needs real
-    // headroom rather than a timeout tuned for small test rigs.
     return client
-      .post(`${RULES_BASE}/${uuid}/run`, pruneOptions ?? {}, { timeout: 600_000, signal })
+      .post(`${RULES_BASE}/${uuid}/run`, options ?? {}, { timeout: 600_000, signal })
       .then((r) => r.data)
   },
 

@@ -17,6 +17,10 @@ import {
 	collectOpcuaDeviceSnapshot, type OPCUADeviceIdentification,
 } from './device-identity.js';
 import { toDeviceUuid } from '../../db/models/device.model.js';
+import {
+	getDiscoveryCache, setDiscoveryCache, computeStructuralHash,
+	type DiscoveryCache, type DiscoveryCacheEntry,
+} from './discovery-cache.js';
 import type { DiscoverySnapshot } from '../../discovery/device-candidates.js';
 import type { ClientSession } from 'node-opcua-client';
 
@@ -30,6 +34,8 @@ export interface OPCUADiscoveryOptions {
   username?: string;
   password?: string;
   deviceIdentification?: OPCUADeviceIdentification;
+  onProgress?: (progress: { found: number; phase: string; target?: string }) => void;
+  forceFullBrowse?: boolean;
 }
 
 export interface OPCUABrowseRequest {
@@ -472,6 +478,62 @@ export class OPCUADiscovery extends BaseDiscovery {
 		});
 	}
 
+	private async structuralScan(
+		session: ClientSession,
+		identifiedDevices: Map<string, any> | undefined,
+		identifierNodeIds: Set<string>,
+	): Promise<Set<string>> {
+		const { AttributeIds } = await import('node-opcua-client');
+		const variableNodeIds = new Set<string>();
+
+		const scanRecursive = async (nodeId: string, depth: number = 0, maxDepth: number = 10): Promise<void> => {
+			if (depth > maxDepth) return;
+
+			let refs;
+			if (identifiedDevices) {
+				refs = await browseHierarchicalReferences(session, nodeId);
+			} else {
+				let result = await session.browse(nodeId);
+				refs = [];
+				for (;;) {
+					if (!result.statusCode.isGood()) break;
+					refs.push(...(result.references || []));
+					if (!result.continuationPoint) break;
+					result = await session.browseNext(result.continuationPoint, false);
+				}
+			}
+
+			const childNodeIds: string[] = [];
+			for (const ref of refs) {
+				const nodeName = ref.browseName?.name || '';
+				const childNodeId = ref.nodeId.toString();
+				if (depth === 0 && ['Server', 'ServerInfo', 'Types', 'Views', 'Aliases'].includes(nodeName)) continue;
+				if (nodeName === 'DeviceUUID' || identifierNodeIds.has(childNodeId)) continue;
+				childNodeIds.push(childNodeId);
+			}
+
+			if (childNodeIds.length === 0) return;
+
+			const readItems = childNodeIds.map(id => ({ nodeId: id, attributeId: AttributeIds.NodeClass }));
+			const results = await session.read(readItems);
+			const nodeClassResults = Array.isArray(results) ? results : [results];
+
+			for (let i = 0; i < childNodeIds.length; i++) {
+				const ncResult = nodeClassResults[i];
+				if (!ncResult?.statusCode?.isGood?.()) continue;
+				const nodeClass = ncResult.value?.value;
+				if (nodeClass === 2) {
+					variableNodeIds.add(childNodeIds[i]);
+				} else if (nodeClass === 1) {
+					await scanRecursive(childNodeIds[i], depth + 1, maxDepth);
+				}
+			}
+		};
+
+		await scanRecursive('ns=0;i=85', 0);
+		return variableNodeIds;
+	}
+
 	/**
    * Phase 1: Fast endpoint enumeration
    */
@@ -479,6 +541,8 @@ export class OPCUADiscovery extends BaseDiscovery {
 		const status = { successful: true, complete: true, authoritative: false };
 		const discovered = withDiscoveryScanStatus([], status);
 		Object.defineProperty(discovered, 'scanComplete', { value: false, writable: true });
+		const onProgress = options?.onProgress;
+		let lastProgressReport = 0;
 
 		// Get discovery targets from endpoints (those with endpointUrl but no dataPoints)
 		let discoveryTargets = this.configManager?.getDiscoveryTargets?.('opcua') || [];
@@ -595,6 +659,9 @@ export class OPCUADiscovery extends BaseDiscovery {
 				const dataPoints: Array<{ nodeId: string; name: string; browseName?: string; device_uuid?: string; device_name?: string; writable?: boolean; unit?: string }> = [];
 				let dataPointsComplete = true;
 				let subscriptionsSupported = false;
+				let discoveryMode: 'full' | 'cached' | 'delta' = 'full';
+				let cachedNodeCount = 0;
+				let newNodeCount = 0;
 
 				try {
 					const configuredIdentification = endpoint.connection?.deviceIdentification;
@@ -622,6 +689,62 @@ export class OPCUADiscovery extends BaseDiscovery {
 						identifiedDevices ? [...identifiedDevices.values()].map(item => item.identifierNodeId) : [],
 					);
 					for (const nodeId of unreadableIdentifierNodeIds) identifierNodeIds.add(nodeId);
+
+					// ── Incremental discovery ──────────────────────────────────
+					const forceFullBrowse = options?.forceFullBrowse ?? false;
+					let cachedIndex: Record<string, DiscoveryCacheEntry> | undefined;
+
+					if (!forceFullBrowse) {
+						try {
+							const cache = await getDiscoveryCache(url);
+							if (cache && Object.keys(cache.nodeIndex).length > 0) {
+								const currentNodeIds = await this.structuralScan(session, identifiedDevices, identifierNodeIds);
+								const currentHash = computeStructuralHash([...currentNodeIds]);
+
+								if (currentHash === cache.structuralHash) {
+									// Tier 1: nothing changed — reconstruct from cache
+									discoveryMode = 'cached';
+									cachedNodeCount = currentNodeIds.size;
+									for (const [nodeId, entry] of Object.entries(cache.nodeIndex)) {
+										dataPoints.push({
+											nodeId,
+											name: entry.name,
+											browseName: entry.browseName,
+											writable: entry.writable,
+											...(entry.unit && { unit: entry.unit }),
+											...(entry.device_uuid && { device_uuid: entry.device_uuid }),
+											...(entry.device_name && { device_name: entry.device_name }),
+										});
+									}
+									this.logger?.infoSync(`Incremental discovery: no changes detected, using cached data (${cachedNodeCount} nodes)`, {
+										component: LogComponents.discovery, endpointUrl: url,
+									});
+								} else {
+									// Tier 2: structure changed — identify new nodes, pass cache for reuse
+									const newIds = new Set<string>();
+									for (const id of currentNodeIds) {
+										if (!cache.nodeIndex[id]) newIds.add(id);
+									}
+									newNodeCount = newIds.size;
+									cachedNodeCount = currentNodeIds.size - newNodeCount;
+									cachedIndex = cache.nodeIndex;
+									discoveryMode = 'delta';
+									this.logger?.infoSync(`Incremental discovery: delta detected — ${newNodeCount} new, ${cachedNodeCount} cached`, {
+										component: LogComponents.discovery, endpointUrl: url,
+									});
+								}
+							}
+						} catch (cacheError) {
+							this.logger?.debugSync('Discovery cache unavailable, falling back to full browse', {
+								component: LogComponents.discovery, endpointUrl: url,
+								error: cacheError instanceof Error ? cacheError.message : String(cacheError),
+							});
+						}
+					}
+
+					if (discoveryMode !== 'cached') {
+					// ── Full or delta browse ───────────────────────────────────
+
 					const visitedDevices = new Set<string>();
 					// Recursive tree browsing function
 					const browseRecursive = async (
@@ -797,6 +920,14 @@ export class OPCUADiscovery extends BaseDiscovery {
 											...(unit && { unit }),
 										});
 										
+										if (onProgress) {
+											const now = Date.now();
+											if (now - lastProgressReport > 1000) {
+												lastProgressReport = now;
+												onProgress({ found: dataPoints.length, phase: 'browsing', target: url });
+											}
+										}
+
 										this.logger?.debugSync(`Discovered variable: ${currentPath.join('/')}`, {
 											component: LogComponents.discovery + "] [" + this.protocol as any,
 											nodeId: childNodeId,
@@ -844,6 +975,27 @@ export class OPCUADiscovery extends BaseDiscovery {
 					await browseRecursive(ObjectsNodeId, [], 0);
 					if (identifiedDevices && visitedDevices.size !== identifiedDevices.size) {
 						throw new Error('Some identified devices could not be reached within the discovery depth limit');
+					}
+
+					} // end if (discoveryMode !== 'cached')
+
+					// Update discovery cache after a full or delta browse
+					if (discoveryMode !== 'cached' && dataPoints.length > 0) {
+						try {
+							const nodeIndex: Record<string, DiscoveryCacheEntry> = {};
+							for (const dp of dataPoints) {
+								nodeIndex[dp.nodeId] = {
+									name: dp.name,
+									browseName: dp.browseName ?? dp.name,
+									writable: dp.writable ?? false,
+									...(dp.unit && { unit: dp.unit }),
+									...(dp.device_uuid && { device_uuid: dp.device_uuid }),
+									...(dp.device_name && { device_name: dp.device_name }),
+								};
+							}
+							const hash = computeStructuralHash(Object.keys(nodeIndex));
+							await setDiscoveryCache(url, { structuralHash: hash, nodeIndex, updatedAt: new Date().toISOString() });
+						} catch { /* non-fatal: cache write failure doesn't block discovery */ }
 					}
 				} catch (browseError) {
 					if (endpoint.connection?.deviceIdentification) throw browseError;
@@ -938,7 +1090,10 @@ export class OPCUADiscovery extends BaseDiscovery {
 							serverCertificateThumbprint: certThumbprint,
 							selectedSecurityMode,
 							selectedSecurityPolicy,
-							discoveryMethod: 'endpoint_discovery'
+							discoveryMethod: 'endpoint_discovery',
+							discoveryMode,
+							...(cachedNodeCount > 0 && { cachedNodeCount }),
+							...(newNodeCount > 0 && { newNodeCount }),
 						}
 					});
 

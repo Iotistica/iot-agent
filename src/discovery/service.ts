@@ -41,6 +41,7 @@ export interface DiscoveryOptions {
 	// "auto-enable found endpoints" setting) — independent of skipDbWrites, which
 	// controls whether new endpoints get created at all, not what state they start in.
 	autoEnableNew?: boolean;
+	onProgress?: (progress: { found: number; phase: string; target?: string }) => void;
 }
 
 export type { DiscoveredDevice } from '../plugins/types';
@@ -251,6 +252,9 @@ export class DiscoveryService extends EventEmitter {
 					continue;
 				}
 
+				if (options.onProgress && pluginOptions) {
+					(pluginOptions as any).onProgress = options.onProgress;
+				}
 				const discovered = await plugin.discover(pluginOptions);
 				const status = discovered.scanStatus;
 				if (status?.successful === true && status.complete === true && status.authoritative === true &&

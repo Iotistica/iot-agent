@@ -2604,7 +2604,11 @@ router.post('/v1/discovery-rules/:uuid/run', requireRole('operator'), async (req
 	try {
 		const prune = req.body?.prune === true || req.body?.prune === 'true';
 		const pruneDryRun = req.body?.pruneDryRun === true || req.body?.pruneDryRun === 'true';
-		const result = await actions.runDiscoveryRule(req.params.uuid, prune ? { prune, pruneDryRun } : undefined);
+		const forceFullBrowse = req.body?.forceFullBrowse === true || req.body?.forceFullBrowse === 'true';
+		const result = await actions.runDiscoveryRule(req.params.uuid, {
+			...(prune ? { prune, pruneDryRun } : {}),
+			...(forceFullBrowse ? { forceFullBrowse } : {}),
+		});
 		return res.status(200).json(result);
 	} catch (error: any) {
 		if (error?.statusCode === 404) return res.status(404).json({ error: error.message });

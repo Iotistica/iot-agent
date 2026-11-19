@@ -15,7 +15,7 @@ export interface DiscoveryRule {
 	status: 'idle' | 'running' | 'ok' | 'error';
 	last_run_at: string | null;
 	next_run_at: string | null;
-	last_result_json: { found: number; saved: number; skipped: number; error?: string } | null;
+	last_result_json: { found: number; saved: number; skipped: number; error?: string; in_progress?: boolean } | null;
 	created_at?: string;
 	updated_at?: string;
 }

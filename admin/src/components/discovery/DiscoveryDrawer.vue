@@ -119,6 +119,7 @@ function fmtElapsed(sec: number): string {
 }
 
 // ── Prune (disable endpoints of this protocol not found in the scan) ──────────
+const forceFullBrowse = ref(false)
 const pruneEnabled = ref(false)
 const pruneConfirmVisible = ref(false)
 const prunePreview = ref<Array<{ name: string; protocol: string }>>([])
@@ -230,7 +231,10 @@ async function runRuleScan() {
     const { rule: completedRule, devices, prunedCount, prunedDevices } = await discoveryRulesApi.run(
       rule.uuid,
       abortController.signal,
-      pruneEnabled.value ? { prune: true, pruneDryRun: true } : undefined,
+      {
+        ...(pruneEnabled.value ? { prune: true, pruneDryRun: true } : {}),
+        ...(forceFullBrowse.value ? { forceFullBrowse: true } : {}),
+      },
     )
     results.value = devices
     if (completedRule.status === 'error') {
@@ -416,6 +420,7 @@ watch(
       hasRun.value = false
       scanError.value = null
       addedThisSession.value = new Set()
+      forceFullBrowse.value = false
       pruneEnabled.value = false
       runInBackground.value = false
       pruneConfirmVisible.value = false
@@ -614,6 +619,14 @@ watch(selectedRuleUuid, () => {
           Run in background
         </a-checkbox>
         <a-tooltip title="Keep the scan running on the agent after you close this panel — reopen this rule to see the results.">
+          <span style="color: var(--text-muted); font-size: 12px; margin-left: 6px; cursor: help">(?)</span>
+        </a-tooltip>
+      </div>
+      <div v-if="selectedRule.protocol === 'opcua'" style="margin-top: 10px">
+        <a-checkbox v-model:checked="forceFullBrowse" :disabled="running">
+          Force full browse (ignore cache)
+        </a-checkbox>
+        <a-tooltip title="By default, discovery reuses cached results when the address space hasn't changed. Check this to re-browse everything from scratch.">
           <span style="color: var(--text-muted); font-size: 12px; margin-left: 6px; cursor: help">(?)</span>
         </a-tooltip>
       </div>

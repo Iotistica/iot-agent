@@ -87,6 +87,7 @@ export interface DiscoveryRuleResult {
   saved: number
   skipped: number
   error?: string
+  in_progress?: boolean
 }
 
 export interface DiscoveryRule {
