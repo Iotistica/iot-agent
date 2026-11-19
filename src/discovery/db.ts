@@ -695,4 +695,49 @@ export class DiscoveryStore {
 			});
 		}
 	}
+
+	async appendDataPoints(
+		device: DiscoveredDevice,
+		traceId: string,
+		cachedUuid?: string,
+	): Promise<string | undefined> {
+		if (cachedUuid) {
+			await EndpointModel.updateByUuid(cachedUuid, { data_points: device.dataPoints });
+			return cachedUuid;
+		}
+
+		const existingEndpoints = await EndpointModel.getAll();
+		const existing = device.protocol === 'opcua'
+			? existingEndpoints.find(s =>
+				s.protocol === 'opcua' &&
+				s.connection?.endpointUrl === device.connection?.endpointUrl
+			)
+			: existingEndpoints.find(s =>
+				s.metadata?.fingerprint === device.fingerprint
+			);
+
+		if (existing) {
+			return undefined;
+		}
+
+		const ep = await EndpointModel.create({
+			name: device.name,
+			protocol: device.protocol,
+			fingerprint: device.fingerprint,
+			connection: device.connection,
+			data_points: device.dataPoints,
+			enabled: false,
+			poll_interval: 5000,
+			metadata: { ...device.metadata, fingerprint: device.fingerprint },
+		} as Endpoint);
+
+		this.logger?.infoSync('Incremental batch save: created endpoint', {
+			component: LogComponents.discovery,
+			traceId,
+			deviceName: device.name,
+			dataPointCount: device.dataPoints?.length,
+		});
+
+		return ep.uuid;
+	}
 }

@@ -35,6 +35,7 @@ export interface OPCUADiscoveryOptions {
   password?: string;
   deviceIdentification?: OPCUADeviceIdentification;
   onProgress?: (progress: { found: number; phase: string; target?: string }) => void;
+  onBatch?: (device: DiscoveredDevice) => Promise<void> | void;
   forceFullBrowse?: boolean;
 }
 
@@ -542,7 +543,10 @@ export class OPCUADiscovery extends BaseDiscovery {
 		const discovered = withDiscoveryScanStatus([], status);
 		Object.defineProperty(discovered, 'scanComplete', { value: false, writable: true });
 		const onProgress = options?.onProgress;
+		const onBatch = options?.onBatch;
 		let lastProgressReport = 0;
+		const BATCH_SIZE = 2000;
+		const CACHE_BATCH_SIZE = 10000;
 
 		// Get discovery targets from endpoints (those with endpointUrl but no dataPoints)
 		let discoveryTargets = this.configManager?.getDiscoveryTargets?.('opcua') || [];
@@ -647,6 +651,18 @@ export class OPCUADiscovery extends BaseDiscovery {
 				await client.connect(url);
 				this.verifyServerThumbprint(endpoint.connection?.expectedServerThumbprint, client.serverCertificate);
 				const endpoints = await client.getEndpoints();
+
+				// Pre-compute endpoint metadata for incremental batch saves
+				// (all these fields are derived from GetEndpoints, independent of browse)
+				const precomputedPreferredEndpoint = endpoints.length > 0
+					? (this.selectPreferredEndpoint(endpoints) || endpoints[0])
+					: undefined;
+				const precomputedApplicationUri = precomputedPreferredEndpoint?.server?.applicationUri || `urn:${new URL(url).hostname}:unknown`;
+				const precomputedFingerprint = this.generateFingerprint(precomputedApplicationUri);
+				const precomputedCertThumbprint = precomputedPreferredEndpoint ? this.calculateThumbprint(precomputedPreferredEndpoint.serverCertificate) : undefined;
+				const precomputedSecurityMode = precomputedPreferredEndpoint ? this.mapSecurityMode(precomputedPreferredEndpoint.securityMode) : undefined;
+				const precomputedSecurityPolicy = precomputedPreferredEndpoint ? this.mapSecurityPolicy(precomputedPreferredEndpoint.securityPolicyUri) : undefined;
+				const precomputedDeviceName = `opcua_${new URL(url).hostname}_${new URL(url).port}`;
 
 				// Create session to browse the node tree
 				const session = endpoint.connection?.username && endpoint.connection?.password
@@ -928,6 +944,52 @@ export class OPCUADiscovery extends BaseDiscovery {
 												}
 											}
 
+											if (onBatch && precomputedPreferredEndpoint && dataPoints.length > 0 && dataPoints.length % BATCH_SIZE === 0) {
+												try {
+													await onBatch({
+														name: precomputedDeviceName,
+														protocol: 'opcua' as const,
+														fingerprint: precomputedFingerprint,
+														connection: {
+															endpointUrl: url,
+															securityMode: precomputedSecurityMode,
+															securityPolicy: precomputedSecurityPolicy,
+															certificateTrustMode: endpoint.connection?.certificateTrustMode || 'strict',
+															...(endpoint.connection?.username && { username: endpoint.connection.username }),
+															...(endpoint.connection?.password && { password: endpoint.connection.password }),
+															...(precomputedCertThumbprint ? { expectedServerThumbprint: precomputedCertThumbprint } : {}),
+														},
+														dataPoints: [...dataPoints],
+														dataPointsComplete: false,
+														confidence: 'medium',
+														discoveredAt: new Date().toISOString(),
+														validated: false,
+														metadata: { endpointUrl: url, applicationUri: precomputedApplicationUri, discoveryMode, batchSave: true },
+													});
+												} catch { /* non-fatal: batch save failure must not block discovery */ }
+											}
+
+											if (dataPoints.length > 0 && dataPoints.length % CACHE_BATCH_SIZE === 0) {
+												try {
+													const partialNodeIndex: Record<string, DiscoveryCacheEntry> = {};
+													for (const dp of dataPoints) {
+														partialNodeIndex[dp.nodeId] = {
+															name: dp.name,
+															browseName: dp.browseName ?? dp.name,
+															writable: dp.writable ?? false,
+															...(dp.unit && { unit: dp.unit }),
+															...(dp.device_uuid && { device_uuid: dp.device_uuid }),
+															...(dp.device_name && { device_name: dp.device_name }),
+														};
+													}
+													await setDiscoveryCache(url, {
+														structuralHash: computeStructuralHash(Object.keys(partialNodeIndex)),
+														nodeIndex: partialNodeIndex,
+														updatedAt: new Date().toISOString(),
+													});
+												} catch { /* non-fatal */ }
+											}
+
 											this.logger?.debugSync(`Discovered variable: ${currentPath.join('/')}`, {
 												component: LogComponents.discovery + "] [" + this.protocol as any,
 												nodeId: childNodeId,
@@ -1038,26 +1100,14 @@ export class OPCUADiscovery extends BaseDiscovery {
 				}
 				
 				if (endpoints.length > 0) {
-					const preferredEndpoint = this.selectPreferredEndpoint(endpoints) || endpoints[0];
-					
-					// Extract ApplicationUri from endpoint (most stable OPC-UA identifier)
-					const applicationUri = preferredEndpoint.server?.applicationUri || `urn:${new URL(url).hostname}:unknown`;
-					
-					// Generate cryptographic fingerprint
-					const fingerprint = this.generateFingerprint(applicationUri);
-					
-					const certThumbprint = this.calculateThumbprint(preferredEndpoint.serverCertificate);
-					const selectedSecurityMode = this.mapSecurityMode(preferredEndpoint.securityMode);
-					const selectedSecurityPolicy = this.mapSecurityPolicy(preferredEndpoint.securityPolicyUri);
-
 					discovered.push({
-						name: `opcua_${new URL(url).hostname}_${new URL(url).port}`,
+						name: precomputedDeviceName,
 						protocol: 'opcua' as const,
-						fingerprint,
+						fingerprint: precomputedFingerprint,
 						connection: {
 							endpointUrl: url,
-							securityMode: selectedSecurityMode,
-							securityPolicy: selectedSecurityPolicy,
+							securityMode: precomputedSecurityMode,
+							securityPolicy: precomputedSecurityPolicy,
 							// Was hardcoded 'strict' regardless of what this discovery run was
 							// actually configured with — meaning the browse itself could succeed
 							// (using endpoint.connection?.certificateTrustMode further up, from
@@ -1076,7 +1126,7 @@ export class OPCUADiscovery extends BaseDiscovery {
 							...(endpoint.connection?.username && { username: endpoint.connection.username }),
 							...(endpoint.connection?.password && { password: endpoint.connection.password }),
 							...(endpoint.connection?.deviceIdentification && { deviceIdentification: endpoint.connection.deviceIdentification }),
-							...(certThumbprint ? { expectedServerThumbprint: certThumbprint } : {})
+							...(precomputedCertThumbprint ? { expectedServerThumbprint: precomputedCertThumbprint } : {})
 						},
 						dataPoints,
 						dataPointsComplete,
@@ -1085,11 +1135,11 @@ export class OPCUADiscovery extends BaseDiscovery {
 						validated: false,
 						metadata: {
 							endpointUrl: url,
-							applicationUri,
+							applicationUri: precomputedApplicationUri,
 							availableEndpoints: endpoints.length,
-							serverCertificateThumbprint: certThumbprint,
-							selectedSecurityMode,
-							selectedSecurityPolicy,
+							serverCertificateThumbprint: precomputedCertThumbprint,
+							selectedSecurityMode: precomputedSecurityMode,
+							selectedSecurityPolicy: precomputedSecurityPolicy,
 							discoveryMethod: 'endpoint_discovery',
 							discoveryMode,
 							...(cachedNodeCount > 0 && { cachedNodeCount }),

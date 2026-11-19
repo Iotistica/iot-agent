@@ -255,6 +255,22 @@ export class DiscoveryService extends EventEmitter {
 				if (options.onProgress && pluginOptions) {
 					pluginOptions.onProgress = options.onProgress;
 				}
+				if (pluginOptions && !options.skipDbWrites) {
+					let batchEndpointUuid: string | undefined | 'skip';
+					pluginOptions.onBatch = async (device: DiscoveredDevice) => {
+						if (batchEndpointUuid === 'skip') return;
+						try {
+							const result = await this.store.appendDataPoints(device, traceId, batchEndpointUuid);
+							batchEndpointUuid = result ?? 'skip';
+						} catch (err) {
+							this.logger?.warnSync('Incremental batch save failed', {
+								component: LogComponents.discovery,
+								traceId,
+								error: err instanceof Error ? err.message : String(err),
+							});
+						}
+					};
+				}
 				const discovered = await plugin.discover(pluginOptions);
 				const status = discovered.scanStatus;
 				if (status?.successful === true && status.complete === true && status.authoritative === true &&
