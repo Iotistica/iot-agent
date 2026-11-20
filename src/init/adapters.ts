@@ -244,6 +244,30 @@ export class AdapterInitializer {
 			}
 		});
 
+		let batchReloadInProgress = false;
+		const BATCH_RELOAD_COOLDOWN_MS = 30_000;
+		this.context.discoveryService.on('batch-points-updated', (data: { protocol: string; dataPointCount: number }) => {
+			if (batchReloadInProgress) return;
+			batchReloadInProgress = true;
+
+			this.scheduleReload('batch-points-updated', async () => {
+				try {
+					if (!this.features.devices) return;
+					await this.features.devices.reloadAdapterGroup(data.protocol);
+					await this.onAdaptersStopping();
+					await this.onAdaptersReady();
+					this._updateCloudSync();
+					logger.infoSync('Protocol adapter reloaded with new discovery batch points', {
+						component: LogComponents.agent,
+						protocol: data.protocol,
+						dataPointCount: data.dataPointCount,
+					});
+				} finally {
+					setTimeout(() => { batchReloadInProgress = false; }, BATCH_RELOAD_COOLDOWN_MS);
+				}
+			});
+		});
+
 		logger.infoSync('Endpoint auto-reload watcher initialized', {
 			component: LogComponents.agent,
 			note: 'Device Publish will reload automatically when discovery finds new enabled endpoints'

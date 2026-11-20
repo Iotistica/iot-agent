@@ -700,10 +700,11 @@ export class DiscoveryStore {
 		device: DiscoveredDevice,
 		traceId: string,
 		cachedUuid?: string,
-	): Promise<string | undefined> {
+		autoEnable?: boolean,
+	): Promise<{ uuid: string; existingPointCount: number } | undefined> {
 		if (cachedUuid) {
 			await EndpointModel.updateByUuid(cachedUuid, { data_points: device.dataPoints });
-			return cachedUuid;
+			return { uuid: cachedUuid, existingPointCount: 0 };
 		}
 
 		const existingEndpoints = await EndpointModel.getAll();
@@ -717,7 +718,7 @@ export class DiscoveryStore {
 			);
 
 		if (existing) {
-			return undefined;
+			return { uuid: existing.uuid!, existingPointCount: existing.data_points?.length ?? 0 };
 		}
 
 		const ep = await EndpointModel.create({
@@ -726,7 +727,7 @@ export class DiscoveryStore {
 			fingerprint: device.fingerprint,
 			connection: device.connection,
 			data_points: device.dataPoints,
-			enabled: false,
+			enabled: autoEnable ?? false,
 			poll_interval: 5000,
 			metadata: { ...device.metadata, fingerprint: device.fingerprint },
 		} as Endpoint);
@@ -736,8 +737,9 @@ export class DiscoveryStore {
 			traceId,
 			deviceName: device.name,
 			dataPointCount: device.dataPoints?.length,
+			enabled: autoEnable ?? false,
 		});
 
-		return ep.uuid;
+		return { uuid: ep.uuid!, existingPointCount: 0 };
 	}
 }

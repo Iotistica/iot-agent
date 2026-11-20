@@ -260,12 +260,30 @@ export class DiscoveryService extends EventEmitter {
 					pluginOptions.signal = options.signal;
 				}
 				if (pluginOptions && !options.skipDbWrites) {
-					let batchEndpointUuid: string | undefined | 'skip';
+					let batchEndpointUuid: string | undefined;
+					let highWaterMark = 0;
 					pluginOptions.onBatch = async (device: DiscoveredDevice) => {
-						if (batchEndpointUuid === 'skip') return;
+						const batchCount = device.dataPoints?.length ?? 0;
+						if (batchCount <= highWaterMark) return;
 						try {
-							const result = await this.store.appendDataPoints(device, traceId, batchEndpointUuid);
-							batchEndpointUuid = result ?? 'skip';
+							const result = await this.store.appendDataPoints(
+								device, traceId, batchEndpointUuid, options.autoEnableNew,
+							);
+							if (!result) return;
+							if (!batchEndpointUuid && result.existingPointCount > 0) {
+								highWaterMark = result.existingPointCount;
+								batchEndpointUuid = result.uuid;
+								if (batchCount <= highWaterMark) return;
+								await this.store.appendDataPoints(device, traceId, batchEndpointUuid);
+							} else {
+								batchEndpointUuid = result.uuid;
+							}
+							highWaterMark = batchCount;
+							this.emit('batch-points-updated', {
+								protocol: device.protocol,
+								endpointUuid: batchEndpointUuid,
+								dataPointCount: batchCount,
+							});
 						} catch (err) {
 							this.logger?.warnSync('Incremental batch save failed', {
 								component: LogComponents.discovery,
