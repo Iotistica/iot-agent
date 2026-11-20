@@ -1044,7 +1044,7 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 			ownerPointSets.set(owner, new Set(owner.dataPoints));
 		}
 		ownerPointSets.set(device, new Set(device.dataPoints));
-		const FLUSH_CHUNK_SIZE = 100;
+		const FLUSH_CHUNK_SIZE = 2000;
 		let draining = false;
 		let flushStartedAt = 0;
 		let processedInFlush = 0;
