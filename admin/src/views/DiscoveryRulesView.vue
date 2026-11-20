@@ -108,15 +108,21 @@ function fmtDate(iso: string | null): string {
   return new Date(iso).toLocaleString()
 }
 
+function fmtCount(n: number): string {
+  if (n >= 1000) return `${(n / 1000).toFixed(1).replace(/\.0$/, '')}k`
+  return String(n)
+}
+
 function resultSummary(rule: DiscoveryRule): string {
   const r = rule.last_result_json as any
   if (!r) return '—'
-  if (r.paused) return `paused at ${r.found} found`
-  if (r.in_progress) return `browsing… ${r.found} found`
+  const pts = r.data_points ? ` · ${fmtCount(r.data_points)} points` : ''
+  if (r.paused) return `paused at ${fmtCount(r.found)} found`
+  if (r.in_progress) return `browsing… ${fmtCount(r.found)} found`
   if (r.error) return `Error: ${r.error.slice(0, 40)}`
-  if (r.mode === 'cached') return `${r.found} (cached)`
-  if (r.mode === 'delta' && r.new_nodes) return `${r.found} (+${r.new_nodes} new)`
-  return `${r.found}`
+  if (r.mode === 'cached') return `${r.found} sources${pts} (cached)`
+  if (r.mode === 'delta' && r.new_nodes) return `${r.found} sources${pts} (+${fmtCount(r.new_nodes)} new)`
+  return `${r.found} ${r.found === 1 ? 'source' : 'sources'}${pts}`
 }
 
 // silent=true (used by the background auto-refresh poll) skips toggling

@@ -89,6 +89,7 @@ export interface DiscoveryRuleResult {
   error?: string
   in_progress?: boolean
   paused?: boolean
+  data_points?: number
 }
 
 export interface DiscoveryRule {

@@ -235,6 +235,7 @@ export class DiscoveryRulesScheduler {
 
 			const found = devices.length;
 			const saved = found;
+			const data_points = devices.reduce((sum, d) => sum + (d.dataPoints?.length ?? 0), 0);
 			const finishedAt = new Date().toISOString();
 			const durationMs = Date.now() - new Date(startedAt).getTime();
 			const next = new Date(Date.now() + rule.interval_seconds * 1000).toISOString();
@@ -248,6 +249,7 @@ export class DiscoveryRulesScheduler {
 				status: 'ok',
 				last_result_json: {
 					found, saved, skipped: 0,
+					...(data_points > 0 && { data_points }),
 					...(mode && { mode }),
 					...(cached_nodes && { cached_nodes }),
 					...(new_nodes && { new_nodes }),
