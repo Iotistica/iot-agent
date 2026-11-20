@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
 import { message } from 'ant-design-vue'
-import { CheckCircleOutlined, ThunderboltOutlined, StopOutlined } from '@ant-design/icons-vue'
+import { CheckCircleOutlined, ThunderboltOutlined, StopOutlined, PauseCircleOutlined } from '@ant-design/icons-vue'
 import type { TableColumnType } from 'ant-design-vue'
 import type { DiscoveredDevice, DiscoveryRule, Endpoint } from '@/types'
 import { useAuth } from '@/composables/useAuth'
@@ -131,6 +131,16 @@ function stopScan() {
   abortController = null
   running.value = false
   stopScanTimer()
+}
+
+async function pauseScan() {
+  if (!selectedRule.value) return
+  try {
+    await discoveryRulesApi.pause(selectedRule.value.uuid)
+    message.success('Discovery paused — resume anytime to continue from where it left off.')
+  } catch {
+    message.error('Failed to pause discovery')
+  }
 }
 
 function isAlreadyAdded(device: DiscoveredDevice): boolean {
@@ -601,12 +611,12 @@ watch(selectedRuleUuid, () => {
           @click="runRuleScan"
         >
           <template #icon><ThunderboltOutlined /></template>
-          {{ running ? `Scanning… (${fmtElapsed(scanElapsedSec)})` : hasRun ? 'Run Again' : 'Run Scan' }}
+          {{ running ? `Scanning… (${fmtElapsed(scanElapsedSec)})` : hasRun ? 'Run Again' : selectedRule?.status === 'paused' ? 'Resume' : 'Run Scan' }}
         </a-button>
         <span v-else style="color: var(--text-tertiary); font-size: 13px">Viewers cannot run discovery scans.</span>
-        <a-button v-if="running" danger @click="stopScan">
-          <template #icon><StopOutlined /></template>
-          Stop
+        <a-button v-if="running" @click="pauseScan">
+          <template #icon><PauseCircleOutlined /></template>
+          Pause
         </a-button>
         <span style="color: var(--text-muted); font-size: 12px; margin-left: 4px">
           <template v-if="running && runInBackground">Large scans can take a few minutes — you can close this panel, the scan keeps running.</template>

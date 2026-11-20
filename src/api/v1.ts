@@ -2618,6 +2618,20 @@ router.post('/v1/discovery-rules/:uuid/run', requireRole('operator'), async (req
 });
 
 /**
+ * POST /v1/discovery-rules/:uuid/pause
+ * Pause a running discovery rule
+ */
+router.post('/v1/discovery-rules/:uuid/pause', requireRole('operator'), async (req: Request, res: Response, next: NextFunction) => {
+	try {
+		const rule = await actions.pauseDiscoveryRule(req.params.uuid);
+		return res.status(200).json({ rule });
+	} catch (error: any) {
+		if (error?.statusCode === 409) return res.status(409).json({ error: error.message });
+		next(error);
+	}
+});
+
+/**
  * GET /v1/discovery-rules/:uuid/runs
  * Run history for a specific rule
  */

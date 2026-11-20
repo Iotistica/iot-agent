@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { message, Modal } from 'ant-design-vue'
-import { PlusOutlined, PlayCircleOutlined, HistoryOutlined, DeleteOutlined, CheckCircleOutlined, StopOutlined } from '@ant-design/icons-vue'
+import { PlusOutlined, PlayCircleOutlined, PauseCircleOutlined, HistoryOutlined, DeleteOutlined, CheckCircleOutlined, StopOutlined } from '@ant-design/icons-vue'
 import type { TableColumnType } from 'ant-design-vue'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import DiscoveryRuleDrawer from '@/components/discovery/DiscoveryRuleDrawer.vue'
@@ -16,6 +16,7 @@ const STATUS_COLOR: Record<string, string> = {
   running: 'processing',
   ok: 'success',
   error: 'error',
+  paused: 'warning',
 }
 
 const activeTab = ref('rules')
@@ -110,6 +111,7 @@ function fmtDate(iso: string | null): string {
 function resultSummary(rule: DiscoveryRule): string {
   const r = rule.last_result_json as any
   if (!r) return '—'
+  if (r.paused) return `paused at ${r.found} found`
   if (r.in_progress) return `browsing… ${r.found} found`
   if (r.error) return `Error: ${r.error.slice(0, 40)}`
   if (r.mode === 'cached') return `${r.found} (cached)`
@@ -139,6 +141,16 @@ async function toggleEnabled(row: DiscoveryRule) {
     await load()
   } catch {
     message.error('Failed to update')
+  }
+}
+
+async function pauseRule(row: DiscoveryRule) {
+  try {
+    await discoveryRulesApi.pause(row.uuid)
+    message.success('Discovery paused')
+    await load()
+  } catch {
+    message.error('Failed to pause')
   }
 }
 
@@ -308,7 +320,10 @@ onUnmounted(() => { if (refreshTimer) clearInterval(refreshTimer) })
 
             <template v-else-if="column.key === 'actions'">
               <a-space>
-                <a-button size="small" title="Run and review results" @click="openScanDrawer(record)">
+                <a-button v-if="record.status === 'running'" size="small" title="Pause discovery" @click="pauseRule(record)">
+                  <template #icon><PauseCircleOutlined /></template>
+                </a-button>
+                <a-button v-else size="small" :title="record.status === 'paused' ? 'Resume discovery' : 'Run and review results'" @click="openScanDrawer(record)">
                   <template #icon><PlayCircleOutlined /></template>
                 </a-button>
                 <a-button size="small" title="Run history" @click="openRunsDrawer(record)">

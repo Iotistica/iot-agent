@@ -37,6 +37,7 @@ export interface OPCUADiscoveryOptions {
   onProgress?: (progress: { found: number; phase: string; target?: string }) => void;
   onBatch?: (device: DiscoveredDevice) => Promise<void> | void;
   forceFullBrowse?: boolean;
+  signal?: AbortSignal;
 }
 
 export interface OPCUABrowseRequest {
@@ -544,6 +545,7 @@ export class OPCUADiscovery extends BaseDiscovery {
 		Object.defineProperty(discovered, 'scanComplete', { value: false, writable: true });
 		const onProgress = options?.onProgress;
 		const onBatch = options?.onBatch;
+		const signal = options?.signal;
 		let lastProgressReport = 0;
 		const BATCH_SIZE = 2000;
 		const CACHE_BATCH_SIZE = 10000;
@@ -771,6 +773,8 @@ export class OPCUADiscovery extends BaseDiscovery {
 							inheritedDeviceUuid?: string,  // UUID from parent folder's DeviceUUID node
 							inheritedDeviceName?: string   // Friendly name of the folder that owns that DeviceUUID node
 						): Promise<void> => {
+							if (signal?.aborted) return;
+
 							// Protection against infinite loops
 							if (depth > maxDepth) {
 								status.complete = false;
@@ -868,10 +872,12 @@ export class OPCUADiscovery extends BaseDiscovery {
 								};
 
 								for (const ref of refs) {
+									if (signal?.aborted) break;
+
 									const nodeName = ref.browseName?.name || '';
 									const childNodeId = ref.nodeId.toString();
 									const currentPath = [...pathSegments, nodeName];
-								
+
 									// Skip standard OPC UA system folders at root level (IEC 62541)
 									// ServerInfo contains metadata like ProfileName, deviceCount which pollute data_points
 									if (depth === 0 && ['Server', 'ServerInfo', 'Types', 'Views', 'Aliases'].includes(nodeName)) {
@@ -882,7 +888,53 @@ export class OPCUADiscovery extends BaseDiscovery {
 									if (nodeName === 'DeviceUUID' || identifierNodeIds.has(childNodeId)) {
 										continue;
 									}
-								
+
+									// Delta mode: skip expensive attribute reads for nodes already in cache
+									if (_cachedIndex?.[childNodeId]) {
+										const cached = _cachedIndex[childNodeId];
+										dataPoints.push({
+											nodeId: childNodeId,
+											name: cached.name,
+											browseName: cached.browseName,
+											writable: cached.writable,
+											...(cached.unit && { unit: cached.unit }),
+											...(cached.device_uuid && { device_uuid: cached.device_uuid }),
+											...(cached.device_name && { device_name: cached.device_name }),
+										});
+										if (onProgress) {
+											const now = Date.now();
+											if (now - lastProgressReport > 1000) {
+												lastProgressReport = now;
+												onProgress({ found: dataPoints.length, phase: 'browsing', target: url });
+											}
+										}
+										if (onBatch && precomputedPreferredEndpoint && dataPoints.length > 0 && dataPoints.length % BATCH_SIZE === 0) {
+											try {
+												await onBatch({
+													name: precomputedDeviceName,
+													protocol: 'opcua' as const,
+													fingerprint: precomputedFingerprint,
+													connection: {
+														endpointUrl: url,
+														securityMode: precomputedSecurityMode,
+														securityPolicy: precomputedSecurityPolicy,
+														certificateTrustMode: endpoint.connection?.certificateTrustMode || 'strict',
+														...(endpoint.connection?.username && { username: endpoint.connection.username }),
+														...(endpoint.connection?.password && { password: endpoint.connection.password }),
+														...(precomputedCertThumbprint ? { expectedServerThumbprint: precomputedCertThumbprint } : {}),
+													},
+													dataPoints: [...dataPoints],
+													dataPointsComplete: false,
+													confidence: 'medium',
+													discoveredAt: new Date().toISOString(),
+													validated: false,
+													metadata: { endpointUrl: url, applicationUri: precomputedApplicationUri, discoveryMode, batchSave: true },
+												});
+											} catch { /* non-fatal */ }
+										}
+										continue;
+									}
+
 									// NodeClass: 1 = Object/Folder, 2 = Variable
 									// Verify the actual NodeClass by reading node attributes. Also read
 									// AccessLevel/UserAccessLevel here (same attributes browseOPCUATree()
@@ -1035,7 +1087,35 @@ export class OPCUADiscovery extends BaseDiscovery {
 						// Start recursive browsing from Objects folder
 						const ObjectsNodeId = 'ns=0;i=85'; // Standard Objects folder
 						await browseRecursive(ObjectsNodeId, [], 0);
-						if (identifiedDevices && visitedDevices.size !== identifiedDevices.size) {
+
+						if (signal?.aborted) {
+							status.complete = false;
+							dataPointsComplete = false;
+							if (onBatch && precomputedPreferredEndpoint && dataPoints.length > 0) {
+								try {
+									await onBatch({
+										name: precomputedDeviceName,
+										protocol: 'opcua' as const,
+										fingerprint: precomputedFingerprint,
+										connection: {
+											endpointUrl: url,
+											securityMode: precomputedSecurityMode,
+											securityPolicy: precomputedSecurityPolicy,
+											certificateTrustMode: endpoint.connection?.certificateTrustMode || 'strict',
+											...(endpoint.connection?.username && { username: endpoint.connection.username }),
+											...(endpoint.connection?.password && { password: endpoint.connection.password }),
+											...(precomputedCertThumbprint ? { expectedServerThumbprint: precomputedCertThumbprint } : {}),
+										},
+										dataPoints: [...dataPoints],
+										dataPointsComplete: false,
+										confidence: 'medium',
+										discoveredAt: new Date().toISOString(),
+										validated: false,
+										metadata: { endpointUrl: url, applicationUri: precomputedApplicationUri, discoveryMode, batchSave: true },
+									});
+								} catch { /* non-fatal */ }
+							}
+						} else if (identifiedDevices && visitedDevices.size !== identifiedDevices.size) {
 							throw new Error('Some identified devices could not be reached within the discovery depth limit');
 						}
 

@@ -12,10 +12,10 @@ export interface DiscoveryRule {
 	target_json: Record<string, any> | null;
 	params_json: Record<string, any> | null;
 	auto_enable: boolean;
-	status: 'idle' | 'running' | 'ok' | 'error';
+	status: 'idle' | 'running' | 'ok' | 'error' | 'paused';
 	last_run_at: string | null;
 	next_run_at: string | null;
-	last_result_json: { found: number; saved: number; skipped: number; error?: string; in_progress?: boolean } | null;
+	last_result_json: { found: number; saved: number; skipped: number; error?: string; in_progress?: boolean; paused?: boolean } | null;
 	created_at?: string;
 	updated_at?: string;
 }
@@ -75,7 +75,7 @@ export class DiscoveryRuleModel {
 	static getDue(): DiscoveryRule[] {
 		const now = new Date().toISOString();
 		const rows = this.getDb()
-			.prepare(`SELECT * FROM ${this.table} WHERE enabled = 1 AND status != 'running' AND (next_run_at IS NULL OR next_run_at <= ?)`)
+			.prepare(`SELECT * FROM ${this.table} WHERE enabled = 1 AND status NOT IN ('running', 'paused') AND (next_run_at IS NULL OR next_run_at <= ?)`)
 			.all(now) as unknown as DiscoveryRuleRow[];
 		return rows.map(r => this.parseRow(r)).filter((r): r is DiscoveryRule => r !== null);
 	}

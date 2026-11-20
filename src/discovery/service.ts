@@ -42,6 +42,7 @@ export interface DiscoveryOptions {
 	// controls whether new endpoints get created at all, not what state they start in.
 	autoEnableNew?: boolean;
 	onProgress?: (progress: { found: number; phase: string; target?: string }) => void;
+	signal?: AbortSignal;
 }
 
 export type { DiscoveredDevice } from '../plugins/types';
@@ -255,6 +256,9 @@ export class DiscoveryService extends EventEmitter {
 				if (options.onProgress && pluginOptions) {
 					pluginOptions.onProgress = options.onProgress;
 				}
+				if (options.signal && pluginOptions) {
+					pluginOptions.signal = options.signal;
+				}
 				if (pluginOptions && !options.skipDbWrites) {
 					let batchEndpointUuid: string | undefined | 'skip';
 					pluginOptions.onBatch = async (device: DiscoveredDevice) => {
@@ -407,6 +411,13 @@ export class DiscoveryService extends EventEmitter {
 			validated: effectiveValidate,
 			protocols: selectedProtocols
 		});
+
+		// Skip store.save() when paused — incremental batch saves have already
+		// persisted partial data to the endpoint (disabled). Enabling it and
+		// firing adapter events would be premature with an incomplete browse.
+		if (options.signal?.aborted) {
+			return allDiscovered;
+		}
 
 		const saveResults = await this.store.save(
 			allDiscovered,

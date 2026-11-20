@@ -2980,6 +2980,18 @@ export const runDiscoveryRule = async (
 };
 
 /**
+ * Discovery rules: pause a running rule
+ */
+export const pauseDiscoveryRule = async (uuid: string) => {
+	if (!discoveryRulesScheduler) {
+		throw new Error('Discovery rules scheduler not initialized');
+	}
+	discoveryRulesScheduler.pauseRule(uuid);
+	const { DiscoveryRuleModel } = await import('../db/models/discovery-rule.model.js');
+	return DiscoveryRuleModel.getByUuid(uuid);
+};
+
+/**
  * Get SQLite database stats for diagnostics
  * Used by: GET /v1/db/stats
  */

@@ -80,7 +80,7 @@ export interface Endpoint {
   health?: EndpointHealth
 }
 
-export type DiscoveryRuleStatus = 'idle' | 'running' | 'ok' | 'error'
+export type DiscoveryRuleStatus = 'idle' | 'running' | 'ok' | 'error' | 'paused'
 
 export interface DiscoveryRuleResult {
   found: number
@@ -88,6 +88,7 @@ export interface DiscoveryRuleResult {
   skipped: number
   error?: string
   in_progress?: boolean
+  paused?: boolean
 }
 
 export interface DiscoveryRule {

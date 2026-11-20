@@ -19,6 +19,7 @@ export class DiscoveryRulesScheduler {
 	private logger?: AgentLogger;
 	private discoveryService: DiscoveryService;
 	private timer?: NodeJS.Timeout;
+	private runningAbort = new Map<string, AbortController>();
 
 	constructor(discoveryService: DiscoveryService, logger?: AgentLogger) {
 		this.discoveryService = discoveryService;
@@ -61,6 +62,21 @@ export class DiscoveryRulesScheduler {
 			clearInterval(this.timer);
 			this.timer = undefined;
 		}
+	}
+
+	pauseRule(uuid: string): void {
+		const controller = this.runningAbort.get(uuid);
+		if (!controller) {
+			throw Object.assign(
+				new Error('Discovery rule is not currently running'),
+				{ statusCode: 409 },
+			);
+		}
+		controller.abort();
+		this.logger?.infoSync('Discovery rule paused by user', {
+			component: LogComponents.agent,
+			ruleUuid: uuid,
+		});
 	}
 
 	async runNow(
@@ -146,6 +162,9 @@ export class DiscoveryRulesScheduler {
 		const startedAt = new Date().toISOString();
 		DiscoveryRuleModel.update(rule.uuid, { status: 'running', last_run_at: startedAt });
 
+		const controller = new AbortController();
+		this.runningAbort.set(rule.uuid, controller);
+
 		let runId: number | null = null;
 		try {
 			runId = DiscoveryRunModel.create({
@@ -183,18 +202,36 @@ export class DiscoveryRulesScheduler {
 				forceRun: true,
 				validate: true,
 				failOnError: true,
-				// Discovered devices are always persisted — auto_enable only controls
-				// what `enabled` state they start in (see autoEnableNew below), not
-				// whether they get saved at all. skipDbWrites has an unrelated meaning
-				// (used by config.ts for the reconcile-owns-creation case) and must
-				// never be derived from auto_enable.
 				autoEnableNew: rule.auto_enable,
 				...(rule.params_json || forceFullBrowse
 					? { optionOverrides: { [rule.protocol]: { ...(rule.params_json || {}), ...(forceFullBrowse ? { forceFullBrowse: true } : {}) } } }
 					: {}),
 				...(pruneOptions?.prune ? { prune: true, pruneDryRun: pruneOptions.pruneDryRun ?? false } : {}),
 				onProgress,
+				signal: controller.signal,
 			});
+
+			if (controller.signal.aborted) {
+				const found = devices[0]?.dataPoints?.length ?? 0;
+				const finishedAt = new Date().toISOString();
+				const durationMs = Date.now() - new Date(startedAt).getTime();
+
+				DiscoveryRuleModel.update(rule.uuid, {
+					status: 'paused',
+					last_result_json: { found, saved: 0, skipped: 0, paused: true },
+				});
+				if (runId !== null) {
+					try { DiscoveryRunModel.finish(runId, { finished_at: finishedAt, duration_ms: durationMs, status: 'ok', found, saved: 0, skipped: 0 }); } catch { /* non-fatal */ }
+				}
+
+				this.logger?.infoSync('Discovery rule paused', {
+					component: LogComponents.agent,
+					ruleUuid: rule.uuid,
+					ruleName: rule.name,
+					found,
+				});
+				return devices;
+			}
 
 			const found = devices.length;
 			const saved = found;
@@ -249,6 +286,8 @@ export class DiscoveryRulesScheduler {
 				ruleUuid: rule.uuid,
 				ruleName: rule.name,
 			});
+		} finally {
+			this.runningAbort.delete(rule.uuid);
 		}
 
 		return devices;

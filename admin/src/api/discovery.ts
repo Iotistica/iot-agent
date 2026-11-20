@@ -51,6 +51,10 @@ export const discoveryRulesApi = {
       .then((r) => r.data)
   },
 
+  pause(uuid: string): Promise<{ rule: DiscoveryRule }> {
+    return client.post(`${RULES_BASE}/${uuid}/pause`).then((r) => r.data)
+  },
+
   getRuns(uuid: string, limit = 50): Promise<DiscoveryRun[]> {
     return client.get<{ runs: DiscoveryRun[] }>(`${RULES_BASE}/${uuid}/runs`, { params: { limit } }).then((r) => r.data.runs)
   },
