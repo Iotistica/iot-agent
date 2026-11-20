@@ -236,8 +236,36 @@ export class DiscoveryRulesScheduler {
 			const found = devices.length;
 			const saved = found;
 			const data_points = devices.reduce((sum, d) => sum + (d.dataPoints?.length ?? 0), 0);
+			const incomplete = devices.some(d => d.dataPointsComplete === false);
+			const channelDied = devices.some(d => (d.metadata as any)?.channelDead === true);
 			const finishedAt = new Date().toISOString();
 			const durationMs = Date.now() - new Date(startedAt).getTime();
+
+			if (incomplete && channelDied && !controller.signal.aborted) {
+				const retryDelaySec = 60;
+				const retryAt = new Date(Date.now() + retryDelaySec * 1000).toISOString();
+				DiscoveryRuleModel.update(rule.uuid, {
+					status: 'idle',
+					last_result_json: {
+						found, saved, skipped: 0,
+						...(data_points > 0 && { data_points }),
+						error: `Connection lost at ${data_points} points — auto-retry in ${retryDelaySec}s`,
+					},
+					next_run_at: retryAt,
+				});
+				if (runId !== null) {
+					try { DiscoveryRunModel.finish(runId, { finished_at: finishedAt, duration_ms: durationMs, status: 'error', found, saved: 0, skipped: 0, error: 'Connection lost — auto-retry scheduled' }); } catch { /* non-fatal */ }
+				}
+				this.logger?.warnSync('Discovery incomplete — OPC UA channel lost, auto-retry scheduled', {
+					component: LogComponents.agent,
+					ruleUuid: rule.uuid,
+					ruleName: rule.name,
+					dataPoints: data_points,
+					retryAt,
+				});
+				return devices;
+			}
+
 			const next = new Date(Date.now() + rule.interval_seconds * 1000).toISOString();
 
 			const deviceMeta = devices[0]?.metadata;

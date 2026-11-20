@@ -708,6 +708,12 @@ export class OPCUADiscovery extends BaseDiscovery {
 					);
 					for (const nodeId of unreadableIdentifierNodeIds) identifierNodeIds.add(nodeId);
 
+					// ── Channel failure detection ──────────────────────────────
+					const CHANNEL_DEAD_ERRORS = ['BadConnectionClosed', 'BadSecureChannelClosed', 'BadCommunicationError', 'BadNotConnected', 'BadSessionClosed'];
+					const CHANNEL_DEAD_THRESHOLD = 3;
+					let _consecutiveChannelErrors = 0;
+					let _channelDead = false;
+
 					// ── Incremental discovery ──────────────────────────────────
 					const forceFullBrowse = options?.forceFullBrowse ?? false;
 					let _cachedIndex: Record<string, DiscoveryCacheEntry> | undefined;
@@ -773,7 +779,7 @@ export class OPCUADiscovery extends BaseDiscovery {
 							inheritedDeviceUuid?: string,  // UUID from parent folder's DeviceUUID node
 							inheritedDeviceName?: string   // Friendly name of the folder that owns that DeviceUUID node
 						): Promise<void> => {
-							if (signal?.aborted) return;
+							if (signal?.aborted || _channelDead) return;
 
 							// Protection against infinite loops
 							if (depth > maxDepth) {
@@ -872,7 +878,7 @@ export class OPCUADiscovery extends BaseDiscovery {
 								};
 
 								for (const ref of refs) {
-									if (signal?.aborted) break;
+									if (signal?.aborted || _channelDead) break;
 
 									const nodeName = ref.browseName?.name || '';
 									const childNodeId = ref.nodeId.toString();
@@ -1064,11 +1070,25 @@ export class OPCUADiscovery extends BaseDiscovery {
 										if (identifiedDevices) throw readError;
 										status.complete = false;
 										dataPointsComplete = false;
-										// If we can't read NodeClass, skip this node
+										const errMsg = readError instanceof Error ? readError.message : String(readError);
+										if (CHANNEL_DEAD_ERRORS.some(e => errMsg.includes(e))) {
+											_consecutiveChannelErrors++;
+											if (_consecutiveChannelErrors >= CHANNEL_DEAD_THRESHOLD) {
+												_channelDead = true;
+												this.logger?.warnSync(`OPC UA channel dead after ${_consecutiveChannelErrors} consecutive channel errors — stopping browse early`, {
+													component: LogComponents.discovery + "] [" + this.protocol as any,
+													dataPointsSoFar: dataPoints.length,
+													lastError: errMsg,
+												});
+												break;
+											}
+										} else {
+											_consecutiveChannelErrors = 0;
+										}
 										this.logger?.warnSync(`Skipping node (cannot read NodeClass): ${currentPath.join('/')}`, {
 											component: LogComponents.discovery + "] [" + this.protocol as any,
 											nodeId: childNodeId,
-											error: readError instanceof Error ? readError.message : String(readError)
+											error: errMsg,
 										});
 									}
 								}
@@ -1088,7 +1108,7 @@ export class OPCUADiscovery extends BaseDiscovery {
 						const ObjectsNodeId = 'ns=0;i=85'; // Standard Objects folder
 						await browseRecursive(ObjectsNodeId, [], 0);
 
-						if (signal?.aborted) {
+						if (signal?.aborted || _channelDead) {
 							status.complete = false;
 							dataPointsComplete = false;
 							if (onBatch && precomputedPreferredEndpoint && dataPoints.length > 0) {
@@ -1111,7 +1131,7 @@ export class OPCUADiscovery extends BaseDiscovery {
 										confidence: 'medium',
 										discoveredAt: new Date().toISOString(),
 										validated: false,
-										metadata: { endpointUrl: url, applicationUri: precomputedApplicationUri, discoveryMode, batchSave: true },
+										metadata: { endpointUrl: url, applicationUri: precomputedApplicationUri, discoveryMode, batchSave: true, ...(_channelDead ? { channelDead: true } : {}) },
 									});
 								} catch { /* non-fatal */ }
 							}
