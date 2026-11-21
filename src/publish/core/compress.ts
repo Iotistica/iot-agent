@@ -78,6 +78,7 @@ export class PayloadCompressor {
 		baselineSize: number,
 		publishCount: number,
 		overrideOpts?: CompressorOptions,
+		preSerializedJson?: { jsonString: string; jsonBytes: number },
 	): Promise<{ payload: Buffer | string; info: CompressionInfo }> {
 		if (shouldMeasureBaseline(publishCount)) {
 			return this.baseline(data, baselineSize);
@@ -86,7 +87,7 @@ export class PayloadCompressor {
 		if (this.dictionaryManager && opts.useKeyCompaction) {
 			return this.applyDictionary(data, baselineSize, opts);
 		}
-		return this.applyMsgpackOrJson(data, baselineSize, opts);
+		return this.applyMsgpackOrJson(data, baselineSize, opts, preSerializedJson);
 	}
 
 	// --- strategies -------------------------------------------------------------
@@ -197,7 +198,7 @@ export class PayloadCompressor {
 		};
 	}
 
-	private async applyMsgpackOrJson(data: unknown, baselineSize: number, opts = this.opts): Promise<{ payload: Buffer | string; info: CompressionInfo }> {
+	private async applyMsgpackOrJson(data: unknown, baselineSize: number, opts = this.opts, preSerializedJson?: { jsonString: string; jsonBytes: number }): Promise<{ payload: Buffer | string; info: CompressionInfo }> {
 		const t0 = Date.now();
 		const cpu0 = process.cpuUsage();
 		const msgIdGen = this.mqttConnection.getMessageIdGenerator?.();
@@ -217,7 +218,13 @@ export class PayloadCompressor {
 			deflateCpu = deflated.deflateCpu;
 			compressedSize = this.sizeOf(finalPayload);
 		} else {
-			const payload = serializePayload(createJsonPayload(data as object, msgIdGen));
+			// Use pre-serialized JSON if available to skip stringify
+			let payload: Buffer | string;
+			if (preSerializedJson) {
+				payload = Buffer.from(preSerializedJson.jsonString, 'utf-8');
+			} else {
+				payload = serializePayload(createJsonPayload(data as object, msgIdGen));
+			}
 
 			if (opts.useDeflate) {
 				const deflated = await this.maybeDeflatePayload(payload, true);
