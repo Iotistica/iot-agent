@@ -118,11 +118,11 @@ export function getAgent(): AgentInstance {
 	return agentInstance;
 }
 
-function getLifecycleStateSafe(): string {
+export function getLifecycleStateSafe(): string {
 	return agentInstance?.getLifecycleState?.() ?? 'UNKNOWN';
 }
 
-function getReadinessSafe(): boolean {
+export function getReadinessSafe(): boolean {
 	return agentInstance?.isFullyOperational?.() ?? false;
 }
 

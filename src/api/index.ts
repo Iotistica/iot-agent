@@ -132,6 +132,19 @@ export class DeviceAPI {
 			res.sendFile(join(adminDist, 'index.html'));
 		});
 
+		// Readiness gate — return 503 for /v1/* data routes while the agent is still initializing.
+		// Health, readiness, ping, auth, provision, device-state, and admin static assets are
+		// handled above and never reach this middleware.
+		this.api.use((req, res, next) => {
+			if (!req.path.startsWith('/v1/')) return next();
+			if (actions.getReadinessSafe()) return next();
+			return res.status(503).json({
+				error: 'Agent is starting up',
+				state: actions.getLifecycleStateSafe(),
+				retryAfter: 5,
+			});
+		});
+
 		// Mount all routers
 		for (const router of this.routers) {
 			this.api.use(router);
