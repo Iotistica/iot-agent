@@ -65,6 +65,10 @@ let logger: AgentLogger | undefined;
 let monitoringInterval: NodeJS.Timeout | undefined;
 let memoryThresholdBreached: boolean = false;
 
+// Leak detection suppression (e.g. during discovery)
+let leakDetectionSuppressed: boolean = false;
+let suppressionReason: string | undefined;
+
 // Memory leak simulation
 let simulationInterval: NodeJS.Timeout | undefined;
 let leakedObjects: any[] = [];
@@ -254,6 +258,37 @@ export function stopMemoryMonitoring(): void {
 			component: LogComponents.metrics
 		});
 	}
+}
+
+/**
+ * Suppress leak detection (sampling continues, breach detection paused).
+ * Call before memory-intensive phases like discovery that cause transient growth.
+ */
+export function suppressLeakDetection(reason: string): void {
+	if (leakDetectionSuppressed) return;
+	leakDetectionSuppressed = true;
+	suppressionReason = reason;
+	logger?.infoSync('Leak detection suppressed', {
+		component: LogComponents.metrics,
+		reason
+	});
+}
+
+/**
+ * Resume leak detection after the transient phase completes.
+ * Clears the sample window so stale growth data from the suppressed phase
+ * does not immediately trigger a false breach.
+ */
+export function resumeLeakDetection(): void {
+	if (!leakDetectionSuppressed) return;
+	const reason = suppressionReason;
+	leakDetectionSuppressed = false;
+	suppressionReason = undefined;
+	heapSamples = [];
+	logger?.infoSync('Leak detection resumed — sample window reset', {
+		component: LogComponents.metrics,
+		previousSuppression: reason
+	});
 }
 
 /**
@@ -1048,6 +1083,12 @@ export async function healthcheck(
 		return true;
 	}
 
+	// Skip breach detection while suppressed (discovery, etc.)
+	// Still collect samples below so the window is populated when we resume
+	if (leakDetectionSuppressed) {
+		return true;
+	}
+
 	// Initialize baseline heap and external
 	if (initialHeap === 0) {
 		const heapStats = getHeapStatistics();
@@ -1258,6 +1299,8 @@ export function getMemoryDiagnostics() {
 		survivorFloorMonotonic: survivorGrowth?.isMonotonic ?? false,
 		survivorRetainedMB: survivorGrowth?.retainedGrowth.toFixed(1) || 'null',
 		currentlyBreached: memoryThresholdBreached,
+		leakDetectionSuppressed,
+		suppressionReason: suppressionReason || null,
 		// Leak pattern analysis
 		leakPattern: leakPattern.pattern,
 		leakDescription: leakPattern.description,

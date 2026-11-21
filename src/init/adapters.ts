@@ -11,6 +11,7 @@
 import { LogComponents } from '../logging/types.js';
 import { AdapterManager, type AdapterConfig } from '../plugins/index.js';
 import type { FeatureContext } from './features.js';
+import { suppressLeakDetection, resumeLeakDetection } from '../system/memory.js';
 
 export interface AdapterFeatures {
 	devices?: AdapterManager;
@@ -144,6 +145,7 @@ export class AdapterInitializer {
 		}
 
 		this.context.discoveryService.on('pre-discovery', async (data: any) => {
+			suppressLeakDetection(`discovery (trigger: ${data.trigger})`);
 			logger.infoSync('Preparing for discovery - stopping Device Publish to free connection slots', {
 				component: LogComponents.agent,
 				protocols: data.protocols,
@@ -193,6 +195,7 @@ export class AdapterInitializer {
 		});
 
 		this.context.discoveryService.on('discovery-complete', async (data: any) => {
+			resumeLeakDetection();
 			const shouldReload = data.savedCount > 0;
 
 			if (shouldReload) {
