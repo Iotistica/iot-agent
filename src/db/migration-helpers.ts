@@ -21,11 +21,11 @@ export function columnExists(db: DatabaseSync, tableName: string, columnName: st
 
 function loadSqlAsset(fileName: string): string {
 	const candidatePaths = [
-		path.join(__dirname, fileName),
-		path.join(process.cwd(), 'dist', 'db', fileName),
-		path.join(process.cwd(), 'src', 'db', fileName),
-		path.join('/app/dist/db', fileName),
-		path.join('/app/src/db', fileName),
+		path.join(__dirname, 'sql', fileName),
+		path.join(process.cwd(), 'dist', 'db', 'sql', fileName),
+		path.join(process.cwd(), 'src', 'db', 'sql', fileName),
+		path.join('/app/dist/db/sql', fileName),
+		path.join('/app/src/db/sql', fileName),
 	];
 
 	for (const candidate of candidatePaths) {
@@ -41,8 +41,4 @@ function loadSqlAsset(fileName: string): string {
 
 export function loadTemplateSql(): string {
 	return loadSqlAsset('template.sqlite.sql');
-}
-
-export function loadMarketplaceSeedSql(): string {
-	return loadSqlAsset('marketplace-seed.sql');
 }

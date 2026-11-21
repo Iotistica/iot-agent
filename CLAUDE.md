@@ -1,3 +1,34 @@
+## Unified Event System
+
+All agent events flow through a single EventBus (`src/events/event-bus.ts`) with `submit()`. The bus writes to three SQLite tables: `agent_events` → `agent_incidents` (fingerprint-correlated) → `agent_alerts`. The old `anomaly_events`/`anomaly_incidents`/`anomaly_alerts` tables no longer exist.
+
+### Event sources
+`EventSource` = `anomaly | schema-drift | discovery | memory | adapter | auth | audit | system` (defined in `src/events/types.ts`). `AUDIT_SOURCES` (`audit`, `auth`) skip incident correlation — they produce events only.
+
+### Convenience helper
+`logEvent()` in `src/api/actions.ts` wraps `eventBus.submit()` for call sites that don't hold a bus reference. The bus is injected at startup via `setActionsEventBus()` in `src/init/features.ts`.
+
+### API endpoints (`src/api/events.ts`)
+- `GET /v1/events?source=&severity=&fingerprint=&from=&to=&limit=&offset=`
+- `GET /v1/incidents?source=&status=&severity=&from=&to=&limit=&offset=`
+- `GET /v1/incidents/stats?source=&windowHours=`
+- `GET /v1/incidents/bad-actors?source=&windowDays=&limit=`
+- `GET /v1/incidents/:id` — single incident with its alerts and recent events
+- `PATCH /v1/incidents/:id/resolve` — requires `operator` role
+- `GET /v1/alerts?source=&severity=&from=&to=&limit=&offset=`
+- Backward-compatible aliases: `/v1/anomaly-events` → events filtered to `anomaly,schema-drift`
+
+### Frontend
+- **Alerts page** (`admin/src/views/AlertsView.vue`) — Events / Incidents / Alerts tabs with a source dropdown filter. Uses `admin/src/api/events.ts` and `admin/src/utils/eventSources.ts`.
+- **Analytics page** (`admin/src/views/AnomalyView.vue`) — Baselines / Schema Drift / Anomaly Rules only (events/incidents/alerts moved out).
+
+### Database / migrations
+- Template: `src/db/sql/template.sqlite.sql` — 59 tables, all migrations squashed into a single initial schema (`src/db/migrations/20260312020000_squashed_initial_schema.ts`).
+- `src/db/native-migrations.ts` references only the squashed migration. New migrations go after it.
+- Dead tables removed from template: `enum_devices`, `enum_metrics`, `enum_observations`, `enum_quality_codes`, `mqtt_acls`.
+
+---
+
 ## graphify
 
 This project has a knowledge graph at graphify-out/ with god nodes, community structure, and cross-file relationships.

@@ -1070,8 +1070,8 @@ echo ""
         
         echo "Copying database assets..."
         npm run copy:db-assets
-        if [ ! -f dist/db/template.sqlite.sql ]; then
-            echo "✗ Error: Database asset copy failed - dist/db/template.sqlite.sql not found"
+        if [ ! -f dist/db/sql/template.sqlite.sql ]; then
+            echo "✗ Error: Database asset copy failed - dist/db/sql/template.sqlite.sql not found"
             exit 1
         fi
 
