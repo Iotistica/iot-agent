@@ -649,24 +649,21 @@ export class AnomalyStorageService {
 				.prepare('DELETE FROM anomaly_baselines WHERE calculated_at < ?')
 				.run(this.getRetentionCutoff()).changes;
 
-			// Delete old events. Events are immutable observations, so a plain age cutoff is safe.
-			const deletedEvents = this.hasTable('anomaly_events')
+			const deletedEvents = this.hasTable('agent_events')
 				? this.db
-					.prepare('DELETE FROM anomaly_events WHERE timestamp_ms < ?')
+					.prepare("DELETE FROM agent_events WHERE timestamp_ms < ? AND source NOT IN ('audit', 'auth')")
 					.run(this.getCutoff(this.eventRetentionDays)).changes
 				: 0;
 
-			// Only prune resolved incidents — an open/active incident represents an ongoing
-			// issue and shouldn't disappear out from under an operator just because it's old.
-			const deletedIncidents = this.hasTable('anomaly_incidents')
+			const deletedIncidents = this.hasTable('agent_incidents')
 				? this.db
-					.prepare("DELETE FROM anomaly_incidents WHERE status = 'resolved' AND last_seen < ?")
+					.prepare("DELETE FROM agent_incidents WHERE status = 'resolved' AND last_seen < ?")
 					.run(this.getCutoff(this.incidentRetentionDays)).changes
 				: 0;
 
-			const deletedAlerts = this.hasTable('anomaly_alerts')
+			const deletedAlerts = this.hasTable('agent_alerts')
 				? this.db
-					.prepare('DELETE FROM anomaly_alerts WHERE created_at < ?')
+					.prepare('DELETE FROM agent_alerts WHERE created_at < ?')
 					.run(this.getCutoff(this.alertRetentionDays)).changes
 				: 0;
 

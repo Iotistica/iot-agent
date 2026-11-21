@@ -12,7 +12,7 @@ import AppLayout from '@/components/layout/AppLayout.vue'
 import { useProStatus } from '@/composables/useProStatus'
 
 const { proInstalled } = useProStatus()
-import { anomalyApi, driftRulesApi, RESOLUTION_REASON_LABELS, type BadActor, type ResolutionReason } from '@/api/anomaly'
+import { anomalyApi, driftRulesApi, type BadActor } from '@/api/anomaly'
 import { client as apiClient } from '@/api/client'
 import { sourcesApi } from '@/api/sources'
 import { BUILTIN_ANOMALY_TEMPLATES, type BuiltinAnomalyTemplate } from '@/data/anomalyTemplates'
@@ -22,9 +22,6 @@ import type {
   AnomalyMetricConfig,
   AnomalyRuleTemplate,
   DetectionMethod,
-  EdgeAnomalyEvent,
-  EdgeAnomalyIncident,
-  EdgeAnomalyAlert,
   DriftRuleConfig,
   MetricScope,
 } from '@/types'
@@ -34,20 +31,7 @@ import type { PointCatalogEntry } from '@/api/point-catalog'
 import { PROTOCOL_LABELS, protocolLabel, protocolColor } from '@/utils/protocol'
 
 // ── Shared ────────────────────────────────────────────────────────────────────
-const activeTab = ref('incidents')
-
-const SEVERITY_TAG_COLOR: Record<string, string> = {
-  critical: 'red',
-  warning: 'orange',
-  info: 'blue',
-}
-const SEVERITY_ORDER = ['info', 'warning', 'critical']
-
-// Strips every embedded "<uuid>_" occurrence from free-text strings (e.g. alert messages).
-const GUID_ANYWHERE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}_/gi
-function stripGuids(text: string): string {
-  return text ? text.replace(GUID_ANYWHERE, '') : text
-}
+const activeTab = ref('baselines')
 
 function fmtTs(ms: number | string): string {
   if (!ms) return '—'
@@ -131,143 +115,7 @@ async function loadWarmupStatus() {
   }
 }
 
-// ── Edge: Events ──────────────────────────────────────────────────────────────
-const edgeEvents = ref<EdgeAnomalyEvent[]>([])
-const edgeEventsTotal = ref(0)
-const edgeEventsLoading = ref(false)
-const edgeEventsSeverity = ref('')
-const edgeEventsPage = ref(1)
 const PAGE_SIZE = 50
-
-const edgeEventColumns = [
-  { title: 'Severity', key: 'severity', width: 100, sorter: (a: EdgeAnomalyEvent, b: EdgeAnomalyEvent) => SEVERITY_ORDER.indexOf(a.severity) - SEVERITY_ORDER.indexOf(b.severity) },
-  { title: 'Device', key: 'device_name', width: 160, ellipsis: true, sorter: (a: EdgeAnomalyEvent, b: EdgeAnomalyEvent) => a.device_name.localeCompare(b.device_name) },
-  { title: 'Point', key: 'metric', ellipsis: true, sorter: (a: EdgeAnomalyEvent, b: EdgeAnomalyEvent) => a.metric.localeCompare(b.metric) },
-  { title: 'Value', key: 'value', width: 90, sorter: (a: EdgeAnomalyEvent, b: EdgeAnomalyEvent) => (a.observed_value ?? 0) - (b.observed_value ?? 0) },
-  { title: 'Score', key: 'score', width: 80, sorter: (a: EdgeAnomalyEvent, b: EdgeAnomalyEvent) => a.anomaly_score - b.anomaly_score },
-  { title: 'Conf', key: 'conf', width: 75, sorter: (a: EdgeAnomalyEvent, b: EdgeAnomalyEvent) => a.confidence - b.confidence },
-  { title: 'Consecutive', key: 'consec', width: 90, sorter: (a: EdgeAnomalyEvent, b: EdgeAnomalyEvent) => a.consecutive_count - b.consecutive_count },
-  { title: 'Time', key: 'time', width: 160, sorter: (a: EdgeAnomalyEvent, b: EdgeAnomalyEvent) => a.timestamp_ms - b.timestamp_ms },
-]
-
-async function loadEdgeEvents() {
-  edgeEventsLoading.value = true
-  try {
-    const [r] = await Promise.all([
-      anomalyApi.getEdgeEvents({
-        severity: edgeEventsSeverity.value || undefined,
-        limit: PAGE_SIZE,
-        offset: (edgeEventsPage.value - 1) * PAGE_SIZE,
-      }),
-      ensureEndpointMaps(),
-    ])
-    edgeEvents.value = r.events
-    edgeEventsTotal.value = r.total
-  } catch { /* non-fatal */ } finally {
-    edgeEventsLoading.value = false
-  }
-}
-
-// ── Edge: Incidents ───────────────────────────────────────────────────────────
-const edgeIncidents = ref<EdgeAnomalyIncident[]>([])
-const edgeIncidentsTotal = ref(0)
-const edgeIncidentsLoading = ref(false)
-const edgeIncidentsStatus = ref('')
-const edgeIncidentsPage = ref(1)
-const resolvingId = ref<string | null>(null)
-
-const edgeIncidentColumns = [
-  { title: 'Severity', key: 'severity', width: 95, sorter: (a: EdgeAnomalyIncident, b: EdgeAnomalyIncident) => SEVERITY_ORDER.indexOf(a.severity) - SEVERITY_ORDER.indexOf(b.severity) },
-  { title: 'Point', key: 'metric', ellipsis: true, sorter: (a: EdgeAnomalyIncident, b: EdgeAnomalyIncident) => a.metric.localeCompare(b.metric) },
-  { title: 'Device', key: 'device_name', width: 160, ellipsis: true, sorter: (a: EdgeAnomalyIncident, b: EdgeAnomalyIncident) => a.device_name.localeCompare(b.device_name) },
-  { title: 'Status', key: 'status', width: 90, sorter: (a: EdgeAnomalyIncident, b: EdgeAnomalyIncident) => a.status.localeCompare(b.status) },
-  { title: 'Events', dataIndex: 'event_count', key: 'event_count', width: 70, sorter: (a: EdgeAnomalyIncident, b: EdgeAnomalyIncident) => a.event_count - b.event_count },
-  { title: 'Score', key: 'score', width: 80, sorter: (a: EdgeAnomalyIncident, b: EdgeAnomalyIncident) => a.max_anomaly_score - b.max_anomaly_score },
-  { title: 'First seen', key: 'first_seen', width: 155, sorter: (a: EdgeAnomalyIncident, b: EdgeAnomalyIncident) => a.first_seen - b.first_seen },
-  { title: 'Last seen', key: 'last_seen', width: 155, sorter: (a: EdgeAnomalyIncident, b: EdgeAnomalyIncident) => a.last_seen - b.last_seen },
-  { title: '', key: 'actions', width: 90, fixed: 'right' },
-]
-
-const INCIDENT_STATUS_COLOR: Record<string, string> = { open: 'orange', active: 'red', resolved: 'green' }
-
-async function loadEdgeIncidents() {
-  edgeIncidentsLoading.value = true
-  try {
-    const [r] = await Promise.all([
-      anomalyApi.getEdgeIncidents({
-        status: edgeIncidentsStatus.value || undefined,
-        limit: PAGE_SIZE,
-        offset: (edgeIncidentsPage.value - 1) * PAGE_SIZE,
-      }),
-      ensureEndpointMaps(),
-    ])
-    edgeIncidents.value = r.incidents
-    edgeIncidentsTotal.value = r.total
-  } catch { /* non-fatal */ } finally {
-    edgeIncidentsLoading.value = false
-  }
-}
-
-// Reason is captured (not just a bare confirm) so noisy rules can eventually
-// be found by false-positive rate, not just raw incident count — see the
-// Bad Actors panel on the Rules tab. Kept to a single required dropdown plus
-// optional free-text notes, not a full form, so resolving stays low-friction.
-const resolveModalOpen = ref(false)
-const resolveModalIncident = ref<EdgeAnomalyIncident | null>(null)
-const resolveModalReason = ref<ResolutionReason | undefined>(undefined)
-const resolveModalNotes = ref('')
-
-function openResolveModal(incident: EdgeAnomalyIncident) {
-  resolveModalIncident.value = incident
-  resolveModalReason.value = undefined
-  resolveModalNotes.value = ''
-  resolveModalOpen.value = true
-}
-
-async function confirmResolve() {
-  const incident = resolveModalIncident.value
-  if (!incident || !resolveModalReason.value) return
-  resolvingId.value = incident.incident_id
-  try {
-    await anomalyApi.resolveIncident(incident.incident_id, resolveModalReason.value, resolveModalNotes.value.trim() || undefined)
-    message.success('Incident resolved')
-    resolveModalOpen.value = false
-    loadEdgeIncidents()
-  } catch (err: unknown) {
-    message.error((err as { message?: string })?.message ?? 'Failed to resolve')
-  } finally {
-    resolvingId.value = null
-  }
-}
-
-// ── Edge: Alerts ──────────────────────────────────────────────────────────────
-const edgeAlerts = ref<EdgeAnomalyAlert[]>([])
-const edgeAlertsTotal = ref(0)
-const edgeAlertsLoading = ref(false)
-const edgeAlertsPage = ref(1)
-
-const edgeAlertColumns = [
-  { title: 'Severity', key: 'severity', width: 100, sorter: (a: EdgeAnomalyAlert, b: EdgeAnomalyAlert) => SEVERITY_ORDER.indexOf(a.severity) - SEVERITY_ORDER.indexOf(b.severity) },
-  { title: 'Point', key: 'metric', ellipsis: true, sorter: (a: EdgeAnomalyAlert, b: EdgeAnomalyAlert) => a.metric.localeCompare(b.metric) },
-  { title: 'Device', key: 'device_name', width: 160, ellipsis: true, sorter: (a: EdgeAnomalyAlert, b: EdgeAnomalyAlert) => a.device_name.localeCompare(b.device_name) },
-  { title: 'Score', key: 'score', width: 80, sorter: (a: EdgeAnomalyAlert, b: EdgeAnomalyAlert) => a.max_anomaly_score - b.max_anomaly_score },
-  { title: 'Message', dataIndex: 'message', key: 'message', width: 500 },
-  { title: 'Time', key: 'time', width: 160, sorter: (a: EdgeAnomalyAlert, b: EdgeAnomalyAlert) => a.created_at - b.created_at },
-]
-
-async function loadEdgeAlerts() {
-  edgeAlertsLoading.value = true
-  try {
-    const [r] = await Promise.all([
-      anomalyApi.getEdgeAlerts({ limit: PAGE_SIZE, offset: (edgeAlertsPage.value - 1) * PAGE_SIZE }),
-      ensureEndpointMaps(),
-    ])
-    edgeAlerts.value = r.alerts
-    edgeAlertsTotal.value = r.total
-  } catch { /* non-fatal */ } finally {
-    edgeAlertsLoading.value = false
-  }
-}
 
 // ── Baselines tab ──────────────────────────────────────────────────────────────
 // pendingWindowSize is set whenever a metric's buffer hasn't yet filled to its
@@ -1339,18 +1187,15 @@ async function loadBadActors() {
 function onTabChange(tab: string) {
   activeTab.value = tab
   stopTabAutoRefresh()
-  if (tab === 'events') { loadEdgeEvents(); startTabAutoRefresh(loadEdgeEvents, edgeEventsLoading) }
-  else if (tab === 'incidents') { loadEdgeIncidents(); startTabAutoRefresh(loadEdgeIncidents, edgeIncidentsLoading) }
-  else if (tab === 'alerts') { loadEdgeAlerts(); startTabAutoRefresh(loadEdgeAlerts, edgeAlertsLoading) }
-  else if (tab === 'baselines') { loadBaselines(); startTabAutoRefresh(loadBaselines, baselinesLoading) }
+  if (tab === 'baselines') { loadBaselines(); startTabAutoRefresh(loadBaselines, baselinesLoading) }
   else if (tab === 'schema-drift') { loadDriftRules() }
   else if (tab === 'rules') { loadConfig(); loadBadActors(); ensureEndpointMaps() }
 }
 
 onMounted(() => {
   ensureEndpointMaps()
-  loadEdgeIncidents()
-  startTabAutoRefresh(loadEdgeIncidents, edgeIncidentsLoading)
+  loadBaselines()
+  startTabAutoRefresh(loadBaselines, baselinesLoading)
 })
 // proInstalled is fetched asynchronously by AppLayout and may not have resolved
 // yet when this view mounts (e.g. a direct page load on the Anomalies tab) — a
@@ -1398,182 +1243,6 @@ onUnmounted(() => {
       </template>
     </a-alert>
     <a-tabs :active-key="activeTab" @change="onTabChange">
-
-      <!-- ══ EVENTS ═════════════════════════════════════════════════════════ -->
-      <a-tab-pane key="events" tab="Events">
-        <a-card size="small" class="list-card">
-        <div class="toolbar-info" style="display: flex; justify-content: space-between; align-items: center">
-          <span>{{ edgeEventsTotal }} total · auto-refresh 5s</span>
-        </div>
-        <div class="filters" style="margin-bottom: 8px">
-          <a-select
-            v-model:value="edgeEventsSeverity"
-            placeholder="All severities"
-            allow-clear
-            class="filter"
-            @change="() => { edgeEventsPage = 1; loadEdgeEvents() }"
-          >
-            <a-select-option value="critical">Critical</a-select-option>
-            <a-select-option value="warning">Warning</a-select-option>
-            <a-select-option value="info">Info</a-select-option>
-          </a-select>
-        </div>
-        <a-table
-          :columns="edgeEventColumns"
-          :data-source="edgeEvents"
-          :loading="edgeEventsLoading && edgeEvents.length === 0"
-          :pagination="{ current: edgeEventsPage, pageSize: PAGE_SIZE, total: edgeEventsTotal, showSizeChanger: false, onChange: (p: number) => { edgeEventsPage = p; loadEdgeEvents() } }"
-          row-key="id"
-          size="small"
-          :scroll="{ x: true }"
-        >
-          <template #bodyCell="{ column, record }">
-            <template v-if="column.key === 'severity'">
-              <a-tag :color="SEVERITY_TAG_COLOR[record.severity]" :class="record.severity === 'critical' && record.status !== 'resolved' ? 'severity-critical' : ''" style="margin: 0">{{ record.severity }}</a-tag>
-            </template>
-            <template v-else-if="column.key === 'metric'">
-              <span :title="record.metric">{{ friendlyLabel(record.metric) }}</span>
-            </template>
-            <template v-else-if="column.key === 'device_name'">
-              {{ deviceDisplayName(record.device_name) }}
-            </template>
-            <template v-else-if="column.key === 'value'">
-              <span style="font-variant-numeric: tabular-nums">{{ fmtNum(record.observed_value, 3) }}</span>
-            </template>
-            <template v-else-if="column.key === 'score'">
-              <span style="font-variant-numeric: tabular-nums">{{ fmtNum(record.anomaly_score, 3) }}</span>
-            </template>
-            <template v-else-if="column.key === 'conf'">
-              {{ Math.round(record.confidence * 100) }}%
-            </template>
-            <template v-else-if="column.key === 'consec'">
-              <span style="color: var(--text-tertiary)">{{ record.consecutive_count }}×</span>
-            </template>
-            <template v-else-if="column.key === 'time'">
-              <span style="color: var(--text-tertiary)">{{ fmtTs(record.timestamp_ms) }}</span>
-            </template>
-          </template>
-          <template #emptyText>
-            <div style="padding: 24px 0; text-align: center; color: var(--text-muted); font-size: 13px">
-              No anomaly events yet. Events are recorded when the anomaly detection engine triggers.
-            </div>
-          </template>
-        </a-table>
-        </a-card>
-      </a-tab-pane>
-
-      <!-- ══ INCIDENTS ══════════════════════════════════════════════════════ -->
-      <a-tab-pane key="incidents" tab="Incidents">
-        <a-card size="small" class="list-card">
-        <div class="toolbar-info" style="display: flex; justify-content: space-between; align-items: center">
-          <span>{{ edgeIncidentsTotal }} total · auto-refresh 5s</span>
-        </div>
-        <div class="filters" style="margin-bottom: 8px">
-          <a-select
-            v-model:value="edgeIncidentsStatus"
-            placeholder="All statuses"
-            allow-clear
-            class="filter"
-            @change="() => { edgeIncidentsPage = 1; loadEdgeIncidents() }"
-          >
-            <a-select-option value="open">Open</a-select-option>
-            <a-select-option value="active">Active</a-select-option>
-            <a-select-option value="resolved">Resolved</a-select-option>
-          </a-select>
-        </div>
-        <a-table
-          :columns="edgeIncidentColumns"
-          :data-source="edgeIncidents"
-          :loading="edgeIncidentsLoading && edgeIncidents.length === 0"
-          :pagination="{ current: edgeIncidentsPage, pageSize: PAGE_SIZE, total: edgeIncidentsTotal, showSizeChanger: false, onChange: (p: number) => { edgeIncidentsPage = p; loadEdgeIncidents() } }"
-          row-key="incident_id"
-          size="small"
-          :scroll="{ x: true }"
-        >
-          <template #bodyCell="{ column, record }">
-            <template v-if="column.key === 'severity'">
-              <a-tag :color="SEVERITY_TAG_COLOR[record.severity]" :class="record.severity === 'critical' && record.status !== 'resolved' ? 'severity-critical' : ''" style="margin: 0">{{ record.severity }}</a-tag>
-            </template>
-            <template v-else-if="column.key === 'metric'">
-              <span :title="record.metric">{{ friendlyLabel(record.metric) }}</span>
-            </template>
-            <template v-else-if="column.key === 'device_name'">
-              {{ deviceDisplayName(record.device_name) }}
-            </template>
-            <template v-else-if="column.key === 'status'">
-              <a-tag :color="INCIDENT_STATUS_COLOR[record.status]" style="margin: 0">{{ record.status }}</a-tag>
-            </template>
-            <template v-else-if="column.key === 'score'">
-              <span style="font-variant-numeric: tabular-nums">{{ fmtNum(record.max_anomaly_score, 3) }}</span>
-            </template>
-            <template v-else-if="column.key === 'first_seen'">
-              <span style="color: var(--text-tertiary)">{{ fmtTs(record.first_seen) }}</span>
-            </template>
-            <template v-else-if="column.key === 'last_seen'">
-              <span style="color: var(--text-tertiary)">{{ fmtTs(record.last_seen) }}</span>
-            </template>
-            <template v-else-if="column.key === 'actions'">
-              <a-button
-                v-if="record.status !== 'resolved'"
-                size="small"
-                :loading="resolvingId === record.incident_id"
-                @click="openResolveModal(record)"
-              >Resolve</a-button>
-              <span v-else style="color: var(--text-tertiary)">—</span>
-            </template>
-          </template>
-          <template #emptyText>
-            <div style="padding: 24px 0; text-align: center; color: var(--text-muted); font-size: 13px">
-              No incidents yet. Incidents are created when multiple anomaly events share the same fingerprint.
-            </div>
-          </template>
-        </a-table>
-        </a-card>
-      </a-tab-pane>
-
-      <!-- ══ ALERTS (edge) ══════════════════════════════════════════════════ -->
-      <a-tab-pane key="alerts" tab="Alerts">
-        <a-card size="small" class="list-card">
-        <div class="toolbar-info" style="display: flex; justify-content: space-between; align-items: center">
-          <span>{{ edgeAlertsTotal }} total · auto-refresh 5s</span>
-        </div>
-        <a-table
-          :columns="edgeAlertColumns"
-          :data-source="edgeAlerts"
-          :loading="edgeAlertsLoading && edgeAlerts.length === 0"
-          :pagination="{ current: edgeAlertsPage, pageSize: PAGE_SIZE, total: edgeAlertsTotal, showSizeChanger: false, onChange: (p: number) => { edgeAlertsPage = p; loadEdgeAlerts() } }"
-          row-key="alert_id"
-          size="small"
-          :scroll="{ x: true }"
-        >
-          <template #bodyCell="{ column, record }">
-            <template v-if="column.key === 'severity'">
-              <a-tag :color="SEVERITY_TAG_COLOR[record.severity]" :class="record.severity === 'critical' && record.status !== 'resolved' ? 'severity-critical' : ''" style="margin: 0">{{ record.severity }}</a-tag>
-            </template>
-            <template v-else-if="column.key === 'metric'">
-              <span :title="record.metric">{{ friendlyLabel(record.metric) }}</span>
-            </template>
-            <template v-else-if="column.key === 'device_name'">
-              {{ deviceDisplayName(record.device_name) }}
-            </template>
-            <template v-else-if="column.key === 'score'">
-              <span style="font-variant-numeric: tabular-nums">{{ fmtNum(record.max_anomaly_score, 3) }}</span>
-            </template>
-            <template v-else-if="column.key === 'message'">
-              <span :title="record.message" style="white-space: normal; word-break: break-word">{{ stripGuids(record.message) }}</span>
-            </template>
-            <template v-else-if="column.key === 'time'">
-              <span style="color: var(--text-tertiary)">{{ fmtTs(record.created_at) }}</span>
-            </template>
-          </template>
-          <template #emptyText>
-            <div style="padding: 24px 0; text-align: center; color: var(--text-muted); font-size: 13px">
-              No alerts promoted yet. Alerts are raised when an incident accumulates enough events (critical: 1, warning: 3, info: 5).
-            </div>
-          </template>
-        </a-table>
-        </a-card>
-      </a-tab-pane>
 
       <!-- ══ BASELINES ══════════════════════════════════════════════════════ -->
       <a-tab-pane key="baselines" tab="Baselines">
@@ -1923,37 +1592,6 @@ onUnmounted(() => {
           </div>
         </template>
       </a-table>
-    </a-modal>
-
-    <!-- ── Resolve incident modal ───────────────────────────────────────────── -->
-    <a-modal
-      :open="resolveModalOpen"
-      title="Resolve incident"
-      ok-text="Resolve"
-      :confirm-loading="!!resolvingId"
-      :ok-button-props="{ disabled: !resolveModalReason }"
-      @ok="confirmResolve"
-      @cancel="resolveModalOpen = false"
-    >
-      <p v-if="resolveModalIncident" style="margin-bottom: 16px">
-        Mark "{{ friendlyLabel(resolveModalIncident.metric) }}" on
-        {{ deviceDisplayName(resolveModalIncident.device_name) }} as resolved.
-      </p>
-      <a-form layout="vertical">
-        <a-form-item label="Reason" required>
-          <a-select v-model:value="resolveModalReason" placeholder="Why is this being resolved?" style="width: 100%">
-            <a-select-option v-for="(label, value) in RESOLUTION_REASON_LABELS" :key="value" :value="value">
-              {{ label }}
-            </a-select-option>
-          </a-select>
-          <div style="font-size: 12px; color: var(--text-tertiary); margin-top: 4px">
-            Used to spot noisy rules later (see Bad Actors on the Rules tab) — not shown anywhere else right now.
-          </div>
-        </a-form-item>
-        <a-form-item label="Notes" style="margin-bottom: 0">
-          <a-textarea v-model:value="resolveModalNotes" placeholder="Optional" :rows="2" />
-        </a-form-item>
-      </a-form>
     </a-modal>
 
     <!-- ── Reset baselines modal ────────────────────────────────────────────── -->

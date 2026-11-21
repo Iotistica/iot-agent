@@ -24,7 +24,7 @@ import { AgentUpdater } from '../update/updater.js';
 import { createCommandFeature, type CommandFeature } from '../commands/index.js';
 import { AgentFirewall } from '../network/firewall.js';
 import { CaptureEngine } from '../network/capture.js';
-import { setDevicePublish, setDiscoveryRulesScheduler, setFirewall, setCaptureEngine } from '../api/actions.js';
+import { setDevicePublish, setDiscoveryRulesScheduler, setFirewall, setCaptureEngine, setEventBus as setActionsEventBus } from '../api/actions.js';
 import { type CloudMqttClient } from '../mqtt/manager.js';
 import { agentTopic } from '../mqtt/topics.js';
 import { type StateManager } from '../core/state.js';
@@ -53,7 +53,7 @@ export interface FeatureContext {
   dictionaryManager?: any; // Dictionary manager for MQTT message key compaction
   pipelineService?: PipelineService; // Node-RED payload transform pipeline (optional)
   liveDataInterceptor?: (messages: any[], endpointName: string) => Promise<any[]> | any[];
-  correlator?: { processEvent: (payload: any) => void };
+  eventBus?: { submit: (event: any) => void };
 }
 
 export interface InitializedFeatures {
@@ -161,10 +161,11 @@ export class FeatureInitializer {
 		this.features.devicePublish?.setMaintenanceEnergyService?.(maintenanceEnergyService);
 	}
 
-	/** Wires the shared incident correlator into Device Publish so critical schema drift can raise alerts. */
-	public setIncidentCorrelator(correlator?: { processEvent: (payload: any) => void }): void {
-		this.context.correlator = correlator;
-		this.features.devicePublish?.setIncidentCorrelator?.(correlator);
+	/** Wires the shared event bus into Device Publish so schema drift and other sources can submit events. */
+	public setEventBus(eventBus?: { submit: (event: any) => void }): void {
+		this.context.eventBus = eventBus;
+		this.features.devicePublish?.setEventBus?.(eventBus);
+		setActionsEventBus(eventBus);
 	}
 
 	public setLiveDataInterceptor(interceptor?: (messages: any[], endpointName: string) => Promise<any[]> | any[]): void {
@@ -431,8 +432,8 @@ export class FeatureInitializer {
 				this.features.devicePublish.setLiveDataInterceptor(this.context.liveDataInterceptor);
 			}
 
-			if (this.context.correlator) {
-				this.features.devicePublish.setIncidentCorrelator(this.context.correlator);
+			if (this.context.eventBus) {
+				this.features.devicePublish.setEventBus(this.context.eventBus);
 			}
 
 			await this.features.devicePublish.start();

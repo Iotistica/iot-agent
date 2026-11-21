@@ -601,6 +601,54 @@ export interface EdgeAnomalyAlert {
   created_at: number
 }
 
+// ── Generic agent events (unified event system) ───────────────────────────
+
+export interface AgentEvent {
+  id: number
+  msg_id: string
+  source: string
+  category: string
+  severity: 'info' | 'warning' | 'critical'
+  fingerprint: string
+  message: string
+  device_name?: string | null
+  timestamp_ms: number
+  actor?: string | null
+  resource_type?: string | null
+  resource_id?: string | null
+  metadata?: string | null
+  created_at: number
+}
+
+export interface AgentIncident {
+  id: number
+  incident_id: string
+  source: string
+  fingerprint: string
+  severity: 'info' | 'warning' | 'critical'
+  device_name: string
+  first_seen: number
+  last_seen: number
+  event_count: number
+  status: 'open' | 'active' | 'resolved'
+  last_alert_at?: number
+  resolution_notes?: string
+  resolution_reason?: string
+  created_at: number
+  updated_at: number
+}
+
+export interface AgentAlert {
+  id: number
+  alert_id: string
+  incident_id: string
+  source: string
+  severity: 'info' | 'warning' | 'critical'
+  device_name: string
+  message: string
+  created_at: number
+}
+
 // ── Schema drift rules ─────────────────────────────────────────────────────
 
 export type DriftType = 'new-field' | 'missing-field' | 'type-drift' | 'rename-candidate'

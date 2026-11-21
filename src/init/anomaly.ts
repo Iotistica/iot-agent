@@ -6,8 +6,7 @@ import { CloudMqttClient } from '../mqtt/manager.js';
 import { agentTopic } from '../mqtt/topics.js';
 import { PublishDestinationsModel } from '../db/models/publish-destinations.model.js';
 import { createExternalMqttClientFromDestination } from '../publish/plugins/mqtt.js';
-import { IncidentCorrelator } from '../analytics/anomaly/incident-correlator.js';
-import type { AnomalyEventPayload } from '../db/models/anomaly-event.model.js';
+import { EventBus } from '../events/event-bus.js';
 import type { AgentInitContext } from './context.js';
 
 export async function initAnomalyDetection(ctx: AgentInitContext): Promise<void> {
@@ -51,16 +50,12 @@ export async function initAnomalyDetection(ctx: AgentInitContext): Promise<void>
 		ctx.anomalyService = undefined;
 	}
 
-	// Start the edge incident correlator (runs regardless of Pro license).
-	if (!ctx.correlator) {
-		ctx.correlator = new IncidentCorrelator();
-		ctx.correlator.start();
+	if (!ctx.eventBus) {
+		ctx.eventBus = new EventBus();
+		ctx.eventBus.start();
 	}
 
-	// Wired unconditionally, before the Pro-gated try block below — schema
-	// drift alerting shouldn't depend on whether Pro anomaly detection loaded
-	// successfully, since the correlator itself runs regardless of license.
-	ctx.featureInitializer?.setIncidentCorrelator?.(ctx.correlator);
+	ctx.featureInitializer?.setEventBus?.(ctx.eventBus);
 
 	try {
 		if (!isProLicensed()) {
@@ -83,7 +78,7 @@ export async function initAnomalyDetection(ctx: AgentInitContext): Promise<void>
 			defaults: config.defaults,
 		});
 
-		const correlator = ctx.correlator;
+		const eventBus = ctx.eventBus;
 		ctx.anomalyService = new AnomalyDetectionService(
 			config,
 			dbInstance,
@@ -102,24 +97,28 @@ export async function initAnomalyDetection(ctx: AgentInitContext): Promise<void>
 				createAlertMqttClient: (config: Record<string, unknown> | null | undefined, deviceId?: string, name?: string, logger?: any) =>
 					createExternalMqttClientFromDestination(config, deviceId, name, logger),
 				onAnomalyDetected: (event: any) =>
-					correlator?.processEvent({
-						metric:            event.metric,
-						fingerprint:       event.fingerprint,
-						timestamp_ms:      event.timestampMs,
-						observed_value:    event.observedValue,
-						anomaly_score:     event.anomalyScore,
-						confidence:        event.confidence,
-						severity:          event.severity,
-						severity_reason:   event.severityReason,
-						consecutive_count: event.consecutiveCount,
-						triggered_by:      event.triggeredBy,
-						baseline:          event.baseline,
-						expected_range:    event.expectedRange,
-						deviation:         event.deviation,
-						device_name:       event.deviceName,
-						device_type:       event.deviceType,
-						device_uuid:       event.agentUuid,
-					} satisfies AnomalyEventPayload),
+					eventBus?.submit({
+						source:      'anomaly',
+						category:    'alert',
+						severity:    event.severity,
+						message:     buildAnomalyMessage(event),
+						fingerprint: event.fingerprint,
+						device_name: event.deviceName ?? 'Unknown',
+						metadata: {
+							metric:            event.metric,
+							observed_value:    event.observedValue,
+							anomaly_score:     event.anomalyScore,
+							confidence:        event.confidence,
+							severity_reason:   event.severityReason,
+							consecutive_count: event.consecutiveCount,
+							triggered_by:      event.triggeredBy,
+							baseline:          event.baseline,
+							expected_range:    event.expectedRange,
+							deviation:         event.deviation,
+							device_type:       event.deviceType,
+							device_uuid:       event.agentUuid,
+						},
+					}),
 			}
 		);
 
@@ -174,4 +173,41 @@ export async function configureAnomalyFeed(ctx: AgentInitContext): Promise<void>
 		component: LogComponents.agent,
 	});
 	await getSystemMetrics();
+}
+
+function buildAnomalyMessage(event: any): string {
+	const parts = [
+		`${(event.severity as string).toUpperCase()}: Anomaly in "${event.metric}"`,
+		`on ${event.deviceName ?? 'Unknown'}.`,
+	];
+
+	const triggeredBy = Array.isArray(event.triggeredBy)
+		? (event.triggeredBy as unknown[]).filter((m): m is string => typeof m === 'string')
+		: undefined;
+	if (triggeredBy?.length) {
+		parts.push(`Triggered by: ${triggeredBy.join(', ')}.`);
+	}
+
+	const range = Array.isArray(event.expectedRange) && event.expectedRange.length === 2
+		? event.expectedRange as [number, number]
+		: undefined;
+	if (range) {
+		parts.push(`Expected range: [${range[0].toFixed(2)}, ${range[1].toFixed(2)}].`);
+	}
+
+	parts.push(`Observed: ${event.observedValue}.`);
+
+	if (typeof event.deviation === 'number' && event.deviation > 0) {
+		parts.push(`Deviation: ${event.deviation.toFixed(2)}.`);
+	}
+
+	if (event.severityReason) {
+		parts.push(`Reason: ${event.severityReason}.`);
+	}
+
+	if (typeof event.anomalyScore === 'number') {
+		parts.push(`Score: ${event.anomalyScore.toFixed(2)}.`);
+	}
+
+	return parts.join(' ');
 }

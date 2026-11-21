@@ -3089,6 +3089,91 @@ router.patch('/v1/protocol-outputs/drift', requireRole('operator'), async (req: 
 });
 
 /**
+ * PATCH /v1/protocol-outputs/:protocol
+ * Update core fields (socket_path, buffer_capacity) for a protocol pipe.
+ */
+router.patch('/v1/protocol-outputs/:protocol', requireRole('operator'), async (req: Request, res: Response, next: NextFunction) => {
+	try {
+		const { protocol } = req.params;
+		const { EndpointOutputModel } = await import('../db/models/endpoint-outputs.model.js');
+		const existing = await EndpointOutputModel.getOutput(protocol);
+		if (!existing) {
+			res.status(404).json({ error: `Protocol output not found: ${protocol}` });
+			return;
+		}
+		const body = req.body ?? {};
+		const updates: Partial<typeof existing> = {};
+		if (body.socket_path !== undefined) updates.socket_path = String(body.socket_path);
+		if (body.buffer_capacity !== undefined) {
+			const cap = Number(body.buffer_capacity);
+			if (!Number.isFinite(cap) || cap < 1024) {
+				res.status(400).json({ error: 'buffer_capacity must be at least 1024 bytes' });
+				return;
+			}
+			updates.buffer_capacity = cap;
+		}
+		if (body.data_format !== undefined) updates.data_format = String(body.data_format);
+		if (body.delimiter !== undefined) updates.delimiter = String(body.delimiter);
+		const updated = await EndpointOutputModel.setOutput({ ...existing, ...updates });
+		res.json({ output: updated });
+	} catch (err) {
+		next(err);
+	}
+});
+
+/**
+ * POST /v1/protocol-outputs
+ * Register a new protocol output pipe.
+ */
+router.post('/v1/protocol-outputs', requireRole('operator'), async (req: Request, res: Response, next: NextFunction) => {
+	try {
+		const { EndpointOutputModel } = await import('../db/models/endpoint-outputs.model.js');
+		const body = req.body ?? {};
+		if (!body.protocol || !body.socket_path) {
+			res.status(400).json({ error: 'protocol and socket_path are required' });
+			return;
+		}
+		const existing = await EndpointOutputModel.getOutput(body.protocol);
+		if (existing) {
+			res.status(409).json({ error: `Protocol output already exists: ${body.protocol}` });
+			return;
+		}
+		const isWindows = process.platform === 'win32';
+		const output = await EndpointOutputModel.setOutput({
+			protocol: body.protocol,
+			socket_path: String(body.socket_path),
+			data_format: body.data_format || 'json',
+			delimiter: body.delimiter || '\n',
+			include_timestamp: body.include_timestamp ?? true,
+			include_device_name: body.include_device_name ?? true,
+			buffer_capacity: Number(body.buffer_capacity) || (1024 * 1024),
+		});
+		res.status(201).json({ output });
+	} catch (err) {
+		next(err);
+	}
+});
+
+/**
+ * DELETE /v1/protocol-outputs/:protocol
+ * Remove a protocol output pipe.
+ */
+router.delete('/v1/protocol-outputs/:protocol', requireRole('operator'), async (req: Request, res: Response, next: NextFunction) => {
+	try {
+		const { protocol } = req.params;
+		const { EndpointOutputModel } = await import('../db/models/endpoint-outputs.model.js');
+		const deleted = await EndpointOutputModel.delete(protocol);
+		if (!deleted) {
+			res.status(404).json({ error: `Protocol output not found: ${protocol}` });
+			return;
+		}
+		res.json({ deleted: protocol });
+	} catch (err) {
+		next(err);
+	}
+});
+
+/**
  * GET /v1/schema-drift/baselines
  * Flattens every protocol pipe's persisted per-device schema drift state into
  * one row per field — established baseline fields plus fields still
@@ -3796,7 +3881,7 @@ router.delete('/v1/admin/sessions/:token', (req: Request, res: Response, next: N
 
 // ── MQTT Broker Monitor (/v1/mqtt/*) ──────────────────────────────────────────
 
-import { BrokerMonitorService } from '../mqtt/broker-monitor.js';
+import { BrokerMonitorService } from '../mqtt/monitor.js';
 
 // ── MQTT Users (/v1/mqtt/users) ───────────────────────────────────────────────
 // Users are stored in the mqtt_users SQLite table so they survive builds and

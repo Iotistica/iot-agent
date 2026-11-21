@@ -34,6 +34,7 @@ import type { DevicePublish } from '../publish/index.js';
 import type { DiscoveryRulesScheduler } from '../discovery/rules-scheduler.js';
 import type { AgentFirewall, FirewallMode } from '../network/firewall.js';
 import type { CaptureEngine } from '../network/capture.js';
+import type { AgentEventInput } from '../events/types.js';
 import type { DockerOptions } from 'dockerode';
 import { isProLicensed } from '../licensing/runtime.js';
 import { queueAgentUpdateRequest } from '../update/update-request.js';
@@ -72,6 +73,7 @@ let discoveryRulesScheduler: DiscoveryRulesScheduler | undefined;
 let localLogBackend: LocalLogBackend | undefined;
 let firewall: AgentFirewall | undefined;
 let captureEngine: CaptureEngine | undefined;
+let eventBus: { submit: (event: AgentEventInput) => void } | undefined;
 
 export function setFirewall(fw: AgentFirewall | undefined): void {
 	firewall = fw;
@@ -87,6 +89,14 @@ export function setCaptureEngine(engine: CaptureEngine | undefined): void {
 
 export function getCaptureEngine(): CaptureEngine | undefined {
 	return captureEngine;
+}
+
+export function setEventBus(eb: typeof eventBus): void {
+	eventBus = eb;
+}
+
+function logEvent(event: AgentEventInput): void {
+	eventBus?.submit(event);
 }
 
 export function setDevicePublish(dp: DevicePublish | undefined): void {
@@ -1668,6 +1678,17 @@ export const addEndpoint = async (body: {
 		}
 	}
 
+	logEvent({
+		source: 'audit',
+		category: 'lifecycle',
+		severity: 'info',
+		message: `Endpoint created: ${body.name}`,
+		actor: 'api',
+		resource_type: 'endpoint',
+		resource_id: uuid,
+		metadata: { protocol: body.protocol, endpoint_name: body.name, enabled: newEndpoint.enabled },
+	});
+
 	return {
 		uuid,
 		name: body.name,
@@ -1699,6 +1720,16 @@ export const updateEndpoint = async (uuidOrName: string, patch: { enabled?: bool
 	const result = await EndpointModel.update(ep.name, updates);
 
 	if (patch.enabled !== undefined) {
+		logEvent({
+			source: 'audit',
+			category: 'lifecycle',
+			severity: 'info',
+			message: `Endpoint ${patch.enabled ? 'enabled' : 'disabled'}: ${ep.name}`,
+			actor: 'api',
+			resource_type: 'endpoint',
+			resource_id: ep.uuid,
+			metadata: { protocol: ep.protocol, endpoint_name: ep.name },
+		});
 		await adapterManager?.reloadAdapterGroup(ep.protocol).catch((err) => {
 			logger?.warn(`Failed to reload ${ep.protocol} adapter after endpoint update`, err as Error);
 		});
@@ -1731,6 +1762,17 @@ export const removeEndpoint = async (uuid: string) => {
 	// Remove directly from the endpoints table so GET /v1/endpoints reflects
 	// the deletion immediately, without waiting for the reconciliation cycle.
 	await EndpointModel.deleteByUuid(uuid);
+
+	logEvent({
+		source: 'audit',
+		category: 'lifecycle',
+		severity: 'info',
+		message: `Endpoint removed: ${existing.name}`,
+		actor: 'api',
+		resource_type: 'endpoint',
+		resource_id: uuid,
+		metadata: { protocol: existing.protocol, endpoint_name: existing.name },
+	});
 
 	// Tell the live protocol adapter to drop this device now. Reconciliation's
 	// own reload trigger only fires on a DETECTED DB diff (calculateSteps()),

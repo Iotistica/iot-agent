@@ -7,7 +7,8 @@ import {
   PartitionOutlined,
   ApartmentOutlined,
   RadarChartOutlined,
-  BellOutlined,
+  AlertOutlined,
+  FundOutlined,
   FileTextOutlined,
   ContainerOutlined,
   SettingOutlined,
@@ -121,8 +122,13 @@ function onMenuClick({ key }: { key: string }) {
           Marketplace
         </a-menu-item>
 
+        <a-menu-item key="/alerts">
+          <template #icon><AlertOutlined /></template>
+          Alerts
+        </a-menu-item>
+
         <a-menu-item key="/anomaly">
-          <template #icon><BellOutlined /></template>
+          <template #icon><FundOutlined /></template>
           Analytics
         </a-menu-item>
 

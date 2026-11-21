@@ -17,7 +17,7 @@ import type { ContainerLogMonitor } from '../logging/container-monitor.js';
 import type { DictionaryManager } from '../mqtt/dictionary.js';
 import type { HttpClient } from '../lib/http-client.js';
 import type { LicenseService } from '../licensing/index.js';
-import type { IncidentCorrelator } from '../analytics/anomaly/incident-correlator.js';
+import type { EventBus } from '../events/event-bus.js';
 
 export interface AgentInitContext {
 	agent: {
@@ -42,7 +42,7 @@ export interface AgentInitContext {
 	featureInitializer?: FeatureInitializer;
 	anomalyService?: any;
 	maintenanceEnergyService?: any;
-	correlator?: IncidentCorrelator;
+	eventBus?: EventBus;
 	pipelineService?: PipelineService;
 	simulationOrchestrator?: any;
 	discoveryService?: DiscoveryService;
