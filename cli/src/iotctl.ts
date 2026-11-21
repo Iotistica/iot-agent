@@ -20,6 +20,7 @@ import {
   publishSubscriptionsList,
 } from './commands/publish';
 import { schemaDriftGet, schemaDriftSet, schemaDriftResetAdvanced } from './commands/schema-drift';
+import { pipelineList, pipelineShow, pipelineSet, pipelineAdd, pipelineRemove } from './commands/pipeline';
 
 function buildCommands(args: string[]): CommandMap {
   const commands: CommandMap = {
@@ -148,6 +149,14 @@ function buildCommands(args: string[]): CommandMap {
       set: (...args: string[]) => schemaDriftSet(...args),
       'reset-advanced': schemaDriftResetAdvanced,
       _default: schemaDriftGet,
+    },
+    pipeline: {
+      list: pipelineList,
+      show: pipelineShow,
+      set: (protocol: string, ...args: string[]) => pipelineSet(protocol, ...args),
+      add: pipelineAdd,
+      remove: pipelineRemove,
+      _default: pipelineList,
     },
     buffer: {
       status: bufferStatus,
