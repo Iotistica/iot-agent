@@ -210,6 +210,29 @@ function close() {
         />
       </a-form-item>
 
+      <template v-if="form.protocol === 'opcua'">
+        <a-form-item label="Max Items per Subscription">
+          <a-input-number
+            :value="form.connection.maxMonitoredItemsPerSubscription ?? 5000"
+            @update:value="(v: number) => form.connection.maxMonitoredItemsPerSubscription = v"
+            :min="100"
+            :max="10000"
+            :step="500"
+            style="width: 100%"
+          />
+        </a-form-item>
+        <a-form-item label="Max Notifications per Publish">
+          <a-input-number
+            :value="form.connection.maxNotificationsPerPublish ?? 2000"
+            @update:value="(v: number) => form.connection.maxNotificationsPerPublish = v"
+            :min="100"
+            :max="10000"
+            :step="500"
+            style="width: 100%"
+          />
+        </a-form-item>
+      </template>
+
       <template v-if="form.protocol === 'modbus'">
         <a-divider orientation="left" orientation-margin="0">Register Map</a-divider>
         <a-button block @click="registerMapOpen = true">

@@ -235,14 +235,14 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
   
 	// Subscription splitting — fewer, larger subscriptions reduce publish-engine
 	// overhead in node-opcua (each subscription runs its own request pipeline).
-	private readonly MAX_MONITORED_ITEMS_PER_SUBSCRIPTION = 1000;
+	private readonly MAX_MONITORED_ITEMS_PER_SUBSCRIPTION = 5000;
 	private readonly DEFAULT_MONITORED_ITEMS_SAFETY_CEILING = 5000;
 
 	// Validation burst management — cap per-request reads so simple servers
 	// (asyncua-based simulators, embedded PLCs) aren't overwhelmed.
-	// 20 nodes × 4 attributes = 80 reads per request.
-	private static readonly VALIDATION_BATCH_SIZE = 20;
-	private static readonly VALIDATION_BATCH_PACE_MS = 10;
+	// 200 nodes × 4 attributes = 800 reads per request.
+	private static readonly VALIDATION_BATCH_SIZE = 200;
+	private static readonly VALIDATION_BATCH_PACE_MS = 2;
   
 	// Reconnection settings
 	private readonly MIN_RETRY_DELAY = 5000;   // 5 seconds
@@ -883,8 +883,10 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 				continue;
 			}
 
-			// Set computed nodeType (result of classification)
+			// Set computed nodeType and cache OPC UA metadata for validation caching
 			(dp as any).nodeType = classified;
+			(dp as any).opcNodeClass = typeof nodeClass === 'number' ? nodeClass : undefined;
+			(dp as any).opcDataTypeId = typeof dataTypeNodeId === 'number' ? dataTypeNodeId : undefined;
 
 			// Only include metrics in validated nodes (metadata excluded from polling/subscription)
 			if (classified === 'metric') {
@@ -895,6 +897,52 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 		this.logger.info(`NodeID validation result for ${deviceName}: ${valid.length} valid metrics, ${invalid.length} invalid out of ${dataPoints.length} total`);
 
 		return { valid, invalid };
+	}
+
+	private static readonly VALIDATION_CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+
+	private async persistValidationCache(
+		deviceName: string,
+		validDataPoints: OPCUADataPoint[],
+		invalidNodeIds: string[],
+	): Promise<void> {
+		try {
+			const { EndpointModel } = await import('../../db/models/endpoint.model.js');
+			const endpoint = await EndpointModel.getByName(deviceName);
+			if (!endpoint?.uuid || !endpoint.data_points) return;
+
+			const now = new Date().toISOString();
+			const validSet = new Set(validDataPoints.map(dp => dp.nodeId));
+			const invalidSet = new Set(invalidNodeIds);
+			const validByNodeId = new Map(validDataPoints.map(dp => [dp.nodeId, dp]));
+
+			const updatedPoints = endpoint.data_points.map((dp: any) => {
+				if (validSet.has(dp.nodeId)) {
+					const validated = validByNodeId.get(dp.nodeId)!;
+					return {
+						...dp,
+						opcNodeClass: (validated as any).opcNodeClass,
+						opcDataTypeId: (validated as any).opcDataTypeId,
+						nodeType: (validated as any).nodeType,
+						...((validated as any).unit && { unit: (validated as any).unit }),
+						validatedAt: now,
+					};
+				}
+				if (invalidSet.has(dp.nodeId)) {
+					const { validatedAt: _, opcNodeClass: _nc, opcDataTypeId: _dt, ...rest } = dp;
+					return rest;
+				}
+				return dp;
+			});
+
+			await EndpointModel.updateByUuid(endpoint.uuid, { data_points: updatedPoints });
+			this.logger.debug(`Persisted validation cache for ${deviceName}`, {
+				cached: validDataPoints.length,
+				invalidated: invalidNodeIds.length,
+			});
+		} catch (err) {
+			this.logger.warn(`Failed to persist validation cache for ${deviceName}: ${err instanceof Error ? err.message : String(err)}`);
+		}
 	}
 
 	/**
@@ -1044,7 +1092,7 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 			ownerPointSets.set(owner, new Set(owner.dataPoints));
 		}
 		ownerPointSets.set(device, new Set(device.dataPoints));
-		const FLUSH_CHUNK_SIZE = 2000;
+		const FLUSH_CHUNK_SIZE = 5000;
 		let draining = false;
 		let flushStartedAt = 0;
 		let processedInFlush = 0;
@@ -1086,9 +1134,9 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 				const quality: 'GOOD' | 'UNCERTAIN' | 'BAD' = entry.isGood ? 'GOOD' : this.classifyQualityFromName(entry.statusCodeName);
 				const qualityCode = quality !== 'GOOD' ? this.extractQualityCode(entry.statusCodeName) : undefined;
 
-				const normalizationDeviceName = precomputedNormNames.get(entry.dp.nodeId) ?? owningDeviceName;
-				const deviceDisplayName = precomputedDisplayNames.get(entry.dp.nodeId);
-				const resolvedDisplayName = precomputedResolvedDisplayNames.get(entry.dp.nodeId);
+				const normalizationDeviceName = this.resolvedNodeDisplayNames.get(entry.dp.nodeId) ?? this.resolvedDeviceNames.get(owningDeviceName) ?? owningDeviceName;
+				const deviceDisplayName = this.deviceDisplayNames.get(owningDeviceName)?.get(entry.dp.nodeId);
+				const resolvedDisplayName = this.resolvedNodeDisplayNames.get(entry.dp.nodeId) ?? this.resolvedDeviceNames.get(owningDeviceName);
 
 				const dataPoint: DeviceDataPoint = {
 					timestamp: new Date().toISOString(),
@@ -1225,7 +1273,7 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 					requestedPublishingInterval: connection.publishingInterval || 1000,
 					requestedLifetimeCount: 100,
 					requestedMaxKeepAliveCount: 10,
-					maxNotificationsPerPublish: 100,
+					maxNotificationsPerPublish: connection.maxNotificationsPerPublish || 2000,
 					publishingEnabled: true,
 					priority: 10,
 				});
@@ -1248,7 +1296,7 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 				revisedPublishingInterval: subscription.publishingInterval,
 				revisedLifetimeCount: subscription.lifetimeCount,
 				revisedMaxKeepAliveCount: subscription.maxKeepAliveCount,
-				requestedMaxNotificationsPerPublish: 100,
+				requestedMaxNotificationsPerPublish: connection.maxNotificationsPerPublish || 2000,
 			});
 			sessionWrapper.subscriptions.push(subscription);
 
@@ -1406,23 +1454,9 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 			throw new Error(`No monitored items were created for ${deviceName}`);
 		}
 
-		const precomputedNormNames = new Map<string, string>();
-		const precomputedDisplayNames = new Map<string, string | undefined>();
-		const precomputedResolvedDisplayNames = new Map<string, string | undefined>();
-		const precomputedStableIds = new Map<string, string>();
 		for (const dp of validDataPoints) {
 			const owningDevice = nodeIdToDevice.get(dp.nodeId) ?? device;
-			precomputedNormNames.set(dp.nodeId,
-				this.resolvedNodeDisplayNames.get(dp.nodeId) ??
-				this.resolvedDeviceNames.get(owningDevice.name) ??
-				owningDevice.name);
-			precomputedDisplayNames.set(dp.nodeId,
-				this.deviceDisplayNames.get(owningDevice.name)?.get(dp.nodeId));
-			if (this.resolvedNodeDisplayNames.has(dp.nodeId) || this.resolvedDeviceNames.has(owningDevice.name)) {
-				precomputedResolvedDisplayNames.set(dp.nodeId,
-					this.resolvedNodeDisplayNames.get(dp.nodeId) ?? this.resolvedDeviceNames.get(owningDevice.name));
-			}
-			precomputedStableIds.set(dp.nodeId, this.buildStableNodeDeviceId(owningDevice, dp));
+			this.buildStableNodeDeviceId(owningDevice, dp);
 		}
 
 		const coalescingTimer = setInterval(flushCoalescingBuffer, coalesceMs);
@@ -1879,15 +1913,45 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 				return sessionWrapper;
 			}
 
-			// Validate NodeIDs before creating subscription or reads
-			this.perfBegin(`validate:${device.name}`);
-			const { valid: validDataPoints, invalid: invalidNodeIds } = await this.validateNodeIds(
-				session,
-				device.dataPoints,
-				device.name
-			);
+			// Validate NodeIDs before creating subscription or reads.
+			// Skip validation for data points that have a recent validation cache.
+			const now = Date.now();
+			const cached: OPCUADataPoint[] = [];
+			const uncached: OPCUADataPoint[] = [];
+			for (const dp of device.dataPoints) {
+				if (dp.validatedAt && dp.opcNodeClass !== undefined && dp.opcDataTypeId !== undefined &&
+					(now - new Date(dp.validatedAt).getTime()) < OPCUAAdapter.VALIDATION_CACHE_TTL_MS) {
+					cached.push(dp);
+				} else {
+					uncached.push(dp);
+				}
+			}
 
-			this.perfEnd(`validate:${device.name}`, { valid: validDataPoints.length, invalid: invalidNodeIds.length });
+			let validDataPoints: OPCUADataPoint[];
+			let invalidNodeIds: string[];
+
+			if (uncached.length === 0 && cached.length > 0) {
+				this.logger.info(`Skipping validation for ${cached.length} previously-validated nodes on ${device.name}`);
+				validDataPoints = cached.filter(dp => dp.nodeType === 'metric');
+				invalidNodeIds = [];
+			} else {
+				const toValidate = uncached.length > 0 && cached.length > 0 ? uncached : device.dataPoints;
+				if (cached.length > 0 && uncached.length > 0) {
+					this.logger.info(`Validating ${uncached.length} new nodes, ${cached.length} from cache on ${device.name}`);
+				}
+				this.perfBegin(`validate:${device.name}`);
+				const result = await this.validateNodeIds(session, toValidate, device.name);
+				this.perfEnd(`validate:${device.name}`, { valid: result.valid.length, invalid: result.invalid.length });
+				if (cached.length > 0 && uncached.length > 0) {
+					validDataPoints = [...cached.filter(dp => dp.nodeType === 'metric'), ...result.valid];
+					invalidNodeIds = result.invalid;
+				} else {
+					validDataPoints = result.valid;
+					invalidNodeIds = result.invalid;
+				}
+				void this.persistValidationCache(device.name, result.valid, result.invalid);
+			}
+
 			// Cache validated NodeIDs (only metrics)
 			validDataPoints.forEach(dp => sessionWrapper.validatedNodes.add(dp.nodeId));
 
@@ -1930,6 +1994,7 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 						endpointUrl: device.connection.endpointUrl,
 						connection: device.connection,
 					});
+					void this.persistValidationCache(device.name, [], device.dataPoints.map(dp => dp.nodeId));
 				}
 			}
 
@@ -1979,6 +2044,15 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 				names.delete(dp.nodeId);
 				const name = displayNames.get(dp.nodeId);
 				if (name) names.set(dp.nodeId, name);
+			}
+
+			// Use inverse-browse results for normalization too — without this,
+			// points whose nodeId structure doesn't match deriveParentNodeId's
+			// path regex fall back to the sanitized endpoint URL.
+			for (const [nodeId, name] of displayNames) {
+				if (!this.resolvedNodeDisplayNames.has(nodeId)) {
+					this.resolvedNodeDisplayNames.set(nodeId, name);
+				}
 			}
 
 			// Read per-node DisplayNames from parent device folder nodes.
@@ -2102,18 +2176,22 @@ export class OPCUAAdapter extends BaseProtocolAdapter  {
 				const nodeIds = [...group.session.validatedNodes].filter(nodeId => !group.ambiguousNodeIds.has(nodeId));
 				const EVIDENCE_CHUNK = 100;
 				const values: DataValue[] = [];
+				let slowChunks = 0;
+				let slowestMs = 0;
 				for (let start = 0; start < nodeIds.length; start += EVIDENCE_CHUNK) {
 					if (!isCurrent()) return;
 					const chunk = nodeIds.slice(start, start + EVIDENCE_CHUNK);
 					const chunkStarted = performance.now();
 					const chunkValues = await session.read(chunk.map(nodeId => ({ nodeId, attributeId: AttributeIds.Value })));
 					this.perfInc('namespaceReadChunks');
-					if (performance.now() - chunkStarted > 250) this.logger.warn('[OPCUA_PERF] slow namespace read', { deviceName: group.compositeDevice.name, durationMs: Math.round(performance.now() - chunkStarted), chunkSize: chunk.length });
+					const chunkMs = performance.now() - chunkStarted;
+					if (chunkMs > 1000) { slowChunks++; slowestMs = Math.max(slowestMs, chunkMs); }
 					if (!Array.isArray(chunkValues) || chunkValues.length !== chunk.length) {
 						throw new Error('OPC UA node validation returned an unexpected number of results');
 					}
 					for (const v of chunkValues) values.push(v);
 				}
+				if (slowChunks > 0) this.logger.warn(`[OPCUA_PERF] namespace read: ${slowChunks}/${Math.ceil(nodeIds.length / EVIDENCE_CHUNK)} chunks >1s (slowest ${Math.round(slowestMs)}ms)`, { deviceName: group.compositeDevice.name });
 				if (!isCurrent()) return;
 				const confirmedUris = await readNamespaceArray();
 				if (!isCurrent()) return;

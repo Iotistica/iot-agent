@@ -215,7 +215,7 @@ EnvironmentFile=/etc/iotistic/agent.env
 Environment=NODE_ENV=production
 Environment=DEPLOYMENT_TYPE=systemd
 
-ExecStart=${NODE_PATH} ${APP_JS_PATH}
+ExecStart=${NODE_PATH} --max-old-space-size=2560 ${APP_JS_PATH}
 
 Restart=always
 RestartSec=5

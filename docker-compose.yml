@@ -5,16 +5,19 @@ services:
     restart: unless-stopped
     ports:
       - "48481:48484"
+      - "9229:9229"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - agent-data:/app/data
       - /app/data/sockets:/app/data/sockets
+    command: ["node", "--max-old-space-size=2560", "--inspect=0.0.0.0:9229", "dist/app.js"]
     environment:
       STANDALONE: "true"
       API_SECURITY_MODE: "LOCAL_NETWORK"
       MQTT_BROKER_URL: "mqtt://iotistic-mosquitto-agent:1883"
       MQTT_USERNAME: "admin"
       MQTT_PASSWORD: "iotistic42!"
+      IPC_ENGINE: "rust"
     networks:
       - iotistica-net
 

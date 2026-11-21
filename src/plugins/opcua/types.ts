@@ -88,11 +88,14 @@ export const OPCUAConnectionSchema = z.object({
 	/** Subscription sampling interval in milliseconds (only if useSubscription=true) */
 	samplingInterval: z.number().int().positive().default(500),
   
-	/** Maximum monitored items per subscription (default: 1000) */
-	maxMonitoredItemsPerSubscription: z.number().int().positive().default(1000),
+	/** Maximum monitored items per subscription (default: 5000) */
+	maxMonitoredItemsPerSubscription: z.number().int().positive().default(5000),
 
 	/** Absolute safety ceiling for subscription batches (default: 5000) */
 	maxMonitoredItemsPerSubscriptionCeiling: z.number().int().positive().optional(),
+
+	/** Maximum notifications the server may bundle into one publish response (default: 2000) */
+	maxNotificationsPerPublish: z.number().int().positive().default(2000),
 
 	/**
 	 * Per-monitored-item notification queue size (only if useSubscription=true).
@@ -182,6 +185,15 @@ export const OPCUADataPointSchema = z.object({
 		'Double',
 		'String'
 	]).optional(),
+
+	/** OPC UA NodeClass numeric value (2 = Variable). Cached from last validation. */
+	opcNodeClass: z.number().optional(),
+
+	/** OPC UA DataType numeric identifier (e.g. 10 = Float). Cached from last validation. */
+	opcDataTypeId: z.number().optional(),
+
+	/** ISO timestamp of last successful validation against the OPC UA server. */
+	validatedAt: z.string().optional(),
 });
 export type OPCUADataPoint = z.infer<typeof OPCUADataPointSchema>;
 
