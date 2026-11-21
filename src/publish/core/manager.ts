@@ -19,7 +19,7 @@ import { SchemaDriftDetector } from '../../analytics/schema-drift/index.js';
 import type { DriftAlertEvent } from '../../analytics/schema-drift/index.js';
 import { SchemaDriftModel } from '../../db/models/schema-drift.model.js';
 import { SchemaDriftRuleModel } from '../../db/models/schema-drift-rule.model.js';
-import type { AnomalyEventPayload } from '../../db/models/anomaly-event.model.js';
+import type { AgentEventInput } from '../../events/types.js';
 import type { DictionaryManager } from '../../mqtt/dictionary.js';
 import type { PublishDestinationInfo, PublishBatchItem } from './types.js';
 import { MlDatasetModel, PublishDestinationsModel, PublishSubscriptionsModel } from '../../db/models/index.js';
@@ -333,10 +333,7 @@ export class PublishManager extends EventEmitter {
 
 		this.schemaDriftDetector.setRules?.(SchemaDriftRuleModel.getAll());
 
-		// setIncidentCorrelator() may already have been called before this resolved
-		// (it's async, called from the constructor) — re-apply now that there's
-		// finally a detector instance to wire it into.
-		if (this.incidentCorrelator) {
+		if (this.eventBus) {
 			this.schemaDriftDetector.setDriftAlertHandler((event: DriftAlertEvent) => this.handleDriftAlert(event));
 		}
 	}
@@ -367,20 +364,12 @@ export class PublishManager extends EventEmitter {
 		this.maintenanceEnergyService = service;
 	}
 
-	private incidentCorrelator?: { processEvent: (payload: AnomalyEventPayload) => void };
+	private eventBus?: { submit: (event: AgentEventInput) => void };
 
-	/**
-	 * Wires (or clears) the shared incident correlator — the same one anomaly
-	 * events feed into — so critical schema drift (missing-field, type-drift)
-	 * shows up in Events/Incidents/Alerts alongside anomalies instead of only
-	 * ever being visible in raw logs. Independent of anomaly detection/Pro
-	 * licensing for the correlator itself (it runs regardless) — but schema
-	 * drift alerts obviously only ever fire if the Pro drift detector loaded.
-	 */
-	public setIncidentCorrelator(correlator?: { processEvent: (payload: AnomalyEventPayload) => void }): void {
-		this.incidentCorrelator = correlator;
+	public setEventBus(eventBus?: { submit: (event: AgentEventInput) => void }): void {
+		this.eventBus = eventBus;
 		this.schemaDriftDetector?.setDriftAlertHandler(
-			correlator ? (event: DriftAlertEvent) => this.handleDriftAlert(event) : undefined,
+			eventBus ? (event: DriftAlertEvent) => this.handleDriftAlert(event) : undefined,
 		);
 	}
 
@@ -390,45 +379,48 @@ export class PublishManager extends EventEmitter {
 	}
 
 	private handleDriftAlert(event: DriftAlertEvent): void {
-		if (!this.incidentCorrelator) return;
+		if (!this.eventBus) return;
 
 		const deviceLabel = event.device ?? this.config.name ?? this.protocol;
-		// rename-candidate has no single fieldName — it's a from/to pair — so
-		// fall back to the "to" field for the metric label and fingerprint.
 		const rawField = event.fieldName ?? event.renameCandidateTo ?? 'unknown';
 		const severity = event.severity;
 
-		// Stable per (endpoint, device, drift type, field) so repeated occurrences
-		// of the SAME problem escalate one incident instead of creating a new one
-		// every time — mirrors how anomaly events fingerprint by metric+device.
-		// Hashed on the raw (uncleaned) values so this stays stable regardless of
-		// display formatting changes.
 		const fingerprint = createHash('sha256')
 			.update(`schema-drift:${event.endpointName}:${deviceLabel}:${event.driftType}:${rawField}`)
 			.digest('hex')
 			.slice(0, 32);
 
 		const metric = stripFieldDevicePrefix(cleanDriftFieldName(rawField), deviceLabel);
+		const endpoint = cleanProtocolPipeName(event.endpointName);
 
-		this.incidentCorrelator.processEvent({
-			metric,
-			fingerprint,
-			timestamp_ms: Date.now(),
-			// Drift isn't a statistical measurement — these have no natural anomaly
-			// equivalent, so they're fixed sentinels representing "confirmed, not
-			// estimated" rather than a real observed value/score/confidence.
-			observed_value: 0,
-			anomaly_score: 1,
-			confidence: 1,
+		let message = `${severity.toUpperCase()}: Schema drift on ${prettifyDriftDeviceId(deviceLabel)}`;
+		if (endpoint) message += ` ('${endpoint}')`;
+		message += '.';
+
+		if (event.driftType === 'missing-field') {
+			message += ` Field "${metric}" stopped appearing in published readings.`;
+		} else if (event.driftType === 'type-drift') {
+			message += ` Field "${metric}" is returning an unexpected value type.`;
+		} else if (event.driftType === 'new-field') {
+			message += ` New field "${metric}" appeared that wasn't in the learned baseline.`;
+		} else if (event.driftType === 'rename-candidate') {
+			message += ` Possible field rename detected — "${metric}" may be a renamed field.`;
+		}
+
+		this.eventBus.submit({
+			source:      'schema-drift',
+			category:    'alert',
 			severity,
-			consecutive_count: 1,
+			message,
+			fingerprint,
 			device_name: prettifyDriftDeviceId(deviceLabel),
-			device_type: this.protocol,
-			device_uuid: this.deviceUuid,
-			kind: 'schema-drift',
-			drift_type: event.driftType,
-			drift_field: metric,
-			drift_endpoint: cleanProtocolPipeName(event.endpointName),
+			metadata: {
+				drift_type:     event.driftType,
+				drift_field:    metric,
+				drift_endpoint: endpoint,
+				device_type:    this.protocol,
+				device_uuid:    this.deviceUuid,
+			},
 		});
 	}
 
@@ -754,37 +746,39 @@ export class PublishManager extends EventEmitter {
 				activityMonitor.recordQualitySample(typeof reading?.quality === 'string' ? reading.quality : undefined);
 			}
 
-			const driftMessages =this.projectMessagesForSchemaDrift(messages);
+			if (this.schemaDriftDetector) {
+				const driftMessages =this.projectMessagesForSchemaDrift(messages);
 
-			for (const msg of driftMessages) this.driftAccumulator.push(msg);
+				for (const msg of driftMessages) this.driftAccumulator.push(msg);
 
-			if (this.driftAccumulator.length > DRIFT_ACCUMULATOR_MAX_MESSAGES) {
-				this.driftAccumulator = this.driftAccumulator.slice(-DRIFT_ACCUMULATOR_MAX_MESSAGES);
-			}
-			const nowMs = Date.now();
-			if (nowMs - this.driftWindowStartedAt >= DRIFT_OBSERVE_WINDOW_MS) {
-				try {
-					this.schemaDriftDetector?.observe(this.driftAccumulator);
-				} catch (err) {
-					this.logger?.warn('Schema drift detector failed', err, { source: name });
+				if (this.driftAccumulator.length > DRIFT_ACCUMULATOR_MAX_MESSAGES) {
+					this.driftAccumulator = this.driftAccumulator.slice(-DRIFT_ACCUMULATOR_MAX_MESSAGES);
 				}
-				this.driftAccumulator = [];
-				this.driftWindowStartedAt = nowMs;
+				const nowMs = Date.now();
+				if (nowMs - this.driftWindowStartedAt >= DRIFT_OBSERVE_WINDOW_MS) {
+					try {
+						this.schemaDriftDetector.observe(this.driftAccumulator);
+					} catch (err) {
+						this.logger?.warn('Schema drift detector failed', err, { source: name });
+					}
+					this.driftAccumulator = [];
+					this.driftWindowStartedAt = nowMs;
+				}
 			}
 
 			const enriched = this.processAnomaly(messages, name);
 			if (this.needStop) return;
 
-			const { data, baselineSize, msgId } = this.buildPayload(name, enriched, this.payloadFormat);
+			const { data, baselineSize, msgId, jsonString, jsonBytes } = this.buildPayload(name, enriched, this.payloadFormat);
 			if (this.needStop) return;
 
 			const hasExternalBindings = this.bindings.some((b) => b.publisher.type !== 'iotistica');
 			if (!this.isConnected() && !hasExternalBindings) {
-				await this.publishOffline(topic, data, msgId, messageCount);
+				await this.publishOffline(topic, data, msgId, messageCount, jsonString, jsonBytes);
 				return;
 			}
 
-			await this.publishOnline(topic, data, msgId, baselineSize, messageCount, batchBytes, enriched, name);
+			await this.publishOnline(topic, data, msgId, baselineSize, messageCount, batchBytes, enriched, name, jsonString, jsonBytes);
 		} finally {
 			const durationMs = Date.now() - this.publishingStartedAt;
 			if (durationMs > 5_000) {
@@ -825,6 +819,8 @@ export class PublishManager extends EventEmitter {
     data: PublishPayload;
     msgId: string;
     baselineSize: number;
+    jsonString: string;
+    jsonBytes: number;
   } {
 		const msgId = this.mqttConnection.getMessageIdGenerator?.()?.generate()
 			?? `${this.deviceUuid}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
@@ -839,8 +835,9 @@ export class PublishManager extends EventEmitter {
 				msgId,
 			};
 			if (context) data.context = context;
-			const baselineSize = Buffer.byteLength(JSON.stringify(data), 'utf8');
-			return { data, msgId, baselineSize };
+			const jsonString = JSON.stringify(data);
+			const jsonBytes = Buffer.byteLength(jsonString, 'utf8');
+			return { data, msgId, baselineSize: jsonBytes, jsonString, jsonBytes };
 		}
 
 		if (payloadFormat === 'ml') {
@@ -875,8 +872,9 @@ export class PublishManager extends EventEmitter {
 				};
 			}
 
-			const baselineSize = Buffer.byteLength(JSON.stringify(data), 'utf8');
-			return { data, msgId, baselineSize };
+			const jsonString = JSON.stringify(data);
+			const jsonBytes = Buffer.byteLength(jsonString, 'utf8');
+			return { data, msgId, baselineSize: jsonBytes, jsonString, jsonBytes };
 		}
 
 		const externalGroupName = this.normalizeExternalGroupName(endpointName);
@@ -901,8 +899,9 @@ export class PublishManager extends EventEmitter {
 		};
 		if (context) data.context = context;
 
-		const baselineSize = Buffer.byteLength(JSON.stringify(data), 'utf8');
-		return { data, msgId, baselineSize };
+		const jsonString = JSON.stringify(data);
+		const jsonBytes = Buffer.byteLength(jsonString, 'utf8');
+		return { data, msgId, baselineSize: jsonBytes, jsonString, jsonBytes };
 	}
 
 	private buildAccumulatedMlPayload(
@@ -911,7 +910,7 @@ export class PublishManager extends EventEmitter {
 		datasetConfig: MlDatasetRecord,
 		configuredPointKeys: Set<string>,
 		lastKnownValues: Map<string, AccumulatedFeature>,
-	): { data: PublishPayload; msgId: string; baselineSize: number } | null {
+	): { data: PublishPayload; msgId: string; baselineSize: number; jsonString: string; jsonBytes: number } | null {
 		const msgId = this.mqttConnection.getMessageIdGenerator?.()?.generate()
 			?? `${this.deviceUuid}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 
@@ -980,8 +979,9 @@ export class PublishManager extends EventEmitter {
 			},
 		};
 
-		const baselineSize = Buffer.byteLength(JSON.stringify(data), 'utf8');
-		return { data, msgId, baselineSize };
+		const jsonString = JSON.stringify(data);
+		const jsonBytes = Buffer.byteLength(jsonString, 'utf8');
+		return { data, msgId, baselineSize: jsonBytes, jsonString, jsonBytes };
 	}
 
 	private async flushDatasetAccumulatorEntry(
@@ -1025,11 +1025,22 @@ export class PublishManager extends EventEmitter {
 				return;
 			}
 
-			const { data, baselineSize } = result;
+			const { data, baselineSize, jsonString, jsonBytes } = result;
 
 			const subscriptionCompression = binding.subscription.compression ?? null;
 			const overrideOpts = subscriptionCompression ? compressionToOpts(subscriptionCompression) : undefined;
-			const { payload } = await this.compressor.compress(data, baselineSize, this.stats.data.messagesPublished, overrideOpts);
+			
+			let payload: string | Buffer;
+			
+			// Optimization: bypass compress() if no compression is needed
+			if (overrideOpts && !Object.values(overrideOpts).some(v => v)) {
+				// No compression: use cached JSON directly
+				payload = jsonString;
+			} else {
+				// Compression needed: call compress() normally
+				const { payload: compressed } = await this.compressor.compress(data, baselineSize, this.stats.data.messagesPublished, overrideOpts, { jsonString, jsonBytes });
+				payload = compressed;
+			}
 
 			const item: PublishBatchItem = {
 				topic: sourceTopic,
@@ -1215,15 +1226,14 @@ export class PublishManager extends EventEmitter {
 				return null;
 			}
 
-			return {
+			const tag: TagPayload = {
 				name,
 				rawName,
 				error: message.error ?? message.errorCode ?? message.qualityCode ?? 'READ_ERROR',
-				...unitFields,
-				...qualityFields,
-				...anomalyFields,
-				...(provisionalPointId && { provisionalPointId }),
 			};
+			Object.assign(tag, unitFields, qualityFields, anomalyFields);
+			if (provisionalPointId) tag.provisionalPointId = provisionalPointId;
+			return tag;
 		}
 
 		const value = message.value ?? message.rawValue ?? null;
@@ -1232,19 +1242,21 @@ export class PublishManager extends EventEmitter {
 				return null;
 			}
 
-			return {
+			const tag: TagPayload = {
 				name,
 				rawName,
 				value,
 				type: this.inferEcpType(value),
-				...unitFields,
-				...qualityFields,
-				...anomalyFields,
-				...(provisionalPointId && { provisionalPointId }),
 			};
+			Object.assign(tag, unitFields, qualityFields, anomalyFields);
+			if (provisionalPointId) tag.provisionalPointId = provisionalPointId;
+			return tag;
 		}
 
-		return { name, rawName, value, ...unitFields, ...qualityFields, ...anomalyFields, ...(provisionalPointId && { provisionalPointId }) };
+		const tag: TagPayload = { name, rawName, value };
+		Object.assign(tag, unitFields, qualityFields, anomalyFields);
+		if (provisionalPointId) tag.provisionalPointId = provisionalPointId;
+		return tag;
 	}
 
 	private mapMlFeaturePayload(message: ProtocolMessage, index: number): MlFeaturePayload {
@@ -1357,8 +1369,25 @@ export class PublishManager extends EventEmitter {
 			return { payload: cachedPayload, info: compressionInfoCache.get(cacheKey) };
 		}
 
-		const { data, baselineSize } = this.buildPayload(endpointName, messages, payloadFormat, filterBadQuality, datasetConfig);
-		const { payload, info } = await this.compressor.compress(data, baselineSize, this.stats.data.messagesPublished, overrideOpts);
+		const { data, baselineSize, jsonString, jsonBytes } = this.buildPayload(endpointName, messages, payloadFormat, filterBadQuality, datasetConfig);
+		
+		// Optimization: bypass compress() if overrideOpts indicates no compression (all false/undefined)
+		if (overrideOpts && !Object.values(overrideOpts).some(v => v)) {
+			// No compression: use cached JSON directly
+			const info: CompressionInfo = {
+				method: 'json',
+				originalSize: baselineSize,
+				compressedSize: jsonBytes,
+				ratio: 0,
+				compressionMs: 0,
+				isBaseline: false,
+			};
+			compressedPayloadCache.set(cacheKey, jsonString);
+			compressionInfoCache.set(cacheKey, info);
+			return { payload: jsonString, info };
+		}
+		
+		const { payload, info } = await this.compressor.compress(data, baselineSize, this.stats.data.messagesPublished, overrideOpts, { jsonString, jsonBytes });
 		compressedPayloadCache.set(cacheKey, payload);
 		compressionInfoCache.set(cacheKey, info);
 		return { payload, info };
@@ -1509,17 +1538,18 @@ export class PublishManager extends EventEmitter {
 		topic: string,
 		data: PublishPayload,
 		msgId: string,
+		jsonString: string,
+		jsonBytes: number,
 	): Promise<number> {
 		const MessageBufferModel = await this.getMessageBufferModel();
-		const jsonPayload = JSON.stringify(data);
 
 		return MessageBufferModel.enqueue({
 			endpoint_name: this.config.name || 'unknown',
 			topic,
 			qos: 1,
-			payload: jsonPayload,
+			payload: jsonString,
 			msg_id: msgId,
-			payload_bytes: Buffer.byteLength(jsonPayload, 'utf8'),
+			payload_bytes: jsonBytes,
 		});
 	}
 
@@ -1527,9 +1557,10 @@ export class PublishManager extends EventEmitter {
 		topic: string,
 		data: PublishPayload,
 		msgId: string,
+		jsonString: string,
+		jsonBytes: number,
 	): Promise<{ id: number; lockId: string }> {
 		const MessageBufferModel = await this.getMessageBufferModel();
-		const jsonPayload = JSON.stringify(data);
 		const lockId = `inline-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 
 		const id = MessageBufferModel.enqueueClaimed(
@@ -1537,9 +1568,9 @@ export class PublishManager extends EventEmitter {
 				endpoint_name: this.config.name || 'unknown',
 				topic,
 				qos: 1,
-				payload: jsonPayload,
+				payload: jsonString,
 				msg_id: msgId,
-				payload_bytes: Buffer.byteLength(jsonPayload, 'utf8'),
+				payload_bytes: jsonBytes,
 			},
 			lockId,
 		);
@@ -1556,6 +1587,8 @@ export class PublishManager extends EventEmitter {
 		batchBytes: number,
 		enriched: ProtocolMessage[],
 		endpointName: string,
+		jsonString: string,
+		jsonBytes: number,
 	): Promise<void> {
 		if (this.needStop) return;
 		let bufferedRecordId: number | undefined;
@@ -1563,7 +1596,7 @@ export class PublishManager extends EventEmitter {
 		const destinationContext = this.getPublishDestinationLogContext(topic);
 
 		try {
-			const claimed = await this.persistClaimedBatch(topic, data, msgId);
+			const claimed = await this.persistClaimedBatch(topic, data, msgId, jsonString, jsonBytes);
 			bufferedRecordId = claimed.id;
 			if (this.needStop) {
 				const MessageBufferModel = await this.getMessageBufferModel();
@@ -1571,17 +1604,42 @@ export class PublishManager extends EventEmitter {
 				return;
 			}
 
-			const { payload, info } = await this.compressor.compress(data, baselineSize, this.stats.data.messagesPublished);
-			if (this.needStop) {
-				const MessageBufferModel = await this.getMessageBufferModel();
-				MessageBufferModel.markRetryFailed(claimed.id, 'Publish interrupted during shutdown');
-				return;
-			}
+			// Check if any subscription requires compression (not "none"/null)
+			const needsGlobalCompress = this.bindings.some(b =>
+				this.resolveDestinationTopic(b, topic) !== null &&
+				this.matchesSubscription(b.subscription) &&
+				b.subscription.compression !== null
+			);
 
 			const compressedPayloadCache = new Map<string, string | Buffer>();
 			const compressionInfoCache = new Map<string, CompressionInfo>();
-			compressedPayloadCache.set(`${this.payloadFormat}::global::fq=false`, payload);
-			compressionInfoCache.set(`${this.payloadFormat}::global::fq=false`, info);
+
+			// Optimization: bypass compress() if all subscriptions have compression="none"
+			// Still route and publish to all destinations
+			if (!needsGlobalCompress) {
+				// Use cached JSON directly without compression (avoid unnecessary Buffer copy)
+				const info: CompressionInfo = {
+					method: 'json',
+					originalSize: baselineSize,
+					compressedSize: jsonBytes,
+					ratio: 0,
+					compressionMs: 0,
+					isBaseline: false,
+				};
+				compressedPayloadCache.set(`${this.payloadFormat}::global::fq=false`, jsonString);
+				compressionInfoCache.set(`${this.payloadFormat}::global::fq=false`, info);
+			} else {
+				// Compression needed: call compress() normally
+				const { payload, info } = await this.compressor.compress(data, baselineSize, this.stats.data.messagesPublished, undefined, { jsonString, jsonBytes });
+				if (this.needStop) {
+					const MessageBufferModel = await this.getMessageBufferModel();
+					MessageBufferModel.markRetryFailed(claimed.id, 'Publish interrupted during shutdown');
+					return;
+				}
+				compressedPayloadCache.set(`${this.payloadFormat}::global::fq=false`, payload);
+				compressionInfoCache.set(`${this.payloadFormat}::global::fq=false`, info);
+			}
+
 			const routed = await this.routePublishBatch(topic, compressedPayloadCache, compressionInfoCache, endpointName, enriched);
 			publishConfirmed = true;
 
@@ -1597,15 +1655,18 @@ export class PublishManager extends EventEmitter {
 				// diagnostic context instead, only when actually degraded.
 				const cloudLinkMode = this.mqttConnection.getPublishMode?.();
 				this.stats.recordPublish(messageCount, batchBytes);
-				this.stats.logPublishSuccess(messageCount, batchBytes, info, endpointName, this.logger, {
-					protocol: this.protocol,
-					...destinationContext,
-					...(cloudLinkMode && cloudLinkMode !== 'direct' ? { cloudLinkMode } : {}),
-				});
+				const compressionInfo = compressionInfoCache.get(`${this.payloadFormat}::global::fq=false`);
+				if (compressionInfo) {
+					this.stats.logPublishSuccess(messageCount, batchBytes, compressionInfo, endpointName, this.logger, {
+						protocol: this.protocol,
+						...destinationContext,
+						...(cloudLinkMode && cloudLinkMode !== 'direct' ? { cloudLinkMode } : {}),
+					});
+				}
 			}
 		} catch (err) {
 			this.logger?.error('Publish batch failed', err, { source: endpointName, protocol: this.protocol, ...destinationContext });
-			await this.handlePublishFailure(endpointName, err, bufferedRecordId, publishConfirmed, topic, data, msgId, messageCount);
+			await this.handlePublishFailure(endpointName, err, bufferedRecordId, publishConfirmed, topic, data, msgId, messageCount, jsonString, jsonBytes);
 		}
 	}
 
@@ -1618,6 +1679,8 @@ export class PublishManager extends EventEmitter {
 		data: PublishPayload,
 		msgId: string,
 		messageCount: number,
+		jsonString: string,
+		jsonBytes: number,
 	): Promise<void> {
 		try {
 			if (publishConfirmed) {
@@ -1638,7 +1701,7 @@ export class PublishManager extends EventEmitter {
 				return;
 			}
 
-			await this.publishOffline(topic, data, msgId, messageCount);
+			await this.publishOffline(topic, data, msgId, messageCount, jsonString, jsonBytes);
 			this.logger?.warn('Buffered failed publish to durable storage', { source: endpointName });
 		} catch (bufferError) {
 			this.logger?.error('Durable buffer write failed', {
@@ -1681,9 +1744,11 @@ export class PublishManager extends EventEmitter {
 		data: PublishPayload,
 		msgId: string,
 		messageCount: number,
+		jsonString: string,
+		jsonBytes: number,
 	): Promise<void> {
 		if (this.needStop) return;
-		await this.bufferOfflineMessages(topic, data, msgId, messageCount);
+		await this.bufferOfflineMessages(topic, data, msgId, messageCount, jsonString, jsonBytes);
 	}
 
 	private async bufferOfflineMessages(
@@ -1691,11 +1756,13 @@ export class PublishManager extends EventEmitter {
 		data: PublishPayload,
 		msgId: string,
 		messageCount: number,
+		jsonString: string,
+		jsonBytes: number,
 	): Promise<void> {
 		const name = this.config.name || 'unknown';
 		this.logger?.warn('Buffering messages (destination offline)', { source: name, messages: messageCount });
 		try {
-			await this.persistQueuedBatch(topic, data, msgId);
+			await this.persistQueuedBatch(topic, data, msgId, jsonString, jsonBytes);
 		} catch (err) {
 			this.logger?.error('Buffer messages failed', err, { source: name, messages: messageCount });
 		}
@@ -2126,7 +2193,7 @@ export class PublishManager extends EventEmitter {
 			const allThrottledOut = minIntervalMs > 0 && effectiveMessages.length === 0 && bindingMessages.length > 0;
 			let payload: string | Buffer | null = null;
 			let compressionInfo: CompressionInfo | undefined;
-			if (!allThrottledOut) {
+			if (!allThrottledOut && binding.publisher.type !== 'noop') {
 				const compressed = await this.getCompressedPayloadForFormat(
 					payloadFormat,
 					cacheKey,

@@ -25,7 +25,7 @@ import { SocketPublishPlugin } from './plugins/socket.js';
 import { DatabricksPublishPlugin } from './plugins/databricks.js';
 import { BasePublishPlugin } from './core/base-plugin.js';
 import type { IPublishPlugin, IPublishClient } from './core/types.js';
-import type { AnomalyEventPayload } from '../db/models/anomaly-event.model.js';
+import type { AgentEventInput } from '../events/types.js';
 
 /**
  * DevicePublish - Manages multiple devices and publishes data to MQTT
@@ -50,7 +50,7 @@ export class DevicePublish extends EventEmitter {
 	private readonly useDeflatePoc: boolean;
 	private anomalyService?: any;
 	private maintenanceEnergyService?: any;
-	private incidentCorrelator?: { processEvent: (payload: AnomalyEventPayload) => void };
+	private eventBus?: { submit: (event: AgentEventInput) => void };
 	private liveDataInterceptor?: (messages: any[], endpointName: string) => Promise<any[]> | any[];
 	private proPlugins: { azure?: any; aws?: any; gcp?: any; influxdb?: any } = {};
 	private readonly sharedDatasetAccumulators = new Map<number, DatasetAccumulatorEntry>();
@@ -136,14 +136,14 @@ export class DevicePublish extends EventEmitter {
 	 * onInitialize()'s per-device loop, before this method may have run yet —
 	 * still pick it up, the same way liveDataInterceptor already works.
 	 */
-	public setIncidentCorrelator(correlator?: { processEvent: (payload: AnomalyEventPayload) => void }): void {
-		this.incidentCorrelator = correlator;
+	public setEventBus(eventBus?: { submit: (event: AgentEventInput) => void }): void {
+		this.eventBus = eventBus;
 		for (const device of this.devices) {
-			device.setIncidentCorrelator(correlator);
+			device.setEventBus(eventBus);
 		}
 
-		this.logger.debug('Updated incident correlator binding for Device Publish Feature', {
-			hasCorrelator: !!correlator,
+		this.logger.debug('Updated event bus binding for Device Publish Feature', {
+			hasEventBus: !!eventBus,
 			deviceCount: this.devices.length,
 		});
 	}
@@ -214,7 +214,7 @@ export class DevicePublish extends EventEmitter {
 			const device = this.createDeviceManager(config, i, deviceConfig.endpoints.length);
 			device.setSharedDatasetAccumulators(this.sharedDatasetAccumulators);
 			if (this.liveDataInterceptor) device.setLiveDataInterceptor(this.liveDataInterceptor);
-			if (this.incidentCorrelator) device.setIncidentCorrelator(this.incidentCorrelator);
+			if (this.eventBus) device.setEventBus(this.eventBus);
 			this.attachDeviceEventHandlers(device, config.name!);
 			this.devices.push(device);
 			await this.startDeviceManager(device, config);

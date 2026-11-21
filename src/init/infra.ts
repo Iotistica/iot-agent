@@ -1,7 +1,7 @@
 import type { AgentInitContext } from './context.js';
 import { LogComponents } from '../logging/types.js';
 import { CloudMqttClient } from '../mqtt/manager.js';
-import { BrokerMonitorService } from '../mqtt/broker-monitor.js';
+import { BrokerMonitorService } from '../mqtt/monitor.js';
 
 
 export async function initInfrastructure(ctx: AgentInitContext): Promise<void> {
@@ -151,7 +151,7 @@ export async function initDeviceAPI(ctx: AgentInitContext): Promise<void> {
 	}
 
 	const { router: v1Router } = await import('../api/v1.js');
-	const { anomalyRouter } = await import('../api/anomaly.js');
+	const { eventsRouter } = await import('../api/events.js');
 	const { dataExplorerViewsRouter } = await import('../api/data-explorer-views.js');
 	const { mlDatasetsRouter } = await import('../api/ml-datasets.js');
 	const { pointCatalogRouter } = await import('../api/point-catalog.js');
@@ -175,7 +175,7 @@ export async function initDeviceAPI(ctx: AgentInitContext): Promise<void> {
 	];
 
 	ctx.agentAPI = new DeviceAPI({
-		routers: [v1Router, anomalyRouter, dataExplorerViewsRouter, mlDatasetsRouter, pointCatalogRouter, networkRouter],
+		routers: [v1Router, eventsRouter, dataExplorerViewsRouter, mlDatasetsRouter, pointCatalogRouter, networkRouter],
 		healthchecks,
 		logger: ctx.agentLogger,
 	});
