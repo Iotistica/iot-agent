@@ -103,7 +103,7 @@ export class OpcuaPerfMonitor {
 		const p99Ms = h && h.min > 0 ? Math.round(h.percentile(99) / NS_PER_MS) : 0;
 		const maxMs = h && h.max > 0 && isFinite(h.max) ? Math.round(h.max / NS_PER_MS) : 0;
 
-		this.logger.info(
+		this.logger.debug(
 			`[perf] event-loop utilization=${utilPct}%` +
 			` delay_mean=${meanMs}ms delay_p95=${p95Ms}ms delay_p99=${p99Ms}ms delay_max=${maxMs}ms`,
 		);

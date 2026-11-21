@@ -147,6 +147,7 @@ function storedMqttSelector(key: string): 'whole' | 'path' | undefined {
 export class PointIdentityCatalog {
 	private stmts = new Map<string, ReturnType<DatabaseSync['prepare']>>();
 	private sourceCache = new Map<string, SourceRow>();
+	private revisionCache = new Map<string, { revision: number; checkedAt: number }>();
 	private batchMode = false;
 
 	constructor(private readonly db: DatabaseSync, private readonly verifier?: CatalogEvidenceVerifier) {}
@@ -195,8 +196,15 @@ export class PointIdentityCatalog {
 	}
 
 	private revisionMatches(endpointUuid: string, expected: number): boolean {
+		const now = Date.now();
+		const cached = this.revisionCache.get(endpointUuid);
+		if (cached && now - cached.checkedAt < 5000) {
+			if (cached.revision !== expected) { this.sourceCache.delete(endpointUuid); return false; }
+			return true;
+		}
 		const row = this.stmt('SELECT revision FROM endpoints WHERE uuid = ? LIMIT 1')
 			.get(endpointUuid) as { revision: number } | undefined;
+		if (row) this.revisionCache.set(endpointUuid, { revision: row.revision, checkedAt: now });
 		if (row?.revision !== expected) {
 			this.sourceCache.delete(endpointUuid);
 			return false;

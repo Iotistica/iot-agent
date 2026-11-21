@@ -29,72 +29,62 @@ interface ClientRoutingRules {
 }
 
 /**
- * IPC Socket Server with Topic-Based Pub/Sub Routing
- * 
- * Supports both Unix Domain Sockets (Linux/macOS) and Named Pipes (Windows).
- * 
- * Topic-Centric Design:
- * - Index: Map<topic, Set<sockets>> for O(K) direct client lookup (K = topic subscribers)
- * - Wildcard: Separate Set for clients subscribed to all topics
- * - Routing: topic → get subscribers (not: iterate all clients)
- * 
- * Subscription Protocol:
- * 1. Client connects to socket
- * 2. Client sends: {"subscribe": ["modbus", "bacnet"]} (empty array = all topics)
- *    Optional routing controls:
- *    {
- *      "subscribe": ["modbus"],
- *      "route": {
- *        "includeMetrics": ["temperature"],
- *        "excludeDevices": ["pump-2"],
- *        "qualities": ["GOOD", "UNCERTAIN"],
- *        "minIntervalMs": 1000,
- *        "maxPointsPerMessage": 100
- *      }
- *    }
- * 3. Server confirms: {"ok": true, "subscribed_to": [...]}
- * 4. Server sends data only to subscribed clients
+ * IPC Socket Server — bridges protocol adapters to the publish pipeline.
+ *
+ * Data flow:
+ *
+ *   Adapter                       SocketServer                  PublishManager
+ *   ───────                       ────────────                  ──────────────
+ *   subscription notifications    sendData(batch, topic)        SocketConnection
+ *   → coalescing buffer (Map)     → formatAsJson()              → 'data' events
+ *   → flush every coalesceMs      → socket.write() per chunk    → MessageBatcher.appendData()
+ *   → emit('data', chunk)                                       → JSON.parse + batch
+ *     (FLUSH_CHUNK_SIZE items)                                  → publishBatch() → MQTT/HTTP
+ *
+ * Transport: Unix domain socket (Linux/Docker) or Windows Named Pipe.
+ * Framing: newline-delimited JSON (delimiter configurable via endpoint_outputs).
+ *
+ * Subscription handshake:
+ *   client → {"subscribe": ["opcua"]}   (empty array = wildcard / all topics)
+ *   server → {"ok": true, "subscribed_to": ["opcua"], "routing": {...}}
+ *   Routing rules (includeMetrics, excludeDevices, qualities, minIntervalMs,
+ *   maxPointsPerMessage) are optional per-client overrides on the handshake.
+ *
+ * Backpressure (critical at scale):
+ *   The adapter and consumer share one event loop. At 70k points the adapter
+ *   emits ~140 chunks per flush; each is JSON-serialised and socket.write()'d.
+ *   The kernel buffer fills quickly and write() returns false.
+ *   Writes are skipped when Node's internal write queue exceeds
+ *   MAX_WRITE_QUEUE_BYTES (32 MB). Skipped data is not lost permanently —
+ *   the adapter's coalescing buffer re-fills every publish interval and the
+ *   next flush picks up fresh values. No drain-timeout removal: in same-process
+ *   IPC the consumer cannot be "stuck" independently of the server — if the
+ *   event loop runs, it will drain. Dead clients are caught by socket
+ *   close/error events, not by write-side timers.
+ *
+ * Control messages:
+ *   sendControl() delivers out-of-band payloads (e.g. device-schema declarations)
+ *   to subscribers. Device-schema messages are retained per topic+deviceName and
+ *   replayed on new subscriptions so late-connecting clients don't miss them.
+ *
+ * Lookup: Map<topic, Set<socket>> + wildcard Set → O(K) per send, K = subscribers.
  */
 export class SocketServer implements ISocketServer {
 	private server?: net.Server;
 	private subscriptions: Map<net.Socket, ClientSubscription> = new Map();
-	private pendingSubscriptions: Set<net.Socket> = new Set(); // Sockets waiting for subscription handshake
+	private pendingSubscriptions: Set<net.Socket> = new Set();
 	private topicToSockets: Map<string, Set<net.Socket>> = new Map();
 	private wildcardSockets: Set<net.Socket> = new Set();
-	// Sockets currently waiting for a kernel 'drain' event after a write()
-	// returned false (kernel buffer full) — value is the pending removal
-	// timeout, cleared if 'drain' fires in time. See sendToSocket().
-	private drainWaiters: Map<net.Socket, NodeJS.Timeout> = new Map();
-	// Retained "device-schema" control messages (topic -> deviceName ->
-	// latest payload), replayed to a client as soon as its subscription
-	// handshake completes — see sendControl() and the handshake handler.
-	// Startup race: an adapter can emit 'device-connected' (which turns into
-	// a device-schema sendControl() call) before PublishManager's own IPC
-	// client has finished subscribing, especially for OPC-UA where one
-	// 'device-connected' event fans out into many per-logical-device
-	// sendControl() calls in a tight loop. Before this, that declaration was
-	// simply dropped (see the sendControl early-return below) and schema
-	// drift never learned that device's fields on a cold start — fields
-	// would individually cross consecutiveMissingThreshold later and fire as
-	// false "missing-field" critical incidents. Keyed by deviceName (not
-	// just topic) so each device's latest declaration replaces any earlier
-	// one — declareDeviceSchema() is idempotent/safe to re-call, so
-	// replaying the same retained message to more than one subscriber, or
-	// more than once, is harmless.
+	// topic → deviceName → latest device-schema payload, replayed on new subscriptions.
 	private retainedDeviceSchema: Map<string, Map<string, Record<string, unknown>>> = new Map();
 	private config: SocketOutput;
 	private logger: Logger;
 	private started = false;
 	private isWindowsNamedPipe: boolean;
+	private lastBackpressureLogAt = 0;
 	private readonly MAX_CLIENTS = 10;
 	private readonly SUBSCRIPTION_TIMEOUT_MS = 5000;
-	// How long a socket may sit backpressured (write() returning false) before
-	// it's treated as genuinely stuck rather than just absorbing a large write.
-	// A single OPC-UA batch can be ~1MB — far bigger than a typical kernel
-	// socket buffer — so write() legitimately returns false for a healthy,
-	// actively-draining client; only a client that never drains at all within
-	// this window is actually a problem.
-	private readonly DRAIN_TIMEOUT_MS = 5000;
+	private readonly MAX_WRITE_QUEUE_BYTES = 32 * 1024 * 1024;
 	private readonly MAX_POINTS_PER_MESSAGE_LIMIT = 1000;
 	private readonly MAX_MIN_INTERVAL_MS = 60_000;
 	private readonly MAX_SUBSCRIPTION_BUFFER = 8192;
@@ -102,15 +92,10 @@ export class SocketServer implements ISocketServer {
 	constructor(config: SocketOutput, logger: Logger) {
 		this.config = config;
 		this.logger = logger;
-
-		// Detect if this is a Windows Named Pipe
 		this.isWindowsNamedPipe =
 			this.config.socketPath.startsWith("\\\\.\\pipe\\");
 	}
 
-	/**
-	 * Start the IPC socket server (Unix socket or Windows Named Pipe)
-	 */
 	async start(): Promise<void> {
 		if (this.started) {
 			this.logger.debug(
@@ -120,14 +105,11 @@ export class SocketServer implements ISocketServer {
 		}
 
 		try {
-			// For Unix sockets, ensure directory exists and clean up old socket
 			if (!this.isWindowsNamedPipe) {
 				const socketDir = path.dirname(this.config.socketPath);
 				if (!fs.existsSync(socketDir)) {
 					fs.mkdirSync(socketDir, { recursive: true });
 				}
-
-				// Remove existing socket file if it exists
 				if (fs.existsSync(this.config.socketPath)) {
 					fs.unlinkSync(this.config.socketPath);
 				}
@@ -148,8 +130,6 @@ export class SocketServer implements ISocketServer {
 						`IPC server started (${transportType}) with pub/sub routing at: ${this.config.socketPath}`,
 					);
 
-					// Set restrictive permissions on Unix socket file (owner + group only)
-					// Prevents unauthorized local processes from connecting
 					if (!this.isWindowsNamedPipe) {
 						try {
 							fs.chmodSync(this.config.socketPath, 0o660);
@@ -161,13 +141,10 @@ export class SocketServer implements ISocketServer {
 					resolve();
 				});
 
-				// Handle errors during startup and post-startup
 				this.server!.on("error", (error) => {
 					if (!settled) {
-						// Startup error - reject promise
 						reject(error);
 					} else {
-						// Runtime error after successful start
 						this.logger.error(`Socket server runtime error: ${error.message}`);
 					}
 				});
@@ -180,16 +157,12 @@ export class SocketServer implements ISocketServer {
 		}
 	}
 
-	/**
-	 * Stop the IPC socket server (Unix socket or Windows Named Pipe)
-	 */
 	async stop(): Promise<void> {
 		if (!this.started || !this.server) {
 			return;
 		}
 
 		try {
-			// Close all client connections (both active and pending handshake)
 			for (const { socket } of this.subscriptions.values()) {
 				socket.destroy();
 			}
@@ -200,10 +173,7 @@ export class SocketServer implements ISocketServer {
 			this.pendingSubscriptions.clear();
 			this.topicToSockets.clear();
 			this.wildcardSockets.clear();
-			for (const timeout of this.drainWaiters.values()) clearTimeout(timeout);
-			this.drainWaiters.clear();
 
-			// Close server
 			await new Promise<void>((resolve) => {
 				this.server!.close(() => {
 					const transportType = this.isWindowsNamedPipe
@@ -214,14 +184,12 @@ export class SocketServer implements ISocketServer {
 				});
 			});
 
-			// Remove Unix socket file (Named Pipes are cleaned up automatically by Windows)
 			if (!this.isWindowsNamedPipe) {
 				try {
 					if (fs.existsSync(this.config.socketPath)) {
 						fs.unlinkSync(this.config.socketPath);
 					}
 				} catch (unlinkError: any) {
-					// Ignore ENOENT (file already deleted) - not an error condition
 					if (unlinkError?.code !== "ENOENT") {
 						this.logger.warn(
 							`Failed to remove socket file: ${unlinkError?.message || unlinkError}`,
@@ -239,29 +207,13 @@ export class SocketServer implements ISocketServer {
 		}
 	}
 
-	/**
-	 * Send device data to subscribed clients (topic-aware, optimized routing)
-	 * 
-	 * @param dataPoints - Device data to send
-	 * @param topic - Protocol topic (e.g., "modbus", "opcua", "bacnet"); defaults to "generic"
-	 * 
-	 * Routing: O(K) where K = subscribers for this topic (not O(N) all clients)
-	 * - Send to topic-specific subscribers (topicToSockets[topic])
-	 * - Send to wildcard subscribers (wildcardSockets)
-	 * - No merging step — iterate both indices separately
-	 * 
-	 * Backpressure: Drops slow consumers instead of buffering.
-	 */
 	sendData(dataPoints: DeviceDataPoint[], topic: string = "generic"): void {
 		if (!this.started || this.subscriptions.size === 0) {
 			return;
 		}
 
 		try {
-			// Track sockets we've already sent to (avoid duplicate sends if socket in both indices)
 			const sentTo = new Set<net.Socket>();
-
-			// Send to topic-specific subscribers
 			const topicSubscribers = this.topicToSockets.get(topic);
 			if (topicSubscribers) {
 				topicSubscribers.forEach((socket) => {
@@ -269,7 +221,6 @@ export class SocketServer implements ISocketServer {
 				});
 			}
 
-			// Send to wildcard subscribers (not already sent to)
 			this.wildcardSockets.forEach((socket) => {
 				if (!sentTo.has(socket)) {
 					this.routeAndSendToSocket(socket, dataPoints, topic, sentTo);
@@ -282,19 +233,7 @@ export class SocketServer implements ISocketServer {
 		}
 	}
 
-	/**
-	 * Sends a single out-of-band control message — not a device reading — to
-	 * every client subscribed to `topic`. Used today to declare a device's
-	 * full configured field list to schema drift (see MessageBatcher's
-	 * "device-schema" handling on the receiving end), decoupled from any
-	 * particular value change.
-	 *
-	 * Deliberately bypasses applyRoutingRules()/formatData(): those only make
-	 * sense for per-device DeviceDataPoint telemetry (metric/device
-	 * include-exclude filters, quality filters, rate limiting), none of which
-	 * apply to a one-off control payload. Every subscriber of the topic gets
-	 * every control message, same as the subscription handshake itself.
-	 */
+	/** Out-of-band control message (e.g. device-schema) — bypasses routing rules. */
 	sendControl(payload: Record<string, unknown>, topic: string = "generic"): void {
 		if (payload.__control === "device-schema" && typeof payload.deviceName === "string") {
 			let byDevice = this.retainedDeviceSchema.get(topic);
@@ -359,22 +298,6 @@ export class SocketServer implements ISocketServer {
 		}
 	}
 
-	/**
-	 * Send data to a single socket with correct backpressure handling.
-	 *
-	 * socket.write() returning false means the kernel's write buffer is full
-	 * — Node has still queued the data internally and will deliver it once
-	 * the buffer drains. That's normal, expected behavior for a large payload
-	 * (a single OPC-UA batch can be ~1MB), not a sign of a bad client. The
-	 * previous version counted every such return as a "failure" and
-	 * destroyed the socket after 4 of them — which discards whatever was
-	 * still queued mid-write, corrupting the message for the client (see the
-	 * "JSON parse failed for 'opcua-pipe'" investigation this fixes).
-	 *
-	 * Correct handling: wait for the kernel's own 'drain' event. Only a
-	 * socket that doesn't drain within DRAIN_TIMEOUT_MS — genuinely stuck,
-	 * not just absorbing a big write — gets removed.
-	 */
 	private sendToSocket(
 		socket: net.Socket,
 		data: string,
@@ -382,40 +305,20 @@ export class SocketServer implements ISocketServer {
 		sentTo: Set<net.Socket>,
 	): boolean {
 		try {
-			const flushed = socket.write(data);
-
-			if (!flushed) {
-				// Already waiting on a previous backpressured write for this
-				// socket — don't stack a second timer/listener on top of it.
-				if (!this.drainWaiters.has(socket)) {
-					this.logger.debug(
-						`IPC client backpressured (topic: ${topic}) — waiting for kernel buffer to drain`,
-						{ reason: "kernel_buffer_full" },
+			if (socket.writableLength > this.MAX_WRITE_QUEUE_BYTES) {
+				const now = Date.now();
+				if (now - this.lastBackpressureLogAt >= 10_000) {
+					this.lastBackpressureLogAt = now;
+					this.logger.warn(
+						`IPC write queue full (topic: ${topic}, queued: ${(socket.writableLength / (1024 * 1024)).toFixed(1)}MB / ${(this.MAX_WRITE_QUEUE_BYTES / (1024 * 1024)).toFixed(0)}MB cap) — skipping writes until consumer drains`,
 					);
-
-					const timeout = setTimeout(() => {
-						this.drainWaiters.delete(socket);
-						this.logger.error(
-							`Removing IPC client (did not drain within ${this.DRAIN_TIMEOUT_MS}ms for topic: ${topic})`,
-							{ reason: "drain_timeout_exceeded" },
-						);
-						this.removeClient(socket);
-					}, this.DRAIN_TIMEOUT_MS);
-					timeout.unref?.();
-					this.drainWaiters.set(socket, timeout);
-
-					socket.once("drain", () => {
-						const pending = this.drainWaiters.get(socket);
-						if (pending) {
-							clearTimeout(pending);
-							this.drainWaiters.delete(socket);
-						}
-					});
 				}
-			} else {
-				sentTo.add(socket);
-				return true;
+				return false;
 			}
+
+			socket.write(data);
+			sentTo.add(socket);
+			return true;
 		} catch (error) {
 			this.logger.warn(
 				`Failed to send data to client (topic: ${topic}): ${error}`,
@@ -426,11 +329,6 @@ export class SocketServer implements ISocketServer {
 		return false;
 	}
 
-	/**
-	 * Send every retained device-schema declaration relevant to a socket's
-	 * just-completed subscription — see retainedDeviceSchema's doc comment.
-	 * Called once, right after a handshake completes.
-	 */
 	private replayRetainedDeviceSchema(
 		socket: net.Socket,
 		subscription: ClientSubscription,
@@ -439,9 +337,6 @@ export class SocketServer implements ISocketServer {
 			return;
 		}
 
-		// Empty topics set = wildcard subscriber (subscribed to everything,
-		// see the handshake handler above) — replay every retained topic;
-		// otherwise only the topics this client actually asked for.
 		const topics =
 			subscription.topics.size > 0
 				? subscription.topics
@@ -460,18 +355,10 @@ export class SocketServer implements ISocketServer {
 		}
 	}
 
-	/**
-	 * Get number of connected clients
-	 */
 	getClientCount(): number {
 		return this.subscriptions.size;
 	}
 
-	/**
-	 * Get subscription stats (useful for monitoring)
-	 * 
-	 * @returns Object with total client count and topic subscription counts
-	 */
 	getSubscriptionStats(): { totalClients: number; topicCounts: Record<string, number> } {
 		const topicCounts: Record<string, number> = {};
 
@@ -491,23 +378,11 @@ export class SocketServer implements ISocketServer {
 		};
 	}
 
-	/**
-	 * Check if server is running
-	 */
 	isRunning(): boolean {
 		return this.started;
 	}
 
-	/**
-	 * Handle new client connection with subscription handshake
-	 * 
-	 * Waits for subscription message: {"subscribe": ["modbus"]}
-	 * Empty array or omitted = subscribe to all topics
-	 * Confirms with: {"ok": true, "subscribed_to": [...]}
-	 * 5-second timeout for handshake completion
-	 */
 	private handleClientConnection(socket: net.Socket): void {
-		// Prevent IPC DoS: reject connections beyond max client limit (includes pending)
 		const totalPending = this.subscriptions.size + this.pendingSubscriptions.size;
 		if (totalPending >= this.MAX_CLIENTS) {
 			this.logger.warn(
@@ -517,7 +392,6 @@ export class SocketServer implements ISocketServer {
 			return;
 		}
 
-		// Create subscription entry (starts with empty set = all topics)
 		const subscription: ClientSubscription = {
 			socket,
 			topics: new Set(),
@@ -525,10 +399,7 @@ export class SocketServer implements ISocketServer {
 			lastSentAt: 0,
 		};
 
-		// Add to pending subscriptions (NOT active yet - waiting for handshake)
 		this.pendingSubscriptions.add(socket);
-
-		// Wait for subscription message from client
 		let subscriptionReceived = false;
 		let subscriptionBuffer = "";
 		let timeoutHandle: NodeJS.Timeout | null = null;
@@ -542,8 +413,6 @@ export class SocketServer implements ISocketServer {
 				return;
 			}
 			subscriptionBuffer += chunk.toString("utf-8");
-
-			// Parse newline-delimited JSON subscription message
 			const lines = subscriptionBuffer.split("\n");
 			for (let i = 0; i < lines.length - 1; i++) {
 				const line = lines[i].trim();
@@ -553,20 +422,12 @@ export class SocketServer implements ISocketServer {
 					const msg = JSON.parse(line);
 
 					if (msg.subscribe && Array.isArray(msg.subscribe)) {
-						// Clean up old subscriptions first (prevents leaks on re-subscribe)
 						this.unsubscribeAll(socket, subscription);
-
-						// Apply per-client routing / flow-control rules
 						subscription.rules = this.parseRoutingRules(msg.route);
 
-						// Apply subscription filter with explicit state transitions
 						if (msg.subscribe.length > 0) {
-							// Topic-specific subscription: must NOT be in wildcard set
 							this.wildcardSockets.delete(socket);
-							
 							subscription.topics = new Set(msg.subscribe);
-							
-							// Update topic-centric index: add socket to each topic
 							for (const topic of msg.subscribe) {
 								if (!this.topicToSockets.has(topic)) {
 									this.topicToSockets.set(topic, new Set());
@@ -578,7 +439,6 @@ export class SocketServer implements ISocketServer {
 								`Client subscribed to topics: ${Array.from(subscription.topics).join(", ")}`,
 							);
 						} else {
-							// Wildcard subscription: subscribe to all topics
 							this.wildcardSockets.add(socket);
 							subscription.topics.clear();
 							
@@ -586,18 +446,15 @@ export class SocketServer implements ISocketServer {
 						}
 
 						subscriptionReceived = true;
-						// Clear the timeout - handshake complete!
 						if (timeoutHandle) {
 							clearTimeout(timeoutHandle);
 							timeoutHandle = null;
 						}
-						// Move socket from pending → active subscriptions (handshake complete, only first time)
 						if (this.pendingSubscriptions.has(socket)) {
 							this.pendingSubscriptions.delete(socket);
 							this.subscriptions.set(socket, subscription);
 						}
 
-						// Confirm effective subscription/routing back to client
 						try {
 							socket.write(
 								JSON.stringify({
@@ -613,9 +470,6 @@ export class SocketServer implements ISocketServer {
 							// Non-fatal: subscription is already active.
 						}
 
-						// Replay any device-schema declarations an adapter already sent
-						// before this client finished its handshake — after the ACK so
-						// the client sees { ok: true } as the first line.
 						this.replayRetainedDeviceSchema(socket, subscription);
 
 						break;
@@ -625,11 +479,9 @@ export class SocketServer implements ISocketServer {
 				}
 			}
 
-			// Keep last incomplete line in buffer
 			subscriptionBuffer = lines[lines.length - 1];
 		};
 
-		// Set timeout for subscription handshake
 		timeoutHandle = setTimeout(() => {
 			if (!subscriptionReceived) {
 				this.logger.warn(
@@ -654,46 +506,25 @@ export class SocketServer implements ISocketServer {
 		});
 	}
 
-	/**
-	 * Unsubscribe socket from all topics and wildcard set
-	 * Called before applying a new subscription to prevent leaks on re-subscribe
-	 */
 	private unsubscribeAll(
 		socket: net.Socket,
 		subscription: ClientSubscription,
 	): void {
-		// Remove from wildcard subscribers
 		this.wildcardSockets.delete(socket);
-
-		// Remove from all topic-specific indices
 		subscription.topics.forEach((topic) => {
 			const sockets = this.topicToSockets.get(topic);
 			if (sockets) {
 				sockets.delete(socket);
-				// Clean up empty topic set
 				if (sockets.size === 0) {
 					this.topicToSockets.delete(topic);
 				}
 			}
 		});
 
-		// Clear subscription topics
 		subscription.topics.clear();
 	}
 
-	/**
-	 * Remove client from subscriptions map and indices
-	 * Handles both active subscriptions and pending handshakes
-	 */
 	private removeClient(socket: net.Socket): void {
-		// Clean up any pending drain-wait timer for this socket.
-		const pendingDrain = this.drainWaiters.get(socket);
-		if (pendingDrain) {
-			clearTimeout(pendingDrain);
-			this.drainWaiters.delete(socket);
-		}
-
-		// Check if socket is still in pending handshake
 		if (this.pendingSubscriptions.has(socket)) {
 			this.pendingSubscriptions.delete(socket);
 			try {
@@ -707,20 +538,14 @@ export class SocketServer implements ISocketServer {
 		// Check if socket is in active subscriptions
 		const subscription = this.subscriptions.get(socket);
 		if (subscription) {
-			// Remove from client subscriptions
 			this.subscriptions.delete(socket);
-
-			// Clean up from topic-centric indices
 			if (subscription.topics.size === 0) {
-				// Wildcard subscriber
 				this.wildcardSockets.delete(socket);
 			} else {
-				// Topic-specific: remove from each topic's subscriber set
 				subscription.topics.forEach((topic) => {
 					const sockets = this.topicToSockets.get(topic);
 					if (sockets) {
 						sockets.delete(socket);
-						// Clean up empty topic set
 						if (sockets.size === 0) {
 							this.topicToSockets.delete(topic);
 						}
@@ -889,12 +714,6 @@ export class SocketServer implements ISocketServer {
 		};
 	}
 
-	/**
-	 * Format device data based on configuration
-	 * 
-	 * Current: Delimiter-based framing (e.g., '\n'). Works for controlled input.
-	 * TODO: Consider length-prefixed framing or MessagePack for production robustness.
-	 */
 	private formatData(dataPoints: DeviceDataPoint[]): string {
 		if (this.config.dataFormat === "csv") {
 			return this.formatAsCsv(dataPoints);
@@ -903,14 +722,9 @@ export class SocketServer implements ISocketServer {
 		}
 	}
 
-	/**
-	 * Format data as JSON
-	 * Returns flat array of readings for cleaner database storage
-	 */
 	private formatAsJson(dataPoints: DeviceDataPoint[]): string {
 		const timestamp = new Date().toISOString();
 
-		// Create flat array of readings (one per register)
 		const readings = dataPoints.map((point) => ({
 			timestamp: point.timestamp,
 			deviceName: point.deviceName,
@@ -940,7 +754,6 @@ export class SocketServer implements ISocketServer {
 			...(point.writable && { writable: true }),
 		}));
 
-		// Return array directly for single reading, or wrapped for batch
 		if (readings.length === 1) {
 			return JSON.stringify(readings[0]);
 		} else {
@@ -948,9 +761,6 @@ export class SocketServer implements ISocketServer {
 		}
 	}
 
-	/**
-	 * Format data as CSV
-	 */
 	private formatAsCsv(dataPoints: DeviceDataPoint[]): string {
 		const rows: string[] = [];
 

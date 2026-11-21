@@ -81,12 +81,74 @@ export class MessageBufferModel {
 	};
 	private static ttlCacheHours?: number;
 	private static ttlCacheAt?: number;
+	private static defaultsEnsured = false;
+	private static stmtInsert: any;
+	private static stmtDelete: any;
+	private static stmtIncrement: any;
+	private static stmtGetMetric: any;
 
 	private static getDb(): DatabaseSync {
 		return getDatabase();
 	}
 
+	private static getPreparedInsert() {
+		if (!this.stmtInsert) {
+			this.stmtInsert = this.getDb().prepare(`
+        INSERT INTO ${this.TABLE} (
+          endpoint_name,
+          topic,
+          qos,
+          payload,
+          msg_id,
+          is_critical,
+          status,
+          lock_id,
+          locked_at,
+          payload_bytes,
+          retry_count,
+          next_retry_at,
+          created_at,
+          expires_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+		}
+		return this.stmtInsert;
+	}
+
+	private static getPreparedDelete() {
+		if (!this.stmtDelete) {
+			this.stmtDelete = this.getDb().prepare(`DELETE FROM ${this.TABLE} WHERE id = ?`);
+		}
+		return this.stmtDelete;
+	}
+
+	private static getPreparedIncrement() {
+		if (!this.stmtIncrement) {
+			this.stmtIncrement = this.getDb().prepare(`
+        INSERT INTO ${this.META_TABLE} (key, value, updated_at)
+        VALUES (?, CAST(? AS TEXT), ?)
+        ON CONFLICT(key) DO UPDATE SET
+          value = CAST(
+            COALESCE(CAST(${this.META_TABLE}.value AS INTEGER), 0) +
+            COALESCE(CAST(excluded.value AS INTEGER), 0)
+            AS TEXT
+          ),
+          updated_at = excluded.updated_at
+      `);
+		}
+		return this.stmtIncrement;
+	}
+
+	private static getPreparedGetMetric() {
+		if (!this.stmtGetMetric) {
+			this.stmtGetMetric = this.getDb().prepare(`SELECT value FROM ${this.META_TABLE} WHERE key = ?`);
+		}
+		return this.stmtGetMetric;
+	}
+
 	private static ensureMetadataDefaults(): void {
+		if (this.defaultsEnsured) return;
+		
 		const db = this.getDb();
 		const updatedAt = new Date().toISOString();
 		const insertDefault = db.prepare(`
@@ -97,6 +159,8 @@ export class MessageBufferModel {
 		for (const [key, value] of Object.entries(this.DEFAULT_METADATA)) {
 			insertDefault.run(key, value, updatedAt);
 		}
+		
+		this.defaultsEnsured = true;
 	}
 
 	private static mapRow(row: MessageBufferRow): MessageBufferRecord {
@@ -149,7 +213,7 @@ export class MessageBufferModel {
 		const db = this.getDb();
 		this.ensureMetadataDefaults();
 		const ttlHours = this.getTtlHours();
-		const payloadBytes = Buffer.byteLength(record.payload, 'utf-8');
+		const payloadBytes = record.payload_bytes > 0 ? record.payload_bytes : Buffer.byteLength(record.payload, 'utf-8');
     
 		// Calculate expiration
 		const expiresAt = new Date();
@@ -157,41 +221,22 @@ export class MessageBufferModel {
 
 		const createdAtIso = new Date().toISOString();
 		return transact(db, () => {
-			const result = db
-				.prepare(`
-          INSERT INTO ${this.TABLE} (
-            endpoint_name,
-            topic,
-            qos,
-            payload,
-            msg_id,
-            is_critical,
-            status,
-            lock_id,
-            locked_at,
-            payload_bytes,
-            retry_count,
-            next_retry_at,
-            created_at,
-            expires_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `)
-				.run(
-					record.endpoint_name,
-					record.topic,
-					record.qos,
-					record.payload,
-					record.msg_id ?? null,
-					record.is_critical ?? 0,
-					options.status,
-					options.lockId,
-					options.lockedAtIso,
-					payloadBytes,
-					0,
-					null,
-					createdAtIso,
-					expiresAt.toISOString(),
-				);
+			const result = this.getPreparedInsert().run(
+				record.endpoint_name,
+				record.topic,
+				record.qos,
+				record.payload,
+				record.msg_id ?? null,
+				record.is_critical ?? 0,
+				options.status,
+				options.lockId,
+				options.lockedAtIso,
+				payloadBytes,
+				0,
+				null,
+				createdAtIso,
+				expiresAt.toISOString(),
+			);
 
 			this.incrementMetric('total_buffered');
 			// canAcceptMessage() is advisory only. Concurrent writers can still
@@ -343,7 +388,14 @@ export class MessageBufferModel {
 	static deleteByIds(ids: number[]): number {
 		if (ids.length === 0) return 0;
 
-		const deleted = this.deleteIdsInChunks(ids);
+		let deleted: number;
+		
+		if (ids.length === 1) {
+			const result = this.getPreparedDelete().run(ids[0]);
+			deleted = Number(result.changes || 0);
+		} else {
+			deleted = this.deleteIdsInChunks(ids);
+		}
 
 		if (deleted > 0) {
 			this.incrementMetric('total_flushed', deleted);
@@ -557,10 +609,7 @@ export class MessageBufferModel {
    */
 	private static getMetric(key: string): number {
 		this.ensureMetadataDefaults();
-		const result = this.getDb()
-			.prepare(`SELECT value FROM ${this.META_TABLE} WHERE key = ? LIMIT 1`)
-			.get(key) as { value?: string | number } | undefined;
-
+		const result = this.getPreparedGetMetric().get(key) as { value?: string | number } | undefined;
 		return parseInt(String(result?.value ?? '0'), 10);
 	}
 
@@ -609,19 +658,7 @@ export class MessageBufferModel {
    */
 	private static incrementMetric(key: string, amount: number = 1): void {
 		this.ensureMetadataDefaults();
-		this.getDb()
-			.prepare(`
-        INSERT INTO ${this.META_TABLE} (key, value, updated_at)
-        VALUES (?, CAST(? AS TEXT), ?)
-        ON CONFLICT(key) DO UPDATE SET
-          value = CAST(
-            COALESCE(CAST(${this.META_TABLE}.value AS INTEGER), 0) +
-            COALESCE(CAST(excluded.value AS INTEGER), 0)
-            AS TEXT
-          ),
-          updated_at = excluded.updated_at
-      `)
-			.run(key, amount, new Date().toISOString());
+		this.getPreparedIncrement().run(key, amount, new Date().toISOString());
 	}
 
 	private static enforceQuotas(): number {

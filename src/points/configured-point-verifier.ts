@@ -31,7 +31,7 @@ export class ConfiguredPointVerifier implements CatalogEvidenceVerifier {
 	private readonly authorizedResolver: WeakRef<object>;
 	private stmtEndpoint: ReturnType<DatabaseSync['prepare']> | undefined;
 	private stmtRevision: ReturnType<DatabaseSync['prepare']> | undefined;
-	private endpointCache = new Map<string, { revision: number; row: EndpointRow } | null>();
+	private endpointCache = new Map<string, { revision: number; row: EndpointRow; checkedAt: number } | null>();
 
 	constructor(
 		private readonly db: DatabaseSync,
@@ -44,15 +44,17 @@ export class ConfiguredPointVerifier implements CatalogEvidenceVerifier {
 		const cached = this.endpointCache.get(endpointUuid);
 		if (cached !== undefined) {
 			if (cached === null) return undefined;
+			const now = Date.now();
+			if (now - cached.checkedAt < 5000) return cached.row;
 			this.stmtRevision ??= this.db.prepare('SELECT revision FROM endpoints WHERE uuid = ? AND enabled = 1 LIMIT 1');
 			const rev = this.stmtRevision.get(endpointUuid) as { revision: number } | undefined;
-			if (rev?.revision === cached.revision) return cached.row;
+			if (rev?.revision === cached.revision) { cached.checkedAt = now; return cached.row; }
 			this.endpointCache.delete(endpointUuid);
 		}
 		this.stmtEndpoint ??= this.db.prepare('SELECT uuid, protocol, connection, revision FROM endpoints WHERE uuid = ? AND enabled = 1 LIMIT 1');
 		const row = this.stmtEndpoint.get(endpointUuid) as EndpointRow | undefined;
 		if (!row) { this.endpointCache.set(endpointUuid, null); return undefined; }
-		this.endpointCache.set(endpointUuid, { revision: row.revision, row });
+		this.endpointCache.set(endpointUuid, { revision: row.revision, row, checkedAt: Date.now() });
 		return row;
 	}
 

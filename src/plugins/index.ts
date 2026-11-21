@@ -10,6 +10,7 @@ import { type ModbusAdapterConfig, normalizeModbusRegisters } from "./modbus/typ
 import { MqttAdapter, type MqttReadingEvidence, type MqttShadowOptions } from "./mqtt/adapter.js";
 import { type MqttAdapterConfig } from "./mqtt/types.js";
 import { SocketServer, type ISocketServer } from "../core/socket-server.js";
+import { RustSocketServer } from "../core/rust-socket-server.js";
 import {
 	type DeviceDataPoint,
 	type ExternalPluginConfig,
@@ -536,7 +537,13 @@ export class AdapterManager extends EventEmitter {
 			includeTimestamp: dbOutput.include_timestamp,
 			includeDeviceName: dbOutput.include_device_name,
 		};
-		const socket: ISocketServer = new SocketServer(outputConfig, this.logger);
+		const useRustIpc = process.env.IPC_ENGINE === "rust";
+		const socket: ISocketServer = useRustIpc
+			? new RustSocketServer(outputConfig, this.logger)
+			: new SocketServer(outputConfig, this.logger);
+		if (useRustIpc) {
+			this.logger.info(`Using Rust-native IPC server for ${protocol}`);
+		}
 		await socket.start();
 		this.socketServers.set(protocol, socket);
 		return socket;
@@ -813,15 +820,21 @@ export class AdapterManager extends EventEmitter {
 			}
 			let snapshotErrorReported = false;
 			let staleConfigurationReported = false;
+			let revCacheResult = false;
+			let revCacheAt = 0;
 			state = {
 				evidence,
 				lookup: new Map(),
 				addressKeys: new Map(),
 				isCurrent: () => {
 					if (!evidence.isCurrent() || this.opcuaIdentityStates.get(endpointUuid) !== state) return false;
+					const now = Date.now();
+					if (now - revCacheAt < 5000) return revCacheResult;
 					try {
 						const check = stmtRevisionCheck.get(evidence.deviceName, endpointUuid) as { revision: number; name_count: number } | undefined;
 						const current = !!check && check.revision === snapshotRevision && check.name_count === snapshotNameCount;
+						revCacheResult = current;
+						revCacheAt = now;
 						snapshotErrorReported = false;
 						if (!current && !staleConfigurationReported) {
 							this.logger.warn(`OPC UA identity source changed for ${evidence.deviceName}; waiting for adapter reload`);

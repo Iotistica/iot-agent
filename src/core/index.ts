@@ -267,15 +267,6 @@ export class AgentManager {
 	private async loadAgentInfo(): Promise<void> {
 		const record = await this.dbClient.loadAgent();
 		if (record) {
-			this.logger?.debugSync('Record loaded from database', {
-				component: LogComponents.agentManager,
-				operation: 'loadAgentInfo',
-				hasRecord: !!record,
-				hasApiTlsConfig: !!record.apiTlsConfig,
-				apiTlsConfigType: typeof record.apiTlsConfig,
-				apiTlsConfigLength: record.apiTlsConfig?.length
-			});
-
 			this.agentInfo = {
 				uuid: record.uuid,
 				name: record.name || undefined,
