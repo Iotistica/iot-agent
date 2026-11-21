@@ -13,7 +13,7 @@
  */
 
 import type { DatabaseSync } from 'node:sqlite';
-import { getDatabase, transact } from '../sqlite';
+import { getDatabase, transact, walCheckpointIfDue } from '../sqlite';
 
 export interface MessageBufferRecord {
   id?: number;
@@ -399,6 +399,7 @@ export class MessageBufferModel {
 
 		if (deleted > 0) {
 			this.incrementMetric('total_flushed', deleted);
+			walCheckpointIfDue();
 		}
 
 		return deleted;

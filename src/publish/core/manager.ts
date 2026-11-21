@@ -1594,13 +1594,18 @@ export class PublishManager extends EventEmitter {
 		let bufferedRecordId: number | undefined;
 		let publishConfirmed = false;
 		const destinationContext = this.getPublishDestinationLogContext(topic);
+		const needsDurableBuffer = this.bindings.some(b => b.publisher.type !== 'noop');
 
 		try {
-			const claimed = await this.persistClaimedBatch(topic, data, msgId, jsonString, jsonBytes);
-			bufferedRecordId = claimed.id;
-			if (this.needStop) {
-				const MessageBufferModel = await this.getMessageBufferModel();
-				MessageBufferModel.markRetryFailed(claimed.id, 'Publish interrupted during shutdown');
+			if (needsDurableBuffer) {
+				const claimed = await this.persistClaimedBatch(topic, data, msgId, jsonString, jsonBytes);
+				bufferedRecordId = claimed.id;
+				if (this.needStop) {
+					const MessageBufferModel = await this.getMessageBufferModel();
+					MessageBufferModel.markRetryFailed(claimed.id, 'Publish interrupted during shutdown');
+					return;
+				}
+			} else if (this.needStop) {
 				return;
 			}
 
@@ -1632,8 +1637,10 @@ export class PublishManager extends EventEmitter {
 				// Compression needed: call compress() normally
 				const { payload, info } = await this.compressor.compress(data, baselineSize, this.stats.data.messagesPublished, undefined, { jsonString, jsonBytes });
 				if (this.needStop) {
-					const MessageBufferModel = await this.getMessageBufferModel();
-					MessageBufferModel.markRetryFailed(claimed.id, 'Publish interrupted during shutdown');
+					if (bufferedRecordId !== undefined) {
+						const MessageBufferModel = await this.getMessageBufferModel();
+						MessageBufferModel.markRetryFailed(bufferedRecordId, 'Publish interrupted during shutdown');
+					}
 					return;
 				}
 				compressedPayloadCache.set(`${this.payloadFormat}::global::fq=false`, payload);
@@ -1643,8 +1650,10 @@ export class PublishManager extends EventEmitter {
 			const routed = await this.routePublishBatch(topic, compressedPayloadCache, compressionInfoCache, endpointName, enriched);
 			publishConfirmed = true;
 
-			const MessageBufferModel = await this.getMessageBufferModel();
-			MessageBufferModel.deleteByIds([claimed.id]);
+			if (bufferedRecordId !== undefined) {
+				const MessageBufferModel = await this.getMessageBufferModel();
+				MessageBufferModel.deleteByIds([bufferedRecordId]);
+			}
 			if (routed) {
 				// This point is only reached after routePublishBatch() has already delivered
 				// the batch to the destination plugin without throwing — always "Published",

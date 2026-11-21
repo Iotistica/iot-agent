@@ -32,6 +32,29 @@ export function closeDatabase(): void {
 	directDb = undefined;
 }
 
+let lastPassiveCheckpointMs = 0;
+const PASSIVE_CHECKPOINT_INTERVAL_MS = 60_000;
+
+/**
+ * Run a PASSIVE WAL checkpoint if at least PASSIVE_CHECKPOINT_INTERVAL_MS has
+ * elapsed since the last one.  PASSIVE never blocks writers — it only moves
+ * pages that are already no longer needed by any reader, so it is safe to call
+ * during normal runtime (unlike TRUNCATE which requires an exclusive lock).
+ *
+ * Returns true when a checkpoint actually ran.
+ */
+export function walCheckpointIfDue(): boolean {
+	const now = Date.now();
+	if (now - lastPassiveCheckpointMs < PASSIVE_CHECKPOINT_INTERVAL_MS) return false;
+	lastPassiveCheckpointMs = now;
+	try {
+		getDatabase().exec('PRAGMA wal_checkpoint(PASSIVE)');
+		return true;
+	} catch {
+		return false;
+	}
+}
+
 /** Run fn inside a transaction, committing on success and rolling back on error. */
 export function transact<T>(db: DatabaseSync, fn: () => T, mode: 'DEFERRED' | 'IMMEDIATE' | 'EXCLUSIVE' = 'DEFERRED'): T {
 	db.exec(`BEGIN ${mode}`);
