@@ -384,7 +384,7 @@ export class DevicePublish extends EventEmitter {
 		publisher: { type: string; name?: string; config_json?: Record<string, unknown> | null; id?: number },
 		client: IPublishClient,
 		logger?: Logger,
-		endpointName?: string,
+		_endpointName?: string,
 	): IPublishPlugin {
 		const target = publisher.type.trim().toLowerCase();
 		const config = publisher.config_json ?? null;
@@ -400,7 +400,7 @@ export class DevicePublish extends EventEmitter {
 			case 'gcp':
 				if (!this.proPlugins.gcp) throw new Error('Google Cloud IoT destination requires Iotistica Agent Pro');
 				return this.proPlugins.gcp.fromEnv(this.agentLogger, logger);
-			case 'mqtt': return MqttPublishPlugin.fromConfig(config, this.agentLogger, logger, this.deviceUuid, endpointName, publisher.id, publisher.name);
+			case 'mqtt': return MqttPublishPlugin.fromConfig(config, this.agentLogger, logger, publisher.id, publisher.name);
 			case 'influxdb':
 				if (!this.proPlugins.influxdb) throw new Error('InfluxDB destination requires Iotistica Agent Pro');
 				return this.proPlugins.influxdb.fromConfig(config, logger);

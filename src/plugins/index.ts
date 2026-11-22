@@ -28,6 +28,8 @@ import { encodeIfUuid } from "../mqtt/codec.js";
 import { createIdentities, resolveEndpoints } from "../points/configured-point-resolver.js";
 import { canonicalizeAddress } from "../points/canonical-address.js";
 import { resolveMqttConfiguredFields } from "../points/mqtt-configured-fields.js";
+import { isEventLoopHealthy, getEventLoopDelayMs } from "../system/memory.js";
+import { RustOpcuaSubscriber, isRustOpcuaAvailable } from "../core/rust-opcua-subscriber.js";
 
 // Type-only import.
 import type { OPCUAAdapterConfig } from "./opcua/types.js";
@@ -256,6 +258,10 @@ export class AdapterManager extends EventEmitter {
 	private readonly mqttIdentityStates = new WeakMap<MqttAdapter, Map<string, MqttIdentityState>>();
 	private readonly mqttIdentityPending = new WeakMap<MqttAdapter, Set<string>>();
 	private readonly LAST_SEEN_THROTTLE_MS = 5000;
+	private rustOpcuaSubscribers: Map<string, RustOpcuaSubscriber> = new Map();
+	private circuitBreakerOpen = false;
+	private circuitBreakerDropped = 0;
+	private lastCircuitBreakerLogAt = 0;
 	private normNameLoggedSources = new Set<string>();
 	private config: AdapterConfig;
 	private deviceUuid: string;
@@ -560,13 +566,37 @@ export class AdapterManager extends EventEmitter {
 		const label = protocol.toUpperCase();
 		adapter.on("started", () => this.logger.info(`${label} adapter started`));
 		adapter.on("data", (dps: DeviceDataPoint[]) => {
+			const loopHealthy = isEventLoopHealthy();
+			const ipcPressured = socket.isBackpressured?.() ?? false;
+
+			if (!loopHealthy || ipcPressured) {
+				this.circuitBreakerDropped += dps.length;
+				const now = Date.now();
+				if (!this.circuitBreakerOpen) {
+					this.circuitBreakerOpen = true;
+					const delay = getEventLoopDelayMs();
+					this.logger.warn(
+						`[CircuitBreaker] OPEN for ${label} — dropping data (loop_healthy=${loopHealthy}, ipc_pressured=${ipcPressured}, el_p99=${delay.p99.toFixed(0)}ms, points=${dps.length})`,
+					);
+				} else if (now - this.lastCircuitBreakerLogAt >= 10000) {
+					const delay = getEventLoopDelayMs();
+					this.logger.debug(
+						`[CircuitBreaker] Still open for ${label} — ${this.circuitBreakerDropped} pts dropped total (el_p99=${delay.p99.toFixed(0)}ms, ipc_pressured=${ipcPressured})`,
+					);
+				}
+				this.lastCircuitBreakerLogAt = now;
+				return;
+			}
+
+			if (this.circuitBreakerOpen) {
+				this.logger.info(
+					`[CircuitBreaker] CLOSED for ${label} — resuming data flow (${this.circuitBreakerDropped} pts were dropped)`,
+				);
+				this.circuitBreakerOpen = false;
+				this.circuitBreakerDropped = 0;
+			}
+
 			socket.sendData(this.enrichWithEndpointUuid(dps, uuidMap, shadow, adapter), protocol);
-			// Stamp lastSeenAt for both endpoint and device tables, throttled per
-			// device name (see LAST_SEEN_THROTTLE_MS above) — health freshness
-			// doesn't need sub-second resolution, and each write is a synchronous
-			// SQLite call that a high-frequency emitter (e.g. an OPC-UA
-			// subscription firing once per changed node) could otherwise repeat
-			// hundreds of times a second for no benefit beyond the first write.
 			const names = [...new Set(dps.map((dp) => dp.deviceName).filter(Boolean))];
 			const now = Date.now();
 			for (const name of names) {
@@ -1001,6 +1031,15 @@ export class AdapterManager extends EventEmitter {
 	/** Stop all running adapters and socket servers. */
 	async stop(): Promise<void> {
 		if (!this.running) return;
+		for (const [name, subscriber] of this.rustOpcuaSubscribers) {
+			try {
+				await subscriber.disconnect();
+				this.logger.debug(`[opcua-rust] Subscriber ${name} stopped`);
+			} catch (e) {
+				this.logger.warn(`[opcua-rust] Error stopping subscriber ${name}: ${e}`);
+			}
+		}
+		this.rustOpcuaSubscribers.clear();
 		for (const [, adapter] of this.adapters) {
 			if (adapter && typeof adapter.stop === "function") await adapter.stop();
 		}
@@ -1123,7 +1162,85 @@ export class AdapterManager extends EventEmitter {
 		return rawConnection;
 	}
 
+	private async startOPCUARustSubscriber(): Promise<void> {
+		if (!isRustOpcuaAvailable()) {
+			throw new Error("[opcua-rust] Native addon not found — OPCUA_ENGINE=rust but addon is missing");
+		}
+
+		const dbDevices = await EndpointModel.getEnabled("opcua");
+		if (dbDevices.length === 0) {
+			this.logger.info("[opcua-rust] No enabled OPC UA endpoints, skipping");
+			return;
+		}
+
+		for (const device of dbDevices) {
+			const connection = this.normalizeOpcuaConnection(device.name, device.connection) as Record<string, any>;
+			const dataPoints = (device.data_points || []) as Array<Record<string, any>>;
+
+			if (dataPoints.length === 0) {
+				this.logger.info(`[opcua-rust] ${device.name}: no data points, skipping`);
+				continue;
+			}
+
+			const socket = await this.createSocketServer("opcua");
+
+			const subscriber = new RustOpcuaSubscriber(
+				{
+					endpointUrl: connection.endpointUrl,
+					securityMode: connection.securityMode,
+					securityPolicy: connection.securityPolicy,
+					username: connection.username,
+					password: connection.password,
+					certificateTrustMode: connection.certificateTrustMode,
+				},
+				this.logger,
+			);
+			subscriber.setIpcServer(socket);
+
+			await subscriber.connect();
+
+			const nodeConfigs = dataPoints.map((dp) => ({
+				nodeId: dp.nodeId as string,
+				deviceName: device.name,
+				metric: dp.name as string || dp.nodeId as string,
+				deviceId: undefined,
+				endpointUuid: device.uuid,
+				deviceUuid: undefined,
+				protocol: "opcua",
+				resolvedDisplayName: undefined,
+				deviceDisplayName: undefined,
+				sourceEndpointName: device.name,
+				pointUuid: undefined,
+				unit: dp.unit as string | undefined,
+				writable: dp.writable as boolean | undefined,
+				rawObjectName: undefined,
+				rawPointName: dp.name as string | undefined,
+				normalizationName: undefined,
+				normalizationDeviceName: undefined,
+			}));
+
+			const publishInterval = (device as any).pollInterval ?? 1000;
+			await subscriber.subscribe(nodeConfigs, publishInterval, publishInterval);
+
+			this.rustOpcuaSubscribers.set(device.name, subscriber);
+			this.logger.info(
+				`[opcua-rust] ${device.name}: Rust subscriber active (${dataPoints.length} nodes)`,
+			);
+		}
+
+		this.logger.info(
+			`[opcua-rust] Started ${this.rustOpcuaSubscribers.size} Rust OPC UA subscriber(s)`,
+		);
+	}
+
 	private async startOPCUAAdapter(): Promise<void> {
+		if (process.env.OPCUA_ENGINE === "rust") {
+			return this.startOPCUARustSubscriber();
+		}
+		return this.startOPCUAAdapterNodeJs();
+	}
+
+	private async startOPCUAAdapterNodeJs(): Promise<void> {
 		try {
 			let opcuaDevices: any[];
 
@@ -1182,6 +1299,10 @@ export class AdapterManager extends EventEmitter {
 
 	/** Start OPC UA adapter group for a specific groupName. */
 	private async startOPCUAAdapterGroup(groupName: string, endpoints: Endpoint[], allEndpoints?: Endpoint[]): Promise<void> {
+		if (process.env.OPCUA_ENGINE === "rust") {
+			this.logger.info(`[opcua-rust] Group "${groupName}" — Rust engine uses single-subscriber path, delegating to startOPCUARustSubscriber`);
+			return this.startOPCUARustSubscriber();
+		}
 		try {
 			const opcuaDevices = endpoints.map((d) => ({
 				uuid: d.uuid,

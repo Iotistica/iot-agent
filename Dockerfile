@@ -71,6 +71,40 @@ RUN npx tsc --project tsconfig.build.json && \
     npm prune --omit=dev
 
 
+# ---- Native IPC (Rust) build stage ----
+FROM node:24-alpine AS rust-builder
+
+RUN apk add --no-cache curl gcc musl-dev openssl-dev openssl-libs-static perl make
+
+# Install Rust via rustup (minimal profile, stable)
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | \
+    sh -s -- -y --default-toolchain stable --profile minimal
+ENV PATH="/root/.cargo/bin:${PATH}"
+
+# -- Build native-ipc addon --
+WORKDIR /app/native-ipc
+
+COPY native-ipc/Cargo.toml native-ipc/build.rs ./
+COPY native-ipc/src ./src
+COPY native-ipc/package.json ./
+RUN --mount=type=cache,target=/root/.cargo/registry \
+    --mount=type=cache,target=/app/native-ipc/target \
+    npm install && \
+    npx napi build --release && \
+    strip native-ipc.node 2>/dev/null || true
+
+# -- Build opcua-subscriber addon --
+WORKDIR /app/opcua-subscriber
+
+COPY opcua-subscriber/Cargo.toml opcua-subscriber/build.rs ./
+COPY opcua-subscriber/src ./src
+COPY opcua-subscriber/package.json ./
+RUN --mount=type=cache,target=/root/.cargo/registry \
+    --mount=type=cache,target=/app/opcua-subscriber/target \
+    npm install && \
+    npx napi build --release && \
+    strip opcua-subscriber.node 2>/dev/null || true
+
 # ---- Admin panel build stage ----
 FROM node:24-alpine AS admin-builder
 
@@ -143,6 +177,12 @@ COPY --from=builder --chown=agentuser:agentgroup /app/dist ./dist
 
 # Copy built admin panel from admin-builder stage
 COPY --from=admin-builder --chown=agentuser:agentgroup /app/dist ./admin/dist
+
+# Copy native IPC addon (Rust)
+COPY --from=rust-builder --chown=agentuser:agentgroup /app/native-ipc/native-ipc.node ./native-ipc/native-ipc.node
+
+# Copy OPC UA subscriber addon (Rust) — optional, activated by OPCUA_ENGINE=rust
+COPY --from=rust-builder --chown=agentuser:agentgroup /app/opcua-subscriber/opcua-subscriber.node ./opcua-subscriber/opcua-subscriber.node
 
 # Copy update scripts and entrypoint
 COPY bin/*.sh /app/bin/

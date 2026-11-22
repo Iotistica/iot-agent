@@ -18,7 +18,7 @@ import type { Endpoint } from '@/types'
 import { dataExplorerPointName, dataExplorerPoints, dataExplorerSourceLookup, dataExplorerSourceName, matchesDataExplorerView, missingDataExplorerViewPointCount, normalizeDataExplorerPointKey, orderDataExplorerViewPoints, type DataExplorerPointRow } from '@/utils/data-explorer-point-key'
 import { mergePinnedDataExplorerPoints } from '@/utils/data-explorer-pins'
 import { restoreDataExplorerTabs } from '@/utils/data-explorer-tabs'
-import ConfiguredPointsPanel from '@/components/sources/ConfiguredPointsPanel.vue'
+import SourcePointsPanel from '@/components/sources/SourcePointsPanel.vue'
 
 type PointRow = DataExplorerPointRow
 type DeviceRecord = { uuid: string; endpoint_id: number; name: string; protocol: string; metadata?: Record<string, unknown> }
@@ -623,7 +623,7 @@ onUnmounted(() => { if (timer) clearInterval(timer); clearTimeout(persistFavTime
         <a-alert v-if="viewError" type="warning" show-icon :message="viewError" style="margin-bottom: 10px" />
         <a-alert v-if="activeSavedView && missingViewCount" type="info" show-icon :message="`${missingViewCount} saved point(s) are not in the recent sample. They remain saved in this view.`" style="margin-bottom: 10px" />
 
-        <ConfiguredPointsPanel :visible="activeTab === 'configured'" :sources="sources" :revision="configuredRevision"
+        <SourcePointsPanel :visible="activeTab === 'configured'" :sources="sources" :revision="configuredRevision"
           :filters="{ search, protocol: protocolFilter, source: sourceFilter, identity: identityFilter }" show-source @count-change="configuredCount = $event" />
         <!-- Views tab content -->
         <template v-if="activeTab === 'views'">

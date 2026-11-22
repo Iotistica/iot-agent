@@ -16,7 +16,11 @@
  * 4. Allows normal plateau (heap stable for 5 minutes = healthy)
  */
 
-import { memoryUsage } from 'process';import { getHeapStatistics } from 'v8';import type { AgentLogger } from '../logging/agent-logger';
+import { memoryUsage } from 'process';
+import { getHeapStatistics } from 'v8';
+import { monitorEventLoopDelay, type IntervalHistogram, performance } from 'perf_hooks';
+import { PerformanceObserver } from 'perf_hooks';
+import type { AgentLogger } from '../logging/agent-logger';
 import { LogComponents } from '../logging/types';
 
 // Heap tracking (more accurate than RSS)
@@ -79,6 +83,29 @@ const MAX_RESTART_ATTEMPTS = 3; // Max restarts in 24 hours
 const _RESTART_WINDOW_MS = 24 * 60 * 60 * 1000; // 24 hour window
 let lastRestartAttempt: number = 0;
 let restartAttemptsSinceStartup: number = 0;
+
+// GC monitoring (diagnostic only - collects stats on 10-second intervals)
+let gcMonitoringInterval: NodeJS.Timeout | undefined;
+let eventLoopHistogram: IntervalHistogram | undefined;
+let performanceObserver: PerformanceObserver | undefined;
+let gcMetrics = {
+	totalGCs: 0,
+	totalPauseMs: 0,
+	maxPauseMs: 0,
+	minorGCs: 0,
+	majorGCs: 0,
+	incrementalGCs: 0,
+	weakCallbackGCs: 0,
+	gcTypes: new Map<string, number>(), // Detailed GC type breakdown
+	lastReportTimestamp: 0,
+	windowStartTimestamp: Date.now(),
+};
+const GC_MONITORING_INTERVAL_MS = 10 * 1000; // 10-second reporting window
+
+// Event loop health circuit breaker
+const EVENT_LOOP_UNHEALTHY_THRESHOLD_MS = 5000;
+let _eventLoopHealthy = true;
+let _lastEventLoopP99Ms = 0;
 
 // Exported for tests only, as process.uptime cannot be stubbed
 export const processUptime = () => Math.floor(process.uptime());
@@ -234,7 +261,7 @@ export function startMemoryMonitoring(
 			// Reset flag if memory returns to normal
 			if (isHealthy && memoryThresholdBreached) {
 				memoryThresholdBreached = false;
-				logger?.infoSync('Memory returned to normal levels', {
+				logger?.debugSync('Memory returned to normal levels', {
 					component: LogComponents.metrics
 				});
 			}
@@ -245,6 +272,9 @@ export function startMemoryMonitoring(
 			);
 		}
 	}, intervalMs);
+
+	// Start GC monitoring alongside heap monitoring (diagnostic only)
+	startGCMonitoring();
 }
 
 /**
@@ -258,6 +288,11 @@ export function stopMemoryMonitoring(): void {
 			component: LogComponents.metrics
 		});
 	}
+	
+	// Also stop GC monitoring if it's running
+	if (gcMonitoringInterval) {
+		stopGCMonitoring();
+	}
 }
 
 /**
@@ -268,7 +303,7 @@ export function suppressLeakDetection(reason: string): void {
 	if (leakDetectionSuppressed) return;
 	leakDetectionSuppressed = true;
 	suppressionReason = reason;
-	logger?.infoSync('Leak detection suppressed', {
+	logger?.debugSync('Leak detection suppressed', {
 		component: LogComponents.metrics,
 		reason
 	});
@@ -285,10 +320,277 @@ export function resumeLeakDetection(): void {
 	leakDetectionSuppressed = false;
 	suppressionReason = undefined;
 	heapSamples = [];
-	logger?.infoSync('Leak detection resumed — sample window reset', {
+	logger?.debugSync('Leak detection resumed — sample window reset', {
 		component: LogComponents.metrics,
 		previousSuppression: reason
 	});
+}
+
+/**
+ * Start GC monitoring (diagnostic only)
+ * Collects GC pause times, event-loop delay percentiles, and GC type breakdown
+ * Integrates with existing memory monitoring lifecycle
+ */
+export function startGCMonitoring(): void {
+	if (gcMonitoringInterval) {
+		logger?.warnSync('GC monitoring already running', {
+			component: LogComponents.metrics
+		});
+		return;
+	}
+
+	// Tracking variables for partial initialization cleanup
+	let histogramCreated = false;
+	let observerCreated = false;
+
+	try {
+		// Initialize event-loop delay histogram
+		if (!eventLoopHistogram) {
+			eventLoopHistogram = monitorEventLoopDelay({ resolution: 10 });
+			histogramCreated = true;
+			eventLoopHistogram.enable();
+		}
+
+		// Set up GC performance observer
+		if (!performanceObserver) {
+			performanceObserver = new PerformanceObserver((items) => {
+				for (const entry of items.getEntries()) {
+					if (entry.entryType === 'gc') {
+						// Node.js perf_hooks GC kind values: 1=minor, 4=major, 8=incremental, 16=weakcb
+						const kind = (entry as any).kind;
+						const duration = entry.duration;
+
+						// Update aggregate metrics
+						gcMetrics.totalGCs++;
+						gcMetrics.totalPauseMs += duration;
+						gcMetrics.maxPauseMs = Math.max(gcMetrics.maxPauseMs, duration);
+
+						// Track GC type
+						const gcType = getGCTypeName(kind);
+						gcMetrics.gcTypes.set(gcType, (gcMetrics.gcTypes.get(gcType) || 0) + 1);
+
+						// Also update specific counters
+						switch (kind) {
+							case 1:
+								gcMetrics.minorGCs++;
+								break;
+							case 4:
+								gcMetrics.majorGCs++;
+								break;
+							case 8:
+								gcMetrics.incrementalGCs++;
+								break;
+							case 16:
+								gcMetrics.weakCallbackGCs++;
+								break;
+						}
+					}
+				}
+			});
+			observerCreated = true;
+
+			// Observe GC events
+			performanceObserver.observe({ entryTypes: ['gc'], buffered: false });
+		}
+
+		// Start periodic reporting
+		gcMonitoringInterval = setInterval(() => {
+			reportGCMetrics();
+		}, GC_MONITORING_INTERVAL_MS);
+
+		gcMonitoringInterval.unref(); // Don't keep process alive just for metrics
+
+		// Reset window timestamp to now (ensures first report covers correct window)
+		gcMetrics.windowStartTimestamp = Date.now();
+
+		logger?.debugSync('GC monitoring started', {
+			component: LogComponents.metrics,
+			intervalMs: GC_MONITORING_INTERVAL_MS
+		});
+	} catch (error) {
+		// Cleanup partial initialization
+		if (histogramCreated && eventLoopHistogram) {
+			try {
+				eventLoopHistogram.disable();
+			} catch (e) {
+				// Ignore cleanup errors
+			}
+			eventLoopHistogram = undefined;
+		}
+
+		if (observerCreated && performanceObserver) {
+			try {
+				performanceObserver.disconnect();
+			} catch (e) {
+				// Ignore cleanup errors
+			}
+			performanceObserver = undefined;
+		}
+
+		if (gcMonitoringInterval) {
+			clearInterval(gcMonitoringInterval);
+			gcMonitoringInterval = undefined;
+		}
+
+		logger?.errorSync(
+			'Failed to start GC monitoring',
+			error instanceof Error ? error : new Error(String(error)),
+			{ component: LogComponents.metrics }
+		);
+	}
+}
+
+/**
+ * Stop GC monitoring
+ */
+export function stopGCMonitoring(): void {
+	let wasStopped = false;
+
+	if (gcMonitoringInterval) {
+		clearInterval(gcMonitoringInterval);
+		gcMonitoringInterval = undefined;
+		wasStopped = true;
+	}
+
+	if (eventLoopHistogram) {
+		eventLoopHistogram.disable();
+		eventLoopHistogram = undefined;
+		wasStopped = true;
+	}
+
+	if (performanceObserver) {
+		performanceObserver.disconnect();
+		performanceObserver = undefined;
+		wasStopped = true;
+	}
+
+	// Reset metrics
+	gcMetrics = {
+		totalGCs: 0,
+		totalPauseMs: 0,
+		maxPauseMs: 0,
+		minorGCs: 0,
+		majorGCs: 0,
+		incrementalGCs: 0,
+		weakCallbackGCs: 0,
+		gcTypes: new Map(),
+		lastReportTimestamp: 0,
+		windowStartTimestamp: Date.now(),
+	};
+
+	if (wasStopped) {
+		logger?.debugSync('GC monitoring stopped', {
+			component: LogComponents.metrics
+		});
+	}
+}
+
+/**
+ * Event loop health — circuit breaker for data-producing adapters.
+ * Returns false when the last reporting window's P99 delay exceeded 5 seconds.
+ */
+export function isEventLoopHealthy(): boolean {
+	return _eventLoopHealthy;
+}
+
+export function getEventLoopDelayMs(): { mean: number; p99: number } {
+	if (!eventLoopHistogram) return { mean: 0, p99: 0 };
+	return {
+		mean: eventLoopHistogram.mean / 1e6,
+		p99: eventLoopHistogram.percentile(99) / 1e6,
+	};
+}
+
+/**
+ * Report GC metrics for the current window
+ */
+function reportGCMetrics(): void {
+	if (!eventLoopHistogram) return;
+
+	const now = Date.now();
+	const windowDurationSec = (now - gcMetrics.windowStartTimestamp) / 1000;
+
+	// Calculate event-loop delay percentiles
+	const mean = eventLoopHistogram.mean / 1e6; // Convert nanoseconds to milliseconds
+	const p95 = eventLoopHistogram.percentile(95) / 1e6;
+	const p99 = eventLoopHistogram.percentile(99) / 1e6;
+	const max = eventLoopHistogram.max / 1e6;
+
+	// Calculate GC frequency
+	const gcFrequencyPerMin = gcMetrics.totalGCs > 0 ? (gcMetrics.totalGCs / (windowDurationSec / 60)) : 0;
+	const avgPauseMs = gcMetrics.totalGCs > 0 ? (gcMetrics.totalPauseMs / gcMetrics.totalGCs) : 0;
+
+	// Build GC type breakdown string
+	const gcTypeBreakdown = Array.from(gcMetrics.gcTypes.entries())
+		.map(([type, count]) => `${type}=${count}`)
+		.join(', ');
+
+	logger?.debugSync('GC metrics report', {
+		component: LogComponents.metrics,
+		// GC events
+		totalGCsInWindow: gcMetrics.totalGCs,
+		gcFrequencyPerMin: gcFrequencyPerMin.toFixed(2),
+		totalPauseMsInWindow: gcMetrics.totalPauseMs.toFixed(1),
+		avgPauseMs: avgPauseMs.toFixed(2),
+		maxPauseMs: gcMetrics.maxPauseMs.toFixed(2),
+		// GC type breakdown (when available)
+		minorGCs: gcMetrics.minorGCs,
+		majorGCs: gcMetrics.majorGCs,
+		incrementalGCs: gcMetrics.incrementalGCs,
+		weakCallbackGCs: gcMetrics.weakCallbackGCs,
+		gcTypeBreakdown: gcTypeBreakdown || 'none',
+		// Event-loop delay
+		eventLoopDelayMeanMs: mean.toFixed(2),
+		eventLoopDelayP95Ms: p95.toFixed(2),
+		eventLoopDelayP99Ms: p99.toFixed(2),
+		eventLoopDelayMaxMs: max.toFixed(2),
+		// Window info
+		windowDurationSec: windowDurationSec.toFixed(1)
+	});
+
+	// Update event loop health circuit breaker
+	const wasHealthy = _eventLoopHealthy;
+	_eventLoopHealthy = p99 < EVENT_LOOP_UNHEALTHY_THRESHOLD_MS;
+	_lastEventLoopP99Ms = p99;
+	if (wasHealthy && !_eventLoopHealthy) {
+		logger?.warn(`[EventLoopHealth] Circuit breaker OPEN — P99=${p99.toFixed(0)}ms exceeds ${EVENT_LOOP_UNHEALTHY_THRESHOLD_MS}ms threshold`);
+	} else if (!wasHealthy && _eventLoopHealthy) {
+		logger?.info(`[EventLoopHealth] Circuit breaker CLOSED — P99=${p99.toFixed(0)}ms recovered below ${EVENT_LOOP_UNHEALTHY_THRESHOLD_MS}ms`);
+	}
+
+	// Reset metrics for next window
+	gcMetrics.totalGCs = 0;
+	gcMetrics.totalPauseMs = 0;
+	gcMetrics.maxPauseMs = 0;
+	gcMetrics.minorGCs = 0;
+	gcMetrics.majorGCs = 0;
+	gcMetrics.incrementalGCs = 0;
+	gcMetrics.weakCallbackGCs = 0;
+	gcMetrics.gcTypes.clear();
+	gcMetrics.windowStartTimestamp = Date.now();
+	gcMetrics.lastReportTimestamp = now;
+
+	// Reset event-loop histogram for next window
+	eventLoopHistogram?.reset();
+}
+
+/**
+ * Map GC kind number to human-readable name
+ * Node.js perf_hooks GC kind values: 1=minor, 4=major, 8=incremental, 16=weakcb
+ */
+function getGCTypeName(kind: number): string {
+	switch (kind) {
+		case 1:
+			return 'minor';
+		case 4:
+			return 'major';
+		case 8:
+			return 'incremental';
+		case 16:
+			return 'weakcb';
+		default:
+			return 'unknown';
+	}
 }
 
 /**
@@ -436,8 +738,9 @@ const MIN_HEAP_RATE_UPTIME_SECONDS = 20 * 60; // 20 minutes
 
 // External memory (Buffers, ArrayBuffers) needs a warmup window too:
 // node-opcua allocates binary protocol buffers during subscription setup.
-// At 50k+ monitored items the working-set allocation phase lasts ~10 minutes.
-const MIN_EXTERNAL_RATE_UPTIME_SECONDS = 15 * 60; // 15 minutes
+// At 100k+ monitored items the working-set allocation phase (native IPC buffers,
+// SQLite, activity monitor population) lasts ~20 minutes before plateauing.
+const MIN_EXTERNAL_RATE_UPTIME_SECONDS = 25 * 60; // 25 minutes
 
 /**
  * Calculate adaptive survivor monotonic tolerance
@@ -639,8 +942,14 @@ function calculateHeapTotalGrowthRate(): number | null {
 function calculateSurvivorGrowthRate(): { rate: number; isMonotonic: boolean; retainedGrowth: number } | null {
 	if (heapSamples.length < 5) return null;
 	
-	// Find minimum heap usage in each time window (approximates post-GC state)
-	// Group samples into 2-minute windows and find min of each window
+	// APPROXIMATION OF POST-GC STATE (not actual GC events):
+	// - Finds minimum heapUsed in each 2-minute window
+	// - Assumes minimum ≈ post-GC baseline (but not guaranteed)
+	// - Samples are from 30-second intervals, NOT aligned with GC events
+	// - If no GC runs for 30+ seconds, minimum is just the lowest heap observed
+	// - This is a heuristic indicator, not precise GC measurement
+	//
+	// For accurate GC measurement, see: startGCMonitoring() with perf_hooks
 	const windowSize = 2 * 60 * 1000; // 2 minutes
 	const windows: Array<{ timestamp: number; minHeap: number }> = [];
 	
@@ -660,7 +969,7 @@ function calculateSurvivorGrowthRate(): { rate: number; isMonotonic: boolean; re
 	
 	if (windows.length < 2) return null;
 	
-	// Check if floor is rising monotonically (true leak signal)
+	// Check if floor is rising monotonically (indicates retained growth)
 	// Adaptive tolerance: 3% (small heaps), 5% (medium), 7% (large)
 	const tolerance = getSurvivorMonotonicTolerance();
 	let isMonotonic = true;
@@ -676,7 +985,7 @@ function calculateSurvivorGrowthRate(): { rate: number; isMonotonic: boolean; re
 	const minHeapInWindow = Math.min(...windows.map(w => w.minHeap));
 	const retainedGrowth = (currentHeap - minHeapInWindow) / (1024 * 1024); // MB
 	
-	// Linear regression on minimum heap values (survivor baseline)
+	// Linear regression on minimum heap values (survivor baseline trend)
 	const n = windows.length;
 	let sumX = 0;
 	let sumY = 0;
@@ -1047,7 +1356,7 @@ function updateBaselineIfStable(currentHeap: number, currentRSS: number): void {
 		
 		_lastBaselineUpdate = now;
 		
-		logger?.infoSync('Baseline updated - heap stabilized at new level', {
+		logger?.debugSync('Baseline updated - heap stabilized at new level', {
 			component: LogComponents.metrics,
 			oldBaselineHeapMB: bytesToMB(oldBaselineHeap),
 			newBaselineHeapMB: bytesToMB(baselineHeap),
@@ -1222,7 +1531,31 @@ export async function healthcheck(
 		externalGrowthRate > externalThreshold &&
 		processUptime() >= MIN_EXTERNAL_RATE_UPTIME_SECONDS
 	) {
-		// Don't log here - caller decides whether to alert
+		// V8 doesn't always collect ArrayBuffer/Buffer garbage under external memory
+		// pressure alone (GC triggers primarily on heap pressure). Force a GC cycle
+		// and re-check: if external memory drops back near baseline, it was unreachable
+		// garbage — not a real leak.
+		if (typeof globalThis.gc === 'function') {
+			const externalBefore = mem.external;
+			globalThis.gc();
+			const postGC = memoryUsage();
+			const externalAfter = postGC.external;
+			const reclaimedMB = (externalBefore - externalAfter) / (1024 * 1024);
+			const growthFromBaseline = externalBefore - baselineExternal;
+			const reclaimedRatio = growthFromBaseline > 0 ? (externalBefore - externalAfter) / growthFromBaseline : 0;
+			logger?.debugSync('Forced GC for external memory pressure', {
+				component: LogComponents.metrics,
+				externalBeforeMB: bytesToMB(externalBefore),
+				externalAfterMB: bytesToMB(externalAfter),
+				reclaimedMB: reclaimedMB.toFixed(2),
+				reclaimedPct: (reclaimedRatio * 100).toFixed(1),
+				heapBeforeMB: bytesToMB(mem.heapUsed),
+				heapAfterMB: bytesToMB(postGC.heapUsed),
+			});
+			if (reclaimedRatio > 0.3) {
+				return true;
+			}
+		}
 		return false;
 	}
 	
@@ -1543,7 +1876,9 @@ function leakMemory(megabytes: number, allocation: 'buffer' | 'heap' = 'buffer')
 				self: null as any,
 			});
 		}
-		// Create circular reference to prevent GC
+		// Objects persist because leakedObjects array keeps them reachable from global root.
+		// Circular self-reference is unnecessary (JS GC handles cycles fine if unreachable).
+		// The simulation leaks by virtue of array retention, not circularity.
 		leakedObjects[leakedObjects.length - 1].self = leakedObjects[leakedObjects.length - 1];
 	}
 }

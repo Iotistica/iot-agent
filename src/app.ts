@@ -78,13 +78,16 @@ health.registerSubsystem('memory', async () => {
 			}
 		} catch { /* DB not ready — fall through to fatal */ }
 
-		// Memory leaks on edge devices are non-recoverable → latch fatal immediately
-		agent.agentLogger?.errorSync('Memory health check failed - marking fatal', undefined, {
+		// Log but do NOT mark fatal — the growth patterns detected during the
+		// first 20-30 minutes at high point counts (100K+) are almost always
+		// transient warmup, not real leaks.  If a genuine OOM occurs, the V8
+		// heap limit or the OS OOM-killer will terminate the process and the
+		// runtime (systemd / Docker restart policy) brings it back.
+		agent.agentLogger?.warnSync('Memory health check failed — monitoring only (no restart)', {
 			component: 'main',
 			operation: 'memoryHealth',
-			action: 'markFatal'
+			action: 'monitor',
 		});
-		markFatalAndRecover('memory-health-failed');
 	}
 	return ok;
 }, {

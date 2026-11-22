@@ -19,7 +19,7 @@ import {
 import { toDeviceUuid } from '../../db/models/device.model.js';
 import {
 	getDiscoveryCache, setDiscoveryCache, computeStructuralHash,
-	type DiscoveryCacheEntry,
+	type DiscoveryCacheEntry, type FolderCacheEntry,
 } from './discovery-cache.js';
 import type { DiscoverySnapshot } from '../../discovery/device-candidates.js';
 import type { ClientSession } from 'node-opcua-client';
@@ -89,6 +89,22 @@ export function looksLikeEngineeringUnit(description: string, nodeName: string):
 	if (trimmed.length > MAX_PLAUSIBLE_UNIT_LENGTH) return false;
 	if (normalizeForUnitNameCompare(trimmed) === normalizeForUnitNameCompare(nodeName)) return false;
 	return true;
+}
+
+const OPC_UA_REFERENCE_TYPES: Record<string, string> = {
+	'ns=0;i=35': 'Organizes',
+	'ns=0;i=36': 'HasEventSource',
+	'ns=0;i=44': 'Aggregates',
+	'ns=0;i=45': 'HasSubtype',
+	'ns=0;i=46': 'HasProperty',
+	'ns=0;i=47': 'HasComponent',
+	'ns=0;i=48': 'HasNotifier',
+};
+
+function resolveReferenceType(ref: any): string | undefined {
+	const id = ref?.referenceTypeId?.toString?.();
+	if (!id) return undefined;
+	return OPC_UA_REFERENCE_TYPES[id] ?? id;
 }
 
 export class OPCUADiscovery extends BaseDiscovery {
@@ -674,7 +690,8 @@ export class OPCUADiscovery extends BaseDiscovery {
 						password: endpoint.connection.password,
 					})
 					: await client.createSession();
-				const dataPoints: Array<{ nodeId: string; name: string; browseName?: string; device_uuid?: string; device_name?: string; writable?: boolean; unit?: string }> = [];
+				const dataPoints: Array<{ nodeId: string; name: string; browseName?: string; device_uuid?: string; device_name?: string; writable?: boolean; unit?: string; parentNodeId?: string }> = [];
+				const folderIndex: Record<string, FolderCacheEntry> = {};
 				let dataPointsComplete = true;
 				let subscriptionsSupported = false;
 				let discoveryMode: 'full' | 'cached' | 'delta' = 'full';
@@ -717,6 +734,7 @@ export class OPCUADiscovery extends BaseDiscovery {
 					// ── Incremental discovery ──────────────────────────────────
 					const forceFullBrowse = options?.forceFullBrowse ?? false;
 					let _cachedIndex: Record<string, DiscoveryCacheEntry> | undefined;
+					let _cachedFolderIndex: Record<string, FolderCacheEntry> | undefined;
 
 					if (!forceFullBrowse) {
 						try {
@@ -738,7 +756,11 @@ export class OPCUADiscovery extends BaseDiscovery {
 											...(entry.unit && { unit: entry.unit }),
 											...(entry.device_uuid && { device_uuid: entry.device_uuid }),
 											...(entry.device_name && { device_name: entry.device_name }),
+											...(entry.parentNodeId && { parentNodeId: entry.parentNodeId }),
 										});
+									}
+									if (cache.folderIndex) {
+										Object.assign(folderIndex, cache.folderIndex);
 									}
 									this.logger?.infoSync(`Incremental discovery: no changes detected, using cached data (${cachedNodeCount} nodes)`, {
 										component: LogComponents.discovery, endpointUrl: url,
@@ -752,6 +774,10 @@ export class OPCUADiscovery extends BaseDiscovery {
 									newNodeCount = newIds.size;
 									cachedNodeCount = currentNodeIds.size - newNodeCount;
 									_cachedIndex = cache.nodeIndex;
+									_cachedFolderIndex = cache.folderIndex;
+									if (_cachedFolderIndex) {
+										Object.assign(folderIndex, _cachedFolderIndex);
+									}
 									discoveryMode = 'delta';
 									this.logger?.infoSync(`Incremental discovery: delta detected — ${newNodeCount} new, ${cachedNodeCount} cached`, {
 										component: LogComponents.discovery, endpointUrl: url,
@@ -906,6 +932,7 @@ export class OPCUADiscovery extends BaseDiscovery {
 											...(cached.unit && { unit: cached.unit }),
 											...(cached.device_uuid && { device_uuid: cached.device_uuid }),
 											...(cached.device_name && { device_name: cached.device_name }),
+											...(cached.parentNodeId ? { parentNodeId: cached.parentNodeId } : { parentNodeId: nodeId }),
 										});
 										if (onProgress) {
 											const now = Date.now();
@@ -984,11 +1011,9 @@ export class OPCUADiscovery extends BaseDiscovery {
 											dataPoints.push({
 												nodeId: childNodeId,
 												name: metricName,
-												// Raw OPC-UA browseName as reported by the server (e.g. "SpaceTemp_device1").
-												// `name` above is lowercased and truncated to the pre-underscore prefix for
-												// use as the metric tag — preserved separately here for accurate display.
 												browseName: nodeName,
 												writable,
+												parentNodeId: nodeId,
 												...(folderDeviceUuid && { device_uuid: folderDeviceUuid }),
 												...(folderDeviceName && { device_name: folderDeviceName }),
 												...(unit && { unit }),
@@ -1038,11 +1063,13 @@ export class OPCUADiscovery extends BaseDiscovery {
 															...(dp.unit && { unit: dp.unit }),
 															...(dp.device_uuid && { device_uuid: dp.device_uuid }),
 															...(dp.device_name && { device_name: dp.device_name }),
+															...(dp.parentNodeId && { parentNodeId: dp.parentNodeId }),
 														};
 													}
 													await setDiscoveryCache(url, {
 														structuralHash: computeStructuralHash(Object.keys(partialNodeIndex)),
 														nodeIndex: partialNodeIndex,
+														...(Object.keys(folderIndex).length > 0 && { folderIndex }),
 														updatedAt: new Date().toISOString(),
 													});
 												} catch { /* non-fatal */ }
@@ -1057,7 +1084,13 @@ export class OPCUADiscovery extends BaseDiscovery {
 												...(folderDeviceUuid && { device_uuid: folderDeviceUuid }),
 											});
 										} else if (actualNodeClass === 1) {
-											// Verified folder - recurse into it, propagating any UUID/name found
+											folderIndex[childNodeId] = {
+												browseName: nodeName,
+												parentNodeId: nodeId,
+												referenceType: resolveReferenceType(ref),
+												typeDefinition: ref.typeDefinition?.toString?.() || undefined,
+											};
+
 											this.logger?.debugSync(`Browsing into folder: ${currentPath.join('/')}`, {
 												component: LogComponents.discovery + "] [" + this.protocol as any,
 												nodeId: childNodeId,
@@ -1106,6 +1139,11 @@ export class OPCUADiscovery extends BaseDiscovery {
 					
 						// Start recursive browsing from Objects folder
 						const ObjectsNodeId = 'ns=0;i=85'; // Standard Objects folder
+						folderIndex[ObjectsNodeId] = {
+							browseName: 'Objects',
+							parentNodeId: null,
+							referenceType: 'Organizes',
+						};
 						await browseRecursive(ObjectsNodeId, [], 0);
 
 						if (signal?.aborted || _channelDead) {
@@ -1153,10 +1191,16 @@ export class OPCUADiscovery extends BaseDiscovery {
 									...(dp.unit && { unit: dp.unit }),
 									...(dp.device_uuid && { device_uuid: dp.device_uuid }),
 									...(dp.device_name && { device_name: dp.device_name }),
+									...(dp.parentNodeId && { parentNodeId: dp.parentNodeId }),
 								};
 							}
 							const hash = computeStructuralHash(Object.keys(nodeIndex));
-							await setDiscoveryCache(url, { structuralHash: hash, nodeIndex, updatedAt: new Date().toISOString() });
+							await setDiscoveryCache(url, {
+								structuralHash: hash,
+								nodeIndex,
+								...(Object.keys(folderIndex).length > 0 && { folderIndex }),
+								updatedAt: new Date().toISOString(),
+							});
 						} catch { /* non-fatal: cache write failure doesn't block discovery */ }
 					}
 				} catch (browseError) {
@@ -1244,6 +1288,7 @@ export class OPCUADiscovery extends BaseDiscovery {
 							discoveryMode,
 							...(cachedNodeCount > 0 && { cachedNodeCount }),
 							...(newNodeCount > 0 && { newNodeCount }),
+							...(Object.keys(folderIndex).length > 0 && { folderIndex }),
 						}
 					});
 

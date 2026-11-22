@@ -229,13 +229,6 @@ export class FeatureInitializer {
 		}
 
 		try {
-			if (!isProLicensed()) {
-				logger.debugSync('Jobs Feature skipped — requires active license', {
-					component: LogComponents.agent,
-				});
-				return;
-			}
-
 			const cloudApiUrl = process.env.CLOUD_API_URL || cloudApiEndpoint;
 			const pollingIntervalMs =
         configSettings.cloudJobsPollingIntervalMs ||
@@ -535,13 +528,6 @@ export class FeatureInitializer {
 		}
 
 		try {
-			if (!isProLicensed()) {
-				logger.debugSync('Shell handler skipped — requires active license', {
-					component: LogComponents.agent,
-				});
-				return;
-			}
-
 			this.features.shellHandler = new ShellHandler(
 				deviceInfo.uuid,
 				mqttManager,
@@ -833,7 +819,7 @@ export async function initDiscoveryService(ctx: AgentInitContext): Promise<void>
 		ctx.discoveryService = new DiscoveryService(ctx.agentLogger, ctx.configManager);
 		await ctx.discoveryService.init();
 
-		ctx.discoveryRulesScheduler = new DiscoveryRulesScheduler(ctx.discoveryService, ctx.agentLogger);
+		ctx.discoveryRulesScheduler = new DiscoveryRulesScheduler(ctx.discoveryService, ctx.agentLogger, ctx.eventBus);
 		ctx.discoveryRulesScheduler.start();
 		setDiscoveryRulesScheduler(ctx.discoveryRulesScheduler);
 	} catch (error) {

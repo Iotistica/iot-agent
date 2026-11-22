@@ -1,17 +1,8 @@
 import { LogComponents } from '../logging/types.js';
-import { isProLicensed } from '../licensing/runtime.js';
 import { SimulationOrchestrator, loadSimulationConfig } from '../analytics/anomaly/index.js';
 import type { AgentInitContext } from './context.js';
 
 export async function initSimulationMode(ctx: AgentInitContext): Promise<void> {
-	if (!isProLicensed()) {
-		ctx.agentLogger?.debugSync('Simulation mode requires active license', {
-			component: LogComponents.agent,
-		});
-		ctx.simulationOrchestrator = undefined;
-		return;
-	}
-
 	const config = loadSimulationConfig();
 
 	if (!config.enabled) {

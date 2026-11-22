@@ -47,7 +47,7 @@ export class CommandDestination {
 		// client was built — tear down the stale connection before rebuilding.
 		await this.reset();
 
-		const client = createExternalMqttClientFromDestination(destination.config_json, deviceUuid, 'commands', logger);
+		const client = createExternalMqttClientFromDestination(destination.config_json, 'commands', logger);
 		if (!client) {
 			logger.warnSync(`Command destination '${destination.name}' has invalid/missing MQTT config`, {
 				component: LogComponents.commands,

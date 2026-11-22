@@ -29,6 +29,21 @@ All agent events flow through a single EventBus (`src/events/event-bus.ts`) with
 
 ---
 
+## OPC UA Simulator (for load testing)
+
+The simulator used for development and load testing lives at `C:\Users\Dan\iot-registry\sim\opcua\simulator.py` (Docker image). It's a standalone asyncua-based OPC UA server configured via env vars:
+
+- `OPCUA_POINT_COUNT` — number of simulated tags (default 8, max 100,000)
+- `OPCUA_PORT` — OPC UA listen port (default 4840)
+- `TICK_INTERVAL_S` — value update interval in seconds (default 5.0)
+- `UPDATE_BATCH_SIZE` — nodes updated per asyncio yield (default 250)
+- `OPCUA_ENGINEERING_UNITS` — attach EU metadata to each tag (default true)
+- `DEVICE_ID` — device folder name in the address space (default "opcua-001")
+
+**Startup behavior:** The server creates all nodes *before* calling `server.start()`, so the TCP port isn't listening until node creation finishes. At 100K points this takes ~1 hour. Progress is logged every 5,000 nodes. The agent's reconnect loop is expected during this window.
+
+---
+
 ## graphify
 
 This project has a knowledge graph at graphify-out/ with god nodes, community structure, and cross-file relationships.

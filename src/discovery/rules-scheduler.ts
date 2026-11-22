@@ -4,6 +4,7 @@ import type { DiscoveryService, DiscoveredDevice } from './service';
 import { DiscoveryRuleModel, type DiscoveryRule } from '../db/models/discovery-rule.model';
 import { DiscoveryRunModel } from '../db/models/discovery-run.model';
 import { DiscoveryBlocklistModel } from '../db/models/discovery-blocklist.model';
+import type { AgentEventInput } from '../events/types.js';
 
 const POLL_INTERVAL_MS = 30_000;
 // start() only resets a rule stuck at status='running' when the agent process
@@ -20,10 +21,16 @@ export class DiscoveryRulesScheduler {
 	private discoveryService: DiscoveryService;
 	private timer?: NodeJS.Timeout;
 	private runningAbort = new Map<string, AbortController>();
+	private eventBus?: { submit: (event: AgentEventInput) => void };
 
-	constructor(discoveryService: DiscoveryService, logger?: AgentLogger) {
+	constructor(discoveryService: DiscoveryService, logger?: AgentLogger, eventBus?: { submit: (event: AgentEventInput) => void }) {
 		this.discoveryService = discoveryService;
 		this.logger = logger;
+		this.eventBus = eventBus;
+	}
+
+	private logEvent(event: AgentEventInput): void {
+		this.eventBus?.submit(event);
 	}
 
 	start(): void {
@@ -186,6 +193,17 @@ export class DiscoveryRulesScheduler {
 			trigger,
 		});
 
+		this.logEvent({
+			source: 'discovery',
+			category: 'lifecycle',
+			severity: 'info',
+			message: `Discovery started: ${rule.name} (${rule.protocol})`,
+			fingerprint: `discovery:start:${rule.uuid}`,
+			resource_type: 'discovery-rule',
+			resource_id: rule.uuid,
+			metadata: { trigger, protocol: rule.protocol },
+		});
+
 		const onProgress = (progress: { found: number; phase: string; target?: string }) => {
 			try {
 				DiscoveryRuleModel.update(rule.uuid, {
@@ -230,6 +248,17 @@ export class DiscoveryRulesScheduler {
 					ruleName: rule.name,
 					found,
 				});
+
+				this.logEvent({
+					source: 'discovery',
+					category: 'lifecycle',
+					severity: 'info',
+					message: `Discovery paused: ${rule.name} — ${found} point(s) so far`,
+					fingerprint: `discovery:paused:${rule.uuid}`,
+					resource_type: 'discovery-rule',
+					resource_id: rule.uuid,
+					metadata: { trigger, protocol: rule.protocol, found },
+				});
 				return devices;
 			}
 
@@ -262,6 +291,17 @@ export class DiscoveryRulesScheduler {
 					ruleName: rule.name,
 					dataPoints: data_points,
 					retryAt,
+				});
+
+				this.logEvent({
+					source: 'discovery',
+					category: 'error',
+					severity: 'warning',
+					message: `Discovery interrupted: ${rule.name} — connection lost at ${data_points} points, auto-retry scheduled`,
+					fingerprint: `discovery:interrupted:${rule.uuid}`,
+					resource_type: 'discovery-rule',
+					resource_id: rule.uuid,
+					metadata: { trigger, protocol: rule.protocol, data_points, retryAt },
 				});
 				return devices;
 			}
@@ -296,6 +336,17 @@ export class DiscoveryRulesScheduler {
 				autoEnable: rule.auto_enable,
 				nextRunAt: next,
 			});
+
+			this.logEvent({
+				source: 'discovery',
+				category: 'lifecycle',
+				severity: 'info',
+				message: `Discovery completed: ${rule.name} — ${found} device(s), ${data_points} point(s)`,
+				fingerprint: `discovery:complete:${rule.uuid}`,
+				resource_type: 'discovery-rule',
+				resource_id: rule.uuid,
+				metadata: { trigger, protocol: rule.protocol, found, data_points, durationMs },
+			});
 		} catch (error) {
 			const msg = error instanceof Error ? error.message : String(error);
 			const finishedAt = new Date().toISOString();
@@ -315,6 +366,17 @@ export class DiscoveryRulesScheduler {
 				component: LogComponents.agent,
 				ruleUuid: rule.uuid,
 				ruleName: rule.name,
+			});
+
+			this.logEvent({
+				source: 'discovery',
+				category: 'error',
+				severity: 'warning',
+				message: `Discovery failed: ${rule.name} — ${msg}`,
+				fingerprint: `discovery:error:${rule.uuid}`,
+				resource_type: 'discovery-rule',
+				resource_id: rule.uuid,
+				metadata: { trigger, protocol: rule.protocol, error: msg, durationMs },
 			});
 		} finally {
 			this.runningAbort.delete(rule.uuid);

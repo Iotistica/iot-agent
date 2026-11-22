@@ -191,6 +191,38 @@ onMounted(() => { if (props.protocol === 'bacnet') loadVendors() })
     >
       <a-switch :checked="get('useSubscription', true)" @change="set('useSubscription', $event)" />
     </a-form-item>
+    <template v-if="get('useSubscription', true)">
+      <a-form-item label="Publishing Interval" extra="How often the server delivers value updates to the agent.">
+        <a-select :value="get('publishingInterval', 1000)" @update:value="set('publishingInterval', $event)" style="width: 100%">
+          <a-select-option :value="250">250 ms</a-select-option>
+          <a-select-option :value="500">500 ms</a-select-option>
+          <a-select-option :value="1000">1 second (default)</a-select-option>
+          <a-select-option :value="2000">2 seconds</a-select-option>
+          <a-select-option :value="5000">5 seconds</a-select-option>
+          <a-select-option :value="10000">10 seconds</a-select-option>
+        </a-select>
+      </a-form-item>
+      <a-form-item label="Max Items per Subscription">
+        <a-input-number
+          :value="get('maxMonitoredItemsPerSubscription', 5000)"
+          @update:value="(v: number) => set('maxMonitoredItemsPerSubscription', v)"
+          :min="100"
+          :max="10000"
+          :step="500"
+          style="width: 100%"
+        />
+      </a-form-item>
+      <a-form-item label="Max Notifications per Publish">
+        <a-input-number
+          :value="get('maxNotificationsPerPublish', 2000)"
+          @update:value="(v: number) => set('maxNotificationsPerPublish', v)"
+          :min="100"
+          :max="10000"
+          :step="500"
+          style="width: 100%"
+        />
+      </a-form-item>
+    </template>
     <a-form-item label="Security Mode" :name="['connection', 'securityMode']">
       <a-select :value="get('securityMode', 'None')" @update:value="set('securityMode', $event)">
         <a-select-option value="None">None</a-select-option>

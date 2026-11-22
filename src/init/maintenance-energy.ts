@@ -1,6 +1,5 @@
 import { LogComponents } from '../logging/types.js';
 import { DatabaseModel } from '../db/models/index.js';
-import { isProLicensed } from '../licensing/runtime.js';
 import { MaintenanceEnergyService } from '../maintenance/index.js';
 import { CloudMqttClient } from '../mqtt/manager.js';
 import { agentTopic } from '../mqtt/topics.js';
@@ -34,13 +33,6 @@ export async function initMaintenanceEnergy(ctx: AgentInitContext): Promise<void
 	}
 
 	try {
-		if (!isProLicensed()) {
-			ctx.agentLogger?.debugSync('Preventive maintenance / energy recommendations skipped — requires active license', {
-				component: LogComponents.agent,
-			});
-			return;
-		}
-
 		const dbInstance = DatabaseModel.getConnection();
 		ctx.maintenanceEnergyService = new MaintenanceEnergyService(dbInstance, {
 			logger: ctx.agentLogger,
@@ -51,8 +43,8 @@ export async function initMaintenanceEnergy(ctx: AgentInitContext): Promise<void
 				const dest = PublishDestinationsModel.getById(id);
 				return dest ? { id: dest.id!, type: dest.type, config_json: dest.config_json } : null;
 			},
-			createAlertMqttClient: (config: Record<string, unknown> | null | undefined, deviceId?: string, name?: string, logger?: any) =>
-				createExternalMqttClientFromDestination(config, deviceId, name, logger),
+			createAlertMqttClient: (config: Record<string, unknown> | null | undefined, _deviceId?: string, name?: string, logger?: any) =>
+				createExternalMqttClientFromDestination(config, name, logger),
 		});
 		ctx.maintenanceEnergyService.start();
 

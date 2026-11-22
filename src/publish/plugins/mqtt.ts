@@ -29,8 +29,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function loadExternalMqttConfigFromRecord(
 	config: Record<string, unknown> | null | undefined,
-	fallbackDeviceId?: string,
-	fallbackEndpointName?: string,
+	destinationName?: string,
+	destinationId?: number,
 ): ExternalMqttConfig | null {
 	if (!isRecord(config)) {
 		return null;
@@ -72,14 +72,10 @@ function loadExternalMqttConfigFromRecord(
 	const protocol = scheme;
 	const defaultPort = protocol === 'mqtts' ? 8883 : protocol === 'mqtt' ? 1883 : protocol === 'wss' ? 443 : 80;
 	const rejectUnauthorized = typeof config.rejectUnauthorized === 'boolean' ? config.rejectUnauthorized : undefined;
-	const sanitizedEndpoint = (fallbackEndpointName || 'endpoint')
-		.toLowerCase()
-		.replace(/[^a-z0-9_-]/g, '-')
-		.replace(/-+/g, '-')
-		.replace(/^-|-$/g, '');
-	const fallbackClientId = fallbackDeviceId && fallbackDeviceId.trim().length > 0
-		? `${fallbackDeviceId}-${sanitizedEndpoint || 'endpoint'}-external-mqtt`
-		: 'device-external-mqtt';
+	const sanitize = (s: string) => s.toLowerCase().replace(/[^a-z0-9_-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+	const namePart = destinationName?.trim() ? sanitize(destinationName) : '';
+	const idSuffix = destinationId !== undefined ? `-${destinationId}` : '';
+	const generatedClientId = `iotistica-${namePart || 'mqtt'}${idSuffix}`;
 
 	return {
 		provider: 'mqtt',
@@ -92,9 +88,7 @@ function loadExternalMqttConfigFromRecord(
 		clientId:
 			typeof config.clientId === 'string' && config.clientId.trim().length > 0
 				? config.clientId
-				: typeof config.deviceId === 'string' && config.deviceId.trim().length > 0
-					? config.deviceId
-					: fallbackClientId,
+				: generatedClientId,
 		username: typeof config.username === 'string' ? config.username : parsedUrl.username || undefined,
 		password: typeof config.password === 'string' ? config.password : parsedUrl.password || undefined,
 		topicTemplate:
@@ -296,12 +290,10 @@ export class MqttPublishPlugin extends BasePublishPlugin {
 		config: Record<string, unknown> | null | undefined,
 		agentLogger?: AgentLogger,
 		logger?: Logger,
-		fallbackDeviceId?: string,
-		fallbackEndpointName?: string,
 		destinationId?: number,
 		destinationName?: string,
 	): MqttPublishPlugin {
-		const resolved = loadExternalMqttConfigFromRecord(config, fallbackDeviceId, fallbackEndpointName);
+		const resolved = loadExternalMqttConfigFromRecord(config, destinationName, destinationId);
 		if (!resolved) {
 			throw new Error('mqtt publisher requires config_json with a brokerUrl');
 		}
@@ -316,11 +308,10 @@ export class MqttPublishPlugin extends BasePublishPlugin {
  */
 export function createExternalMqttClientFromDestination(
 	config: Record<string, unknown> | null | undefined,
-	fallbackDeviceId?: string,
 	fallbackName?: string,
 	logger?: AgentLogger,
 ): ExternalMqttClient | null {
-	const resolved = loadExternalMqttConfigFromRecord(config, fallbackDeviceId, fallbackName);
+	const resolved = loadExternalMqttConfigFromRecord(config, fallbackName);
 	if (!resolved) return null;
 	return new ExternalMqttClient(resolved, logger);
 }

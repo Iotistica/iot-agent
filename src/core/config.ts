@@ -269,7 +269,6 @@ export class ConfigManager extends EventEmitter {
 				pollInterval: endpoint.poll_interval,
 				enabled: Boolean(endpoint.enabled), // Convert SQLite integer (0/1) to boolean
 				metadata: endpoint.metadata,
-				dataPoints: endpoint.data_points, // Include data point definitions for cloud reporting
 			}),
 		);
 
@@ -717,8 +716,6 @@ export class ConfigManager extends EventEmitter {
 			enabled: device.enabled !== undefined ? device.enabled : true,
 			poll_interval: deviceAny.pollInterval || deviceAny.poll_interval || 5000,
 			connection: deviceAny.connection,
-			data_points:
-				deviceAny.dataPoints || deviceAny.data_points || deviceAny.registers,
 			metadata: deviceAny.metadata,
 		};
 	}
@@ -1021,22 +1018,7 @@ export class ConfigManager extends EventEmitter {
 						operation: "syncEndpointsToDatabase",
 						agentUuid: existing.uuid,
 						agentName: existing.name,
-						existingDataPointsCount: existing.data_points?.length || 0,
 					});
-
-					// CRITICAL: Preserve discovered data_points if target state has empty array
-					// This prevents reconciliation from overwriting discovery results
-					// Flow: Discovery finds nodes → saves to DB → cloud syncs → reconcile runs
-					// Without this check, reconcile would overwrite with cloud's empty array
-					const shouldPreserveDataPoints =
-						existing.data_points &&
-						existing.data_points.length > 0 &&
-						(!normalizedDevice.data_points ||
-							normalizedDevice.data_points.length === 0);
-
-					if (shouldPreserveDataPoints) {
-						normalizedDevice.data_points = existing.data_points;
-					}
 
 					await EndpointModel.updateByUuid(
 						normalizedDevice.uuid,
@@ -1047,7 +1029,6 @@ export class ConfigManager extends EventEmitter {
 						agentUuid: normalizedDevice.uuid,
 						agentName: normalizedDevice.name,
 						protocol: normalizedDevice.protocol,
-						dataPointsCount: normalizedDevice.data_points?.length || 0,
 					});
 				} else {
 					this.logger?.infoSync("Device NOT found in DB (will CREATE)", {
@@ -1055,75 +1036,7 @@ export class ConfigManager extends EventEmitter {
 						operation: "syncEndpointsToDatabase",
 						agentUuid: normalizedDevice.uuid,
 						agentName: normalizedDevice.name,
-						targetDataPointsCount: normalizedDevice.data_points?.length || 0,
 					});
-
-					// CRITICAL: Check for discovered data_points in discovery cache
-					// When a new device is created during reconciliation, the cloud doesn't have
-					// the discovered nodes yet, so dataPoints will be empty. But discovery may have
-					// just run and cached the results. Check cache before creating with empty array.
-					const endpointUrl = normalizedDevice.connection?.endpointUrl;
-					if (endpointUrl && this.discoveryService) {
-						this.logger?.debugSync("Checking discovery cache for new device", {
-							component: LogComponents.configManager,
-							operation: "syncEndpointsToDatabase",
-							endpointUrl,
-							hasDiscoveryService: !!this.discoveryService,
-							hasGetMethod: !!this.discoveryService.getDiscoveredDevice,
-						});
-
-						const discoveredDevice =
-							this.discoveryService.getDiscoveredDevice?.(endpointUrl);
-						if (
-							discoveredDevice?.dataPoints &&
-							discoveredDevice.dataPoints.length > 0
-						) {
-							this.logger?.debugSync(
-								"✅ USING cached discovered data_points (CREATE path)",
-								{
-									component: LogComponents.configManager,
-									agentUuid: normalizedDevice.uuid,
-									agentName: normalizedDevice.name,
-									endpointUrl,
-									cachedDataPointsCount: discoveredDevice.dataPoints.length,
-									reason: "Found in discovery cache - using cached nodes",
-								},
-							);
-
-							// Use discovered data_points instead of empty array from target state
-							normalizedDevice.data_points = discoveredDevice.dataPoints;
-						} else {
-							this.logger?.debugSync("⚠️ Discovery cache MISS for new device", {
-								component: LogComponents.configManager,
-								agentUuid: normalizedDevice.uuid,
-								agentName: normalizedDevice.name,
-								endpointUrl,
-								cacheHit: !!discoveredDevice,
-								hasDataPoints: discoveredDevice?.dataPoints?.length || 0,
-								reason:
-									"Will create with empty data_points - discovery may not have run yet",
-							});
-						}
-					} else {
-						const protocol = String(
-							normalizedDevice.protocol || "",
-						).toLowerCase();
-						const logFn = endpointUrl
-							? this.logger?.warnSync.bind(this.logger)
-							: this.logger?.debugSync.bind(this.logger);
-
-						logFn?.("⚠️ Cannot check discovery cache", {
-							component: LogComponents.configManager,
-							agentUuid: normalizedDevice.uuid,
-							agentName: normalizedDevice.name,
-							protocol,
-							hasEndpointUrl: !!endpointUrl,
-							hasDiscoveryService: !!this.discoveryService,
-							reason: endpointUrl
-								? "No discoveryService"
-								: "No endpointUrl (expected for some protocols like mqtt)",
-						});
-					}
 
 					try {
 						await EndpointModel.create(normalizedDevice);
@@ -1171,9 +1084,6 @@ export class ConfigManager extends EventEmitter {
 						agentUuid: normalizedDevice.uuid,
 						agentName: normalizedDevice.name,
 						protocol: normalizedDevice.protocol,
-						dataPointsCount: normalizedDevice.data_points?.length || 0,
-						dbDataPointsCount: verifyInsert?.data_points?.length || 0,
-						dbFirstDataPoint: verifyInsert?.data_points?.[0] || null,
 						verificationMethod: "by-uuid",
 					});
 				}
@@ -1530,8 +1440,6 @@ export class ConfigManager extends EventEmitter {
 				enabled: device.enabled !== undefined ? device.enabled : true,
 				poll_interval: device.pollInterval || 5000,
 				connection: connection,
-				data_points:
-					(device as any).dataPoints || (device as any).registers || [],
 				metadata: metadata,
 			};
 
@@ -1601,44 +1509,17 @@ export class ConfigManager extends EventEmitter {
 			const connection = this.resolveAdapterConnection(device);
 			const metadata = this.buildEndpointMetadata(device, connection, false);
 
-			// Get existing device first to check for data_points preservation
 			const existing = await EndpointModel.getByUuid(device.id);
 
-			// Prepare data_points with preservation logic
-			let dataPoints =
-				(device as any).dataPoints || (device as any).registers || [];
-
-			// CRITICAL: Preserve discovered data_points if target state has empty array
-			// Same logic as syncEndpointsToDatabase() - don't overwrite discovery results
-			if (
-				existing?.data_points &&
-				existing.data_points.length > 0 &&
-				(!dataPoints || dataPoints.length === 0)
-			) {
-				this.logger?.debugSync(
-					"Preserving existing data_points in updateEndpoint",
-					{
-						component: LogComponents.configManager,
-						deviceName: device.name,
-						existingCount: existing.data_points.length,
-					},
-				);
-				dataPoints = existing.data_points;
-			}
-
-			// Normalize property names (camelCase → snake_case)
-			// Normalize property names (camelCase → snake_case)
 			const normalizedDevice = {
 				protocol: device.protocol as "modbus" | "can" | "opcua",
 				enabled: device.enabled !== undefined ? device.enabled : true,
 				poll_interval: device.pollInterval || 5000,
 				connection: connection,
-				data_points: dataPoints,
 				metadata: metadata,
 			};
 
 			if (existing) {
-				// Device exists - update it
 				await EndpointModel.updateByUuid(device.id, normalizedDevice);
 
 				this.logger?.infoSync("Device updated in endpoints table", {
@@ -1647,7 +1528,6 @@ export class ConfigManager extends EventEmitter {
 					deviceName: device.name,
 				});
 			} else {
-				// Device doesn't exist - create it (upsert behavior)
 				await EndpointModel.create({
 					uuid: device.id,
 					name: device.name,
@@ -2068,14 +1948,20 @@ export class ConfigManager extends EventEmitter {
 		// Determine which protocols were affected by changes (added or modified endpoints)
 		const changedEndpoints = [...changeType.added, ...changeType.modified];
 
-		// CRITICAL: Also include OPC UA endpoints with null/empty data_points for auto-discovery
-		// This handles the case where device is synced from cloud without nodes
-		const opcuaWithoutNodes = newEndpoints.filter(
-			(e: any) =>
-				e.protocol === "opcua" &&
-				e.connection?.endpointUrl &&
-				(!e.data_points || e.data_points.length === 0),
-		);
+		// Only trigger discovery for OPC UA endpoints that have no data_points in the DB yet.
+		// The config endpoints no longer carry dataPoints (managed by discovery directly),
+		// so check the DB to avoid re-discovering points that are already cached.
+		const { EndpointModel } = await import("../db/models/endpoint.model.js");
+		const opcuaWithoutNodes: any[] = [];
+		for (const e of newEndpoints) {
+			if (e.protocol !== "opcua" || !e.connection?.endpointUrl) continue;
+			const uuid = e.uuid || e.id;
+			if (!uuid) continue;
+			const dbEndpoint = await EndpointModel.getByUuid(uuid);
+			if (!dbEndpoint?.data_points || dbEndpoint.data_points.length === 0) {
+				opcuaWithoutNodes.push(e);
+			}
+		}
 
 		// Combine changed endpoints with OPC UA endpoints needing discovery
 		const allEndpointsNeedingDiscovery = [

@@ -16,6 +16,8 @@ interface NativeIpcInstance {
 	getClientCount(): number;
 	isRunning(): boolean;
 	getStats(): string;
+	getQueuedBytes(): number;
+	getEvictionStats(): string;
 	stop(): void;
 }
 
@@ -53,12 +55,17 @@ function writeStr(buf: Buffer, s: string, off: number): number {
 	return off + len;
 }
 
+const BACKPRESSURE_BYTES_THRESHOLD = 32 * 1024 * 1024; // 32MB
+
 export class RustSocketServer implements ISocketServer {
 	private native: NativeIpcInstance;
 	private config: SocketOutput;
 	private logger: Logger;
 	private started = false;
 	private encodeBuf: Buffer | null = null;
+	private consecutiveBackpressure = 0;
+	private totalDropped = 0;
+	private lastBackpressureLogAt = 0;
 
 	constructor(config: SocketOutput, logger: Logger) {
 		this.config = config;
@@ -83,10 +90,28 @@ export class RustSocketServer implements ISocketServer {
 		if (!this.started) return;
 		const batch = this.encodeBatch(dataPoints);
 		if (!this.native.sendBatch(batch)) {
-			this.logger.warn(
-				`[native-ipc] Backpressure — data dropped for topic: ${topic ?? "generic"}`,
-			);
+			this.consecutiveBackpressure++;
+			this.totalDropped += dataPoints.length;
+			const now = Date.now();
+			if (now - this.lastBackpressureLogAt >= 5000) {
+				this.logger.warn(
+					`[native-ipc] Backpressure — batch dropped (${dataPoints.length} pts, topic=${topic ?? "generic"}, consecutive=${this.consecutiveBackpressure}, total_dropped=${this.totalDropped}, queued=${(this.native.getQueuedBytes() / 1_048_576).toFixed(1)}MB)`,
+				);
+				this.lastBackpressureLogAt = now;
+			}
+		} else {
+			if (this.consecutiveBackpressure > 0) {
+				this.logger.debug(
+					`[native-ipc] Backpressure resolved after ${this.consecutiveBackpressure} consecutive drops (${this.totalDropped} pts total)`,
+				);
+				this.consecutiveBackpressure = 0;
+			}
 		}
+	}
+
+	isBackpressured(): boolean {
+		if (!this.started) return false;
+		return this.native.getQueuedBytes() > BACKPRESSURE_BYTES_THRESHOLD;
 	}
 
 	sendControl(payload: Record<string, unknown>, _topic?: string): void {

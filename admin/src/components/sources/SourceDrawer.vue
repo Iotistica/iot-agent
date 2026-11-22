@@ -201,37 +201,17 @@ function close() {
 
       <a-divider orientation="left" orientation-margin="0">Options</a-divider>
 
-      <a-form-item label="Poll Interval (ms)" name="poll_interval">
+      <a-form-item label="Poll Interval (ms)" name="poll_interval"
+        :extra="form.protocol === 'opcua' && form.connection.useSubscription !== false ? 'Not used when subscriptions are enabled.' : undefined"
+      >
         <a-input-number
           v-model:value="form.poll_interval"
           :min="100"
           :step="1000"
+          :disabled="form.protocol === 'opcua' && form.connection.useSubscription !== false"
           style="width: 100%"
         />
       </a-form-item>
-
-      <template v-if="form.protocol === 'opcua'">
-        <a-form-item label="Max Items per Subscription">
-          <a-input-number
-            :value="form.connection.maxMonitoredItemsPerSubscription ?? 5000"
-            @update:value="(v: number) => form.connection.maxMonitoredItemsPerSubscription = v"
-            :min="100"
-            :max="10000"
-            :step="500"
-            style="width: 100%"
-          />
-        </a-form-item>
-        <a-form-item label="Max Notifications per Publish">
-          <a-input-number
-            :value="form.connection.maxNotificationsPerPublish ?? 2000"
-            @update:value="(v: number) => form.connection.maxNotificationsPerPublish = v"
-            :min="100"
-            :max="10000"
-            :step="500"
-            style="width: 100%"
-          />
-        </a-form-item>
-      </template>
 
       <template v-if="form.protocol === 'modbus'">
         <a-divider orientation="left" orientation-margin="0">Register Map</a-divider>

@@ -22,6 +22,8 @@ const SEND_CHANNEL_CAP: usize = 128;
 const MAX_QUEUED_BYTES: u64 = 128 * 1024 * 1024;
 const PER_CLIENT_BUF_CAP: usize = 64 * 1024 * 1024;
 const WRITER_THREADS: usize = 2;
+const MAX_BATCH_AGE: Duration = Duration::from_secs(10);
+const CLIENT_STALL_TIMEOUT: Duration = Duration::from_secs(30);
 
 struct ClientState {
     stream: UnixStream,
@@ -81,11 +83,14 @@ struct ServerInner {
     clients: Mutex<Vec<ClientState>>,
     last_backpressure_log: Mutex<Instant>,
     last_stats_log: Mutex<Instant>,
+    evicted_batches: AtomicU64,
+    evicted_bytes: AtomicU64,
+    stall_disconnects: AtomicU64,
 }
 
 enum WriteMsg {
-    Data(Vec<u8>),
-    Batch(Vec<u8>),
+    Data(Vec<u8>, Instant),
+    Batch(Vec<u8>, Instant),
     Stop,
 }
 
@@ -144,6 +149,9 @@ impl NativeIpcServer {
                 clients: Mutex::new(Vec::new()),
                 last_backpressure_log: Mutex::new(Instant::now()),
                 last_stats_log: Mutex::new(Instant::now()),
+                evicted_batches: AtomicU64::new(0),
+                evicted_bytes: AtomicU64::new(0),
+                stall_disconnects: AtomicU64::new(0),
             }),
         }
     }
@@ -258,7 +266,7 @@ impl NativeIpcServer {
         frame.extend_from_slice(&self.inner.delimiter);
         let frame_len = frame.len() as u64;
 
-        match tx.try_send(WriteMsg::Data(frame)) {
+        match tx.try_send(WriteMsg::Data(frame, Instant::now())) {
             Ok(()) => {
                 self.inner.queued_bytes.fetch_add(frame_len, Ordering::Relaxed);
                 true
@@ -293,7 +301,7 @@ impl NativeIpcServer {
         let bytes = data.to_vec();
         let len = bytes.len() as u64;
 
-        match tx.try_send(WriteMsg::Batch(bytes)) {
+        match tx.try_send(WriteMsg::Batch(bytes, Instant::now())) {
             Ok(()) => {
                 self.inner.queued_bytes.fetch_add(len, Ordering::Relaxed);
                 true
@@ -318,14 +326,40 @@ impl NativeIpcServer {
         let queued = self.inner.queued_bytes.load(Ordering::Relaxed);
         let written = self.inner.bytes_written.load(Ordering::Relaxed);
         let msgs = self.inner.msgs_written.load(Ordering::Relaxed);
+        let evicted = self.inner.evicted_batches.load(Ordering::Relaxed);
+        let evicted_mb = self.inner.evicted_bytes.load(Ordering::Relaxed) as f64 / 1_048_576.0;
+        let stalls = self.inner.stall_disconnects.load(Ordering::Relaxed);
         let clients = self.inner.clients.lock().unwrap();
         let buf_total: usize = clients.iter().map(|c| c.write_buf.len()).sum();
+        let stalled_count = clients.iter().filter(|c| c.stalled_since.is_some()).count();
         format!(
-            "queued={:.1}MB written={:.1}MB msgs={} client_bufs={:.1}MB",
+            "queued={:.1}MB written={:.1}MB msgs={} client_bufs={:.1}MB evicted={} evicted_mb={:.1} stall_disconnects={} stalled_clients={}",
             queued as f64 / 1_048_576.0,
             written as f64 / 1_048_576.0,
             msgs,
             buf_total as f64 / 1_048_576.0,
+            evicted,
+            evicted_mb,
+            stalls,
+            stalled_count,
+        )
+    }
+
+    #[napi]
+    pub fn get_queued_bytes(&self) -> f64 {
+        self.inner.queued_bytes.load(Ordering::Relaxed) as f64
+    }
+
+    #[napi]
+    pub fn get_eviction_stats(&self) -> String {
+        let batches = self.inner.evicted_batches.load(Ordering::Relaxed);
+        let bytes = self.inner.evicted_bytes.load(Ordering::Relaxed);
+        let stalls = self.inner.stall_disconnects.load(Ordering::Relaxed);
+        format!(
+            "evicted_batches={} evicted_bytes={:.1}MB stall_disconnects={}",
+            batches,
+            bytes as f64 / 1_048_576.0,
+            stalls,
         )
     }
 
@@ -393,6 +427,22 @@ fn flush_pending_buffers(inner: &ServerInner) {
     let mut disconnected = Vec::new();
 
     for client in clients.iter_mut() {
+        if let Some(stalled_at) = client.stalled_since {
+            let stall_duration = stalled_at.elapsed();
+            if stall_duration > CLIENT_STALL_TIMEOUT {
+                eprintln!(
+                    "[native-ipc] Client {} stalled for {:.1}s (limit {}s, buf={:.1}MB), disconnecting",
+                    client.id,
+                    stall_duration.as_secs_f64(),
+                    CLIENT_STALL_TIMEOUT.as_secs(),
+                    client.write_buf.len() as f64 / 1_048_576.0,
+                );
+                inner.stall_disconnects.fetch_add(1, Ordering::Relaxed);
+                client.stream.shutdown(Shutdown::Both).ok();
+                disconnected.push(client.id);
+                continue;
+            }
+        }
         if client.write_buf.is_empty() {
             continue;
         }
@@ -419,14 +469,38 @@ fn flush_pending_buffers(inner: &ServerInner) {
 fn writer_loop(rx: crossbeam_channel::Receiver<WriteMsg>, inner: Arc<ServerInner>) {
     loop {
         match rx.recv_timeout(Duration::from_millis(5)) {
-            Ok(WriteMsg::Data(data)) => {
+            Ok(WriteMsg::Data(data, created_at)) => {
                 let data_len = data.len() as u64;
                 inner.queued_bytes.fetch_sub(data_len, Ordering::Relaxed);
+                let age = created_at.elapsed();
+                if age > MAX_BATCH_AGE {
+                    inner.evicted_batches.fetch_add(1, Ordering::Relaxed);
+                    inner.evicted_bytes.fetch_add(data_len, Ordering::Relaxed);
+                    eprintln!(
+                        "[native-ipc] Evicting stale data frame ({:.1}s old, limit {}s, {:.1}KB)",
+                        age.as_secs_f64(),
+                        MAX_BATCH_AGE.as_secs(),
+                        data_len as f64 / 1024.0,
+                    );
+                    continue;
+                }
                 broadcast_frame(&inner, &data);
             }
-            Ok(WriteMsg::Batch(raw)) => {
+            Ok(WriteMsg::Batch(raw, created_at)) => {
                 let raw_len = raw.len() as u64;
                 inner.queued_bytes.fetch_sub(raw_len, Ordering::Relaxed);
+                let age = created_at.elapsed();
+                if age > MAX_BATCH_AGE {
+                    inner.evicted_batches.fetch_add(1, Ordering::Relaxed);
+                    inner.evicted_bytes.fetch_add(raw_len, Ordering::Relaxed);
+                    eprintln!(
+                        "[native-ipc] Evicting stale batch ({:.1}s old, limit {}s, {:.1}KB)",
+                        age.as_secs_f64(),
+                        MAX_BATCH_AGE.as_secs(),
+                        raw_len as f64 / 1024.0,
+                    );
+                    continue;
+                }
                 match decode_batch_to_json(&raw) {
                     Some(mut json) => {
                         json.extend_from_slice(&inner.delimiter);
@@ -448,14 +522,22 @@ fn writer_loop(rx: crossbeam_channel::Receiver<WriteMsg>, inner: Arc<ServerInner
         if last.elapsed() >= Duration::from_secs(30) {
             let written = inner.bytes_written.load(Ordering::Relaxed);
             let msgs = inner.msgs_written.load(Ordering::Relaxed);
+            let evicted = inner.evicted_batches.load(Ordering::Relaxed);
+            let evicted_mb = inner.evicted_bytes.load(Ordering::Relaxed) as f64 / 1_048_576.0;
+            let stalls = inner.stall_disconnects.load(Ordering::Relaxed);
             let clients = inner.clients.lock().unwrap();
             let buf_total: usize = clients.iter().map(|c| c.write_buf.len()).sum();
+            let stalled_count = clients.iter().filter(|c| c.stalled_since.is_some()).count();
             eprintln!(
-                "[native-ipc] stats: written={:.1}MB msgs={} clients={} pending_bufs={:.1}MB",
+                "[native-ipc] stats: written={:.1}MB msgs={} clients={} pending_bufs={:.1}MB evicted={} evicted_mb={:.1} stall_disconnects={} stalled_clients={}",
                 written as f64 / 1_048_576.0,
                 msgs,
                 clients.len(),
                 buf_total as f64 / 1_048_576.0,
+                evicted,
+                evicted_mb,
+                stalls,
+                stalled_count,
             );
             *last = Instant::now();
         }

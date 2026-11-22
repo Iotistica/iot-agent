@@ -133,8 +133,9 @@ export class DeviceAPI {
 		});
 
 		// Readiness gate — return 503 for /v1/* data routes while the agent is still initializing.
-		// Health, readiness, ping, auth, provision, device-state, and admin static assets are
-		// handled above and never reach this middleware.
+		// Health, readiness, ping, and admin static assets are handled above and never reach
+		// this middleware.  Auth/provision/device routes pass through the auth bypass above
+		// but are still gated here — the frontend shows a startup splash on 503.
 		this.api.use((req, res, next) => {
 			if (!req.path.startsWith('/v1/')) return next();
 			if (actions.getReadinessSafe()) return next();

@@ -791,14 +791,14 @@ export class PublishManager extends EventEmitter {
 
 	private processAnomaly(messages: ProtocolMessage[], endpointName: string): ProtocolMessage[] {
 		if (!this.anomalyService) {
-			this.logger?.debug('Skipping endpoint anomaly processing: no anomaly service bound', {
+			this.logger?.debug('Skipping anomaly processing: no anomaly service bound', {
 				endpointName,
 				messageCount: messages.length,
 			});
 			return messages;
 		}
 
-		this.logger?.debug('Dispatching endpoint batch to anomaly feed', {
+		this.logger?.debug('Dispatching batch to anomaly feed', {
 			endpointName,
 			messageCount: messages.length,
 		});
@@ -2185,10 +2185,12 @@ export class PublishManager extends EventEmitter {
 				? this.filterMessagesForPublishInterval(bindingMessages, records, binding.subscription.id ?? null, endpointName, minIntervalMs)
 				: bindingMessages;
 
-			// Throttled subscriptions build their payload from a per-binding-filtered
-			// subset of `messages`, so they can never safely share a compressedPayloadCache
-			// entry with another binding — make the key unique.
-			const hasPerBindingFilter = minIntervalMs > 0;
+			// Subscriptions with per-binding filters (throttle, metric include/exclude)
+			// build their payload from a filtered subset of `messages`, so they can never
+			// safely share a compressedPayloadCache entry with another binding — make the
+			// key unique.
+			const hasMetricFilter = (route?.includeMetrics?.length ?? 0) > 0 || (route?.excludeMetrics?.length ?? 0) > 0;
+			const hasPerBindingFilter = minIntervalMs > 0 || hasMetricFilter;
 			const cacheKey = hasPerBindingFilter
 				? `${payloadFormat}::${subscriptionCompression ?? 'global'}::fq=${filterBadQuality}::sub=${binding.subscription.id ?? 'none'}`
 				: subscriptionCompression
@@ -2459,10 +2461,16 @@ export class PublishManager extends EventEmitter {
 	): ProtocolMessage[] {
 		const includedSources = new Set(route?.includeDevices ?? []);
 		const excludedSources = new Set(route?.excludeDevices ?? []);
+		const includedMetrics = new Set(route?.includeMetrics ?? []);
+		const excludedMetrics = new Set(route?.excludeMetrics ?? []);
 		if (route?.sourceFilterMode === 'specific' && includedSources.size === 0) return [];
-		if (includedSources.size === 0 && excludedSources.size === 0) return messages;
+
+		const hasSourceFilter = includedSources.size > 0 || excludedSources.size > 0;
+		const hasMetricFilter = includedMetrics.size > 0 || excludedMetrics.size > 0;
+		if (!hasSourceFilter && !hasMetricFilter) return messages;
 
 		const matchesSource = (record: ProtocolMessage, fallback?: string): boolean => {
+			if (!hasSourceFilter) return true;
 			const sourceName = this.readExternalNodeCandidate(record) ?? fallback ?? endpointName;
 			const rawName = typeof record.sourceEndpointName === 'string' ? record.sourceEndpointName : sourceName;
 			return (includedSources.size === 0 || includedSources.has(sourceName) || includedSources.has(rawName) || includedSources.has(endpointName))
@@ -2471,15 +2479,26 @@ export class PublishManager extends EventEmitter {
 				&& !excludedSources.has(endpointName);
 		};
 
+		const matchesMetric = (record: ProtocolMessage): boolean => {
+			if (!hasMetricFilter) return true;
+			const metric = this.resolveRecordMetric(record);
+			if (includedMetrics.size > 0 && !includedMetrics.has(metric)) return false;
+			if (excludedMetrics.has(metric)) return false;
+			return true;
+		};
+
+		const matches = (record: ProtocolMessage, fallback?: string): boolean =>
+			matchesSource(record, fallback) && matchesMetric(record);
+
 		const filtered: ProtocolMessage[] = [];
 		for (const message of messages) {
 			if (Array.isArray(message.readings)) {
 				const sourceName = this.readExternalNodeCandidate(message) ?? endpointName;
 				const rawFallback = typeof message.sourceEndpointName === 'string' ? message.sourceEndpointName : sourceName;
-				const readings = message.readings.filter((reading) => matchesSource(reading, rawFallback));
+				const readings = message.readings.filter((reading) => matches(reading, rawFallback));
 				if (readings.length === 0) continue;
 				filtered.push(readings.length === message.readings.length ? message : { ...message, readings });
-			} else if (matchesSource(message)) {
+			} else if (matches(message)) {
 				filtered.push(message);
 			}
 		}

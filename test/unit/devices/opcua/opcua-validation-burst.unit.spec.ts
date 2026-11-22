@@ -7,7 +7,7 @@
  * replicate the loop structures and verify correctness at scale.
  */
 
-const VALIDATION_BATCH_SIZE = 20;
+const VALIDATION_BATCH_SIZE = 200;
 const ATTRS_PER_NODE = 4;
 
 /** Simulates the chunked validation loop from adapter.ts. */
@@ -63,7 +63,7 @@ function simulateValidation(
 
 describe('Validation burst management', () => {
 	describe('request sizing', () => {
-		it('splits 4000 nodes into 200 batches of 20', () => {
+		it('splits 4000 nodes into 20 batches of 200', () => {
 			let batchCount = 0;
 			let maxOpsPerRequest = 0;
 
@@ -73,8 +73,8 @@ describe('Validation burst management', () => {
 				return batch.map(() => ({ isGood: true }));
 			});
 
-			expect(batchCount).toBe(200);
-			expect(maxOpsPerRequest).toBe(VALIDATION_BATCH_SIZE * ATTRS_PER_NODE); // 80
+			expect(batchCount).toBe(20);
+			expect(maxOpsPerRequest).toBe(VALIDATION_BATCH_SIZE * ATTRS_PER_NODE); // 800
 		});
 
 		it('handles non-round counts (e.g. 4007 nodes)', () => {
@@ -87,7 +87,7 @@ describe('Validation burst management', () => {
 				return batch.map(() => ({ isGood: true }));
 			});
 
-			expect(batchCount).toBe(Math.ceil(4007 / VALIDATION_BATCH_SIZE));
+			expect(batchCount).toBe(Math.ceil(4007 / VALIDATION_BATCH_SIZE)); // 21
 			expect(lastBatchSize).toBe((4007 % VALIDATION_BATCH_SIZE) * ATTRS_PER_NODE); // 7 * 4 = 28
 		});
 	});
@@ -122,52 +122,52 @@ describe('Validation burst management', () => {
 	describe('batch failure isolation', () => {
 		it('marks only the failed batch as invalid, preserving others', () => {
 			let batchIdx = 0;
-			const { valid, invalid } = simulateValidation(60, (batch) => {
+			const { valid, invalid } = simulateValidation(600, (batch) => {
 				const currentBatch = batchIdx++;
 				// Fail the second batch (index 1)
 				if (currentBatch === 1) throw new Error('Simulated OPC-UA timeout');
 				return batch.map(() => ({ isGood: true }));
 			});
 
-			// Batch 0 (nodes 0-19): valid
-			// Batch 1 (nodes 20-39): all invalid due to batch failure
-			// Batch 2 (nodes 40-59): valid
-			expect(valid).toHaveLength(40);
-			expect(invalid).toHaveLength(20);
+			// Batch 0 (nodes 0-199): valid
+			// Batch 1 (nodes 200-399): all invalid due to batch failure
+			// Batch 2 (nodes 400-599): valid
+			expect(valid).toHaveLength(400);
+			expect(invalid).toHaveLength(200);
 
-			// Verify the failed batch is exactly nodes 20-39
-			for (let i = 20; i < 40; i++) {
+			// Verify the failed batch is exactly nodes 200-399
+			for (let i = 200; i < 400; i++) {
 				expect(invalid).toContain(`ns=2;s=Device/test/Point_${i}`);
 			}
 			// Verify nodes before and after the failed batch are valid
-			for (let i = 0; i < 20; i++) {
+			for (let i = 0; i < 200; i++) {
 				expect(valid).toContain(`ns=2;s=Device/test/Point_${i}`);
 			}
-			for (let i = 40; i < 60; i++) {
+			for (let i = 400; i < 600; i++) {
 				expect(valid).toContain(`ns=2;s=Device/test/Point_${i}`);
 			}
 		});
 
 		it('handles multiple batch failures', () => {
 			let batchIdx = 0;
-			const { valid, invalid } = simulateValidation(100, (batch) => {
+			const { valid, invalid } = simulateValidation(1000, (batch) => {
 				const currentBatch = batchIdx++;
 				if (currentBatch === 0 || currentBatch === 4) throw new Error('Simulated error');
 				return batch.map(() => ({ isGood: true }));
 			});
 
-			expect(invalid).toHaveLength(40); // 2 failed batches × 20 nodes
-			expect(valid).toHaveLength(60);
+			expect(invalid).toHaveLength(400); // 2 failed batches × 200 nodes
+			expect(valid).toHaveLength(600);
 		});
 
 		it('result offset stays aligned after a batch failure', () => {
 			let batchIdx = 0;
-			const { valid, invalid } = simulateValidation(60, (batch) => {
+			const { valid, invalid } = simulateValidation(600, (batch) => {
 				const currentBatch = batchIdx++;
 				if (currentBatch === 1) throw new Error('Simulated error');
 				return batch.map((_, i) => {
 					const nodeIdx = Math.floor(i / ATTRS_PER_NODE);
-					// In batch 2, node index 0 (global index 40) has bad Value
+					// In batch 2, node index 0 (global index 400) has bad Value
 					if (currentBatch === 2 && nodeIdx === 0 && i % ATTRS_PER_NODE === 0) {
 						return { isGood: false };
 					}
@@ -175,10 +175,10 @@ describe('Validation burst management', () => {
 				});
 			});
 
-			// 20 valid from batch 0, batch 1 all failed (20), batch 2: 1 failed + 19 valid
-			expect(valid).toHaveLength(39);
-			expect(invalid).toHaveLength(21);
-			expect(invalid).toContain('ns=2;s=Device/test/Point_40');
+			// 200 valid from batch 0, batch 1 all failed (200), batch 2: 1 failed + 199 valid
+			expect(valid).toHaveLength(399);
+			expect(invalid).toHaveLength(201);
+			expect(invalid).toContain('ns=2;s=Device/test/Point_400');
 		});
 	});
 

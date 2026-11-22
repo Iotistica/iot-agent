@@ -1051,9 +1051,6 @@ router.post('/v1/test/anomaly', requireRole('operator'), async (req: Request, re
 		}
 		
 		const anomalyService = (actions as any).getAnomalyService?.();
-		if (!anomalyService) {
-			return res.status(503).json({ error: 'Anomaly detection service not available' });
-		}
 		
 		// Inject test data points
 		const injectedPoints = [];
@@ -1112,9 +1109,6 @@ router.get('/v1/anomaly/points', async (req: Request, res: Response, next: NextF
 router.get('/v1/anomaly/config', (req: Request, res: Response, next: NextFunction) => {
 	try {
 		const anomalyService = actions.getAnomalyService();
-		if (!anomalyService) {
-			return res.status(503).json({ error: 'Anomaly detection service not available' });
-		}
 		return res.status(200).json({ config: anomalyService.getConfig() });
 	} catch (error) {
 		next(error);
@@ -1131,9 +1125,6 @@ router.get('/v1/anomaly/config', (req: Request, res: Response, next: NextFunctio
 router.patch('/v1/anomaly/config', requireRole('operator'), async (req: Request, res: Response, next: NextFunction) => {
 	try {
 		const anomalyService = actions.getAnomalyService();
-		if (!anomalyService) {
-			return res.status(503).json({ error: 'Anomaly detection service not available' });
-		}
 		if (!req.body || typeof req.body !== 'object') {
 			return res.status(400).json({ error: 'Request body must be a JSON object' });
 		}
@@ -1184,9 +1175,6 @@ router.get('/v1/logs', async (req: Request, res: Response, next: NextFunction) =
 router.get('/v1/anomaly/alerts', (req: Request, res: Response, next: NextFunction) => {
 	try {
 		const anomalyService = actions.getAnomalyService();
-		if (!anomalyService) {
-			return res.status(503).json({ error: 'Anomaly detection service not available' });
-		}
 		const since = req.query.since ? Number(req.query.since) : undefined;
 		const severity = req.query.severity as string | undefined;
 		const metric = req.query.metric as string | undefined;
@@ -1210,9 +1198,6 @@ router.get('/v1/anomaly/alerts', (req: Request, res: Response, next: NextFunctio
 router.delete('/v1/anomaly/alerts', requireRole('operator'), (req: Request, res: Response, next: NextFunction) => {
 	try {
 		const anomalyService = actions.getAnomalyService();
-		if (!anomalyService) {
-			return res.status(503).json({ error: 'Anomaly detection service not available' });
-		}
 		anomalyService.clearAlerts();
 		return res.status(200).json({ cleared: true });
 	} catch (error) {
@@ -1227,9 +1212,6 @@ router.delete('/v1/anomaly/alerts', requireRole('operator'), (req: Request, res:
 router.get('/v1/anomaly/stats', (req: Request, res: Response, next: NextFunction) => {
 	try {
 		const anomalyService = actions.getAnomalyService();
-		if (!anomalyService) {
-			return res.status(503).json({ error: 'Anomaly detection service not available' });
-		}
 		return res.status(200).json({
 			stats: anomalyService.getStats(),
 			scores: anomalyService.getAllAnomalyScores(),
@@ -1248,9 +1230,6 @@ router.get('/v1/anomaly/stats', (req: Request, res: Response, next: NextFunction
 router.get('/v1/anomaly/baselines', (req: Request, res: Response, next: NextFunction) => {
 	try {
 		const anomalyService = actions.getAnomalyService();
-		if (!anomalyService) {
-			return res.status(503).json({ error: 'Anomaly detection service not available' });
-		}
 		const metric = req.query.metric as string | undefined;
 		const limit = req.query.limit ? Number(req.query.limit) : 100;
 		const baselines = actions.getAnomalyBaselines(metric, limit);
@@ -1270,9 +1249,6 @@ router.get('/v1/anomaly/baselines', (req: Request, res: Response, next: NextFunc
 router.get('/v1/anomaly/baseline-progress', (req: Request, res: Response, next: NextFunction) => {
 	try {
 		const anomalyService = actions.getAnomalyService();
-		if (!anomalyService) {
-			return res.status(503).json({ error: 'Anomaly detection service not available' });
-		}
 		if (typeof anomalyService.getBaselineProgress !== 'function') {
 			return res.status(200).json({ progress: [] });
 		}

@@ -1,0 +1,16 @@
+{
+  "name": "@iot-agent/opcua-subscriber",
+  "version": "0.1.0",
+  "private": true,
+  "main": "opcua-subscriber.node",
+  "napi": {
+    "name": "opcua-subscriber"
+  },
+  "scripts": {
+    "build": "napi build --platform --release",
+    "build-debug": "napi build --platform"
+  },
+  "devDependencies": {
+    "@napi-rs/cli": "^2.18.0"
+  }
+}

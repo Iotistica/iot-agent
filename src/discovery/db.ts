@@ -97,7 +97,11 @@ function mergeDiscoveredPoints(
 			const merged = { ...previous };
 			if (protocol === 'opcua' && typeof update.browseName === 'string' && update.browseName.trim()) {
 				merged.browseName = update.browseName;
-			} else if (protocol === 'bacnet' && typeof update.objectName === 'string' && update.objectName.trim() &&
+			}
+			if (protocol === 'opcua' && typeof update.parentNodeId === 'string') {
+				merged.parentNodeId = update.parentNodeId;
+			}
+			if (protocol === 'bacnet' && typeof update.objectName === 'string' && update.objectName.trim() &&
 				update.objectName !== `${update.objectType}_${update.objectInstance}`) {
 				merged.objectName = update.objectName;
 			} else if (protocol === 'mqtt' && Array.isArray(update.sampleFields) && update.sampleFields.length > 0 &&

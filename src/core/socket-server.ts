@@ -9,6 +9,7 @@ export interface ISocketServer {
 	stop(): Promise<void>;
 	sendData(dataPoints: DeviceDataPoint[], topic?: string): void;
 	sendControl(payload: Record<string, unknown>, topic?: string): void;
+	isBackpressured?(): boolean;
 }
 
 interface ClientSubscription {

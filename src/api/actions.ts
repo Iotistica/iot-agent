@@ -862,16 +862,30 @@ export const getDeviceState = async () => {
 export const getStateSnapshot = async (type?: 'current' | 'target') => {
 	if (!stateManager) throw new Error('State manager not initialized');
 	if (type === 'current') {
-		return { current: await stateManager.getCurrentState() };
+		return { current: stripDataPoints(await stateManager.getCurrentState()) };
 	}
 	if (type === 'target') {
-		return { target: stateManager.getTargetState() };
+		return { target: stripDataPoints(stateManager.getTargetState()) };
 	}
 	return {
-		current: await stateManager.getCurrentState(),
-		target: stateManager.getTargetState(),
+		current: stripDataPoints(await stateManager.getCurrentState()),
+		target: stripDataPoints(stateManager.getTargetState()),
 	};
 };
+
+function stripDataPoints(state: any): any {
+	if (!state?.config?.endpoints) return state;
+	return {
+		...state,
+		config: {
+			...state.config,
+			endpoints: state.config.endpoints.map((ep: any) => {
+				const { dataPoints, data_points, ...rest } = ep;
+				return rest;
+			}),
+		},
+	};
+}
 
 /**
  * Update target state from admin UI
@@ -880,7 +894,7 @@ export const getStateSnapshot = async (type?: 'current' | 'target') => {
 export const updateTargetState = async (state: Record<string, unknown>) => {
 	if (!stateManager) throw new Error('State manager not initialized');
 	await stateManager.setTarget(state as any);
-	return { target: stateManager.getTargetState() };
+	return { target: stripDataPoints(stateManager.getTargetState()) };
 };
 
 /**

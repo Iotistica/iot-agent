@@ -367,7 +367,7 @@ WorkingDirectory=$AGENT_DIR
 EnvironmentFile=$ENV_FILE
 Environment=NODE_ENV=production
 Environment=DEPLOYMENT_TYPE=systemd
-ExecStart=$NODE_BIN $APP_JS
+ExecStart=$NODE_BIN --expose-gc $APP_JS
 Restart=always
 RestartSec=5
 WatchdogSec=60

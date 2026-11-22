@@ -1,6 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { message } from 'ant-design-vue'
 import { useAuth } from '@/composables/useAuth'
+import { agentStarting } from '@/api/client'
 
 const router = createRouter({
   history: createWebHistory('/admin/'),
@@ -126,10 +127,13 @@ router.beforeEach(async (to) => {
   if (!authChecked) {
     const { checkAuth } = useAuth()
     await checkAuth()
-    authChecked = true
+    if (!agentStarting.value) authChecked = true
   }
   const { currentUser, hasRole } = useAuth()
-  if (!currentUser.value) return { path: '/login' }
+  if (!currentUser.value) {
+    if (agentStarting.value) return true
+    return { path: '/login' }
+  }
   if (currentUser.value.must_change_password && to.path !== '/user/profile') {
     return { path: '/user/profile' }
   }

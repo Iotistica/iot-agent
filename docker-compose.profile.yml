@@ -1,0 +1,10 @@
+# Compose override — enables V8 CPU profiling on the agent service.
+# Usage: docker compose -f docker-compose.yml -f docker-compose.profile.yml up -d agent
+#
+# --cpu-prof cannot be set via NODE_OPTIONS (Node.js security restriction).
+# It must be passed directly on the node command line, which this override does.
+# The .cpuprofile file is written to /app/data inside the container on clean shutdown.
+# Use scripts/profile-agent.ps1 to run the full profile → copy → open workflow.
+services:
+  agent:
+    command: ["node", "--cpu-prof", "--cpu-prof-dir=/app/data", "--cpu-prof-interval=1000", "dist/app.js"]

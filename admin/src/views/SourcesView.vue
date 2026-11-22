@@ -89,7 +89,7 @@ const columns: TableColumnType<Endpoint>[] = [
   { title: 'Status', key: 'status', width: 130 },
   { title: 'Last Seen', key: 'last_seen', width: 100 },
   { title: 'Connection', key: 'connection', ellipsis: true },
-  { title: 'Poll', key: 'poll_interval', width: 80 },
+  { title: 'Rate', key: 'poll_interval', width: 90 },
     { title: 'Enabled', key: 'enabled', width: 90, sorter: (a: Endpoint, b: Endpoint) => Number(a.enabled) - Number(b.enabled) },
   { title: 'Actions', key: 'actions', width: 100, fixed: 'right' },
 ]
@@ -524,7 +524,9 @@ onUnmounted(() => {
         </template>
 
         <template v-else-if="column.key === 'poll_interval'">
-          <span style="color: var(--text-tertiary); font-size: 12px">{{ fmtInterval(record.poll_interval) }}</span>
+          <span v-if="record.protocol === 'opcua' && record.connection?.useSubscription !== false"
+            style="color: var(--text-tertiary); font-size: 12px">{{ fmtInterval(record.connection?.publishingInterval ?? 1000) }} pub</span>
+          <span v-else style="color: var(--text-tertiary); font-size: 12px">{{ fmtInterval(record.poll_interval) }}</span>
         </template>
 
         <template v-else-if="column.key === 'actions'">

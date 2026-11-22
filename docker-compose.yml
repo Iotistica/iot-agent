@@ -10,7 +10,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       - agent-data:/app/data
       - /app/data/sockets:/app/data/sockets
-    command: ["node", "--max-old-space-size=2560", "--inspect=0.0.0.0:9229", "dist/app.js"]
+    command: ["node", "--max-old-space-size=2560", "--expose-gc", "--inspect=0.0.0.0:9229", "dist/app.js"]
     environment:
       STANDALONE: "true"
       API_SECURITY_MODE: "LOCAL_NETWORK"
@@ -18,6 +18,7 @@ services:
       MQTT_USERNAME: "admin"
       MQTT_PASSWORD: "iotistic42!"
       IPC_ENGINE: "rust"
+      OPCUA_ENGINE: "rust"
     networks:
       - iotistica-net
 

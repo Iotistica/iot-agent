@@ -1,0 +1,11 @@
+C:\Users\Dan\iot-agent\opcua-subscriber\target\debug\deps\napi_build-649e4717d64b93df.d: C:\Users\Dan\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\napi-build-2.6.0\src\lib.rs C:\Users\Dan\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\napi-build-2.6.0\src\android.rs C:\Users\Dan\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\napi-build-2.6.0\src\wasi.rs C:\Users\Dan\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\napi-build-2.6.0\src\windows.rs C:\Users\Dan\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\napi-build-2.6.0\src\wasi_heap_sync_exports.o
+
+C:\Users\Dan\iot-agent\opcua-subscriber\target\debug\deps\libnapi_build-649e4717d64b93df.rlib: C:\Users\Dan\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\napi-build-2.6.0\src\lib.rs C:\Users\Dan\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\napi-build-2.6.0\src\android.rs C:\Users\Dan\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\napi-build-2.6.0\src\wasi.rs C:\Users\Dan\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\napi-build-2.6.0\src\windows.rs C:\Users\Dan\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\napi-build-2.6.0\src\wasi_heap_sync_exports.o
+
+C:\Users\Dan\iot-agent\opcua-subscriber\target\debug\deps\libnapi_build-649e4717d64b93df.rmeta: C:\Users\Dan\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\napi-build-2.6.0\src\lib.rs C:\Users\Dan\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\napi-build-2.6.0\src\android.rs C:\Users\Dan\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\napi-build-2.6.0\src\wasi.rs C:\Users\Dan\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\napi-build-2.6.0\src\windows.rs C:\Users\Dan\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\napi-build-2.6.0\src\wasi_heap_sync_exports.o
+
+C:\Users\Dan\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\napi-build-2.6.0\src\lib.rs:
+C:\Users\Dan\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\napi-build-2.6.0\src\android.rs:
+C:\Users\Dan\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\napi-build-2.6.0\src\wasi.rs:
+C:\Users\Dan\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\napi-build-2.6.0\src\windows.rs:
+C:\Users\Dan\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\napi-build-2.6.0\src\wasi_heap_sync_exports.o:

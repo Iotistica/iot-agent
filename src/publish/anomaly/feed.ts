@@ -61,7 +61,7 @@ export class AnomalyFeed {
 			this.currentService = undefined;
 		}
 
-		if (this.batchProcessedMetrics.size > 0) {
+		if (this.batchProcessedMetrics.size > 0 && this.batchSkippedMetrics.size < this.batchCandidateMetrics.size) {
 			this.logger?.debug("Anomaly processing complete", {
 				source: deviceName,
 				protocol: this.protocol,

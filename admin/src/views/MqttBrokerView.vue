@@ -148,9 +148,7 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
             <a-card size="small" class="metric-card">
               <div class="metric-inner">
                 <span class="metric-icon icon-clients"><TeamOutlined /></span>
-                <a-statistic title="Connected clients" :value="metrics?.clients.connected ?? '—'" :value-style="connected ? { color: '#52c41a' } : {}">
-                  <template #suffix><span class="metric-sub">of {{ metrics?.clients.total ?? '—' }}</span></template>
-                </a-statistic>
+                <a-statistic title="Connected clients" :value="metrics?.clients.connected ?? '—'" :value-style="connected ? { color: '#52c41a' } : {}" />
               </div>
             </a-card>
           </a-col>

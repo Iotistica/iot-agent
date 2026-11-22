@@ -8,11 +8,20 @@ export interface DiscoveryCacheEntry {
 	unit?: string;
 	device_uuid?: string;
 	device_name?: string;
+	parentNodeId?: string;
+}
+
+export interface FolderCacheEntry {
+	browseName: string;
+	parentNodeId: string | null;
+	referenceType?: string;
+	typeDefinition?: string;
 }
 
 export interface DiscoveryCache {
 	structuralHash: string;
 	nodeIndex: Record<string, DiscoveryCacheEntry>;
+	folderIndex?: Record<string, FolderCacheEntry>;
 	updatedAt: string;
 }
 
