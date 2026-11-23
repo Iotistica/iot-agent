@@ -85,6 +85,9 @@ export class AnomalyFeed {
 		});
 	}
 
+	getLastBatchCandidateCount(): number { return this.batchCandidateMetrics.size; }
+	getLastBatchSkippedCount(): number { return this.batchSkippedMetrics.size; }
+
 	// --- helpers ----------------------------------------------------------------
 
 	private toFiniteNumber(value: unknown): number | undefined {

@@ -55,6 +55,14 @@ export class SocketConnection extends EventEmitter {
 		}
 	}
 
+	pause(): void {
+		this.socket?.pause();
+	}
+
+	resume(): void {
+		this.socket?.resume();
+	}
+
 	disconnect(): void {
 		this.stopped = true;
 		this.clearReconnectTimer();
