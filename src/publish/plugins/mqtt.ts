@@ -279,8 +279,8 @@ export class MqttPublishPlugin extends BasePublishPlugin {
 
 		const readingsKey = Array.isArray(parsed.tags) ? 'tags'
 			: Array.isArray(parsed.features) ? 'features'
-			: Array.isArray(parsed.messages) ? 'messages'
-			: null;
+				: Array.isArray(parsed.messages) ? 'messages'
+					: null;
 		if (!readingsKey) return [item];
 
 		const readings = parsed[readingsKey] as unknown[];

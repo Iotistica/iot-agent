@@ -112,8 +112,10 @@ export class RustOpcuaSubscriber {
 	private batchesForwarded = 0;
 	private bytesForwarded = 0;
 	private forwardErrors = 0;
-	private lastStatsLogAt = 0;
 	private statsInterval: ReturnType<typeof setInterval> | null = null;
+	private prevDataChanges = 0;
+	private prevBatches = 0;
+	private prevBytes = 0;
 
 	constructor(config: SubscriberConfig, logger: Logger) {
 		this.logger = logger;
@@ -202,9 +204,16 @@ export class RustOpcuaSubscriber {
 			},
 		);
 
+		const subscribed = this.native.getSubscribedCount();
 		this.logger.info(
-			`[opcua-rust] Subscribed: ${this.native.getSubscribedCount()} nodes active`,
+			`[opcua-rust] Subscribed: ${subscribed} nodes active`,
 		);
+		this.logger.debug("[OPCUA_PERF] subscription summary (rust)", {
+			monitoredItems: subscribed,
+			requestedNodes: nodes.length,
+			publishingIntervalMs: publishingIntervalMs,
+			samplingIntervalMs: samplingIntervalMs,
+		});
 	}
 
 	async disconnect(): Promise<void> {
@@ -223,7 +232,7 @@ export class RustOpcuaSubscriber {
 		batchesForwarded: number;
 		bytesForwardedMB: string;
 		forwardErrors: number;
-	} {
+		} {
 		return {
 			native: this.native.getStats(),
 			batchesForwarded: this.batchesForwarded,
@@ -234,12 +243,37 @@ export class RustOpcuaSubscriber {
 
 	private startStatsReporter(): void {
 		this.statsInterval = setInterval(() => {
-			if (!this.native.isConnected()) return;
-			const stats = this.native.getStats();
-			this.logger.debug(
-				`[opcua-rust] stats: ${stats} | fwd_batches=${this.batchesForwarded} fwd_mb=${(this.bytesForwarded / 1_048_576).toFixed(1)} fwd_errors=${this.forwardErrors}`,
-			);
-		}, 30_000);
+			if (!this.native.isConnected()) {
+				this.logger.debug("[opcua-rust] heartbeat: not connected (watchdog will reconnect)");
+				return;
+			}
+			const dataChanges = this.native.getDataChangeCount();
+			const subscribed = this.native.getSubscribedCount();
+			const nativeStats = this.native.getStats();
+
+			const intervalChanges = dataChanges - this.prevDataChanges;
+			const intervalBatches = this.batchesForwarded - this.prevBatches;
+			const intervalBytes = this.bytesForwarded - this.prevBytes;
+			this.prevDataChanges = dataChanges;
+			this.prevBatches = this.batchesForwarded;
+			this.prevBytes = this.bytesForwarded;
+
+			const mem = process.memoryUsage();
+			this.logger.debug("[OPCUA_PERF] heartbeat (rust)", {
+				rssMB: Math.round(mem.rss / 1_048_576),
+				heapUsedMB: Math.round(mem.heapUsed / 1_048_576),
+				monitoredItems: subscribed,
+				dataChanges5s: intervalChanges,
+				dataChangesPerSec: Math.round(intervalChanges / 5),
+				batches5s: intervalBatches,
+				batchBytes5s: intervalBytes,
+				totalDataChanges: dataChanges,
+				totalBatches: this.batchesForwarded,
+				totalMB: (this.bytesForwarded / 1_048_576).toFixed(1),
+				forwardErrors: this.forwardErrors,
+				native: nativeStats,
+			});
+		}, 5_000);
 	}
 
 	private stopStatsReporter(): void {
