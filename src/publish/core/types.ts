@@ -129,7 +129,7 @@ export function normalizeTarget(target?: string): PublishTarget {
 export interface PublishBatchItem {
   topic: string;
   payload: string | Buffer;
-  options?: { qos?: 0 | 1 | 2; destinationTopic?: string };
+  options?: { qos?: 0 | 1 | 2; destinationTopic?: string; maxPointsPerMessage?: number };
 }
 
 export interface PublishDestinationInfo {

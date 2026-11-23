@@ -358,6 +358,7 @@ export class PublishManager extends EventEmitter {
 
 	public setAnomalyService(service?: any): void {
 		this.anomalyService = service;
+		this.anomalyFeedSkipped = false;
 	}
 
 	public setMaintenanceEnergyService(service?: any): void {
@@ -713,6 +714,7 @@ export class PublishManager extends EventEmitter {
 
 		this.publishing = true;
 		this.publishingStartedAt = Date.now();
+		this.connection.pause();
 		try {
 
 			const name = this.config.name || 'unknown';
@@ -786,23 +788,35 @@ export class PublishManager extends EventEmitter {
 			}
 			this.publishing = false;
 			this.publishingStartedAt = 0;
+			this.connection.resume();
 		}
 	}
 
+	private anomalyFeedSkipped = false;
+
 	private processAnomaly(messages: ProtocolMessage[], endpointName: string): ProtocolMessage[] {
 		if (!this.anomalyService) {
-			this.logger?.debug('Skipping anomaly processing: no anomaly service bound', {
-				endpointName,
-				messageCount: messages.length,
-			});
+			return messages;
+		}
+		if (typeof this.anomalyService.hasConfiguredMetrics === 'function' && !this.anomalyService.hasConfiguredMetrics()) {
+			return messages;
+		}
+		if (this.anomalyFeedSkipped) {
 			return messages;
 		}
 
-		this.logger?.debug('Dispatching batch to anomaly feed', {
-			endpointName,
-			messageCount: messages.length,
-		});
 		this.feed.processBatch(messages, endpointName);
+
+		const feedCandidates = this.feed.getLastBatchCandidateCount();
+		const feedSkipped = this.feed.getLastBatchSkippedCount();
+		if (feedCandidates > 0 && feedSkipped === feedCandidates) {
+			this.anomalyFeedSkipped = true;
+			this.logger?.info('Anomaly feed: all metrics skipped — bypassing feed for this endpoint until config changes', {
+				endpointName,
+				skippedMetrics: feedCandidates,
+			});
+		}
+
 		return this.enricher.enrich(messages, endpointName) as ProtocolMessage[];
 	}
 
@@ -2288,12 +2302,15 @@ export class PublishManager extends EventEmitter {
 					activityMonitor.recordCompression(destinationTopic, compressionInfo);
 				}
 				const items = batchesByPlugin.get(binding.plugin) || [];
+				const maxPts = typeof route?.maxPointsPerMessage === 'number' && route.maxPointsPerMessage > 0
+					? route.maxPointsPerMessage : undefined;
 				items.push({
 					topic: sourceTopic,
 					payload,
 					options: {
 						qos: 1,
 						destinationTopic,
+						...(maxPts && { maxPointsPerMessage: maxPts }),
 					},
 				});
 				batchesByPlugin.set(binding.plugin, items);

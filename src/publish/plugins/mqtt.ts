@@ -215,16 +215,21 @@ class ExternalMqttFlushProxy implements IBufferPublishClient {
 	}
 }
 
+const DEFAULT_MAX_READINGS_PER_MESSAGE = 5000;
+
 export class MqttPublishPlugin extends BasePublishPlugin {
 	private destBufferSync?: MessageBufferSync;
+	private readonly maxReadingsPerMessage: number;
 
 	constructor(
 		client: ICorePublishClient,
 		logger?: Logger,
 		private readonly destinationId?: number,
 		private readonly agentLogger?: AgentLogger,
+		maxReadingsPerMessage?: number,
 	) {
 		super(client, logger);
+		this.maxReadingsPerMessage = maxReadingsPerMessage ?? DEFAULT_MAX_READINGS_PER_MESSAGE;
 	}
 
 	override async start(): Promise<void> {
@@ -250,7 +255,51 @@ export class MqttPublishPlugin extends BasePublishPlugin {
 			await this.bufferBatch(batch);
 			return;
 		}
-		return super.publishBatch(batch);
+
+		for (const item of batch) {
+			const chunks = this.chunkPayload(item);
+			for (const chunk of chunks) {
+				await this.client.publish(chunk.topic, chunk.payload, chunk.options);
+			}
+		}
+	}
+
+	private chunkPayload(item: PublishBatchItem): PublishBatchItem[] {
+		if (typeof item.payload !== 'string') return [item];
+
+		const subscriptionLimit = typeof item.options?.maxPointsPerMessage === 'number' && item.options.maxPointsPerMessage > 0
+			? item.options.maxPointsPerMessage
+			: Infinity;
+		const limit = Math.min(this.maxReadingsPerMessage, subscriptionLimit);
+		if (!Number.isFinite(limit) || limit <= 0) return [item];
+
+		let parsed: Record<string, unknown>;
+		try { parsed = JSON.parse(item.payload); }
+		catch { return [item]; }
+
+		const readingsKey = Array.isArray(parsed.tags) ? 'tags'
+			: Array.isArray(parsed.features) ? 'features'
+			: Array.isArray(parsed.messages) ? 'messages'
+			: null;
+		if (!readingsKey) return [item];
+
+		const readings = parsed[readingsKey] as unknown[];
+		if (readings.length <= limit) return [item];
+
+		const chunks: PublishBatchItem[] = [];
+		for (let i = 0; i < readings.length; i += limit) {
+			const slice = readings.slice(i, i + limit);
+			chunks.push({ ...item, payload: JSON.stringify({ ...parsed, [readingsKey]: slice }) });
+		}
+
+		this.logger?.info('Chunked payload for MQTT publish', {
+			destinationId: this.destinationId,
+			totalReadings: readings.length,
+			chunks: chunks.length,
+			readingsPerChunk: limit,
+		});
+
+		return chunks;
 	}
 
 	private async bufferBatch(batch: PublishBatchItem[]): Promise<void> {
@@ -297,7 +346,10 @@ export class MqttPublishPlugin extends BasePublishPlugin {
 		if (!resolved) {
 			throw new Error('mqtt publisher requires config_json with a brokerUrl');
 		}
-		return new MqttPublishPlugin(new ExternalMqttClient(resolved, agentLogger, destinationName), logger, destinationId, agentLogger);
+		const maxReadings = typeof config?.maxReadingsPerMessage === 'number' && config.maxReadingsPerMessage > 0
+			? config.maxReadingsPerMessage
+			: undefined;
+		return new MqttPublishPlugin(new ExternalMqttClient(resolved, agentLogger, destinationName), logger, destinationId, agentLogger, maxReadings);
 	}
 }
 
