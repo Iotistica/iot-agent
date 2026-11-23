@@ -1,8 +1,9 @@
 import * as crypto from 'crypto';
 import type { IClientOptions } from 'mqtt';
-import type { AgentLogger, IPublishClient, Logger } from '../shared/types.js';
-import { BasePublishPlugin } from '../shared/base-plugin.js';
-import { BaseMqttClient } from '../shared/base-client.js';
+import type { AgentLogger } from '../../logging/agent-logger.js';
+import type { IPublishClient, Logger } from '../core/types.js';
+import { BasePublishPlugin } from '../core/base-plugin.js';
+import { BaseMqttClient } from '../core/base-client.js';
 
 interface AzureIotConfig {
 	provider: 'azure';

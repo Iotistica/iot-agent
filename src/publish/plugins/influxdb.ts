@@ -1,6 +1,6 @@
 import { EventEmitter } from 'events';
 import { InfluxDB, Point, type WriteApi } from '@influxdata/influxdb-client';
-import type { IPublishPlugin, PublishBatchItem, Logger } from '../shared/types.js';
+import type { IPublishPlugin, PublishBatchItem, Logger } from '../core/types.js';
 
 interface InfluxDbConfig {
 	url: string;
