@@ -1,17 +1,17 @@
 # Graph Report - iot-agent  (2026-11-24)
 
 ## Corpus Check
-- 722 files · ~713,783 words
+- 722 files · ~713,786 words
 - Verdict: corpus is large enough that graph structure adds value.
 - Unclassified: 21 file(s) not represented in the graph (top: (none) 11, .tmp-shm 2, .tmp-wal 2)
 
 ## Summary
-- 9538 nodes · 22438 edges · 330 communities (263 shown, 67 thin omitted)
+- 9540 nodes · 22440 edges · 315 communities (254 shown, 61 thin omitted)
 - Extraction: 92% EXTRACTED · 8% INFERRED · 0% AMBIGUOUS · INFERRED: 1718 edges (avg confidence: 0.86)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `6fdf23a9`
+- Built from commit: `92bce52b`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -26,12 +26,12 @@
 - AssetsView.vue
 - SettingsView.vue
 - device-resolution-store.ts
-- infra.ts
+- express
 - commands-e2e.integration.spec.ts
 - BACnetAdapter
 - ModbusClient
 - plugins/index.ts
-- types/index.ts
+- DiscoveryService
 - DiscoveryRuleDrawer.vue
 - core/index.ts
 - collection-utils.ts
@@ -55,12 +55,12 @@
 - MessageBufferModel
 - SubscriptionDrawer.vue
 - fixtures.ts
-- MqttAdapter
+- src/api/ml-datasets.ts
 - CloudLogBackend
 - OPCUAAdapter
 - CloudMqttClient
 - getDatabase
-- reconciliation-planner.ts
+- container-manager.ts
 - Agent
 - core/manager.ts
 - AlertsView.vue
@@ -74,7 +74,7 @@
 - ContainerManager
 - EndpointModel
 - UsersView.vue
-- db-path.ts
+- infra.ts
 - CloudSync
 - DashboardView.vue
 - DiscoveryDrawer.vue
@@ -86,30 +86,30 @@
 - DockerDriver
 - PrivateEvidenceRegistry
 - clearApiCache
-- MaintenanceEnergyService
+- MockHttpClient
 - timescaledb.ts
 - ref_fs
 - anomaly/types.ts
 - BaseHttpClient
 - memory.ts
-- SubscriptionsView.vue
+- api/mqtt.ts
 - system/metrics.ts
 - publish-destinations.model.ts
-- container-manager.ts
+- ContainerService
 - data-explorer-point-key.ts
 - MarketplaceCatalog.vue
 - opcua-subscriber/src/lib.rs
 - src/core.ts
 - drift-presets.ts
-- mqtt/adapter.ts
+- MqttAdapter
 - OfflineQueue
 - AnomalyDetectionService
-- anomaly/service.ts
+- analytics/anomaly/device-state.ts
 - MessageViewer.vue
 - CaptureTab.vue
 - pipeline.service.ts
 - backup.ts
-- vue
+- downloadCsv
 - PointsTable.vue
 - ipc/src/lib.rs
 - point-identity-catalog.ts
@@ -119,27 +119,27 @@
 - BaseOrchestratorDriver
 - BaseProtocolAdapter
 - IOrchestratorDriver
-- decoders/index.ts
+- TerminalView.vue
 - cli/package.json
 - compress.ts
 - with
-- DiscoveryRulesView.vue
+- normalizeSourceSystem
 - mqtt/auth.ts
-- ModbusAdapter
+- DeviceMetrics
 - JobsFeature
 - units/index.ts
-- MaintenanceRuleDrawer.vue
+- @playwright/test
 - scripts
 - lib/http-client.ts
 - RetryManager
 - DecodedPacket
-- MqttBrokerClient
+- firewall-rule.model.ts
 - ActivityMonitor
 - NetworkView.vue
 - configured-points.unit.spec.ts
 - DiscoveryRuleModel
 - BaseFeature
-- ModbusRegisterMapEditor.vue
+- SourceDrawer.vue
 - configured-point-resolver.ts
 - steps
 - capture.ts
@@ -147,25 +147,25 @@
 - forecaster.ts
 - MqttUsersTab.vue
 - CaptureEngine
-- unit-catalog.model.ts
+- units/catalog.ts
 - DevicePublish
 - iotctl.ts
 - compilerOptions
 - with
 - dependencies
-- SocketServer
+- DeviceDataPoint
 - jobs/types.ts
 - device.model.ts
-- modbus/discovery.ts
+- BACnetDiscovery
 - BaseMqttClient
-- units/catalog.ts
+- normalization-health-tracker.ts
 - compilerOptions
 - useSystemStats.ts
 - compilerOptions
 - agent
 - steps
 - DevicesPanel.vue
-- .discover
+- Phase 2C-1: durable point identity integration design
 - opcua/discovery.ts
 - AgentFirewall
 - opcua-decoder.unit.spec.ts
@@ -180,7 +180,7 @@
 - bacnet/discovery.ts
 - FetchHttpClient
 - .error
-- SourceConnectionFields.vue
+- TopicTree.vue
 - src/api/events.ts
 - volume-manager.ts
 - CustomUnitAliasesModel
@@ -191,54 +191,51 @@
 - commands/db.ts
 - steps
 - package-cli
-- LogsView.vue
+- normalizeDataExplorerPointKey
 - AnomalyRuleTemplateModel
 - EnergyRecommendationModel
 - MaintenanceRecommendationModel
 - ConsoleLogger
 - MessageBufferSync
 - AnomalyStorageService
-- configured-points.ts
+- point-identity-catalog.ts
 - setup_remote_access.sh
 - PublishSubscriptionsModel
 - AppMarketplaceModel
 - AnomalyInjectionSimulation
-- AssetDrawer.vue
+- configured-points.ts
 - install.sh
 - MqttUserModel
 - schema-drift-rule.model.ts
 - JobEngine
 - RustOpcuaSubscriber
-- EnergyRuleDrawer.vue
+- schema-drift-rule-template.model.ts
 - handleServiceMenu
 - overrides
 - OPCUABrowser.vue
-- opcua/device-identity.ts
+- SchemaViewer.vue
 - docker
 - steps
 - recommendation-publish-settings.model.ts
-- anomaly/buffer.ts
+- fs-utils.ts
 - jobs/monitor.ts
 - validation.ts
-- .constructor
+- opcua/types.ts
 - load
 - Iotistica Agent
 - AlertManager
-- CredentialManager
+- install-unit-generation.unit.spec.ts
 - 🔐 MQTTS/TLS Setup
-- .info
-- SourcePointsPanel.vue
+- .handleAdmissionPressure
+- 🎯 Quick Start
 - graphify.yml
-- state-snapshot-unification.test.ts
 - doAction
 - CLIError
 - schema-drift.ts
 - package
 - EnergyRuleModel
-- .debug
 - MaintenanceRuleModel
 - version
-- AnomalyFeed
 - BacnetPropertyId
 - connectLogs
 - logger
@@ -246,16 +243,13 @@
 - docker
 - jobs
 - AssetModel
-- EndpointOutputModel
 - JobStatus
 - connectWs
-- AssetMetricModel
-- DataExplorerViewModel
-- transform-shared.ts
+- data-explorer-views.ts
 - resolveState
 - PrivateShadowObserver
 - version
-- DatabricksPublishPlugin
+- IPublishPlugin
 - rule-resolver.ts
 - OPC-UA Adapter
 - Modbus TCP/RTU Adapter
@@ -263,15 +257,13 @@
 - data-explorer-tabs.ts
 - cleanup.sh
 - smoke.sh
-- replaceEndpoint
 - upload-azure
 - test-provisioning-skip.sh
-- VolumeImpl
 - SKILL.md
 - Logger
 - NativeIpcServer
 - capture.unit.spec.ts
-- TailscaleManager
+- .errorSync
 - ExternalMqttFlushProxy
 - 🔀 IPC Pub/Sub Routing
 - jobs
@@ -289,7 +281,6 @@
 - build-deb.sh
 - enable_ssl.sh
 - MQTT Device-Write Commands
-- shared/http-client.ts
 - test-install-with-vpn.sh
 - test-wireguard-client.sh
 - Main Functions
@@ -299,13 +290,9 @@
 - verify_ci
 - NativeIpcServer
 - IoTistic CPU profiling — Raspberry Pi to Windows
-- interfaces.ts
-- state-introspection.ts
-- SchemaDriftModel
 - AgentState
 - ModbusDataType
 - commands/license.ts
-- 🔍 Protocol Discovery
 - GitHub Actions → Raspberry Pi deployment
 - PULL_REQUEST_TEMPLATE.md
 - env
@@ -315,14 +302,12 @@
 - 5. Canonical protocol addresses
 - docker-image-usage.ts
 - MarketplaceCategoriesModel
-- opcua-device-identification.test.ts
-- isWithinSchedule
 - cgroups.sh
 - services
 - Security Policy
 - scrollToLogMatch
 - src/api/anomaly.ts
-- InfluxDbNoopClient
+- influxdb.ts
 - update-runner.sh
 - ipc
 - opcua-subscriber
@@ -340,33 +325,33 @@
 10. `buildCommands()` - 71 edges
 
 ## Surprising Connections (you probably didn't know these)
-- `Transactions and concurrency` --references--> `transact()`  [INFERRED]
-  docs/phase2-point-identity-design.md → src/db/sqlite.ts
-- `Event sources` --references--> `EventSource`  [INFERRED]
-  CLAUDE.md → src/events/types.ts
-- `10. Legacy compatibility and preservation` --references--> `DeviceDataPoint`  [INFERRED]
-  docs/phase2c3-trusted-protocol-evidence-design.md → src/plugins/types.ts
-- `2. Current lifecycle and trust boundaries` --references--> `DeviceDataPoint`  [INFERRED]
-  docs/phase2c3-trusted-protocol-evidence-design.md → src/plugins/types.ts
+- `Phase 2C-4: internal resolution` --references--> `PublishManager`  [INFERRED]
+  docs/phase2c-point-identity-integration-design.md → src/publish/core/manager.ts
 - `Gap During Transport Switching` --references--> `MessageBufferSync`  [INFERRED]
   docs/transport-switch-buffering-review.md → src/publish/core/buffer.ts
+- `Phase 2C-3: trusted protocol evidence` --references--> `SocketServer`  [INFERRED]
+  docs/phase2c-point-identity-integration-design.md → src/core/socket-server.ts
+- `Event sources` --references--> `EventSource`  [INFERRED]
+  CLAUDE.md → src/events/types.ts
+- `Transactions and concurrency` --references--> `transact()`  [INFERRED]
+  docs/phase2-point-identity-design.md → src/db/sqlite.ts
 
 ## Import Cycles
 - 2-file cycle: `src/containers/container-manager.ts -> src/containers/docker-manager.ts -> src/containers/container-manager.ts`
 
-## Communities (330 total, 67 thin omitted)
+## Communities (315 total, 61 thin omitted)
 
 ### Community 0 - "AgentLogger"
-Cohesion: 0.04
-Nodes (47): setLocalLogBackend(), BACnetConfig, ConfigManagerEvents, FeatureToggles, IntervalConfig, LoggingConfig, ModbusConfig, ModbusConnectionConfig (+39 more)
+Cohesion: 0.03
+Nodes (58): mqtt, DeviceAPIConstructOpts, DeviceState, DockerOpsContext, DockerContainerInfo, DockerStateSyncContext, ManagedContainerSummary, DriverFactoryConfig (+50 more)
 
 ### Community 1 - "publish/core/types.ts"
-Cohesion: 0.04
-Nodes (45): mqtt, BasePublishPlugin, DeviceConfigSchema, DevicePublishConfigSchema, DriftOptionsSchema, DriftRuleConfigSchema, DriftSeverityEnum, DriftTypeEnum (+37 more)
+Cohesion: 0.06
+Nodes (29): BasePublishPlugin, DeviceConfigSchema, DevicePublishConfigSchema, DriftOptionsSchema, DriftRuleConfigSchema, DriftSeverityEnum, DriftTypeEnum, IPublishClient (+21 more)
 
 ### Community 2 - "actions.ts"
-Cohesion: 0.04
-Nodes (95): addService(), AgentInstance, anomalyMetricResultKey(), approveImageUpdate(), buildDockerOptions(), checkForUpdate(), checkImageUpdates(), clearAnomalyBaselines() (+87 more)
+Cohesion: 0.02
+Nodes (149): addEndpoint(), addService(), AgentInstance, anomalyMetricResultKey(), applyConfigUpdate(), approveImageUpdate(), browseOPCUAAddressSpace(), buildDockerOptions() (+141 more)
 
 ### Community 3 - "PublishManager"
 Cohesion: 0.05
@@ -374,31 +359,31 @@ Nodes (5): Endpoint telemetry, MlDatasetRecord, CompressionInfo, PublishManager,
 
 ### Community 4 - "AnomalyView.vue"
 Cohesion: 0.02
-Nodes (111): activeCategories, activeTab, advancedOpen, badActors, badActorsLoading, badActorsWindowDays, baselineColumns, BaselineRow (+103 more)
+Nodes (121): protocolOptions, protocolOptions, BUILTIN_ANOMALY_TEMPLATES, BuiltinAnomalyTemplate, DetectionMethod, SeasonalityPattern, protocolLabel(), activeCategories (+113 more)
 
 ### Community 5 - "AppLayout.vue"
-Cohesion: 0.04
-Nodes (64): authApi, AuthUser, MarketplaceImage, agentVersion, buildId, { currentUser, logout }, { fetchDockerStatus }, { fetchProStatus } (+56 more)
+Cohesion: 0.03
+Nodes (93): authApi, AuthUser, agentStarting, ApiError, client, MarketplaceImage, deviceApi, DeviceInfo (+85 more)
 
 ### Community 6 - "ContainersView.vue"
 Cohesion: 0.02
 Nodes (82): actionInFlight, addSvcDrawerOpen, addSvcForm, addSvcSaving, addSvcSelectedImage, addSvcTargetApp, appDetailsName, appDetailsOpen (+74 more)
 
 ### Community 7 - "AssetsView.vue"
-Cohesion: 0.03
-Nodes (50): activeTopTab, assetColumns, assetDrawerOpen, assetEditing, assetRows, assetsError, assetsLoading, CRITICALITY_ORDER (+42 more)
+Cohesion: 0.02
+Nodes (121): assetsApi, energyApi, maintenanceApi, addBinding(), addingBinding, bindingDeviceUuid, bindingMetric, close() (+113 more)
 
 ### Community 8 - "SettingsView.vue"
 Cohesion: 0.02
-Nodes (96): licenseApi, LicenseState, LicenseStatus, LicenseTier, updateApi, UpdateCheckResult, UpdateTriggerResult, activeTab (+88 more)
+Nodes (98): licenseApi, LicenseState, LicenseStatus, LicenseTier, settingsApi, updateApi, UpdateCheckResult, UpdateTriggerResult (+90 more)
 
 ### Community 9 - "device-resolution-store.ts"
-Cohesion: 0.10
-Nodes (21): previewOPCUADevices(), addOwner(), confirmDeviceResolution(), ConfirmedDeviceIdentity, ConfirmedDeviceResolution, DeviceResolutionCandidate, DeviceResolutionKey, DeviceResolutionPreview (+13 more)
+Cohesion: 0.05
+Nodes (35): previewOPCUADevices(), DeviceCandidateResult, DeviceCandidateStrategy, DeviceCandidateStrategySchema, generateDeviceCandidates(), objectPathKey(), parseTemplate(), patternDevice() (+27 more)
 
-### Community 10 - "infra.ts"
-Cohesion: 0.07
-Nodes (38): express, getCaptureEngine(), attachCaptureHandler(), authenticate(), parseCookie(), DeviceAPIConstructOpts, setLogger(), isHealthCheckPath() (+30 more)
+### Community 10 - "express"
+Cohesion: 0.17
+Nodes (13): express, isHealthCheckPath(), isSilentDebugPath(), logging(), getClientIP(), isLocalhost(), isPrivateNetwork(), LOCALHOST_IPS (+5 more)
 
 ### Community 11 - "commands-e2e.integration.spec.ts"
 Cohesion: 0.07
@@ -406,122 +391,130 @@ Nodes (34): CommandDeduplicator, DedupEntry, CommandDestination, CommandError, c
 
 ### Community 12 - "BACnetAdapter"
 Cohesion: 0.05
-Nodes (33): BACnet write data types, Protocol support, BACnetAdapter, BACnetClient, BACnetAdapterConfig, BACnetAdapterConfigSchema, BACnetDevice, BACnetDeviceSchema (+25 more)
+Nodes (21): BACnet write data types, Protocol support, Writable-point allowlist, BACnetAdapter, BACnetClient, BACnetDevice, BACnetObject, BACnetObjectType (+13 more)
 
 ### Community 13 - "ModbusClient"
-Cohesion: 0.07
-Nodes (16): ModbusClient, ByteOrder, ABCD, BADC, CDAB, DCBA, ModbusFunctionCode, READ_COILS (+8 more)
+Cohesion: 0.06
+Nodes (19): MetricsSummary, ModbusAdapter, ModbusClient, ByteOrder, ABCD, BADC, CDAB, DCBA (+11 more)
 
 ### Community 14 - "plugins/index.ts"
-Cohesion: 0.04
-Nodes (39): Ingestion, naming and enrichment, Phase 2B standalone version 1 contract, 11. Proposed regression matrix, 12. Unresolved decisions and risks, 13. Explicit approval gates, 1. Executive summary, 3. Phase 2B execution verification, 5. SQLite lifecycle, transaction and concurrency (+31 more)
+Cohesion: 0.05
+Nodes (22): Ingestion, naming and enrichment, 8. Verified field flows and proposed attachment boundary, ISocketServer, toDeviceUuid(), uuidv5(), Endpoint, AdapterManager, groupFieldNamesByOwningDevice() (+14 more)
 
-### Community 15 - "types/index.ts"
-Cohesion: 0.04
-Nodes (64): anomalyApi, BadActor, BaselineProgress, DriftAlertType, DriftOptions, driftRulesApi, ProtocolOutput, RESOLUTION_REASON_LABELS (+56 more)
+### Community 15 - "DiscoveryService"
+Cohesion: 0.10
+Nodes (6): Discovery and source configuration, DiscoveryRule, DiscoveryStore, DiscoveryOptionsBuilder, DiscoveryService, DiscoveredDevice
 
 ### Community 16 - "DiscoveryRuleDrawer.vue"
-Cohesion: 0.05
-Nodes (35): discoveryApi, discoveryBlocklistApi, DiscoveryOptions, discoveryRulesApi, bacnet, BACnetParams, buildParamsJson(), close() (+27 more)
+Cohesion: 0.03
+Nodes (65): discoveryApi, discoveryBlocklistApi, DiscoveryOptions, discoveryRulesApi, bacnet, BACnetParams, buildParamsJson(), close() (+57 more)
 
 ### Community 17 - "core/index.ts"
-Cohesion: 0.04
-Nodes (37): AgentManager, AgentInfo, ApiTlsConfig, AzurePublishingConfig, IotisticaPublishingConfig, KeyExchangeRequest, KeyExchangeResponse, MqttBrokerConfig (+29 more)
+Cohesion: 0.03
+Nodes (46): AgentManager, AgentInfo, ApiTlsConfig, AzurePublishingConfig, IotisticaPublishingConfig, KeyExchangeRequest, KeyExchangeResponse, MqttBrokerConfig (+38 more)
 
 ### Community 18 - "collection-utils.ts"
-Cohesion: 0.09
-Nodes (14): Network, NetworkImpl, ComposeNetworkConfig, DockerNetwork, DockerNetworkConfig, DockerNetworkInspectInfo, normalizeLabels(), getPath() (+6 more)
+Cohesion: 0.06
+Nodes (22): dockerode, InvalidNetworkNameError, Network, NetworkImpl, ComposeNetworkConfig, ComposeVolumeConfig, DockerNetwork, DockerNetworkConfig (+14 more)
 
 ### Community 19 - "DataExplorer.vue"
 Cohesion: 0.02
-Nodes (100): mergePinnedDataExplorerPoints(), dataExplorerSourceName(), activateTab(), activeSavedView, activeTab, candidateDatasetPoints, candidateViewPoints, closeSavedView() (+92 more)
+Nodes (79): activateTab(), activeSavedView, activeTab, candidateDatasetPoints, candidateViewPoints, closeSavedView(), columns, configuredCount (+71 more)
 
 ### Community 20 - ".warnSync"
-Cohesion: 0.09
-Nodes (9): detectOrchestrator(), attachLogsToContainer(), initialized(), HealthArbiter, createLogger(), AgentUpdater, detectBinaryVersion(), isValidVersion() (+1 more)
+Cohesion: 0.11
+Nodes (7): detectOrchestrator(), attachLogsToContainer(), createLogger(), AgentUpdater, detectBinaryVersion(), isValidVersion(), verifyCommandSignature()
 
 ### Community 21 - "OPCUADeviceClient"
-Cohesion: 0.09
-Nodes (8): Writable-point allowlist, createOPCUASession(), OPCUADeviceClient, OPCUACertificateTrustMode, OPCUAConnection, OPCUADataPoint, badStatus, goodStatus
+Cohesion: 0.08
+Nodes (9): createOPCUASession(), OPCUADeviceClient, OPCUACertificateTrustMode, OPCUAConnection, OPCUASecurityMode, OPCUASecurityPolicy, createdClientInstances, createdWrappers (+1 more)
 
 ### Community 22 - "ConfigManager"
-Cohesion: 0.04
-Nodes (12): getManagerStatus(), ConfigManager, normalizeValue(), stableStringify(), StateManager, ConfigReconciliationResult, ConfigStep, DeviceConfig (+4 more)
+Cohesion: 0.05
+Nodes (13): Dynamic Configuration Updates, How It Works, Supported Dynamic Updates, ConfigManager, normalizeValue(), stableStringify(), StateManager, ConfigReconciliationResult (+5 more)
 
 ### Community 23 - "codec.ts"
-Cohesion: 0.13
-Nodes (18): clearCodecCaches(), createMsgpackPayload(), decodeCache, decodeHexId(), decodeUuid(), deserializePayload(), encodeCache, encodeHexId() (+10 more)
+Cohesion: 0.25
+Nodes (15): clearCodecCaches(), decodeCache, decodeHexId(), decodeUuid(), deserializePayload(), encodeCache, encodeHexId(), encodeIfUuid() (+7 more)
+
+### Community 24 - "MqttDiscovery"
+Cohesion: 0.10
+Nodes (7): modbus-serial@^8.0.17, modbus-serial, ModbusDiscovery, MqttDiscovery, DiscoveryDeviceList, ValidationResult, withDiscoveryScanStatus()
 
 ### Community 25 - "SchemaDriftDetector"
 Cohesion: 0.06
 Nodes (37): asRecord(), DEFAULT_OPTIONS, DeviceDriftState, DeviceSchema, DriftAlertEvent, DriftDetectorOptions, DriftRule, DriftSeverity (+29 more)
 
 ### Community 27 - "LogComponents"
-Cohesion: 0.04
-Nodes (69): loadConfigFromTargetState(), setAgent(), setConfigManager(), setDiscoveryRulesScheduler(), setDiscoveryService(), setUpdater(), DeviceAPI, StateReconcilerEvents (+61 more)
+Cohesion: 0.06
+Nodes (45): setDiscoveryRulesScheduler(), setLocalLogBackend(), DeviceAPI, BackupScheduler, DatabaseModel, DiscoveryRulesScheduler, EventBus, AgentEventInput (+37 more)
 
 ### Community 28 - "opcua/adapter.ts"
 Cohesion: 0.02
-Nodes (69): zod, logger, server, WorkerMessage, loadNativeBinding(), NativeIpcBinding, NativeIpcInstance, RustSocketServer (+61 more)
+Nodes (78): Phase 2B standalone version 1 contract, 7. Protocol evidence matrix, node-opcua-client, zod, loadNativeBinding(), NativeIpcBinding, NativeIpcInstance, RustSocketServer (+70 more)
 
 ### Community 29 - "DestinationsView.vue"
 Cohesion: 0.04
-Nodes (50): destinationsApi, TestResult, settingsApi, cfg, emit, props, set(), setIn() (+42 more)
+Nodes (53): destinationsApi, TestResult, cfg, emit, props, set(), setIn(), ALL_DESTINATION_TYPES (+45 more)
 
 ### Community 30 - "DeviceDrawer.vue"
-Cohesion: 0.07
-Nodes (26): addEntry(), assetPath, close(), copiedUuid, copyUuid(), Device, emit, loadingPoints (+18 more)
+Cohesion: 0.04
+Nodes (53): LogLevel, LogMessage, logsApi, LogsFilter, LogSourceType, addEntry(), assetPath, close() (+45 more)
 
 ### Community 31 - "detectors.ts"
-Cohesion: 0.08
-Nodes (44): binaryConfidence(), CONFIDENCE_STRATEGY, exponentialConfidence(), getConfidence(), sigmoid(), getMethodsToRun(), runDetectionMethods(), RunDetectionMethodsInput (+36 more)
+Cohesion: 0.06
+Nodes (55): addToBuffer(), addValue(), getBufferStats(), getIQR(), getMAD(), getMedian(), getPercentile(), getRateOfChange() (+47 more)
 
 ### Community 32 - "points/catalog.ts"
 Cohesion: 0.06
-Nodes (44): 10. Regression plan and required fixtures, 11. Risks and unresolved decisions, 1. Executive summary, 3. Existing identity dependency map, 4. Proposed additive SQLite schema, 6. Legacy reconciliation, 7. Migration, lifecycle and rollback, 8. Downstream compatibility and rollout (+36 more)
+Nodes (43): 10. Regression plan and required fixtures, 11. Risks and unresolved decisions, 1. Executive summary, 3. Existing identity dependency map, 4. Proposed additive SQLite schema, 6. Legacy reconciliation, 7. Migration, lifecycle and rollback, 8. Downstream compatibility and rollout (+35 more)
 
 ### Community 33 - "DriftRuleDrawer.vue"
-Cohesion: 0.04
-Nodes (50): adaptivePromotionBatches, adaptivePromotionMinElapsedMs, adaptiveRetireBatches, advancedActiveKey, alertCooldownMs, alertOnDriftTypes, alertSeverity, ALL_DRIFT_TYPES (+42 more)
-
-### Community 34 - ".infoSync"
-Cohesion: 0.06
-Nodes (3): ContainerService, DockerManager, factoryReset()
+Cohesion: 0.02
+Nodes (100): anomalyApi, BadActor, BaselineProgress, DriftAlertType, DriftOptions, driftRulesApi, ProtocolOutput, RESOLUTION_REASON_LABELS (+92 more)
 
 ### Community 35 - "PointPickerModal.vue"
 Cohesion: 0.07
-Nodes (37): pointCatalogApi, PointCatalogEntry, catalogPoints, checkedKeys, configuredPoints, devices, emit, expandedProtocols (+29 more)
+Nodes (35): pointCatalogApi, PointCatalogEntry, catalogPoints, checkedKeys, configuredPoints, devices, emit, expandedProtocols (+27 more)
 
 ### Community 37 - "SubscriptionDrawer.vue"
-Cohesion: 0.04
-Nodes (48): subscriptionsApi, blankForm(), blankRoute(), buildIotisticaTopic(), close(), COMPRESSIONS, connSummary(), customIntervalUnit (+40 more)
+Cohesion: 0.03
+Nodes (74): subscriptionsApi, blankForm(), blankRoute(), buildIotisticaTopic(), close(), COMPRESSIONS, connSummary(), customIntervalUnit (+66 more)
 
 ### Community 38 - "fixtures.ts"
-Cohesion: 0.06
-Nodes (28): sinon, reconcileVolumesForApp(), HttpResponse, createCompleteConfigScenario(), createConfigUpdateScenario(), createEmptyDeviceState(), createETagCachedScenario(), createFirstBootScenario() (+20 more)
+Cohesion: 0.11
+Nodes (23): createCompleteConfigScenario(), createConfigUpdateScenario(), createEmptyDeviceState(), createETagCachedScenario(), createFirstBootScenario(), createMockAgentInfo(), createMockDeviceState(), createMockFetchResponse() (+15 more)
+
+### Community 39 - "src/api/ml-datasets.ts"
+Cohesion: 0.12
+Nodes (15): createPublishSubscription(), DatasetResponse, isValidPointKey(), mlDatasetsRouter, normalizeAndDedupKeys(), normalizePointKey(), VALID_MISSING_VALUES, VALID_NORMALIZATIONS (+7 more)
 
 ### Community 40 - "CloudLogBackend"
-Cohesion: 0.06
-Nodes (22): CloudLogBackend, LogSampler, SamplingRates, LogSpool, SpoolConfig, AckCursor, CloudLogBackendConfig, DroppedLogSummary (+14 more)
+Cohesion: 0.05
+Nodes (21): CloudLogBackend, LocalLogBackend, LogSampler, SamplingRates, LogSpool, SpoolConfig, AckCursor, DroppedLogSummary (+13 more)
 
 ### Community 41 - "OPCUAAdapter"
-Cohesion: 0.10
-Nodes (6): OPCUAAdapter, OPCUAConnectionGroup, OpcuaReadingEvidence, OPCUASession, resolveDeviceDisplayNames(), OPCUADeviceConfig
+Cohesion: 0.05
+Nodes (18): OPCUAAdapter, OPCUAConnectionGroup, OpcuaReadingEvidence, OPCUASession, resolveDeviceDisplayNames(), blankRecord(), DiagnosableSession, fmt() (+10 more)
 
 ### Community 42 - "CloudMqttClient"
-Cohesion: 0.08
-Nodes (4): MqttPayload, CloudMqttClient, MqttRouter, SubscriptionHandler
+Cohesion: 0.07
+Nodes (8): MqttPayload, CloudMqttClient, MqttConnectOptions, MqttRouter, SubscriptionHandler, initMessageIdGenerator(), MessageIdGenerator, BufferSyncConfig
 
 ### Community 43 - "getDatabase"
 Cohesion: 0.05
-Nodes (44): AdminSessionModel, TemplateRow, BufferStats, MessageBufferRecord, MessageBufferRow, DataExplorerViewRecord, DeviceStateHistoryRecord, DictionaryDelta (+36 more)
+Nodes (37): clearSchemaDriftBaselines(), BufferStats, MessageBufferRecord, MessageBufferRow, CustomUnitAliasRecord, DeviceStateHistoryRecord, DictionaryDelta, DictionaryDeltaRow (+29 more)
 
-### Community 44 - "reconciliation-planner.ts"
-Cohesion: 0.16
-Nodes (13): AppStep, DeviceApp, AddAppPlanningCallbacks, PlannerApp, PlannerContainerApp, PlannerContainerService, PlannerService, PlannerStep (+5 more)
+### Community 44 - "container-manager.ts"
+Cohesion: 0.06
+Nodes (41): AppStep, ContainerManagerEvents, DeviceApp, createNetwork(), createVolume(), downloadImage(), pauseContainer(), removeContainer() (+33 more)
+
+### Community 45 - "Agent"
+Cohesion: 0.08
+Nodes (3): Agent, AgentLifecycle, stopMemoryLeakSimulation()
 
 ### Community 46 - "core/manager.ts"
-Cohesion: 0.06
+Cohesion: 0.07
 Nodes (24): cleanDriftFieldName(), cleanProtocolPipeName(), KNOWN_DEVICE_ACRONYMS, prettifyDriftDeviceId(), stripFieldDevicePrefix(), PublishDestinationRecord, PublishSubscriptionRecord, AccumulatedFeature (+16 more)
 
 ### Community 47 - "AlertsView.vue"
@@ -529,12 +522,12 @@ Cohesion: 0.05
 Nodes (47): eventsApi, RESOLUTION_REASON_LABELS, ResolutionReason, AgentAlert, AgentEvent, AgentIncident, SOURCE_LABELS, SOURCE_OPTIONS (+39 more)
 
 ### Community 48 - "runtime.ts"
-Cohesion: 0.09
-Nodes (28): licenseService(), createHttpClient(), bootstrapLicense(), BootstrapOptions, EMBEDDED_LICENSE_PUBLIC_KEY, getLicensePublicKey(), envEnabled(), getLicenseService() (+20 more)
+Cohesion: 0.10
+Nodes (26): licenseService(), bootstrapLicense(), BootstrapOptions, EMBEDDED_LICENSE_PUBLIC_KEY, getLicensePublicKey(), envEnabled(), getLicenseService(), initLicensing() (+18 more)
 
 ### Community 49 - "lib/errors.ts"
 Cohesion: 0.06
-Nodes (35): AppendDirectiveError, AppsJsonParseError, BackupError, BadRequestError, CodedSysError, ConfigurationValidationError, DatabaseParseError, DeltaApplyError (+27 more)
+Nodes (34): AppendDirectiveError, AppsJsonParseError, BackupError, BadRequestError, CodedSysError, ConfigurationValidationError, DatabaseParseError, DeltaApplyError (+26 more)
 
 ### Community 50 - "SourcesView.vue"
 Cohesion: 0.04
@@ -542,39 +535,35 @@ Nodes (45): EndpointCommunicationQuality, activeProtocol, activeTab, bulkDisable
 
 ### Community 51 - "package.json"
 Cohesion: 0.05
-Nodes (52): author, description, devDependencies, eslint@^8.57.1, jest@^29.0.0, rimraf@^5.0.10, sinon@^21.0.0, ts-jest@^29.0.0 (+44 more)
+Nodes (51): author, description, devDependencies, eslint@^8.57.1, jest@^29.0.0, rimraf@^5.0.10, ts-jest@^29.0.0, ts-node@^10.0.0 (+43 more)
 
 ### Community 52 - "CreateViewDrawer.vue"
-Cohesion: 0.06
-Nodes (32): CreateViewInput, SavedView, viewsApi, canSave, description, DisplayPoint, displayPoints, emit (+24 more)
+Cohesion: 0.07
+Nodes (27): CreateViewInput, SavedView, viewsApi, canSave, description, DisplayPoint, displayPoints, emit (+19 more)
 
 ### Community 53 - "maintenance/service.ts"
-Cohesion: 0.13
-Nodes (29): addValue(), createBuffer(), continuousDurationMs(), getLatestSample(), onRatioWithinWindow(), Sample, evaluateCumulativeRuntime(), evaluateCycleCount() (+21 more)
+Cohesion: 0.06
+Nodes (43): createBuffer(), continuousDurationMs(), getLatestSample(), onRatioWithinWindow(), Sample, DebounceTracker, evaluateCumulativeRuntime(), evaluateCycleCount() (+35 more)
 
 ### Community 54 - ".warn"
-Cohesion: 0.13
-Nodes (15): DeviceStateHistoryModel, Protocol, CanonicalDeviceState, extractRawDeviceState(), extractStateField(), fallbackStateForProtocol(), FAULT_TOKENS, IDLE_TOKENS (+7 more)
-
-### Community 56 - "EndpointModel"
-Cohesion: 0.09
-Nodes (7): Discovery and source configuration, DiscoveryRule, EndpointModel, DiscoveryStore, DiscoveryService, DiscoveredDevice, IDiscovery
+Cohesion: 0.08
+Nodes (18): 2. Current lifecycle and findings, Anomaly, persistence, publishing and views, DeviceStateHistoryModel, Protocol, CanonicalDeviceState, extractRawDeviceState(), extractStateField(), fallbackStateForProtocol() (+10 more)
 
 ### Community 57 - "UsersView.vue"
 Cohesion: 0.06
 Nodes (36): UserRole, Session, sessionsApi, User, usersApi, activeTab, bulkActivate(), bulkActivating (+28 more)
 
-### Community 58 - "db-path.ts"
-Cohesion: 0.40
-Nodes (3): getDbStats(), dataDir, getDatabasePath()
+### Community 58 - "infra.ts"
+Cohesion: 0.13
+Nodes (17): PointCatalogEntry, pointCatalogRouter, SHELL_ALLOWLIST, _connectIotisticaMqtt(), initBrokerMonitor(), initContainerManager(), initDeviceAPI(), initializeConnections() (+9 more)
 
 ### Community 59 - "CloudSync"
-Cohesion: 0.05
-Nodes (31): Supported Dynamic Updates, AgentState, ConnectionHealth, ConnectionMonitor, ConnectionMonitorEvents, ConnectionState, HttpClient, PublishMode (+23 more)
+Cohesion: 0.04
+Nodes (33): AgentState, StateReconcilerEvents, ConnectionHealth, ConnectionMonitor, ConnectionMonitorEvents, ConnectionState, CompressionStats, HttpClient (+25 more)
 
 ### Community 60 - "DashboardView.vue"
 Cohesion: 0.03
-Nodes (63): CanonicalUnit, CustomUnitAlias, dashboardApi, DashboardStats, NetworkBandwidth, NormalizationHealth, NormalizationIssue, NormalizationIssueSummary (+55 more)
+Nodes (61): CanonicalUnit, CustomUnitAlias, dashboardApi, DashboardStats, NetworkBandwidth, NormalizationHealth, NormalizationIssue, NormalizationIssueSummary (+53 more)
 
 ### Community 61 - "DiscoveryDrawer.vue"
 Cohesion: 0.05
@@ -594,7 +583,7 @@ Nodes (19): SecurityPolicySummary, HealthCheckConfig, HealthCheckExecutor, Healt
 
 ### Community 65 - "docker-manager.ts"
 Cohesion: 0.11
-Nodes (24): dockerode, DockerAuthConfig, DockerContainerInfo, DockerContainerInfo, DockerStateSyncContext, ManagedContainerSummary, mapDockerStateToServiceState(), syncStateFromDocker() (+16 more)
+Nodes (21): DockerAuthConfig, DockerContainerInfo, mapDockerStateToServiceState(), syncStateFromDocker(), checkImageUpdate(), getRemoteDigest(), imageRepository(), ImageUpdateStatus (+13 more)
 
 ### Community 66 - "quality/index.ts"
 Cohesion: 0.19
@@ -602,31 +591,31 @@ Nodes (19): sourceCheck(), CheckDefinition, CheckFn, valueCheck(), buildCompactI
 
 ### Community 67 - "DockerDriver"
 Cohesion: 0.08
-Nodes (13): ServiceSecurityConfig, DockerDriver, createOrchestratorDriver(), DriverFactoryConfig, ContainerMetrics, CurrentState, LogStreamOptions, NetworkConfig (+5 more)
+Nodes (9): DockerDriver, ContainerMetrics, CurrentState, LogStreamOptions, NetworkConfig, ReconciliationResult, ServiceConfig, ServiceStatus (+1 more)
 
 ### Community 68 - "PrivateEvidenceRegistry"
-Cohesion: 0.12
-Nodes (29): Phase 2C-3A implementation status, AddressProtocol, Binding, copyObserved(), isObject(), isRecord(), Observation, PrivateEvidenceRegistry (+21 more)
+Cohesion: 0.13
+Nodes (27): Phase 2C-3A implementation status, AddressProtocol, Binding, copyObserved(), isObject(), isRecord(), Observation, PrivateEvidenceRegistry (+19 more)
 
 ### Community 69 - "clearApiCache"
 Cohesion: 0.17
 Nodes (20): agentState(), showStatusEnhanced(), appsList(), configGet(), configGetApi(), configReset(), configSet(), configShow() (+12 more)
 
-### Community 70 - "MaintenanceEnergyService"
-Cohesion: 0.09
-Nodes (12): DebounceTracker, MaintenanceEnergyService, AssetMetricBinding, AssetRecord, EnergyRecommendationUpsert, EnergyRuleRecord, MaintenanceEnergyStorageService, MaintenanceRecommendationUpsert (+4 more)
+### Community 70 - "MockHttpClient"
+Cohesion: 0.11
+Nodes (5): sinon@^21.0.0, sinon, HttpResponse, MockHttpClient, poller()
 
 ### Community 71 - "timescaledb.ts"
 Cohesion: 0.07
 Nodes (26): pg@^8.22.0, pg, coerceValue(), CustomPayload, detectProtocolFromTopic(), isTagsPayload(), isTransientError(), KNOWN_PROTOCOLS (+18 more)
 
 ### Community 72 - "ref_fs"
-Cohesion: 0.08
-Nodes (30): __dirname, STORAGE_STATE, { existsSync, readFileSync }, { join }, close(), gracefulShutdown(), columnExists(), loadSqlAsset() (+22 more)
+Cohesion: 0.06
+Nodes (40): __dirname, STORAGE_STATE, 2. Verified implementation and baseline, 5. SQLite lifecycle, transaction and concurrency, { existsSync, readFileSync }, { join }, close(), factoryReset() (+32 more)
 
 ### Community 73 - "anomaly/types.ts"
 Cohesion: 0.06
-Nodes (33): estimateStorageOverhead(), getBaselineKey(), getMinimumSamplesForSeasonalBaseline(), getTimeSlot(), getTimeSlotCount(), AlertMetricState, loadSimulationConfig(), normalizeSimulationMetrics() (+25 more)
+Nodes (32): estimateStorageOverhead(), getBaselineKey(), getMinimumSamplesForSeasonalBaseline(), getTimeSlot(), getTimeSlotCount(), AlertMetricState, loadSimulationConfig(), normalizeSimulationMetrics() (+24 more)
 
 ### Community 74 - "BaseHttpClient"
 Cohesion: 0.09
@@ -634,27 +623,27 @@ Nodes (4): BaseHttpClient, HttpClientConfig, fetchMock, TestHttpClient
 
 ### Community 75 - "memory.ts"
 Cohesion: 0.05
-Nodes (48): setCaptureEngine(), setDevicePublish(), setFirewall(), AdapterInitializer, FeatureInitializer, bytesToMB(), calculateExternalGrowthRate(), calculateHeapGrowthRate() (+40 more)
+Nodes (48): setCaptureEngine(), setDevicePublish(), setFirewall(), AdapterFeatures, AdapterInitializer, FeatureInitializer, bytesToMB(), calculateExternalGrowthRate() (+40 more)
 
-### Community 76 - "SubscriptionsView.vue"
-Cohesion: 0.07
-Nodes (26): b64url(), buildIotisticaTopicBase(), encodeIfUuid(), allEndpoints, bulkDisable(), bulkDisabling, bulkEnable(), bulkEnabling (+18 more)
+### Community 76 - "api/mqtt.ts"
+Cohesion: 0.13
+Nodes (15): BrokerMetrics, BrokerStatus, CompressionSnapshot, FlatTopic, HistoryEntry, HistoryListEntry, mqttApi, emit (+7 more)
 
 ### Community 77 - "system/metrics.ts"
-Cohesion: 0.13
-Nodes (27): bytesToMb(), configureAnomalyFeed(), exec, ExtendedMetrics, getContainerMemory(), getCpuCores(), getCpuTemp(), getExtendedMetrics() (+19 more)
+Cohesion: 0.12
+Nodes (29): NetworkInterfaceInfo, bytesToMb(), configureAnomalyFeed(), exec, ExtendedMetrics, getContainerMemory(), getCpuCores(), getCpuTemp() (+21 more)
 
 ### Community 78 - "publish-destinations.model.ts"
 Cohesion: 0.13
 Nodes (12): AgentModel, AgentRow, DestinationType, PublishDestinationRow, decryptData(), decryptDeviceRecord(), encryptData(), encryptDeviceRecord() (+4 more)
 
-### Community 79 - "container-manager.ts"
-Cohesion: 0.04
-Nodes (63): ContainerManagerEvents, DeviceState, ContainerSecurityPolicyError, DEFAULT_PIDS_LIMIT, hostConfigMatchesPolicy(), MAX_PIDS_LIMIT, permissionFailureHint(), resolveContainerSecurityPolicy() (+55 more)
+### Community 79 - "ContainerService"
+Cohesion: 0.11
+Nodes (27): ContainerService, ContainerSecurityPolicyError, DEFAULT_PIDS_LIMIT, hostConfigMatchesPolicy(), MAX_PIDS_LIMIT, permissionFailureHint(), resolveContainerSecurityPolicy(), ResolvedSecurityPolicy (+19 more)
 
 ### Community 80 - "data-explorer-point-key.ts"
-Cohesion: 0.11
-Nodes (29): ActivityEvent, pipelineApi, SubscriptionActivity, chart, emit, error, load(), loading (+21 more)
+Cohesion: 0.13
+Nodes (25): ActivityEvent, pipelineApi, SubscriptionActivity, chart, emit, error, load(), loading (+17 more)
 
 ### Community 81 - "MarketplaceCatalog.vue"
 Cohesion: 0.05
@@ -669,44 +658,40 @@ Cohesion: 0.11
 Nodes (24): agentPullTargetState(), agentUpdate(), bufferStatus(), describeCloudFetchError(), formatMaybeAge(), formatMaybeTime(), memoryDiagnostics(), restart() (+16 more)
 
 ### Community 84 - "drift-presets.ts"
-Cohesion: 0.25
-Nodes (7): ADVANCED_DRIFT_DEFAULTS, classifySensitivity(), DriftOptionsInner, SENSITIVITY_LEVELS, SENSITIVITY_PRESETS, SensitivityFields, SensitivityLevel
+Cohesion: 0.18
+Nodes (8): ADVANCED_DRIFT_DEFAULTS, classifySensitivity(), DriftOptionsInner, SENSITIVITY_LEVELS, SENSITIVITY_PRESETS, SensitivityFields, SensitivityLevel, DriftOptions
 
-### Community 85 - "mqtt/adapter.ts"
-Cohesion: 0.07
-Nodes (30): mqtt-pattern@^2.0.0, mqtt-pattern, AUTO_METRICS_SKIP_KEYS, MQTT_UNIT_TO_CANONICAL, MqttReadingEvidence, MqttSelectorToken, MqttShadowOptions, MqttTraversal (+22 more)
-
-### Community 86 - "OfflineQueue"
-Cohesion: 0.15
-Nodes (3): OfflineQueueModel, OfflineQueueRecord, OfflineQueue
+### Community 85 - "MqttAdapter"
+Cohesion: 0.04
+Nodes (35): mqtt-pattern, OpcuaIdentityState, AUTO_METRICS_SKIP_KEYS, MQTT_UNIT_TO_CANONICAL, MqttAdapter, MqttReadingEvidence, MqttSelectorToken, MqttShadowOptions (+27 more)
 
 ### Community 87 - "AnomalyDetectionService"
-Cohesion: 0.10
-Nodes (5): MetricMatchContext, AnomalyDetectionService, AnomalyConfig, DataPoint, Protocol
+Cohesion: 0.08
+Nodes (7): MetricMatchContext, AlertMqttClient, AnomalyDetectionService, AnomalyMqttClient, AnomalyConfig, DataPoint, MqttPayload
 
-### Community 88 - "anomaly/service.ts"
-Cohesion: 0.07
-Nodes (29): calculateConfidence(), generateSeverityReason(), resetBuffer(), extractRawDeviceState(), extractStateField(), fallbackStateForProtocol(), FAULT_TOKENS, IDLE_TOKENS (+21 more)
+### Community 88 - "analytics/anomaly/device-state.ts"
+Cohesion: 0.24
+Nodes (12): extractRawDeviceState(), extractStateField(), fallbackStateForProtocol(), FAULT_TOKENS, IDLE_TOKENS, normalizeDeviceState(), normalizeNumericState(), normalizeStringState() (+4 more)
 
 ### Community 89 - "MessageViewer.vue"
-Cohesion: 0.05
-Nodes (45): BrokerMetrics, BrokerStatus, CompressionSnapshot, FlatTopic, HistoryEntry, HistoryListEntry, JSONSchema, mqttApi (+37 more)
+Cohesion: 0.09
+Nodes (23): activeTab, compression, compressionApplied, copied, displayMessage, effectiveSchema, effectiveText, effectiveTruncated (+15 more)
 
 ### Community 90 - "CaptureTab.vue"
 Cohesion: 0.05
 Nodes (38): autoScroll, available, bpfFilter, columns, drawerOpen, fetchRetainedPackets(), filterDirection, filteredPackets (+30 more)
 
 ### Community 91 - "pipeline.service.ts"
-Cohesion: 0.10
-Nodes (12): pendingTransforms, pipelineEvents, DeviceFilterConfig, PIPELINE_ALLOWED_NODE_TYPES, PipelineFlow, PipelineFlowNode, PipelineInConfig, PipelineNodeType (+4 more)
+Cohesion: 0.11
+Nodes (15): pendingTransforms, pipelineEvents, PipelineService, DeviceFilterConfig, PIPELINE_ALLOWED_NODE_TYPES, PipelineFlow, PipelineFlowNode, PipelineInConfig (+7 more)
 
 ### Community 92 - "backup.ts"
 Cohesion: 0.18
 Nodes (20): createDbBackup(), DbBackupInfo, DbBackupMetadata, DbVerificationResult, ensureDir(), formatTimestampForFile(), getDefaultBackupDir(), getIntegrityCheck() (+12 more)
 
-### Community 93 - "vue"
-Cohesion: 0.06
-Nodes (27): agentStarting, ApiError, client, deviceApi, DeviceInfo, WritablePoint, WriteResult, { isDark } (+19 more)
+### Community 93 - "downloadCsv"
+Cohesion: 0.14
+Nodes (16): mergePinnedDataExplorerPoints(), dataExplorerSourceName(), deviceName(), downloadCsv(), friendlyDevice(), isStale(), originalName(), pointDisplayNames (+8 more)
 
 ### Community 94 - "PointsTable.vue"
 Cohesion: 0.10
@@ -717,80 +702,76 @@ Cohesion: 0.08
 Nodes (20): broadcast_frame(), CLIENT_STALL_TIMEOUT, ClientState, create_listener(), enlarge_send_buffer(), flush_pending_buffers(), HEX, MAX_BATCH_AGE (+12 more)
 
 ### Community 96 - "point-identity-catalog.ts"
-Cohesion: 0.16
-Nodes (23): Phase 2C-2 implementation and review limits, MAX_MQTT_FIELD_IDENTITIES, AliasRow, CatalogReason, identity(), IdentityRow, isBusy(), isProtocol() (+15 more)
+Cohesion: 0.28
+Nodes (11): Phase 2C-2 implementation and review limits, identity(), isProtocol(), nonempty(), PointIdentityCatalog, resolved(), sameScope(), unresolved() (+3 more)
 
 ### Community 97 - "BackupsView.vue"
 Cohesion: 0.08
 Nodes (21): Backup, backups, BackupSchedule, columns, confirmDelete(), confirmRestore(), createBackup(), creating (+13 more)
 
 ### Community 98 - "app.ts"
-Cohesion: 0.13
-Nodes (17): setHealthReporter(), agent, gracefulShutdown(), hasSystemdWatchdog(), health, markFatalAndRecover(), registerRuntimeHealthSubsystems(), stopWatchdog (+9 more)
+Cohesion: 0.08
+Nodes (18): setHealthReporter(), agent, gracefulShutdown(), hasSystemdWatchdog(), health, markFatalAndRecover(), registerRuntimeHealthSubsystems(), stopWatchdog (+10 more)
 
 ### Community 99 - "PublishDestinationsModel"
-Cohesion: 0.25
-Nodes (7): createPublisher(), deletePublisher(), getAllApps(), listPublishDestinations(), updateApp(), updatePublisher(), PublishDestinationsModel
+Cohesion: 0.19
+Nodes (11): updatePublisher(), ensureSocketDestination(), removeSocketDestination(), socketDestinationName(), socketPath(), PublishDestinationsModel, mockCreate, mockGetById (+3 more)
 
 ### Community 101 - "BaseProtocolAdapter"
-Cohesion: 0.07
-Nodes (22): 10. Legacy compatibility and preservation, 11. Catalog, SQLite, admission and contention blockers, 12. Proposed test matrix, 13. Proposed implementation slices and review gates, 14. Operational risks, diagnostics and rollback, 15. Verification performed for this design, 16. Open decisions and explicit approval gate, 1. Executive summary and scope (+14 more)
+Cohesion: 0.16
+Nodes (3): Phase 2C-3B final corrections, Phase 2C-3B OPC UA implementation status, BaseProtocolAdapter
 
-### Community 103 - "decoders/index.ts"
-Cohesion: 0.15
-Nodes (11): DnsDecoder, RCODES, RECORD_TYPES, HttpDecoder, DecoderRegistry, getDecoderRegistry(), PacketMeta, ProtocolDecoder (+3 more)
+### Community 103 - "TerminalView.vue"
+Cohesion: 0.14
+Nodes (15): CLI_COMMANDS, Cmd, CmdGroup, cmdSearch, connect(), ConnState, connState, containerEl (+7 more)
 
 ### Community 104 - "cli/package.json"
 Cohesion: 0.09
 Nodes (23): bin, iotctl, dependencies, undici@^7.28.0, description, devDependencies, @types/node@^22.19.7, typescript@^5.9.3 (+15 more)
 
 ### Community 105 - "compress.ts"
-Cohesion: 0.10
-Nodes (20): createJsonPayload(), serializePayload(), compressionToOpts(), CompressorOptions, deflateAsync, Payload, PayloadCompressor, shouldDeflate() (+12 more)
+Cohesion: 0.12
+Nodes (15): createJsonPayload(), createMsgpackPayload(), serializePayload(), compressionToOpts(), CompressorOptions, deflateAsync, Payload, PayloadCompressor (+7 more)
 
 ### Community 106 - "with"
 Cohesion: 0.08
 Nodes (26): with, build-args, cache-from, cache-to, cleanup, context, creds, driver-opts (+18 more)
 
-### Community 107 - "DiscoveryRulesView.vue"
-Cohesion: 0.06
-Nodes (30): activeTab, bulkDisable(), bulkDisabling, bulkEnable(), bulkEnabling, columns, deleting, drawerOpen (+22 more)
+### Community 107 - "normalizeSourceSystem"
+Cohesion: 0.25
+Nodes (3): UnitCatalog, normalizeSourceSystem(), Logger
 
 ### Community 108 - "mqtt/auth.ts"
-Cohesion: 0.13
-Nodes (15): AclEntry, buildAclContent(), buildPasswdContent(), ContainerManager, contentHash(), EndpointMqttAuth, execFileAsync, FileAuthOptions (+7 more)
-
-### Community 109 - "ModbusAdapter"
 Cohesion: 0.08
-Nodes (5): DeviceMetrics, MetricsSummary, ModbusAdapter, ModbusDevice, IDeviceStatus
+Nodes (27): BACnetConfig, ConfigManagerEvents, FeatureToggles, IntervalConfig, LoggingConfig, ModbusConfig, ModbusConnectionConfig, MQTTConfig (+19 more)
 
 ### Community 110 - "JobsFeature"
-Cohesion: 0.21
+Cohesion: 0.18
 Nodes (3): FeatureLogger, JobsFeature, JobExecutionData
 
 ### Community 111 - "units/index.ts"
-Cohesion: 0.24
-Nodes (18): getUnitCatalog(), convertUnit(), ConvertUnitResult, createUnitNormalizationInterceptor(), unitNormalizationInterceptor(), NO_UNIT_PLACEHOLDERS, normalizeReadingInPlace(), ProtocolMessage (+10 more)
+Cohesion: 0.25
+Nodes (17): getUnitCatalog(), convertUnit(), ConvertUnitResult, createUnitNormalizationInterceptor(), unitNormalizationInterceptor(), NO_UNIT_PLACEHOLDERS, normalizeReadingInPlace(), ProtocolMessage (+9 more)
 
-### Community 112 - "MaintenanceRuleDrawer.vue"
-Cohesion: 0.09
-Nodes (20): assets, availableMetricOptions, buildConfig(), buildWindowGating(), close(), cumulativeRuntime, CumulativeRuntimeForm, cycleCount (+12 more)
+### Community 112 - "@playwright/test"
+Cohesion: 0.15
+Nodes (3): pages, adminPassword, @playwright/test
 
 ### Community 113 - "scripts"
 Cohesion: 0.08
 Nodes (25): scripts, build, build:admin, clean, copy:db-assets, copy:pipeline-assets, dev, dev:admin (+17 more)
 
 ### Community 114 - "lib/http-client.ts"
-Cohesion: 0.11
-Nodes (8): CompressionStats, FetchHttpClient, HttpClientOptions, HttpError, ApiKeyRotatedEvent, CredentialManagerConfig, RotationReason, SubscriberResponse
-
-### Community 115 - "RetryManager"
-Cohesion: 0.11
-Nodes (4): isRetryableError(), RetryManager, StepExecutorContext, RetryStateModel
+Cohesion: 0.10
+Nodes (12): FetchHttpClient, HttpError, queueAgentUpdateRequest(), UPDATE_REQUEST_FILE, UPDATE_RUNNING_FILE, compareVersions(), execAsync, LastUpdateRecord (+4 more)
 
 ### Community 116 - "DecodedPacket"
-Cohesion: 0.11
-Nodes (19): ABORT_REASONS, BacnetDecoder, BVLC_FUNCTIONS, CONFIRMED_SERVICES, decodeObjectIdentifier(), ERROR_CLASSES, ERROR_CODES, OBJECT_TYPES (+11 more)
+Cohesion: 0.07
+Nodes (30): ABORT_REASONS, BacnetDecoder, BVLC_FUNCTIONS, CONFIRMED_SERVICES, decodeObjectIdentifier(), ERROR_CLASSES, ERROR_CODES, OBJECT_TYPES (+22 more)
+
+### Community 117 - "firewall-rule.model.ts"
+Cohesion: 0.27
+Nodes (6): CreateFirewallRule, FirewallRuleAction, FirewallRuleModel, FirewallRuleRow, UpdateFirewallRule, validateAction()
 
 ### Community 118 - "ActivityMonitor"
 Cohesion: 0.08
@@ -801,20 +782,16 @@ Cohesion: 0.06
 Nodes (35): activeTab, applyFirewallMode(), drawerOpen, editingRule, firewallColumns, firewallData, firewallDisableConfirmationOpen, firewallIsActive (+27 more)
 
 ### Community 120 - "configured-points.unit.spec.ts"
-Cohesion: 0.06
-Nodes (28): ConfiguredEndpoint, configuredPointsRouter, dataExplorerViewsRouter, SavedViewResponse, parseCookie(), RANK, requireRole(), DatasetResponse (+20 more)
+Cohesion: 0.08
+Nodes (22): getBufferStatusPayload(), getHealthPayload(), getHealthReportPayload(), getHealthReportSafe(), getLifecycleStateSafe(), getReadinessPayload(), getReadinessSafe(), initVpnActions() (+14 more)
 
-### Community 122 - "BaseFeature"
-Cohesion: 0.14
-Nodes (4): BaseFeature, FeatureConfig, FeatureLogger, MqttConnection
-
-### Community 123 - "ModbusRegisterMapEditor.vue"
-Cohesion: 0.12
-Nodes (23): SourceTestRegisterResult, addRow(), applyCsv(), columns, csvOpen, csvText, DATA_TYPE_OPTIONS, emit (+15 more)
+### Community 123 - "SourceDrawer.vue"
+Cohesion: 0.03
+Nodes (75): ConfiguredPoint, DeviceCandidateStrategy, DeviceDiscoveryPreview, OPCUADeviceIdentification, sourcesApi, SourceTestRegisterResult, SourceTestResult, addRow() (+67 more)
 
 ### Community 124 - "configured-point-resolver.ts"
 Cohesion: 0.08
-Nodes (23): OpcuaAddressInput, bacnetInput(), buildCanonicalInput(), createIdentities(), CreateIdentitiesResult, EndpointInput, EndpointResolution, findAmbiguousKeys() (+15 more)
+Nodes (24): CanonicalAddressResult, OpcuaAddressInput, bacnetInput(), buildCanonicalInput(), createIdentities(), CreateIdentitiesResult, EndpointInput, EndpointResolution (+16 more)
 
 ### Community 125 - "steps"
 Cohesion: 0.06
@@ -822,15 +799,15 @@ Nodes (34): concurrency, cancel-in-progress, group, env, ACCT, FORCE_JAVASCRIPT_
 
 ### Community 126 - "capture.ts"
 Cohesion: 0.08
-Nodes (19): ArpPacketInfo, CapturedPacket, CaptureFilter, CaptureStatus, IP_PROTOCOL_NAMES, ParsedCapturePayload, WELL_KNOWN_PORTS, FramedMessage (+11 more)
+Nodes (18): ArpPacketInfo, CapturedPacket, CaptureStatus, IP_PROTOCOL_NAMES, ParsedCapturePayload, WELL_KNOWN_PORTS, FramedMessage, ProtocolFramer (+10 more)
 
 ### Community 127 - "OpcUaReader"
 Cohesion: 0.13
 Nodes (9): ALLOWED_CHUNKS, OpcUaReader, CONNECTION_MSG_TYPES, MESSAGE_TYPE_NAMES, MIN_MESSAGE_SIZES, OpcuaDecoder, OpcuaDecoderConfig, STATUS_CODE_NAMES (+1 more)
 
 ### Community 128 - "forecaster.ts"
-Cohesion: 0.09
-Nodes (23): calculatePredictionConfidence(), calculateTrendDirection(), calculateTrendStrength(), calculateTrendThreshold(), EMA_PREDICTOR_LOOKBACK, EMAPredictor, estimateLinearTimeToThreshold(), estimateLinearTimeToThresholdResult() (+15 more)
+Cohesion: 0.06
+Nodes (45): calculateConfidence(), calculateSeverity(), createAnomalyAlert(), createId(), generateSeverityReason(), getRecentValues(), getTrend(), resetBuffer() (+37 more)
 
 ### Community 129 - "MqttUsersTab.vue"
 Cohesion: 0.10
@@ -840,13 +817,13 @@ Nodes (17): columns, confirmDelete(), createForm, createOpen, creating, deleteUs
 Cohesion: 0.13
 Nodes (3): CommandFeature, InitializedFeatures, CaptureEngine
 
-### Community 131 - "unit-catalog.model.ts"
-Cohesion: 0.31
-Nodes (5): mapDefinitionRow(), UnitAliasRecord, UnitDefinitionRecord, UnitDefinitionRow, UnitDefinitionsModel
+### Community 131 - "units/catalog.ts"
+Cohesion: 0.27
+Nodes (7): UnitAliasesModel, seedUnitCatalog(), SeedUnitAlias, SeedUnitDefinition, UNIT_ALIASES, UNIT_DEFINITIONS, validateUnitCatalogSeed()
 
 ### Community 132 - "DevicePublish"
-Cohesion: 0.07
-Nodes (4): DeviceContext, DevicePublishConfig, DriftOptions, DevicePublish
+Cohesion: 0.08
+Nodes (4): isProLicensed(), DeviceContext, DevicePublishConfig, DevicePublish
 
 ### Community 133 - "iotctl.ts"
 Cohesion: 0.17
@@ -861,32 +838,28 @@ Cohesion: 0.09
 Nodes (23): with, build-args, cache-from, cache-to, context, creds, fetch-depth, file (+15 more)
 
 ### Community 136 - "dependencies"
-Cohesion: 0.09
-Nodes (22): dependencies, bcryptjs@^3.0.3, dockerode@^4.0.2, express@^4.18.2, @influxdata/influxdb-client@~1.33.2, mqtt@^5.14.1, msgpack-lite@^0.1.26, net-snmp@^3.26.0 (+14 more)
+Cohesion: 0.08
+Nodes (25): dependencies, bcryptjs@^3.0.3, dockerode@^4.0.2, express@^4.18.2, @influxdata/influxdb-client@~1.33.2, mqtt@^5.14.1, mqtt-pattern@^2.0.0, msgpack-lite@^0.1.26 (+17 more)
 
-### Community 137 - "SocketServer"
-Cohesion: 0.14
-Nodes (5): 10. Independently reviewable implementation plan, Phase 2C-2: isolated catalog service, Phase 2C-3: trusted protocol evidence, Phase 2C-4: internal resolution, SocketServer
+### Community 137 - "DeviceDataPoint"
+Cohesion: 0.04
+Nodes (41): 10. Legacy compatibility and preservation, 11. Catalog, SQLite, admission and contention blockers, 12. Proposed test matrix, 13. Proposed implementation slices and review gates, 14. Operational risks, diagnostics and rollback, 15. Verification performed for this design, 16. Open decisions and explicit approval gate, 1. Executive summary and scope (+33 more)
 
 ### Community 138 - "jobs/types.ts"
-Cohesion: 0.10
-Nodes (20): ActionCommandInput, ActionCommandInputSchema, ActionHandlerInput, ActionHandlerInputSchema, ActionType, RUN_COMMAND, RUN_HANDLER, JobAction (+12 more)
+Cohesion: 0.11
+Nodes (17): ActionCommandInputSchema, ActionHandlerInputSchema, ActionType, RUN_COMMAND, RUN_HANDLER, JobActionSchema, JobCondition, JobConditionSchema (+9 more)
 
 ### Community 139 - "device.model.ts"
-Cohesion: 0.10
-Nodes (14): Device, DeviceModel, deviceNameSuffix(), deviceNameSuffixFor(), DeviceRow, normalizeForCompare(), toDeviceUuid(), RFC-4122 (+6 more)
-
-### Community 140 - "modbus/discovery.ts"
-Cohesion: 0.07
-Nodes (13): modbus-serial@^8.0.17, modbus-serial, BACnetClientLike, BACnetDiscovery, BaseDiscovery, DataPoint, ModbusConnection, ModbusDiscovery (+5 more)
+Cohesion: 0.13
+Nodes (6): DeviceModel, good, MockClient, start(), tick(), waitForCount()
 
 ### Community 141 - "BaseMqttClient"
-Cohesion: 0.07
-Nodes (6): BaseMqttClient, applyTopicTemplate(), AwsIotClient, applyTopicTemplate(), GcpIotClient, ExternalMqttClient
+Cohesion: 0.08
+Nodes (5): BaseMqttClient, applyTopicTemplate(), AwsIotClient, applyTopicTemplate(), GcpIotClient
 
-### Community 142 - "units/catalog.ts"
-Cohesion: 0.10
-Nodes (17): CustomUnitAliasRecord, seedUnitCatalog(), UnitCatalog, getNormalizationHealthTracker(), keyFor(), NormalizationHealthSummary, NormalizationHealthTracker, NormalizationIssueSummary (+9 more)
+### Community 142 - "normalization-health-tracker.ts"
+Cohesion: 0.15
+Nodes (7): getNormalizationHealthTracker(), keyFor(), NormalizationHealthSummary, NormalizationHealthTracker, NormalizationIssueSummary, resetNormalizationHealthTrackerForTests(), TrackedIssue
 
 ### Community 143 - "compilerOptions"
 Cohesion: 0.05
@@ -909,32 +882,32 @@ Cohesion: 0.10
 Nodes (20): if, name, runs-on, steps, env, PLINK, PLINK_ARGS, jobs (+12 more)
 
 ### Community 148 - "DevicesPanel.vue"
-Cohesion: 0.07
-Nodes (26): activeProtocol, bulkDisable(), bulkDisabling, bulkEnable(), bulkEnabling, columns, deleting, Device (+18 more)
+Cohesion: 0.09
+Nodes (20): activeProtocol, bulkDisable(), bulkDisabling, bulkEnable(), bulkEnabling, columns, deleting, Device (+12 more)
 
-### Community 149 - ".discover"
-Cohesion: 0.16
-Nodes (5): node-opcua-client, browseHierarchicalReferences(), identifyDevices(), OPCUADiscovery, resolveReferenceType()
+### Community 149 - "Phase 2C-1: durable point identity integration design"
+Cohesion: 0.17
+Nodes (12): 10. Independently reviewable implementation plan, 11. Proposed regression matrix, 12. Unresolved decisions and risks, 13. Explicit approval gates, 1. Executive summary, 3. Phase 2B execution verification, 6. Legacy reconciliation decision table, 9. Failure, compatibility and rollback (+4 more)
 
 ### Community 150 - "opcua/discovery.ts"
-Cohesion: 0.10
-Nodes (17): MetadataModel, resolveUnitFromDescription(), OPCUADeviceIdentification, cacheKey(), clearDiscoveryCache(), computeStructuralHash(), DiscoveryCache, DiscoveryCacheEntry (+9 more)
+Cohesion: 0.06
+Nodes (22): MetadataModel, DiscoverySnapshot, resolveUnitFromDescription(), browseHierarchicalReferences(), identifyDevices(), OPCUADeviceIdentification, cacheKey(), clearDiscoveryCache() (+14 more)
 
 ### Community 151 - "AgentFirewall"
-Cohesion: 0.12
-Nodes (10): CreateFirewallRule, FirewallRule, FirewallRuleAction, FirewallRuleModel, FirewallRuleRow, UpdateFirewallRule, validateAction(), Rule (+2 more)
+Cohesion: 0.07
+Nodes (33): getSystemPorts(), FirewallRule, castArray(), exec, applyRules(), build(), ChainBuilder, convertToRestoreRulesFormat() (+25 more)
 
 ### Community 152 - "opcua-decoder.unit.spec.ts"
 Cohesion: 0.24
 Nodes (7): buildAbort(), buildERR(), buildHEL(), buildOPN(), buildRHE(), META, writeOpcUaString()
 
 ### Community 153 - "TerminalView.vue"
-Cohesion: 0.04
-Nodes (53): pages, dependencies, @ant-design/icons-vue@^7.0.1, ant-design-vue@^4.2.6, axios@^1.7.9, device-agent@file:.., vue@^3.5.13, vue-router@^4.5.0 (+45 more)
+Cohesion: 0.07
+Nodes (35): dependencies, @ant-design/icons-vue@^7.0.1, ant-design-vue@^4.2.6, axios@^1.7.9, device-agent@file:.., vue@^3.5.13, vue-router@^4.5.0, @xterm/addon-fit@^0.11.0 (+27 more)
 
 ### Community 154 - "canonical-address.ts"
-Cohesion: 0.13
-Nodes (30): AddressProvenance, bacnet(), BacnetAddressInput, bacnetTypeNumbers, bacnetTypes, canonicalizeAddress(), canonicalizeModbusAddresses(), integer() (+22 more)
+Cohesion: 0.11
+Nodes (34): AddressProvenance, bacnet(), BacnetAddressInput, bacnetTypeNumbers, bacnetTypes, CANONICAL_ADDRESS_VERSION, canonicalizeAddress(), canonicalizeModbusAddresses() (+26 more)
 
 ### Community 155 - "buildCommands"
 Cohesion: 0.30
@@ -945,48 +918,52 @@ Cohesion: 0.18
 Nodes (10): concurrency, cancel-in-progress, group, env, FORCE_JAVASCRIPT_ACTIONS_TO_NODE24, name, on, push (+2 more)
 
 ### Community 157 - "asset.model.ts"
-Cohesion: 0.07
-Nodes (29): addAssetMetric(), createAsset(), createEnergyRule(), createMaintenanceRule(), deleteAsset(), deleteEnergyRule(), deleteMaintenanceRule(), getAsset() (+21 more)
+Cohesion: 0.14
+Nodes (13): addAssetMetric(), createAsset(), deleteAsset(), getAsset(), listAssets(), removeAssetMetric(), updateAsset(), AssetMetric (+5 more)
 
 ### Community 158 - "src/api/network.ts"
-Cohesion: 0.06
-Nodes (36): getFirewall(), persistFirewallMode(), firewallModeUpdateQueue, getDockerPorts(), getSystemPorts(), isSystemFirewallRuleAction(), networkRouter, normalizeSystemFirewallRules() (+28 more)
+Cohesion: 0.11
+Nodes (21): getCaptureEngine(), getFirewall(), persistFirewallMode(), attachCaptureHandler(), authenticate(), parseCookie(), decodePacket(), firewallModeUpdateQueue (+13 more)
 
 ### Community 159 - "MqttBrokerView.vue"
-Cohesion: 0.08
-Nodes (22): collapsedSet, emit, localCollapsed, props, sorted, toggle(), activeTab, connected (+14 more)
+Cohesion: 0.13
+Nodes (16): activeTab, connected, countTopics(), filteredTree, filterText, filterTree(), findNode(), loading (+8 more)
 
 ### Community 160 - "BrokerMonitorService"
 Cohesion: 0.09
 Nodes (8): BrokerMetrics, BrokerMonitorService, BrokerStatus, JSONSchema, RateSample, SchemaGenerator, TopicHistoryEntry, TopicNode
 
 ### Community 161 - "bacnet/discovery.ts"
-Cohesion: 0.08
-Nodes (20): bacstack@^0.0.1-beta.14, bacstack, DriftRuleTemplate, parseRow(), SchemaDriftRuleTemplateModel, TemplateRow, BACNET_INPUT_OBJECT_TYPES, BACNET_OBJECT_TYPES (+12 more)
+Cohesion: 0.06
+Nodes (18): bacstack@^0.0.1-beta.14, bacstack, BACNET_INPUT_OBJECT_TYPES, BACNET_OBJECT_TYPES, BACNET_POSSIBLY_COMMANDABLE_OBJECT_TYPES, BACNET_UNITS_CODE_TO_NAME, BACNET_UNITS_SYMBOLS, BACnetArrayElement (+10 more)
+
+### Community 162 - "FetchHttpClient"
+Cohesion: 0.11
+Nodes (6): CompressionStats, FetchHttpClient, HttpClient, HttpClientOptions, HttpError, HttpResponse
 
 ### Community 163 - ".error"
 Cohesion: 0.07
-Nodes (5): MessageBatcher, SocketConnection, DeviceConfig, SocketPublishClient, pushReading()
+Nodes (10): MessageBatcher, RuntimeSnapshot, SocketConnection, DeviceConfig, DeviceState, CONNECTED, CONNECTING, DISCONNECTED (+2 more)
 
-### Community 164 - "SourceConnectionFields.vue"
-Cohesion: 0.13
-Nodes (13): emit, get(), modelOptions, onModelChange(), props, selectedModel, selectedVendor, set() (+5 more)
+### Community 164 - "TopicTree.vue"
+Cohesion: 0.20
+Nodes (6): collapsedSet, emit, localCollapsed, props, sorted, toggle()
 
 ### Community 165 - "src/api/events.ts"
-Cohesion: 0.08
-Nodes (20): ANOMALY_SOURCES, eventsRouter, stripDeviceUuidSuffix(), VALID_RESOLUTION_REASONS, withPrettyDeviceName(), ALERT_THRESHOLDS, escalateSeverity(), SEVERITY_RANK (+12 more)
+Cohesion: 0.06
+Nodes (28): clearAnomalyBaselines(), getAnomalyBaselines(), getDbStats(), ANOMALY_SOURCES, eventsRouter, stripDeviceUuidSuffix(), VALID_RESOLUTION_REASONS, withPrettyDeviceName() (+20 more)
 
 ### Community 166 - "volume-manager.ts"
-Cohesion: 0.09
-Nodes (29): buildContainerSecurityOptions(), InvalidNetworkNameError, ResourceRecreationAttemptError, acquireNetworkLock(), checkNetworkCollisions(), create(), ensureAgentNetwork(), get() (+21 more)
+Cohesion: 0.10
+Nodes (29): buildContainerSecurityOptions(), ResourceRecreationAttemptError, acquireNetworkLock(), checkNetworkCollisions(), create(), ensureAgentNetwork(), get(), getAll() (+21 more)
 
 ### Community 167 - "CustomUnitAliasesModel"
-Cohesion: 0.21
-Nodes (4): CustomUnitAliasesModel, UnitAliasesModel, suggestCanonicalUnits(), UnitSuggestion
+Cohesion: 0.19
+Nodes (5): CustomUnitAliasesModel, mapDefinitionRow(), UnitDefinitionsModel, suggestCanonicalUnits(), UnitSuggestion
 
 ### Community 168 - "ShellHandler"
-Cohesion: 0.17
-Nodes (6): MqttPayload, ShellMqttClient, ShellCommand, ShellHandler, ShellHandlerOptions, verifyCommandSignature()
+Cohesion: 0.19
+Nodes (5): ShellMqttClient, ShellCommand, ShellHandler, ShellHandlerOptions, verifyCommandSignature()
 
 ### Community 169 - "WireGuardManager"
 Cohesion: 0.24
@@ -994,7 +971,7 @@ Nodes (3): NetworkRouteManager, execAsync, WireGuardManager
 
 ### Community 170 - "Iotistic Agent"
 Cohesion: 0.06
-Nodes (32): Anomaly Detection (Edge AI), Applications, Architecture, Basic Example, Building, CLI Tool - iotctl, Composition Steps, Contributing (+24 more)
+Nodes (35): Applications, Architecture, Basic Example, Best Practices, Building, Composition Steps, Configuration, Contributing (+27 more)
 
 ### Community 171 - "admin/src/api/network.ts"
 Cohesion: 0.09
@@ -1012,37 +989,41 @@ Nodes (16): steps, steps, steps, E2E_ADMIN_PASSWORD_FILE, steps, steps, continue
 Cohesion: 0.20
 Nodes (11): arch, package-cli, include, strategy, if, name, needs, runs-on (+3 more)
 
-### Community 175 - "LogsView.vue"
-Cohesion: 0.09
-Nodes (27): LogLevel, LogMessage, logsApi, LogsFilter, LogSourceType, autoRefresh, clearFilters(), componentOptions (+19 more)
+### Community 175 - "normalizeDataExplorerPointKey"
+Cohesion: 0.20
+Nodes (11): matchesDataExplorerView(), normalizeDataExplorerPointKey(), orderDataExplorerViewPoints(), activeViewIds, allFilteredPoints, columnSort(), debouncedPersistFavorites(), exportViewCsv() (+3 more)
 
 ### Community 180 - "MessageBufferSync"
 Cohesion: 0.14
-Nodes (8): 1. Durable MQTT message spool, Design summary, Minimal implementation approach, Proposed control states, Proposed Solution, Why this fits existing code patterns, BufferAdmissionDecision, MessageBufferSync
+Nodes (6): Design summary, Minimal implementation approach, Proposed control states, Proposed Solution, Why this fits existing code patterns, MessageBufferSync
 
-### Community 182 - "configured-points.ts"
+### Community 181 - "AnomalyStorageService"
 Cohesion: 0.12
-Nodes (22): ConfiguredPointRow, findAssociatedDevice(), getConfiguredPointRows(), isDeferred(), isRecord(), mqttFieldName(), pointName(), protocolAddress() (+14 more)
+Nodes (8): ALLOWED_TABLES, AnomalyBaselineInsertRecord, AnomalyBaselineRow, AnomalyStorageService, SQLiteResult, StorageInsertTableMap, StorageTableName, CanonicalDeviceState
+
+### Community 182 - "point-identity-catalog.ts"
+Cohesion: 0.11
+Nodes (19): CanonicalAddressInput, ConfiguredPointVerifier, EndpointRow, isVerifierEvidence(), VerifierEvidence, MAX_MQTT_FIELD_IDENTITIES, resolveMqttConfiguredFields(), AliasRow (+11 more)
 
 ### Community 183 - "setup_remote_access.sh"
 Cohesion: 0.45
 Nodes (14): check_requirements(), configure_cloud_server(), configure_cloud_sshd(), generate_ssh_key(), main(), print_banner(), print_error(), print_info() (+6 more)
 
 ### Community 184 - "PublishSubscriptionsModel"
-Cohesion: 0.18
-Nodes (7): createPublishSubscription(), deletePublishSubscription(), listPublishSubscriptions(), updatePublishSubscription(), MlDatasetModel, PublishSubscriptionsModel, writeSubscriptionSources()
+Cohesion: 0.30
+Nodes (5): deletePublishSubscription(), listPublishSubscriptions(), updatePublishSubscription(), PublishSubscriptionsModel, writeSubscriptionSources()
 
 ### Community 185 - "AppMarketplaceModel"
-Cohesion: 0.24
-Nodes (4): router, MarketplaceImage, AppMarketplaceModel, template
+Cohesion: 0.26
+Nodes (4): MarketplaceImage, AppMarketplaceModel, TemplateRow, template
 
 ### Community 186 - "AnomalyInjectionSimulation"
-Cohesion: 0.17
-Nodes (3): AnomalyInjectionSimulation, AnomalyBaselineRecord, AnomalySimulationService
+Cohesion: 0.15
+Nodes (4): AnomalyInjectionSimulation, AnomalyBaselineRecord, AnomalySimulationConfig, AnomalySimulationService
 
-### Community 188 - "AssetDrawer.vue"
-Cohesion: 0.09
-Nodes (21): assetsApi, addBinding(), addingBinding, bindingDeviceUuid, bindingMetric, close(), CRITICALITY_OPTIONS, emit (+13 more)
+### Community 188 - "configured-points.ts"
+Cohesion: 0.29
+Nodes (10): ConfiguredEndpoint, ConfiguredPointRow, configuredPointsRouter, findAssociatedDevice(), getConfiguredPointRows(), isDeferred(), isRecord(), mqttFieldName() (+2 more)
 
 ### Community 189 - "install.sh"
 Cohesion: 0.19
@@ -1056,13 +1037,17 @@ Nodes (4): MqttUser, MqttUserModel, MqttUserRow, parseRow()
 Cohesion: 0.29
 Nodes (4): DriftRuleRow, parseRow(), SchemaDriftRuleModel, DriftRuleConfig
 
+### Community 193 - "JobEngine"
+Cohesion: 0.24
+Nodes (5): JobEngine, ActionCommandInput, ActionHandlerInput, ActionResult, JobAction
+
 ### Community 194 - "RustOpcuaSubscriber"
-Cohesion: 0.12
+Cohesion: 0.14
 Nodes (7): isRustOpcuaAvailable(), loadNativeBinding(), NativeSubscriberBinding, NativeSubscriberInstance, NodeConfig, RustOpcuaSubscriber, SubscriberConfig
 
-### Community 195 - "EnergyRuleDrawer.vue"
-Cohesion: 0.09
-Nodes (20): assets, availableMetricOptions, buildConfig(), close(), DAYS, dutyCycle, DutyCycleForm, emit (+12 more)
+### Community 195 - "schema-drift-rule-template.model.ts"
+Cohesion: 0.35
+Nodes (4): DriftRuleTemplate, parseRow(), SchemaDriftRuleTemplateModel, TemplateRow
 
 ### Community 196 - "handleServiceMenu"
 Cohesion: 0.13
@@ -1073,12 +1058,12 @@ Cohesion: 0.14
 Nodes (14): overrides, brace-expansion, @grpc/grpc-js, handlebars, ip-address, jsrsasign, path-to-regexp, picomatch (+6 more)
 
 ### Community 198 - "OPCUABrowser.vue"
-Cohesion: 0.05
-Nodes (49): TopicNode, ConfiguredPoint, DeviceCandidateStrategy, DeviceDiscoveryPreview, OPCUABrowseNode, OPCUADeviceIdentification, sourcesApi, SourceTestResult (+41 more)
+Cohesion: 0.08
+Nodes (26): TopicNode, OPCUABrowseNode, collapsed, deviceDepth, emit, entries, error, loadChildren() (+18 more)
 
-### Community 199 - "opcua/device-identity.ts"
-Cohesion: 0.12
-Nodes (17): DeviceCandidateResult, DeviceCandidateStrategy, DeviceCandidateStrategySchema, DiscoveryObject, DiscoveryPoint, DiscoverySnapshot, generateDeviceCandidates(), objectPathKey() (+9 more)
+### Community 199 - "SchemaViewer.vue"
+Cohesion: 0.24
+Nodes (7): JSONSchema, fieldCount, fields, flattenSchema(), props, SchemaField, TYPE_COLORS
 
 ### Community 200 - "docker"
 Cohesion: 0.17
@@ -1092,21 +1077,21 @@ Nodes (12): steps, steps, steps, id, if, name, run, shell (+4 more)
 Cohesion: 0.23
 Nodes (7): getRecommendationPublishSettings(), updateRecommendationPublishSettings(), DEFAULTS, RecommendationPublishModule, RecommendationPublishSettings, RecommendationPublishSettingsModel, RecommendationPublishSettingsRow
 
-### Community 203 - "anomaly/buffer.ts"
-Cohesion: 0.15
-Nodes (20): calculateSeverity(), createAnomalyAlert(), createId(), addToBuffer(), getBufferStats(), getIQR(), getMAD(), getMedian() (+12 more)
+### Community 203 - "fs-utils.ts"
+Cohesion: 0.27
+Nodes (5): isENOENT(), safeRename(), touch(), writeAndSyncFile(), writeFileAtomic()
 
 ### Community 204 - "jobs/monitor.ts"
-Cohesion: 0.25
+Cohesion: 0.33
 Nodes (6): CloudJob, JobsConfig, JobsOptions, JobStatusUpdate, JobDocument, JobsMqttClient
 
 ### Community 205 - "validation.ts"
 Cohesion: 0.23
 Nodes (10): isEmpty(), isObject(), checkBooleanish(), checkFalsey(), CheckIntOptions, checkTruthy(), FALSEY, TRUTHY (+2 more)
 
-### Community 206 - ".constructor"
-Cohesion: 0.11
-Nodes (21): getBufferStatusPayload(), getHealthPayload(), getHealthReportPayload(), getHealthReportSafe(), getLifecycleStateSafe(), getReadinessPayload(), getReadinessSafe(), initVpnActions() (+13 more)
+### Community 206 - "opcua/types.ts"
+Cohesion: 0.20
+Nodes (9): OPCUAAdapterConfigSchema, OPCUACertificateTrustModeSchema, OPCUAConnectionSchema, OPCUADataPointSchema, OPCUADeviceConfigSchema, OPCUAMetadata, OPCUAMetadataSchema, OPCUASecurityModeSchema (+1 more)
 
 ### Community 207 - "load"
 Cohesion: 0.40
@@ -1120,25 +1105,21 @@ Nodes (23): Admin UI, Admin UI, Agent, Agent Startup Phases, Architecture, CLI (
 Cohesion: 0.13
 Nodes (5): AlertManager, hash16(), AlertManager, AnomalyAlert, AnomalySeverity
 
+### Community 210 - "install-unit-generation.unit.spec.ts"
+Cohesion: 0.60
+Nodes (5): buildTestPreamble(), generateUnit(), INSTALL_SH, runBash(), validateOnly()
+
 ### Community 211 - "🔐 MQTTS/TLS Setup"
 Cohesion: 0.09
 Nodes (22): 1. Generate CA Certificate (Self-Signed), 2. Configure Mosquitto Broker, 3. Store CA Certificate in API Database, 4. Verify API Sends CA Certificate, 5. Agent Applies TLS Options, Architecture Flow, Check Agent Database, Check Agent Logs (+14 more)
 
-### Community 212 - ".info"
-Cohesion: 0.13
-Nodes (4): batchStats(), OpcuaPerfMonitor, rate(), TransformPool
-
-### Community 213 - "SourcePointsPanel.vue"
-Cohesion: 0.10
-Nodes (16): addressText(), allFiltered, columns, drawerOpen, emit, error, filtered, identityLabel() (+8 more)
+### Community 213 - "🎯 Quick Start"
+Cohesion: 0.50
+Nodes (4): Anomaly Detection (Edge AI), CLI Tool - iotctl, 🎯 Quick Start, Simulation Mode
 
 ### Community 214 - "graphify.yml"
-Cohesion: 0.10
-Nodes (20): concurrency, cancel-in-progress, group, jobs, update-graph, name, on, push (+12 more)
-
-### Community 215 - "state-snapshot-unification.test.ts"
-Cohesion: 0.10
-Nodes (9): getLocalLanNetworks(), ipv6NetworkCidr(), LocalLanNetworks, RFC-1918, sampleApps, sampleConfig, sampleDisabledConfig, bad (+1 more)
+Cohesion: 0.09
+Nodes (22): concurrency, cancel-in-progress, group, env, GRAPHIFY_OUT, jobs, update-graph, name (+14 more)
 
 ### Community 216 - "doAction"
 Cohesion: 0.67
@@ -1156,17 +1137,9 @@ Nodes (9): formatValue(), humanMs(), KNOWN_FIELDS, OPERATOR_FIELDS, printConfig(
 Cohesion: 0.20
 Nodes (10): arch, deb_arch, package, include, name, needs, runs-on, strategy (+2 more)
 
-### Community 221 - ".debug"
-Cohesion: 0.19
-Nodes (5): blankRecord(), DiagnosableSession, fmt(), OpcuaDeviceDiagnosticRecord, OpcuaStartupDiagnostics
-
 ### Community 223 - "version"
 Cohesion: 0.22
 Nodes (9): version, on, push, workflow_dispatch, tags, description, required, type (+1 more)
-
-### Community 224 - "AnomalyFeed"
-Cohesion: 0.22
-Nodes (3): 2. Current lifecycle and findings, Anomaly, persistence, publishing and views, AnomalyFeed
 
 ### Community 225 - "BacnetPropertyId"
 Cohesion: 0.22
@@ -1200,9 +1173,9 @@ Nodes (8): JobStatus, CANCELED, FAILED, IN_PROGRESS, QUEUED, REJECTED, SUCCEEDED
 Cohesion: 0.24
 Nodes (13): cancelPacketFlush(), captureWsUrl(), clearCapture(), connectWs(), disconnectWs(), formatCaptureInterface(), handleInterfaceChange(), loadInterfaces() (+5 more)
 
-### Community 237 - "transform-shared.ts"
-Cohesion: 0.15
-Nodes (14): PendingChunk, SuperBatch, WorkerSlot, buildPoint(), classifyQualityFromName(), mapQualityCode(), PrimitiveEntry, SyncMessage (+6 more)
+### Community 236 - "data-explorer-views.ts"
+Cohesion: 0.23
+Nodes (4): dataExplorerViewsRouter, SavedViewResponse, DataExplorerViewModel, DataExplorerViewRecord
 
 ### Community 238 - "resolveState"
 Cohesion: 0.33
@@ -1212,9 +1185,9 @@ Nodes (6): resolveState(), stateColor(), stateLabel(), summaryForApp(), totalRun
 Cohesion: 0.33
 Nodes (6): version, tag, version, name, outputs, runs-on
 
-### Community 241 - "DatabricksPublishPlugin"
-Cohesion: 0.15
-Nodes (7): buildAuthorizationDetails(), DatabricksConfig, DatabricksPublishPlugin, isTagsPayload(), loadConfig(), OAuthToken, TagsPayload
+### Community 241 - "IPublishPlugin"
+Cohesion: 0.06
+Nodes (11): IPublishPlugin, PublishBatchItem, buildAuthorizationDetails(), DatabricksConfig, DatabricksPublishPlugin, isTagsPayload(), loadConfig(), OAuthToken (+3 more)
 
 ### Community 242 - "rule-resolver.ts"
 Cohesion: 0.47
@@ -1244,10 +1217,6 @@ Nodes (4): ok(), cleanup.sh script, skip(), warn()
 Cohesion: 0.70
 Nodes (4): auth(), fail(), smoke.sh script, step()
 
-### Community 249 - "replaceEndpoint"
-Cohesion: 0.15
-Nodes (15): addEndpoint(), applyConfigUpdate(), browseOPCUAAddressSpace(), initialize(), logEvent(), persistAnomalyConfig(), removeAllEndpoints(), removeEndpoint() (+7 more)
-
 ### Community 250 - "upload-azure"
 Cohesion: 0.40
 Nodes (5): upload-azure, if, name, needs, runs-on
@@ -1255,10 +1224,6 @@ Nodes (5): upload-azure, if, name, needs, runs-on
 ### Community 251 - "test-provisioning-skip.sh"
 Cohesion: 0.90
 Nodes (4): check_provisioning_status(), reset_provisioning(), test-provisioning-skip.sh script, simulate_provisioning()
-
-### Community 252 - "VolumeImpl"
-Cohesion: 0.15
-Nodes (7): ComposeVolumeConfig, DockerVolumeConfig, LabelObject, Volume, VolumeImpl, omitBy(), InternalInconsistencyError
 
 ### Community 253 - "SKILL.md"
 Cohesion: 0.13
@@ -1272,9 +1237,9 @@ Nodes (5): NativeIpcServer, WriteMsg, Batch, Data, Stop
 Cohesion: 0.16
 Nodes (7): CaptureInterfaceError, CaptureStartOptions, createLogger(), createPcapHeader(), createPcapRecord(), decodeFrame(), packet29
 
-### Community 257 - "TailscaleManager"
-Cohesion: 0.33
-Nodes (3): execAsync, spawnAsync(), TailscaleManager
+### Community 257 - ".errorSync"
+Cohesion: 0.10
+Nodes (9): attachShellHandler(), authenticate(), parseCookie(), resolveShell(), createOrchestratorDriver(), execAsync, spawnAsync(), TailscaleManager (+1 more)
 
 ### Community 259 - "🔀 IPC Pub/Sub Routing"
 Cohesion: 0.14
@@ -1293,8 +1258,8 @@ Cohesion: 0.15
 Nodes (8): Admin UI not reachable, Agent fails to start — module not found, Check agent status, Check first-run setup status, Iotistica Agent — Troubleshooting, Port 1883 conflict (Mosquitto), Reinstall / upgrade, Useful log commands
 
 ### Community 264 - "Transport Switch Buffering Review"
-Cohesion: 0.15
-Nodes (13): 2. Durable endpoint telemetry spool with claim-before-publish semantics, 3. Durable CloudSync report queue, 4. In-memory MQTT pending publish queue, 5. Cloud log buffering and disk spool, Bottom Line, CloudSync state reports, Current State Transport Flow, Gap During Transport Switching (+5 more)
+Cohesion: 0.13
+Nodes (14): 1. Durable MQTT message spool, 2. Durable endpoint telemetry spool with claim-before-publish semantics, 3. Durable CloudSync report queue, 4. In-memory MQTT pending publish queue, 5. Cloud log buffering and disk spool, Bottom Line, CloudSync state reports, Current State Transport Flow (+6 more)
 
 ### Community 265 - "ipc/package.json"
 Cohesion: 0.17
@@ -1308,21 +1273,13 @@ Nodes (12): devDependencies, @napi-rs/cli@^2.18.0, @napi-rs/cli, main, name, nap
 Cohesion: 0.18
 Nodes (10): Architecture, Command schema, Enabling it, MQTT Device-Write Commands, MQTT topics, Point name rules, Result schema, Security note (+2 more)
 
-### Community 279 - "shared/http-client.ts"
-Cohesion: 0.18
-Nodes (4): CompressionStats, HttpClientOptions, HttpError, HttpResponse
-
 ### Community 288 - "Main Functions"
 Cohesion: 0.20
 Nodes (10): API Reference, Events, `executeStep(step, options?): Promise<void>`, `getCurrentApps(): Promise<InstancedAppState>`, `getRequiredSteps(currentApps, targetApps, keepImages?, keepVolumes?, force?): Promise<CompositionStep[]>`, `getState(): Promise<AppState>`, `getTargetApps(): Promise<TargetApps>`, `initialized(): Promise<void>` (+2 more)
 
 ### Community 290 - "🔄 Cloud Sync Reliability"
-Cohesion: 0.20
-Nodes (10): Circuit Breaker Protection, 🔄 Cloud Sync Reliability, Combined Protection, Configuration, Dynamic Configuration Updates, Error Counter Capping, How It Works, Monitoring (+2 more)
-
-### Community 291 - "anomaly/utils.ts"
-Cohesion: 0.20
-Nodes (3): RunDetectionMethodsResult, DetectionMethod, loadConfigFromEnv()
+Cohesion: 0.25
+Nodes (8): Circuit Breaker Protection, 🔄 Cloud Sync Reliability, Combined Protection, Configuration, Error Counter Capping, Monitoring, Request Deduplication, Utilities
 
 ### Community 292 - "Unified Event System"
 Cohesion: 0.22
@@ -1336,17 +1293,9 @@ Nodes (9): verify_ci, promote_latest, sha, actions, name, needs, outputs, permis
 Cohesion: 0.25
 Nodes (7): 1. On Raspberry Pi: verify watchdog is off, 2. On Raspberry Pi: create profiler script (once), 3. On Raspberry Pi: enable Inspector and capture, 4. On Windows PowerShell: copy to Downloads, 5. On Windows: verify and upload, 6. Restore watchdog after testing, IoTistic CPU profiling — Raspberry Pi to Windows
 
-### Community 296 - "interfaces.ts"
-Cohesion: 0.29
-Nodes (7): systeminformation@^5.31.7, systeminformation, getFirewallInterfaceOptions(), getNetworkInterfaces(), NetworkInterfaceInfo, NetworkInterfaceOption, SystemMetrics
-
-### Community 297 - "state-introspection.ts"
-Cohesion: 0.29
-Nodes (7): getReconciliationStatus(), ManagerStatus, printStateDetails(), ReconciliationAppStatus, ReconciliationServiceStatus, ReconciliationStatus, uniq()
-
 ### Community 299 - "AgentState"
-Cohesion: 0.25
-Nodes (8): AgentState, BOOT, ERROR, INIT, READY, RUNNING, STOPPED, STOPPING
+Cohesion: 0.17
+Nodes (11): AgentState, BOOT, ERROR, INIT, READY, RUNNING, STOPPED, STOPPING (+3 more)
 
 ### Community 300 - "ModbusDataType"
 Cohesion: 0.25
@@ -1355,10 +1304,6 @@ Nodes (8): ModbusDataType, BOOLEAN, FLOAT32, INT16, INT32, STRING, UINT16, UINT3
 ### Community 301 - "commands/license.ts"
 Cohesion: 0.52
 Nodes (6): licenseActivate(), licenseApplyToken(), licenseStatus(), licenseTrial(), post(), printStatus()
-
-### Community 302 - "🔍 Protocol Discovery"
-Cohesion: 0.29
-Nodes (7): Best Practices, Configuration, Discovered Device Storage, Discovery Features, Discovery Schedule, 🔍 Protocol Discovery, Two-Phase Discovery Architecture
 
 ### Community 303 - "GitHub Actions → Raspberry Pi deployment"
 Cohesion: 0.29
@@ -1372,9 +1317,13 @@ Nodes (6): Notes, Screenshots, Summary, Testing, Type of change, What to review
 Cohesion: 0.29
 Nodes (7): CI_WORKFLOW, GH_REPO, GH_TOKEN, RELEASE_BRANCH, RELEASE_TAG, env, env
 
+### Community 306 - "DiscoveryBlocklistModel"
+Cohesion: 0.33
+Nodes (3): runDiscoveryWithPruneResult(), BlockedDevice, DiscoveryBlocklistModel
+
 ### Community 308 - "confidence-policy.ts"
-Cohesion: 0.43
-Nodes (3): unitCheck(), assessUnitConfidence(), UNIT_PROVENANCE_CONFIDENCE
+Cohesion: 0.39
+Nodes (4): unitCheck(), assessUnitConfidence(), UNIT_PROVENANCE_CONFIDENCE, UnitProvenance
 
 ### Community 309 - "5. Canonical protocol addresses"
 Cohesion: 0.33
@@ -1384,13 +1333,9 @@ Nodes (6): 5. Canonical protocol addresses, BACnet, Future protocols, Modbus, MQ
 Cohesion: 0.47
 Nodes (4): AppWithServices, DockerImageUsage, getDockerImageUsageByApp(), normalizeImageReference()
 
-### Community 312 - "opcua-device-identification.test.ts"
-Cohesion: 0.40
-Nodes (4): config, good, makeSession(), ref()
-
-### Community 313 - "isWithinSchedule"
-Cohesion: 0.60
-Nodes (3): DailySchedule, isWithinSchedule(), minutesSinceMidnight()
+### Community 311 - "MarketplaceCategoriesModel"
+Cohesion: 0.31
+Nodes (4): getMarketplaceCategories(), CategoryRow, MarketplaceCategoriesModel, MarketplaceCategory
 
 ### Community 314 - "cgroups.sh"
 Cohesion: 0.83
@@ -1408,25 +1353,29 @@ Nodes (3): Reporting a Vulnerability, Security Policy, Supported Versions
 Cohesion: 0.67
 Nodes (3): logSearchNext(), logSearchPrev(), scrollToLogMatch()
 
+### Community 320 - "influxdb.ts"
+Cohesion: 0.13
+Nodes (8): applyNumericField(), CustomPayload, InfluxDbConfig, InfluxDbNoopClient, InfluxDbPublishPlugin, isTagsPayload(), loadConfig(), TagsPayload
+
 ## Knowledge Gaps
-- **84 isolated node(s):** `PATH`, `ipc`, `Data`, `Stop`, `opcua-subscriber` (+79 more)
-  These have ≤1 connection - possible missing edges or undocumented components. (Counts symbols only; 3563 node(s) total have ≤1 connection when file, concept and rationale nodes are included.)
-- **67 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
+- **84 isolated node(s):** `RFC-1918`, `CONNECTED`, `CONNECTING`, `DISCONNECTED`, `ERROR` (+79 more)
+  These have ≤1 connection - possible missing edges or undocumented components. (Counts symbols only; 3564 node(s) total have ≤1 connection when file, concept and rationale nodes are included.)
+- **61 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `AgentLogger` connect `AgentLogger` to `capture.unit.spec.ts`, `TailscaleManager`, `actions.ts`, `CaptureEngine`, `publish/core/types.ts`, `DevicePublish`, `infra.ts`, `commands-e2e.integration.spec.ts`, `modbus/discovery.ts`, `BaseMqttClient`, `plugins/index.ts`, `AzureIotClient`, `core/index.ts`, `.warnSync`, `.discover`, `ConfigManager`, `codec.ts`, `AgentFirewall`, `MqttDiscovery`, `opcua/discovery.ts`, `LogComponents`, `opcua/adapter.ts`, `detectors.ts`, `bacnet/discovery.ts`, `.infoSync`, `FetchHttpClient`, `CloudLogBackend`, `WireGuardManager`, `CloudMqttClient`, `ShellHandler`, `Agent`, `runtime.ts`, `MessageBufferSync`, `AnomalyStorageService`, `maintenance/service.ts`, `ContainerManager`, `EndpointModel`, `AnomalyInjectionSimulation`, `CloudSync`, `containers/types.ts`, `docker-manager.ts`, `JobEngine`, `DockerDriver`, `ref_fs`, `anomaly/types.ts`, `BaseHttpClient`, `anomaly/buffer.ts`, `jobs/monitor.ts`, `memory.ts`, `publish-destinations.model.ts`, `container-manager.ts`, `CredentialManager`, `OfflineQueue`, `AnomalyDetectionService`, `anomaly/service.ts`, `app.ts`, `BaseOrchestratorDriver`, `mqtt/auth.ts`, `lib/http-client.ts`, `RetryManager`, `BaseFeature`, `capture.ts`?**
-  _High betweenness centrality (0.136) - this node is a cross-community bridge._
+- **Why does `AgentLogger` connect `AgentLogger` to `forecaster.ts`, `.errorSync`, `actions.ts`, `CaptureEngine`, `publish/core/types.ts`, `DevicePublish`, `capture.unit.spec.ts`, `express`, `commands-e2e.integration.spec.ts`, `BACnetDiscovery`, `BaseMqttClient`, `plugins/index.ts`, `DiscoveryService`, `AzureIotClient`, `core/index.ts`, `.warnSync`, `ConfigManager`, `codec.ts`, `AgentFirewall`, `MqttDiscovery`, `opcua/discovery.ts`, `LogComponents`, `opcua/adapter.ts`, `src/api/network.ts`, `detectors.ts`, `bacnet/discovery.ts`, `.infoSync`, `FetchHttpClient`, `CloudLogBackend`, `WireGuardManager`, `CloudMqttClient`, `AgentState`, `container-manager.ts`, `Agent`, `ShellHandler`, `runtime.ts`, `MessageBufferSync`, `AnomalyStorageService`, `maintenance/service.ts`, `ContainerManager`, `infra.ts`, `AnomalyInjectionSimulation`, `CloudSync`, `containers/types.ts`, `docker-manager.ts`, `JobEngine`, `DockerDriver`, `ref_fs`, `anomaly/types.ts`, `BaseHttpClient`, `memory.ts`, `jobs/monitor.ts`, `publish-destinations.model.ts`, `ContainerService`, `OfflineQueue`, `AnomalyDetectionService`, `pipeline.service.ts`, `app.ts`, `PublishDestinationsModel`, `BaseOrchestratorDriver`, `mqtt/auth.ts`, `lib/http-client.ts`, `RetryManager`, `BaseFeature`, `capture.ts`?**
+  _High betweenness centrality (0.130) - this node is a cross-community bridge._
 - **Are the 3 inferred relationships involving `getDatabase()` (e.g. with `2. Verified implementation and baseline` and `4. Proposed internal catalog contract`) actually correct?**
   _`getDatabase()` has 3 INFERRED edges - model-reasoned connections that need verification._
-- **What connects `PATH`, `ipc`, `Data` to the rest of the system?**
+- **What connects `RFC-1918`, `CONNECTED`, `CONNECTING` to the rest of the system?**
   _84 weakly-connected nodes found - possible documentation gaps or missing edges._
 - **Should `AgentLogger` be split into smaller, more focused modules?**
-  _Cohesion score 0.035346097201767304 - nodes in this community are weakly interconnected._
-- **Why does `vue` connect `vue` to `MqttUsersTab.vue`, `AnomalyView.vue`, `AppLayout.vue`, `ContainersView.vue`, `AssetsView.vue`, `SettingsView.vue`, `DiscoveryRuleDrawer.vue`, `useSystemStats.ts`, `DataExplorer.vue`, `DevicesPanel.vue`, `TerminalView.vue`, `DestinationsView.vue`, `DeviceDrawer.vue`, `MqttBrokerView.vue`, `DriftRuleDrawer.vue`, `PointPickerModal.vue`, `SourceConnectionFields.vue`, `SubscriptionDrawer.vue`, `AlertsView.vue`, `LogsView.vue`, `SourcesView.vue`, `CreateViewDrawer.vue`, `UsersView.vue`, `DashboardView.vue`, `DiscoveryDrawer.vue`, `AssetDrawer.vue`, `CreateDatasetDrawer.vue`, `EnergyRuleDrawer.vue`, `OPCUABrowser.vue`, `SubscriptionsView.vue`, `data-explorer-point-key.ts`, `MarketplaceCatalog.vue`, `SourcePointsPanel.vue`, `MessageViewer.vue`, `CaptureTab.vue`, `PointsTable.vue`, `BackupsView.vue`, `DiscoveryRulesView.vue`, `MaintenanceRuleDrawer.vue`, `NetworkView.vue`, `ModbusRegisterMapEditor.vue`?**
-  _High betweenness centrality (0.065) - this node is a cross-community bridge._
+  _Cohesion score 0.030654404904704786 - nodes in this community are weakly interconnected._
+- **Why does `vue` connect `AppLayout.vue` to `MqttUsersTab.vue`, `AnomalyView.vue`, `ContainersView.vue`, `AssetsView.vue`, `SettingsView.vue`, `DiscoveryRuleDrawer.vue`, `useSystemStats.ts`, `DataExplorer.vue`, `DevicesPanel.vue`, `TerminalView.vue`, `DestinationsView.vue`, `DeviceDrawer.vue`, `MqttBrokerView.vue`, `DriftRuleDrawer.vue`, `PointPickerModal.vue`, `TopicTree.vue`, `SubscriptionDrawer.vue`, `AlertsView.vue`, `SourcesView.vue`, `CreateViewDrawer.vue`, `UsersView.vue`, `DashboardView.vue`, `DiscoveryDrawer.vue`, `CreateDatasetDrawer.vue`, `OPCUABrowser.vue`, `SchemaViewer.vue`, `api/mqtt.ts`, `data-explorer-point-key.ts`, `MarketplaceCatalog.vue`, `MessageViewer.vue`, `CaptureTab.vue`, `PointsTable.vue`, `BackupsView.vue`, `TerminalView.vue`, `NetworkView.vue`, `SourceDrawer.vue`?**
+  _High betweenness centrality (0.055) - this node is a cross-community bridge._
 - **Are the 4 inferred relationships involving `PublishManager` (e.g. with `Anomaly, persistence, publishing and views` and `Phase 2C-4: internal resolution`) actually correct?**
   _`PublishManager` has 4 INFERRED edges - model-reasoned connections that need verification._
 - **Should `publish/core/types.ts` be split into smaller, more focused modules?**
-  _Cohesion score 0.04078624078624079 - nodes in this community are weakly interconnected._
+  _Cohesion score 0.05821917808219178 - nodes in this community are weakly interconnected._
