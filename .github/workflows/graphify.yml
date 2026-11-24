@@ -5,7 +5,7 @@ on:
     branches:
       - main
     paths-ignore:
-      - 'graphify-out/**'
+      - '.graphify/**'
   workflow_dispatch:
 
 permissions:
