@@ -22,7 +22,7 @@ const SEND_CHANNEL_CAP: usize = 128;
 const MAX_QUEUED_BYTES: u64 = 128 * 1024 * 1024;
 const PER_CLIENT_BUF_CAP: usize = 64 * 1024 * 1024;
 const WRITER_THREADS: usize = 2;
-const MAX_BATCH_AGE: Duration = Duration::from_secs(10);
+const MAX_BATCH_AGE: Duration = Duration::from_secs(30);
 const CLIENT_STALL_TIMEOUT: Duration = Duration::from_secs(30);
 
 struct ClientState {
@@ -801,6 +801,10 @@ fn decode_batch_to_json(buf: &[u8]) -> Option<Vec<u8>> {
     }
 
     let count = reader.read_u32()?;
+    if count as usize > reader.remaining() {
+        eprintln!("[native-ipc] Batch count ({count}) exceeds remaining buffer ({} bytes), rejecting", reader.remaining());
+        return None;
+    }
     let batch_ts = reader.read_str()?;
 
     let mut out = Vec::with_capacity(count as usize * 400 + 128);
