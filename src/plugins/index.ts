@@ -545,7 +545,7 @@ export class AdapterManager extends EventEmitter {
 		};
 		const useRustIpc = process.env.IPC_ENGINE === "rust";
 		const socket: ISocketServer = useRustIpc
-			? new RustSocketServer(outputConfig, this.logger)
+			? new RustSocketServer(outputConfig, this.logger, `ipc-${protocol}`)
 			: new SocketServer(outputConfig, this.logger);
 		if (useRustIpc) {
 			this.logger.info(`Using Rust-native IPC server for ${protocol}`);
@@ -1219,8 +1219,9 @@ export class AdapterManager extends EventEmitter {
 				normalizationDeviceName: undefined,
 			}));
 
-			const publishInterval = (device as any).pollInterval ?? 1000;
-			await subscriber.subscribe(nodeConfigs, publishInterval, publishInterval);
+			const publishInterval = (device.connection as any)?.publishingInterval ?? (device as any).pollInterval ?? 1000;
+			const samplingInterval = (device.connection as any)?.samplingInterval ?? 500;
+			await subscriber.subscribe(nodeConfigs, publishInterval, samplingInterval);
 
 			this.rustOpcuaSubscribers.set(device.name, subscriber);
 			this.logger.info(
@@ -1612,6 +1613,43 @@ export class AdapterManager extends EventEmitter {
 		}
 		(this.config as any).mqtt = { enabled: true };
 		await this.startMQTTAdapter();
+	}
+
+	async removeEndpointLive(protocol: string, endpointName: string): Promise<boolean> {
+		const normalizedProtocol = protocol.toLowerCase();
+		this.logger.info(`[removeEndpointLive] Looking for ${endpointName} in ${normalizedProtocol} adapters`);
+
+		if (normalizedProtocol === "opcua" && process.env.OPCUA_ENGINE === "rust") {
+			const knownKeys = [...this.rustOpcuaSubscribers.keys()];
+			this.logger.debug(`[removeEndpointLive] Rust OPC UA subscribers: [${knownKeys.join(', ')}]`);
+			const subscriber = this.rustOpcuaSubscribers.get(endpointName);
+			if (subscriber) {
+				try {
+					await subscriber.disconnect();
+					this.logger.info(`[removeEndpointLive] Disconnected Rust subscriber for ${endpointName}`);
+				} catch (err) {
+					this.logger.warn(`[removeEndpointLive] Error disconnecting ${endpointName}: ${err}`);
+				}
+				this.rustOpcuaSubscribers.delete(endpointName);
+				return true;
+			}
+			this.logger.info(`[removeEndpointLive] ${endpointName} not found in Rust subscriber map — returning false`);
+			return false;
+		}
+
+		for (const [groupName, groupProtocol] of this.groupProtocol) {
+			if (groupProtocol !== normalizedProtocol) continue;
+			const adapter = this.adapters.get(groupName) as any;
+			if (adapter && typeof adapter.disconnectDevice === "function" && adapter.devices?.has(endpointName)) {
+				await adapter.disconnectDevice(endpointName);
+				adapter.devices.delete(endpointName);
+				this.logger.info(`[removeEndpointLive] Removed ${endpointName} from adapter group ${groupName}`);
+				return true;
+			}
+		}
+
+		this.logger.info(`[removeEndpointLive] ${endpointName} not found in any ${normalizedProtocol} adapter — returning false`);
+		return false;
 	}
 
 	async reloadAdapterGroup(protocol: string): Promise<void> {

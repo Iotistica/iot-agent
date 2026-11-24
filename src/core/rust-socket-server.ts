@@ -6,6 +6,7 @@ interface NativeIpcBinding {
 	NativeIpcServer: new (
 		socketPath: string,
 		delimiter: string,
+		label?: string,
 	) => NativeIpcInstance;
 }
 
@@ -67,13 +68,14 @@ export class RustSocketServer implements ISocketServer {
 	private totalDropped = 0;
 	private lastBackpressureLogAt = 0;
 
-	constructor(config: SocketOutput, logger: Logger) {
+	constructor(config: SocketOutput, logger: Logger, label?: string) {
 		this.config = config;
 		this.logger = logger;
 		const binding = loadNativeBinding();
 		this.native = new binding.NativeIpcServer(
 			config.socketPath,
 			config.delimiter || "\n",
+			label,
 		);
 	}
 

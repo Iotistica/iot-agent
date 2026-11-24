@@ -73,6 +73,7 @@ impl ClientState {
 struct ServerInner {
     socket_path: String,
     delimiter: Vec<u8>,
+    label: String,
     running: AtomicBool,
     client_count: AtomicU32,
     next_client_id: AtomicU32,
@@ -134,11 +135,12 @@ fn enlarge_send_buffer(_stream: &UnixStream, _size: i32) {}
 #[napi]
 impl NativeIpcServer {
     #[napi(constructor)]
-    pub fn new(socket_path: String, delimiter: String) -> Self {
+    pub fn new(socket_path: String, delimiter: String, label: Option<String>) -> Self {
         Self {
             inner: Arc::new(ServerInner {
                 socket_path,
                 delimiter: delimiter.into_bytes(),
+                label: label.unwrap_or_else(|| "ipc".into()),
                 running: AtomicBool::new(false),
                 client_count: AtomicU32::new(0),
                 next_client_id: AtomicU32::new(1),
@@ -170,7 +172,7 @@ impl NativeIpcServer {
         // Acceptor thread
         let inner = self.inner.clone();
         std::thread::Builder::new()
-            .name("ipc-acceptor".into())
+            .name(format!("{}-accept", inner.label))
             .spawn(move || {
                 let listener = match create_listener(&inner.socket_path) {
                     Ok(l) => l,
@@ -229,7 +231,7 @@ impl NativeIpcServer {
             let rx = write_rx.clone();
             let inner = self.inner.clone();
             std::thread::Builder::new()
-                .name(format!("ipc-writer-{t}"))
+                .name(format!("{}-wr-{t}", inner.label))
                 .spawn(move || {
                     writer_loop(rx, inner);
                 })
