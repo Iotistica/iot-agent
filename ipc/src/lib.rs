@@ -25,42 +25,50 @@ const WRITER_THREADS: usize = 2;
 const MAX_BATCH_AGE: Duration = Duration::from_secs(30);
 const CLIENT_STALL_TIMEOUT: Duration = Duration::from_secs(30);
 
+struct PendingFrame {
+    data: Arc<Vec<u8>>,
+    offset: usize,
+}
+
 struct ClientState {
     stream: UnixStream,
     id: u32,
-    write_buf: VecDeque<u8>,
+    write_buf: VecDeque<PendingFrame>,
+    pending_bytes: usize,
     stalled_since: Option<Instant>,
 }
 
 impl ClientState {
     fn new(stream: UnixStream, id: u32) -> Self {
-        Self { stream, id, write_buf: VecDeque::new(), stalled_since: None }
+        Self { stream, id, write_buf: VecDeque::new(), pending_bytes: 0, stalled_since: None }
     }
 
-    fn queue(&mut self, data: &[u8]) -> bool {
-        if self.write_buf.len() + data.len() > PER_CLIENT_BUF_CAP {
-            return false;
-        }
-        self.write_buf.extend(data);
+    fn queue(&mut self, data: &Arc<Vec<u8>>) -> bool {
+        if data.is_empty() { return true; }
+        let Some(next) = self.pending_bytes.checked_add(data.len()) else { return false; };
+        if next > PER_CLIENT_BUF_CAP { return false; }
+        self.write_buf.push_back(PendingFrame { data: Arc::clone(data), offset: 0 });
+        self.pending_bytes = next;
         true
     }
 
     fn flush_buf(&mut self) -> io::Result<usize> {
         let mut total = 0;
-        while !self.write_buf.is_empty() {
-            let (front, back) = self.write_buf.as_slices();
-            let chunk = if !front.is_empty() { front } else { back };
-            match self.stream.write(chunk) {
+        while let Some(frame) = self.write_buf.front_mut() {
+            match self.stream.write(&frame.data[frame.offset..]) {
                 Ok(0) => return Err(io::Error::new(io::ErrorKind::WriteZero, "write returned 0")),
                 Ok(n) => {
-                    self.write_buf.drain(..n);
+                    frame.offset += n;
+                    self.pending_bytes -= n;
                     total += n;
                     self.stalled_since = None;
-                }
-                Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
-                    if self.stalled_since.is_none() {
-                        self.stalled_since = Some(Instant::now());
+                    if frame.offset == frame.data.len() {
+                        self.write_buf.pop_front();
                     }
+                }
+                Err(ref e) if e.kind() == io::ErrorKind::Interrupted => continue,
+                Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
+                    self.stalled_since.get_or_insert_with(Instant::now);
                     break;
                 }
                 Err(e) => return Err(e),
@@ -101,16 +109,6 @@ pub struct NativeIpcServer {
 }
 
 #[cfg(unix)]
-fn set_nonblocking(stream: &UnixStream) {
-    use std::os::unix::io::AsRawFd;
-    let fd = stream.as_raw_fd();
-    unsafe {
-        let flags = libc::fcntl(fd, libc::F_GETFL);
-        libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK);
-    }
-}
-
-#[cfg(unix)]
 fn enlarge_send_buffer(stream: &UnixStream, size: i32) {
     let fd = stream.as_raw_fd();
     unsafe {
@@ -122,11 +120,6 @@ fn enlarge_send_buffer(stream: &UnixStream, size: i32) {
             std::mem::size_of::<i32>() as libc::socklen_t,
         );
     }
-}
-
-#[cfg(windows)]
-fn set_nonblocking(stream: &UnixStream) {
-    stream.set_nonblocking(true).ok();
 }
 
 #[cfg(windows)]
@@ -200,7 +193,10 @@ impl NativeIpcServer {
                             let _ = stream.read(&mut sub_buf);
                             stream.set_read_timeout(None).ok();
 
-                            set_nonblocking(&stream);
+                            if let Err(e) = stream.set_nonblocking(true) {
+                                eprintln!("[ipc] Client {id} nonblocking setup failed: {e}");
+                                continue;
+                            }
                             enlarge_send_buffer(&stream, 4 * 1024 * 1024);
                             let client = ClientState::new(stream, id);
                             inner.clients.lock().unwrap().push(client);
@@ -332,7 +328,7 @@ impl NativeIpcServer {
         let evicted_mb = self.inner.evicted_bytes.load(Ordering::Relaxed) as f64 / 1_048_576.0;
         let stalls = self.inner.stall_disconnects.load(Ordering::Relaxed);
         let clients = self.inner.clients.lock().unwrap();
-        let buf_total: usize = clients.iter().map(|c| c.write_buf.len()).sum();
+        let buf_total: usize = clients.iter().map(|c| c.pending_bytes).sum();
         let stalled_count = clients.iter().filter(|c| c.stalled_since.is_some()).count();
         format!(
             "queued={:.1}MB written={:.1}MB msgs={} client_bufs={:.1}MB evicted={} evicted_mb={:.1} stall_disconnects={} stalled_clients={}",
@@ -386,16 +382,17 @@ impl NativeIpcServer {
     }
 }
 
-fn broadcast_frame(inner: &ServerInner, data: &[u8]) {
+fn broadcast_frame(inner: &ServerInner, data: Vec<u8>) {
+    let data = Arc::new(data);
     let mut clients = inner.clients.lock().unwrap();
     let mut disconnected = Vec::new();
 
     for client in clients.iter_mut() {
-        if !client.queue(data) {
+        if !client.queue(&data) {
             eprintln!(
                 "[ipc] Client {} buffer full ({:.1}MB), disconnecting",
                 client.id,
-                client.write_buf.len() as f64 / 1_048_576.0,
+                client.pending_bytes as f64 / 1_048_576.0,
             );
             client.stream.shutdown(Shutdown::Both).ok();
             disconnected.push(client.id);
@@ -437,7 +434,7 @@ fn flush_pending_buffers(inner: &ServerInner) {
                     client.id,
                     stall_duration.as_secs_f64(),
                     CLIENT_STALL_TIMEOUT.as_secs(),
-                    client.write_buf.len() as f64 / 1_048_576.0,
+                    client.pending_bytes as f64 / 1_048_576.0,
                 );
                 inner.stall_disconnects.fetch_add(1, Ordering::Relaxed);
                 client.stream.shutdown(Shutdown::Both).ok();
@@ -469,7 +466,12 @@ fn flush_pending_buffers(inner: &ServerInner) {
 }
 
 fn writer_loop(rx: crossbeam_channel::Receiver<WriteMsg>, inner: Arc<ServerInner>) {
+    let mut last_maintenance = Instant::now();
     loop {
+        if last_maintenance.elapsed() >= Duration::from_millis(50) {
+            flush_pending_buffers(&inner);
+            last_maintenance = Instant::now();
+        }
         match rx.recv_timeout(Duration::from_millis(5)) {
             Ok(WriteMsg::Data(data, created_at)) => {
                 let data_len = data.len() as u64;
@@ -486,7 +488,7 @@ fn writer_loop(rx: crossbeam_channel::Receiver<WriteMsg>, inner: Arc<ServerInner
                     );
                     continue;
                 }
-                broadcast_frame(&inner, &data);
+                broadcast_frame(&inner, data);
             }
             Ok(WriteMsg::Batch(raw, created_at)) => {
                 let raw_len = raw.len() as u64;
@@ -506,7 +508,7 @@ fn writer_loop(rx: crossbeam_channel::Receiver<WriteMsg>, inner: Arc<ServerInner
                 match decode_batch_to_json(&raw) {
                     Some(mut json) => {
                         json.extend_from_slice(&inner.delimiter);
-                        broadcast_frame(&inner, &json);
+                        broadcast_frame(&inner, json);
                     }
                     None => {
                         eprintln!("[ipc] Failed to decode batch ({raw_len} bytes)");
@@ -528,7 +530,7 @@ fn writer_loop(rx: crossbeam_channel::Receiver<WriteMsg>, inner: Arc<ServerInner
             let evicted_mb = inner.evicted_bytes.load(Ordering::Relaxed) as f64 / 1_048_576.0;
             let stalls = inner.stall_disconnects.load(Ordering::Relaxed);
             let clients = inner.clients.lock().unwrap();
-            let buf_total: usize = clients.iter().map(|c| c.write_buf.len()).sum();
+            let buf_total: usize = clients.iter().map(|c| c.pending_bytes).sum();
             let stalled_count = clients.iter().filter(|c| c.stalled_since.is_some()).count();
             eprintln!(
                 "[ipc] stats: written={:.1}MB msgs={} clients={} pending_bufs={:.1}MB evicted={} evicted_mb={:.1} stall_disconnects={} stalled_clients={}",
