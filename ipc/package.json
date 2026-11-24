@@ -1,10 +1,10 @@
 {
-  "name": "@iot-agent/native-ipc",
+  "name": "@iot-agent/ipc",
   "version": "0.1.0",
   "private": true,
-  "main": "native-ipc.node",
+  "main": "ipc.node",
   "napi": {
-    "name": "native-ipc"
+    "name": "ipc"
   },
   "scripts": {
     "build": "napi build --platform --release",

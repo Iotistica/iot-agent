@@ -81,17 +81,17 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | \
     sh -s -- -y --default-toolchain stable --profile minimal
 ENV PATH="/root/.cargo/bin:${PATH}"
 
-# -- Build native-ipc addon --
-WORKDIR /app/native-ipc
+# -- Build ipc addon --
+WORKDIR /app/ipc
 
-COPY native-ipc/Cargo.toml native-ipc/build.rs ./
-COPY native-ipc/src ./src
-COPY native-ipc/package.json ./
+COPY ipc/Cargo.toml ipc/build.rs ./
+COPY ipc/src ./src
+COPY ipc/package.json ./
 RUN --mount=type=cache,target=/root/.cargo/registry \
-    --mount=type=cache,target=/app/native-ipc/target \
+    --mount=type=cache,target=/app/ipc/target \
     npm install && \
     npx napi build --release && \
-    strip native-ipc.node 2>/dev/null || true
+    strip ipc.node 2>/dev/null || true
 
 # -- Build opcua-subscriber addon --
 WORKDIR /app/opcua-subscriber
@@ -178,8 +178,8 @@ COPY --from=builder --chown=agentuser:agentgroup /app/dist ./dist
 # Copy built admin panel from admin-builder stage
 COPY --from=admin-builder --chown=agentuser:agentgroup /app/dist ./admin/dist
 
-# Copy native IPC addon (Rust)
-COPY --from=rust-builder --chown=agentuser:agentgroup /app/native-ipc/native-ipc.node ./native-ipc/native-ipc.node
+# Copy IPC addon (Rust)
+COPY --from=rust-builder --chown=agentuser:agentgroup /app/ipc/ipc.node ./ipc/ipc.node
 
 # Copy OPC UA subscriber addon (Rust) — optional, activated by OPCUA_ENGINE=rust
 COPY --from=rust-builder --chown=agentuser:agentgroup /app/opcua-subscriber/opcua-subscriber.node ./opcua-subscriber/opcua-subscriber.node

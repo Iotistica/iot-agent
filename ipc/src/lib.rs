@@ -177,7 +177,7 @@ impl NativeIpcServer {
                 let listener = match create_listener(&inner.socket_path) {
                     Ok(l) => l,
                     Err(e) => {
-                        eprintln!("[native-ipc] Failed to bind {}: {e}", inner.socket_path);
+                        eprintln!("[ipc] Failed to bind {}: {e}", inner.socket_path);
                         return;
                     }
                 };
@@ -190,7 +190,7 @@ impl NativeIpcServer {
 
                             let ack = b"{\"ok\":true}\n";
                             if let Err(e) = stream.write_all(ack) {
-                                eprintln!("[native-ipc] Client {id} ACK write failed: {e}");
+                                eprintln!("[ipc] Client {id} ACK write failed: {e}");
                                 stream.shutdown(Shutdown::Both).ok();
                                 continue;
                             }
@@ -205,7 +205,7 @@ impl NativeIpcServer {
                             let client = ClientState::new(stream, id);
                             inner.clients.lock().unwrap().push(client);
                             inner.client_count.fetch_add(1, Ordering::Relaxed);
-                            eprintln!("[native-ipc] Client {id} connected (total: {})",
+                            eprintln!("[ipc] Client {id} connected (total: {})",
                                 inner.client_count.load(Ordering::Relaxed));
                         }
                         Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
@@ -213,7 +213,7 @@ impl NativeIpcServer {
                         }
                         Err(e) => {
                             if inner.running.load(Ordering::Relaxed) {
-                                eprintln!("[native-ipc] Accept error: {e}");
+                                eprintln!("[ipc] Accept error: {e}");
                             }
                             break;
                         }
@@ -255,7 +255,7 @@ impl NativeIpcServer {
             let mut last = self.inner.last_backpressure_log.lock().unwrap();
             if last.elapsed() >= Duration::from_secs(10) {
                 eprintln!(
-                    "[native-ipc] Backpressure: {:.1}MB queued (cap {:.0}MB), skipping",
+                    "[ipc] Backpressure: {:.1}MB queued (cap {:.0}MB), skipping",
                     queued as f64 / 1_048_576.0,
                     MAX_QUEUED_BYTES as f64 / 1_048_576.0,
                 );
@@ -291,7 +291,7 @@ impl NativeIpcServer {
             let mut last = self.inner.last_backpressure_log.lock().unwrap();
             if last.elapsed() >= Duration::from_secs(10) {
                 eprintln!(
-                    "[native-ipc] Backpressure: {:.1}MB queued (cap {:.0}MB), skipping batch",
+                    "[ipc] Backpressure: {:.1}MB queued (cap {:.0}MB), skipping batch",
                     queued as f64 / 1_048_576.0,
                     MAX_QUEUED_BYTES as f64 / 1_048_576.0,
                 );
@@ -393,7 +393,7 @@ fn broadcast_frame(inner: &ServerInner, data: &[u8]) {
     for client in clients.iter_mut() {
         if !client.queue(data) {
             eprintln!(
-                "[native-ipc] Client {} buffer full ({:.1}MB), disconnecting",
+                "[ipc] Client {} buffer full ({:.1}MB), disconnecting",
                 client.id,
                 client.write_buf.len() as f64 / 1_048_576.0,
             );
@@ -409,7 +409,7 @@ fn broadcast_frame(inner: &ServerInner, data: &[u8]) {
                 }
             }
             Err(_) => {
-                eprintln!("[native-ipc] Client {} disconnected (write error)", client.id);
+                eprintln!("[ipc] Client {} disconnected (write error)", client.id);
                 client.stream.shutdown(Shutdown::Both).ok();
                 disconnected.push(client.id);
             }
@@ -433,7 +433,7 @@ fn flush_pending_buffers(inner: &ServerInner) {
             let stall_duration = stalled_at.elapsed();
             if stall_duration > CLIENT_STALL_TIMEOUT {
                 eprintln!(
-                    "[native-ipc] Client {} stalled for {:.1}s (limit {}s, buf={:.1}MB), disconnecting",
+                    "[ipc] Client {} stalled for {:.1}s (limit {}s, buf={:.1}MB), disconnecting",
                     client.id,
                     stall_duration.as_secs_f64(),
                     CLIENT_STALL_TIMEOUT.as_secs(),
@@ -455,7 +455,7 @@ fn flush_pending_buffers(inner: &ServerInner) {
                 }
             }
             Err(_) => {
-                eprintln!("[native-ipc] Client {} disconnected (flush error)", client.id);
+                eprintln!("[ipc] Client {} disconnected (flush error)", client.id);
                 client.stream.shutdown(Shutdown::Both).ok();
                 disconnected.push(client.id);
             }
@@ -479,7 +479,7 @@ fn writer_loop(rx: crossbeam_channel::Receiver<WriteMsg>, inner: Arc<ServerInner
                     inner.evicted_batches.fetch_add(1, Ordering::Relaxed);
                     inner.evicted_bytes.fetch_add(data_len, Ordering::Relaxed);
                     eprintln!(
-                        "[native-ipc] Evicting stale data frame ({:.1}s old, limit {}s, {:.1}KB)",
+                        "[ipc] Evicting stale data frame ({:.1}s old, limit {}s, {:.1}KB)",
                         age.as_secs_f64(),
                         MAX_BATCH_AGE.as_secs(),
                         data_len as f64 / 1024.0,
@@ -496,7 +496,7 @@ fn writer_loop(rx: crossbeam_channel::Receiver<WriteMsg>, inner: Arc<ServerInner
                     inner.evicted_batches.fetch_add(1, Ordering::Relaxed);
                     inner.evicted_bytes.fetch_add(raw_len, Ordering::Relaxed);
                     eprintln!(
-                        "[native-ipc] Evicting stale batch ({:.1}s old, limit {}s, {:.1}KB)",
+                        "[ipc] Evicting stale batch ({:.1}s old, limit {}s, {:.1}KB)",
                         age.as_secs_f64(),
                         MAX_BATCH_AGE.as_secs(),
                         raw_len as f64 / 1024.0,
@@ -509,7 +509,7 @@ fn writer_loop(rx: crossbeam_channel::Receiver<WriteMsg>, inner: Arc<ServerInner
                         broadcast_frame(&inner, &json);
                     }
                     None => {
-                        eprintln!("[native-ipc] Failed to decode batch ({raw_len} bytes)");
+                        eprintln!("[ipc] Failed to decode batch ({raw_len} bytes)");
                     }
                 }
             }
@@ -531,7 +531,7 @@ fn writer_loop(rx: crossbeam_channel::Receiver<WriteMsg>, inner: Arc<ServerInner
             let buf_total: usize = clients.iter().map(|c| c.write_buf.len()).sum();
             let stalled_count = clients.iter().filter(|c| c.stalled_since.is_some()).count();
             eprintln!(
-                "[native-ipc] stats: written={:.1}MB msgs={} clients={} pending_bufs={:.1}MB evicted={} evicted_mb={:.1} stall_disconnects={} stalled_clients={}",
+                "[ipc] stats: written={:.1}MB msgs={} clients={} pending_bufs={:.1}MB evicted={} evicted_mb={:.1} stall_disconnects={} stalled_clients={}",
                 written as f64 / 1_048_576.0,
                 msgs,
                 clients.len(),
@@ -561,7 +561,7 @@ fn create_listener(path: &str) -> io::Result<UnixListener> {
         let port = 10000 + (hash % 50000);
         format!("127.0.0.1:{port}")
     };
-    eprintln!("[native-ipc] Windows mode: listening on TCP {addr}");
+    eprintln!("[ipc] Windows mode: listening on TCP {addr}");
     UnixListener::bind(&addr)
 }
 
@@ -798,13 +798,13 @@ fn decode_batch_to_json(buf: &[u8]) -> Option<Vec<u8>> {
 
     let version = reader.read_u8()?;
     if version != 1 {
-        eprintln!("[native-ipc] Unknown batch format version: {version}");
+        eprintln!("[ipc] Unknown batch format version: {version}");
         return None;
     }
 
     let count = reader.read_u32()?;
     if count as usize > reader.remaining() {
-        eprintln!("[native-ipc] Batch count ({count}) exceeds remaining buffer ({} bytes), rejecting", reader.remaining());
+        eprintln!("[ipc] Batch count ({count}) exceeds remaining buffer ({} bytes), rejecting", reader.remaining());
         return None;
     }
     let batch_ts = reader.read_str()?;

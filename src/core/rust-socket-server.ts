@@ -28,9 +28,9 @@ function loadNativeBinding(): NativeIpcBinding {
 	if (nativeBinding) return nativeBinding;
 
 	const candidates = [
-		path.join(__dirname, "..", "native-ipc", "native-ipc.node"),
-		path.join(__dirname, "..", "..", "native-ipc", "native-ipc.node"),
-		path.join(__dirname, "..", "native-ipc.node"),
+		path.join(__dirname, "..", "ipc", "ipc.node"),
+		path.join(__dirname, "..", "..", "ipc", "ipc.node"),
+		path.join(__dirname, "..", "ipc.node"),
 	];
 
 	for (const candidate of candidates) {
@@ -44,7 +44,7 @@ function loadNativeBinding(): NativeIpcBinding {
 	}
 
 	throw new Error(
-		`Failed to load native-ipc addon. Searched:\n  ${candidates.join("\n  ")}`,
+		`Failed to load ipc addon. Searched:\n  ${candidates.join("\n  ")}`,
 	);
 }
 
@@ -84,7 +84,7 @@ export class RustSocketServer implements ISocketServer {
 		this.native.start();
 		this.started = true;
 		this.logger.info(
-			`[native-ipc] Rust IPC server started at ${this.config.socketPath}`,
+			`[ipc] Rust IPC server started at ${this.config.socketPath}`,
 		);
 	}
 
@@ -97,14 +97,14 @@ export class RustSocketServer implements ISocketServer {
 			const now = Date.now();
 			if (now - this.lastBackpressureLogAt >= 5000) {
 				this.logger.warn(
-					`[native-ipc] Backpressure — batch dropped (${dataPoints.length} pts, topic=${topic ?? "generic"}, consecutive=${this.consecutiveBackpressure}, total_dropped=${this.totalDropped}, queued=${(this.native.getQueuedBytes() / 1_048_576).toFixed(1)}MB)`,
+					`[ipc] Backpressure — batch dropped (${dataPoints.length} pts, topic=${topic ?? "generic"}, consecutive=${this.consecutiveBackpressure}, total_dropped=${this.totalDropped}, queued=${(this.native.getQueuedBytes() / 1_048_576).toFixed(1)}MB)`,
 				);
 				this.lastBackpressureLogAt = now;
 			}
 		} else {
 			if (this.consecutiveBackpressure > 0) {
 				this.logger.debug(
-					`[native-ipc] Backpressure resolved after ${this.consecutiveBackpressure} consecutive drops (${this.totalDropped} pts total)`,
+					`[ipc] Backpressure resolved after ${this.consecutiveBackpressure} consecutive drops (${this.totalDropped} pts total)`,
 				);
 				this.consecutiveBackpressure = 0;
 			}
@@ -126,7 +126,7 @@ export class RustSocketServer implements ISocketServer {
 		if (!this.started) return;
 		this.native.stop();
 		this.started = false;
-		this.logger.info("[native-ipc] Rust IPC server stopped");
+		this.logger.info("[ipc] Rust IPC server stopped");
 	}
 
 	isRunning(): boolean {
@@ -143,7 +143,7 @@ export class RustSocketServer implements ISocketServer {
 
 	/**
 	 * Encode data points into binary format v1 for Rust-side JSON serialization.
-	 * See native-ipc/src/lib.rs decode_batch_to_json() for the wire format.
+	 * See ipc/src/lib.rs decode_batch_to_json() for the wire format.
 	 */
 	private encodeBatch(dataPoints: DeviceDataPoint[]): Buffer {
 		const batchTimestamp = new Date().toISOString();
