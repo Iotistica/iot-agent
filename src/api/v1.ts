@@ -1044,13 +1044,14 @@ router.post('/v1/shutdown', requireRole('admin'), async (req: Request, res: Resp
  */
 router.post('/v1/test/anomaly', requireRole('operator'), async (req: Request, res: Response, next: NextFunction) => {
 	try {
+		const anomalyService = actions.getAnomalyService();
+		if (!anomalyService) return handleDisabledAnomaly(res);
+
 		const { metric = 'cpu_usage', value, count = 1 } = req.body;
 		
 		if (value === undefined) {
 			return res.status(400).json({ error: 'Missing value parameter' });
 		}
-		
-		const anomalyService = (actions as any).getAnomalyService?.();
 		
 		// Inject test data points
 		const injectedPoints = [];
@@ -1091,8 +1092,10 @@ router.post('/v1/test/anomaly', requireRole('operator'), async (req: Request, re
  */
 router.get('/v1/anomaly/points', async (req: Request, res: Response, next: NextFunction) => {
 	try {
-		const metrics = await actions.getAvailableAnomalyMetrics();
 		const anomalyService = actions.getAnomalyService();
+		if (!anomalyService) return handleDisabledAnomaly(res);
+
+		const metrics = await actions.getAvailableAnomalyMetrics();
 		const sourceDevices = typeof anomalyService?.getObservedDeviceNames === 'function'
 			? anomalyService.getObservedDeviceNames()
 			: [];
@@ -1103,12 +1106,23 @@ router.get('/v1/anomaly/points', async (req: Request, res: Response, next: NextF
 });
 
 /**
+ * Helper: Return 404 with friendly message if anomaly detection is disabled
+ */
+function handleDisabledAnomaly(res: Response): Response {
+	return res.status(404).json({
+		error: 'Anomaly detection is not enabled',
+		note: 'Enable anomaly detection in Settings > Features > Anomaly Detection to use this feature',
+	});
+}
+
+/**
  * GET /v1/anomaly/config
  * Return current anomaly detection configuration
  */
 router.get('/v1/anomaly/config', (req: Request, res: Response, next: NextFunction) => {
 	try {
 		const anomalyService = actions.getAnomalyService();
+		if (!anomalyService) return handleDisabledAnomaly(res);
 		return res.status(200).json({ config: anomalyService.getConfig() });
 	} catch (error) {
 		next(error);
@@ -1125,6 +1139,7 @@ router.get('/v1/anomaly/config', (req: Request, res: Response, next: NextFunctio
 router.patch('/v1/anomaly/config', requireRole('operator'), async (req: Request, res: Response, next: NextFunction) => {
 	try {
 		const anomalyService = actions.getAnomalyService();
+		if (!anomalyService) return handleDisabledAnomaly(res);
 		if (!req.body || typeof req.body !== 'object') {
 			return res.status(400).json({ error: 'Request body must be a JSON object' });
 		}
@@ -1175,6 +1190,8 @@ router.get('/v1/logs', async (req: Request, res: Response, next: NextFunction) =
 router.get('/v1/anomaly/alerts', (req: Request, res: Response, next: NextFunction) => {
 	try {
 		const anomalyService = actions.getAnomalyService();
+		if (!anomalyService) return handleDisabledAnomaly(res);
+
 		const since = req.query.since ? Number(req.query.since) : undefined;
 		const severity = req.query.severity as string | undefined;
 		const metric = req.query.metric as string | undefined;
@@ -1198,6 +1215,8 @@ router.get('/v1/anomaly/alerts', (req: Request, res: Response, next: NextFunctio
 router.delete('/v1/anomaly/alerts', requireRole('operator'), (req: Request, res: Response, next: NextFunction) => {
 	try {
 		const anomalyService = actions.getAnomalyService();
+		if (!anomalyService) return handleDisabledAnomaly(res);
+
 		anomalyService.clearAlerts();
 		return res.status(200).json({ cleared: true });
 	} catch (error) {
@@ -1212,6 +1231,8 @@ router.delete('/v1/anomaly/alerts', requireRole('operator'), (req: Request, res:
 router.get('/v1/anomaly/stats', (req: Request, res: Response, next: NextFunction) => {
 	try {
 		const anomalyService = actions.getAnomalyService();
+		if (!anomalyService) return handleDisabledAnomaly(res);
+
 		return res.status(200).json({
 			stats: anomalyService.getStats(),
 			scores: anomalyService.getAllAnomalyScores(),
@@ -1230,6 +1251,8 @@ router.get('/v1/anomaly/stats', (req: Request, res: Response, next: NextFunction
 router.get('/v1/anomaly/baselines', (req: Request, res: Response, next: NextFunction) => {
 	try {
 		const anomalyService = actions.getAnomalyService();
+		if (!anomalyService) return handleDisabledAnomaly(res);
+
 		const metric = req.query.metric as string | undefined;
 		const limit = req.query.limit ? Number(req.query.limit) : 100;
 		const baselines = actions.getAnomalyBaselines(metric, limit);
@@ -1249,6 +1272,7 @@ router.get('/v1/anomaly/baselines', (req: Request, res: Response, next: NextFunc
 router.get('/v1/anomaly/baseline-progress', (req: Request, res: Response, next: NextFunction) => {
 	try {
 		const anomalyService = actions.getAnomalyService();
+		if (!anomalyService) return handleDisabledAnomaly(res);
 		if (typeof anomalyService.getBaselineProgress !== 'function') {
 			return res.status(200).json({ progress: [] });
 		}
@@ -1265,6 +1289,9 @@ router.get('/v1/anomaly/baseline-progress', (req: Request, res: Response, next: 
  */
 router.delete('/v1/anomaly/baselines', requireRole('operator'), (req: Request, res: Response, next: NextFunction) => {
 	try {
+		const anomalyService = actions.getAnomalyService();
+		if (!anomalyService) return handleDisabledAnomaly(res);
+
 		const deleted = actions.clearAnomalyBaselines();
 		return res.status(200).json({ deleted });
 	} catch (error) {
@@ -1278,6 +1305,9 @@ router.delete('/v1/anomaly/baselines', requireRole('operator'), (req: Request, r
  */
 router.get('/v1/anomaly/templates', async (req: Request, res: Response, next: NextFunction) => {
 	try {
+		const anomalyService = actions.getAnomalyService();
+		if (!anomalyService) return handleDisabledAnomaly(res);
+
 		const templates = await actions.listAnomalyTemplates();
 		return res.status(200).json({ templates });
 	} catch (error) {
@@ -1291,6 +1321,9 @@ router.get('/v1/anomaly/templates', async (req: Request, res: Response, next: Ne
  */
 router.post('/v1/anomaly/templates', requireRole('operator'), async (req: Request, res: Response, next: NextFunction) => {
 	try {
+		const anomalyService = actions.getAnomalyService();
+		if (!anomalyService) return handleDisabledAnomaly(res);
+
 		const template = await actions.createAnomalyTemplate(req.body);
 		return res.status(201).json({ template });
 	} catch (error) {
@@ -1304,6 +1337,9 @@ router.post('/v1/anomaly/templates', requireRole('operator'), async (req: Reques
  */
 router.patch('/v1/anomaly/templates/:uuid', requireRole('operator'), async (req: Request, res: Response, next: NextFunction) => {
 	try {
+		const anomalyService = actions.getAnomalyService();
+		if (!anomalyService) return handleDisabledAnomaly(res);
+
 		const template = await actions.updateAnomalyTemplate(req.params.uuid, req.body);
 		return res.status(200).json({ template });
 	} catch (error) {
@@ -3746,9 +3782,45 @@ router.get('/v1/auth/me', (req: Request, res: Response) => {
 	return res.status(200).json({ username: user.username, role: user.role, is_superuser: user.is_superuser, must_change_password: user.must_change_password });
 });
 
-// ── Role guard for all /v1/admin/* routes (user/session/MQTT-user/backup management) ──
+// ── Bootstrap: allow first user creation without authentication ──
+// This endpoint is placed BEFORE the admin role guard so it's not protected.
+// It only works when NO users exist, preventing unauthorized user creation.
+router.post('/v1/admin/users/bootstrap', async (req: Request, res: Response, next: NextFunction) => {
+	try {
+		// Only allow if NO users exist
+		if (UserModel.count() > 0) {
+			return res.status(403).json({ error: 'Bootstrap endpoint only available when no users exist' });
+		}
 
-router.use('/v1/admin', requireRole('admin'));
+		const { username, password, role = 'admin' } = req.body ?? {};
+		if (!username || typeof username !== 'string' || !username.trim()) {
+			return res.status(400).json({ error: 'username is required' });
+		}
+		if (!password || typeof password !== 'string' || password.length < 6) {
+			return res.status(400).json({ error: 'password must be at least 6 characters' });
+		}
+		if (!VALID_ROLES.includes(role)) {
+			return res.status(400).json({ error: `role must be one of: ${VALID_ROLES.join(', ')}` });
+		}
+
+		const hash = await bcrypt.hash(password, 10);
+		const user = UserModel.create(username.trim(), hash, role);
+		return res.status(201).json({ user });
+	} catch (error) {
+		next(error);
+	}
+});
+
+// ── Role guard for all /v1/admin/* routes EXCEPT bootstrap (user/session/MQTT-user/backup management) ──
+// Apply a conditional middleware that skips authentication for the bootstrap endpoint
+router.use('/v1/admin', (req, res, next) => {
+	// Allow bootstrap endpoint to bypass auth check
+	if (req.path === '/users/bootstrap' && req.method === 'POST') {
+		return next();
+	}
+	// For all other /v1/admin routes, require admin role
+	return requireRole('admin')(req, res, next);
+});
 
 // ── Administration: Users ────────────────────────────────────────────────────
 

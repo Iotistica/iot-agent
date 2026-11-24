@@ -68,21 +68,21 @@ describe('persistence queue guardrails', () => {
 		expect(upsertManyCalls).toBe(1);
 	});
 
-	it('queue size is bounded — the oldest pending entry is evicted (with a logged warning) once the cap is reached', () => {
+	it('queue grows adaptively — doubles capacity when full, evicts only at the absolute ceiling', () => {
 		const warn = jest.fn();
+		const info = jest.fn();
 		const catalog = getPointNameCatalog();
-		catalog.init({ debug: jest.fn(), info: jest.fn(), warn, error: jest.fn() });
+		catalog.init({ debug: jest.fn(), info, warn, error: jest.fn() });
 
-		// MAX_QUEUE_SIZE is 5000 (module-internal) — one over the cap forces exactly one eviction.
+		// Initial capacity is 5000. Fill it to trigger a growth.
 		for (let i = 0; i < 5001; i++) {
 			catalog.resolve({ sourceSystem: 'bacnet', endpointName: 'ep-1', deviceKey: 'dev-1', rawName: `point-${i}` });
 		}
 
-		expect(catalog.getMetrics().queueDepth).toBe(5000);
-		expect(catalog.getMetrics().overflowCount).toBe(1);
-		expect(warn).toHaveBeenCalledWith(
-			expect.stringContaining('overflow'),
-			expect.anything(),
+		expect(catalog.getMetrics().queueCapacity).toBe(10_000);
+		expect(catalog.getMetrics().overflowCount).toBe(0);
+		expect(info).toHaveBeenCalledWith(
+			expect.stringContaining('queue grew'),
 		);
 	}, 30000);
 

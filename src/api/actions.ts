@@ -1788,16 +1788,23 @@ export const removeEndpoint = async (uuid: string) => {
 		metadata: { protocol: existing.protocol, endpoint_name: existing.name },
 	});
 
-	// Tell the live protocol adapter to drop this device now. Reconciliation's
-	// own reload trigger only fires on a DETECTED DB diff (calculateSteps()),
-	// but the direct delete above already makes DB and target state agree —
-	// so reconcile() never sees a change to react to, and without this call
-	// the adapter instance (e.g. ModbusAdapter) keeps polling and publishing
-	// the removed device indefinitely, using its last-loaded in-memory device
-	// list, until something unrelated happens to trigger a reload.
-	await adapterManager?.reloadAdapterGroup(existing.protocol).catch((err) => {
-		logger?.warn(`Failed to reload ${existing.protocol} adapter after removing endpoint ${uuid}`, err as Error);
+	// Tell the live protocol adapter to drop this device now. Try targeted
+	// removal first (disconnects only the deleted endpoint, leaves siblings
+	// untouched); fall back to full protocol reload if targeted removal can't
+	// find the endpoint in a running adapter.
+	logger?.info(`[Endpoint] Attempting targeted removal of ${existing.name} (protocol=${existing.protocol})`);
+	const removed = await adapterManager?.removeEndpointLive(existing.protocol, existing.name).catch((err) => {
+		logger?.warn(`[Endpoint] Targeted removal failed for ${existing.name}: ${err}`);
+		return false;
 	});
+	if (removed) {
+		logger?.info(`[Endpoint] Targeted removal succeeded for ${existing.name} — no adapter restart`);
+	} else {
+		logger?.info(`[Endpoint] Targeted removal not possible for ${existing.name} — falling back to full ${existing.protocol} adapter reload`);
+		await adapterManager?.reloadAdapterGroup(existing.protocol).catch((err) => {
+			logger?.warn(`[Endpoint] Full adapter reload failed for ${existing.protocol}: ${err}`);
+		});
+	}
 	if (devicePublish) await devicePublish.reloadAllBindings();
 };
 
@@ -2762,6 +2769,15 @@ export const updateDiscoveryRule = async (uuid: string, body: {
  * Discovery rules: delete a rule
  */
 export const deleteDiscoveryRule = async (uuid: string) => {
+	if (discoveryRulesScheduler) {
+		try {
+			discoveryRulesScheduler.pauseRule(uuid);
+			logger?.info(`[Discovery] Aborted in-flight browse for rule ${uuid} before delete`);
+		} catch {
+			logger?.debug(`[Discovery] Rule ${uuid} was not running — delete proceeds without abort`);
+		}
+	}
+
 	const { DiscoveryRuleModel } = await import('../db/models/discovery-rule.model.js');
 	const deleted = DiscoveryRuleModel.delete(uuid);
 	if (!deleted) {

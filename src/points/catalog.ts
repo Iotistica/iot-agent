@@ -7,7 +7,7 @@ import type { Logger, PointIdentity } from './types.js';
 import { normalizeSourceSystem } from '../units/source-system.js';
 
 const MAX_ROWS_PER_FLUSH = 200;
-const MAX_QUEUE_SIZE = 5000;
+const MAX_QUEUE_SIZE = 60000;
 const MAX_FLUSH_RETRIES = 3;
 const BASE_BACKOFF_MS = 1000;
 const UNNAMED_POINT_PREFIX = 'unnamed_point';

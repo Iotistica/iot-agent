@@ -246,45 +246,87 @@ export class MqttPublishPlugin extends BasePublishPlugin {
 	}
 
 	override async publishBatch(batch: PublishBatchItem[]): Promise<void> {
+		// Chunk all payloads first, regardless of connection state
+		const chunkedBatch: PublishBatchItem[] = [];
+		for (const item of batch) {
+			const chunks = this.chunkPayload(item);
+			chunkedBatch.push(...chunks);
+		}
+
 		if (this.destBufferSync && !this.isConnected()) {
 			this.agentLogger?.debugSync('Destination offline, buffering batch', {
 				component: LogComponents.agent,
-				messages: batch.length,
+				messages: chunkedBatch.length,
 				destinationId: this.destinationId,
 			});
-			await this.bufferBatch(batch);
+			await this.bufferBatch(chunkedBatch);
 			return;
 		}
 
-		for (const item of batch) {
-			const chunks = this.chunkPayload(item);
-			for (const chunk of chunks) {
-				await this.client.publish(chunk.topic, chunk.payload, chunk.options);
-			}
+		for (const chunk of chunkedBatch) {
+			await this.client.publish(chunk.topic, chunk.payload, chunk.options);
 		}
 	}
 
 	private chunkPayload(item: PublishBatchItem): PublishBatchItem[] {
-		if (typeof item.payload !== 'string') return [item];
+		if (typeof item.payload !== 'string') {
+			this.logger?.debug('Skipping chunking: payload is not string', {
+				destinationId: this.destinationId,
+				payloadType: typeof item.payload,
+				isBuffer: Buffer.isBuffer(item.payload),
+			});
+			return [item];
+		}
 
 		const subscriptionLimit = typeof item.options?.maxPointsPerMessage === 'number' && item.options.maxPointsPerMessage > 0
 			? item.options.maxPointsPerMessage
 			: Infinity;
 		const limit = Math.min(this.maxReadingsPerMessage, subscriptionLimit);
-		if (!Number.isFinite(limit) || limit <= 0) return [item];
+		if (!Number.isFinite(limit) || limit <= 0) {
+			this.logger?.debug('Skipping chunking: invalid limit', {
+				destinationId: this.destinationId,
+				subscriptionLimit,
+				maxReadingsPerMessage: this.maxReadingsPerMessage,
+				limit,
+			});
+			return [item];
+		}
 
 		let parsed: Record<string, unknown>;
 		try { parsed = JSON.parse(item.payload); }
-		catch { return [item]; }
+		catch (e) {
+			this.logger?.debug('Skipping chunking: JSON parse failed', {
+				destinationId: this.destinationId,
+				error: e instanceof Error ? e.message : String(e),
+				payloadLength: item.payload.length,
+			});
+			return [item];
+		}
 
 		const readingsKey = Array.isArray(parsed.tags) ? 'tags'
 			: Array.isArray(parsed.features) ? 'features'
 				: Array.isArray(parsed.messages) ? 'messages'
 					: null;
-		if (!readingsKey) return [item];
+		if (!readingsKey) {
+			this.logger?.debug('Skipping chunking: no readings key found', {
+				destinationId: this.destinationId,
+				keys: Object.keys(parsed),
+				hasTags: Array.isArray(parsed.tags),
+				hasFeatures: Array.isArray(parsed.features),
+				hasMessages: Array.isArray(parsed.messages),
+			});
+			return [item];
+		}
 
 		const readings = parsed[readingsKey] as unknown[];
-		if (readings.length <= limit) return [item];
+		if (readings.length <= limit) {
+			this.logger?.debug('Skipping chunking: readings below limit', {
+				destinationId: this.destinationId,
+				readingsCount: readings.length,
+				limit,
+			});
+			return [item];
+		}
 
 		const chunks: PublishBatchItem[] = [];
 		for (let i = 0; i < readings.length; i += limit) {

@@ -182,6 +182,14 @@ export class FeatureInitializer {
 		return this.context.configFeatures?.enableDevicePublish ?? true;
 	}
 
+	private isAnomalyDetectionEnabled(): boolean {
+		const dynamicFeatures = this.context.stateReconciler?.getConfigManager?.().getFeatures?.();
+		if (dynamicFeatures && typeof dynamicFeatures.enableAnomalyDetection === 'boolean') {
+			return dynamicFeatures.enableAnomalyDetection;
+		}
+		return this.context.configFeatures?.enableAnomalyDetection ?? false;
+	}
+
 	private isDeviceRemoteAccessEnabled(): boolean {
 		const dynamicFeatures = this.context.stateReconciler?.getConfigManager?.().getFeatures?.();
 		if (dynamicFeatures && typeof dynamicFeatures.enableDeviceRemoteAccess === 'boolean') {
@@ -277,7 +285,8 @@ export class FeatureInitializer {
    * Reads endpoint configuration from database and starts device Publish
    */
 	async initDevicePublish(): Promise<void> {
-		const { logger, deviceInfo, anomalyService, maintenanceEnergyService } = this.context;
+		const { logger, deviceInfo, maintenanceEnergyService } = this.context;
+		const anomalyService = this.isAnomalyDetectionEnabled() ? this.context.anomalyService : undefined;
 
 		const devicePublishEnabled = this.isDevicePublishEnabled();
 		if (!devicePublishEnabled) {

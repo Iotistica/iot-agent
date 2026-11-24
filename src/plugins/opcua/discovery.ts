@@ -333,8 +333,9 @@ export class OPCUADiscovery extends BaseDiscovery {
 		this.configManager = configManager;
 	}
 
-	generateFingerprint(applicationUri: string): string {
-		return createHash('sha256').update(`opcua:${applicationUri}`).digest('hex').substring(0, 32);
+	generateFingerprint(applicationUri: string, endpointUrl?: string): string {
+		const key = endpointUrl ? `opcua:${applicationUri}@${endpointUrl}` : `opcua:${applicationUri}`;
+		return createHash('sha256').update(key).digest('hex').substring(0, 32);
 	}
 
 	private async withBrowseSession<T>(request: OPCUABrowseRequest, callback: (session: ClientSession) => Promise<T>): Promise<T> {
@@ -566,19 +567,13 @@ export class OPCUADiscovery extends BaseDiscovery {
 		const BATCH_SIZE = 2000;
 		const CACHE_BATCH_SIZE = 10000;
 
-		// Get discovery targets from endpoints (those with endpointUrl but no dataPoints)
-		let discoveryTargets = this.configManager?.getDiscoveryTargets?.('opcua') || [];
-		if (options?.deviceIdentification && options.discoveryUrls?.length) {
-			discoveryTargets = [];
-		}
+		// Determine discovery targets.
+		// When a rule provides explicit discoveryUrls, those are the targets — not a fallback.
+		// Only fall back to DB endpoints when no explicit URLs are given.
+		let discoveryTargets: any[];
 
-		// Fallback: allow explicit URL probing when no DB targets exist yet.
-		if (discoveryTargets.length === 0) {
-			const fallbackUrls = options?.discoveryUrls && options.discoveryUrls.length > 0
-				? options.discoveryUrls
-				: ['opc.tcp://localhost:4840'];
-
-			discoveryTargets = fallbackUrls.map((endpointUrl) => ({
+		if (options?.discoveryUrls && options.discoveryUrls.length > 0) {
+			discoveryTargets = options.discoveryUrls.map((endpointUrl: string) => ({
 				uuid: undefined,
 				name: `opcua_${endpointUrl.replace(/[^a-zA-Z0-9]/g, '_')}`,
 				protocol: 'opcua',
@@ -595,11 +590,20 @@ export class OPCUADiscovery extends BaseDiscovery {
 				dataPoints: []
 			}));
 
-			this.logger?.debugSync('Using OPC-UA fallback discovery URLs', {
+			this.logger?.debugSync('Using explicit discovery URLs from rule', {
 				component: LogComponents.discovery + "] [" + this.protocol as any,
 				protocol: this.protocol,
-				urls: fallbackUrls
+				urls: options.discoveryUrls
 			});
+		} else {
+			discoveryTargets = this.configManager?.getDiscoveryTargets?.('opcua') || [];
+
+			if (discoveryTargets.length === 0) {
+				this.logger?.warnSync('No OPC-UA discovery targets — rule has no discoveryUrls and no DB endpoints exist', {
+					component: LogComponents.discovery + "] [" + this.protocol as any,
+				});
+				return withDiscoveryScanStatus([], status);
+			}
 		}
     
 		this.logger?.debugSync('OPC-UA discovery targets received', {
@@ -676,7 +680,10 @@ export class OPCUADiscovery extends BaseDiscovery {
 					? (this.selectPreferredEndpoint(endpoints) || endpoints[0])
 					: undefined;
 				const precomputedApplicationUri = precomputedPreferredEndpoint?.server?.applicationUri || `urn:${new URL(url).hostname}:unknown`;
-				const precomputedFingerprint = this.generateFingerprint(precomputedApplicationUri);
+				const precomputedFingerprint = this.generateFingerprint(precomputedApplicationUri, url);
+				this.logger?.debugSync(`[Discovery] [opcua] Fingerprint: ${precomputedFingerprint.substring(0, 12)}... (appUri=${precomputedApplicationUri}, endpoint=${url})`, {
+					component: LogComponents.discovery + "] [" + this.protocol as any,
+				});
 				const precomputedCertThumbprint = precomputedPreferredEndpoint ? this.calculateThumbprint(precomputedPreferredEndpoint.serverCertificate) : undefined;
 				const precomputedSecurityMode = precomputedPreferredEndpoint ? this.mapSecurityMode(precomputedPreferredEndpoint.securityMode) : undefined;
 				const precomputedSecurityPolicy = precomputedPreferredEndpoint ? this.mapSecurityPolicy(precomputedPreferredEndpoint.securityPolicyUri) : undefined;
