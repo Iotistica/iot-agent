@@ -522,11 +522,13 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "crossbeam-channel",
+ "libc",
  "napi",
  "napi-build",
  "napi-derive",
  "opcua",
  "parking_lot",
+ "tokio",
 ]
 
 [[package]]
