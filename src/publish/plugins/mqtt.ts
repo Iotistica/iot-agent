@@ -215,7 +215,7 @@ class ExternalMqttFlushProxy implements IBufferPublishClient {
 	}
 }
 
-const DEFAULT_MAX_READINGS_PER_MESSAGE = 5000;
+const DEFAULT_MAX_READINGS_PER_MESSAGE = 100;
 
 export class MqttPublishPlugin extends BasePublishPlugin {
 	private destBufferSync?: MessageBufferSync;
@@ -269,11 +269,30 @@ export class MqttPublishPlugin extends BasePublishPlugin {
 	}
 
 	private chunkPayload(item: PublishBatchItem): PublishBatchItem[] {
-		if (typeof item.payload !== 'string') {
+		let payload = item.payload;
+
+		// Convert Buffer to string if needed (happens when msgpack compression is applied by default)
+		if (Buffer.isBuffer(payload)) {
+			try {
+				payload = payload.toString('utf-8');
+				this.logger?.debug('Converted Buffer payload to string for chunking', {
+					destinationId: this.destinationId,
+					bufferSize: item.payload.length,
+				});
+			} catch (e) {
+				this.logger?.debug('Skipping chunking: failed to convert Buffer to string', {
+					destinationId: this.destinationId,
+					error: e instanceof Error ? e.message : String(e),
+				});
+				return [item];
+			}
+		}
+
+		if (typeof payload !== 'string') {
 			this.logger?.debug('Skipping chunking: payload is not string', {
 				destinationId: this.destinationId,
-				payloadType: typeof item.payload,
-				isBuffer: Buffer.isBuffer(item.payload),
+				payloadType: typeof payload,
+				isBuffer: Buffer.isBuffer(payload),
 			});
 			return [item];
 		}
@@ -293,12 +312,12 @@ export class MqttPublishPlugin extends BasePublishPlugin {
 		}
 
 		let parsed: Record<string, unknown>;
-		try { parsed = JSON.parse(item.payload); }
+		try { parsed = JSON.parse(payload); }
 		catch (e) {
 			this.logger?.debug('Skipping chunking: JSON parse failed', {
 				destinationId: this.destinationId,
 				error: e instanceof Error ? e.message : String(e),
-				payloadLength: item.payload.length,
+				payloadLength: payload.length,
 			});
 			return [item];
 		}
