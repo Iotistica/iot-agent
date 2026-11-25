@@ -37,9 +37,13 @@ export class DevicePublish extends EventEmitter {
 	private agentLogger: AgentLogger;
 	private logger: {
 		info: (message: string, context?: Record<string, any>) => void;
+		infoSync: (message: string, context?: Record<string, any>) => void;
 		warn: (message: string, context?: Record<string, any>) => void;
+		warnSync: (message: string, context?: Record<string, any>) => void;
 		error: (message: string, error?: unknown, context?: Record<string, any>) => void;
+		errorSync: (message: string, error?: Error, context?: Record<string, any>) => void;
 		debug: (message: string, context?: Record<string, any>) => void;
+		debugSync: (message: string, context?: Record<string, any>) => void;
 	};
 	private mqttConnection?: MqttConnection;
 	private readonly deviceUuid: string;
@@ -77,7 +81,17 @@ export class DevicePublish extends EventEmitter {
 					component: LogComponents.devicePublish,
 					...(context || {}),
 				}),
+			infoSync: (message: string, context?: Record<string, any>) =>
+				this.agentLogger.infoSync(message, {
+					component: LogComponents.devicePublish,
+					...(context || {}),
+				}),
 			warn: (message: string, context?: Record<string, any>) =>
+				this.agentLogger.warnSync(message, {
+					component: LogComponents.devicePublish,
+					...(context || {}),
+				}),
+			warnSync: (message: string, context?: Record<string, any>) =>
 				this.agentLogger.warnSync(message, {
 					component: LogComponents.devicePublish,
 					...(context || {}),
@@ -91,7 +105,21 @@ export class DevicePublish extends EventEmitter {
 						...(context || {}),
 					}
 				),
+			errorSync: (message: string, error?: Error, context?: Record<string, any>) =>
+				this.agentLogger.errorSync(
+					message,
+					error,
+					{
+						component: LogComponents.devicePublish,
+						...(context || {}),
+					}
+				),
 			debug: (message: string, context?: Record<string, any>) =>
+				this.agentLogger.debugSync(message, {
+					component: LogComponents.devicePublish,
+					...(context || {}),
+				}),
+			debugSync: (message: string, context?: Record<string, any>) =>
 				this.agentLogger.debugSync(message, {
 					component: LogComponents.devicePublish,
 					...(context || {}),
@@ -335,11 +363,25 @@ export class DevicePublish extends EventEmitter {
 					...args[0]
 				});
 			},
+			debugSync: (message: string, context?: Record<string, any>) => {
+				this.agentLogger.debugSync(message, {
+					component: LogComponents.devicePublish,
+					protocol,
+					...context
+				});
+			},
 			info: (message: string, ...args: any[]) => {
 				this.agentLogger.infoSync(message, {
 					component: LogComponents.devicePublish,
 					protocol,
 					...args[0]
+				});
+			},
+			infoSync: (message: string, context?: Record<string, any>) => {
+				this.agentLogger.infoSync(message, {
+					component: LogComponents.devicePublish,
+					protocol,
+					...context
 				});
 			},
 			warn: (message: string, ...args: any[]) => {
@@ -349,11 +391,25 @@ export class DevicePublish extends EventEmitter {
 					...args[0]
 				});
 			},
+			warnSync: (message: string, context?: Record<string, any>) => {
+				this.agentLogger.warnSync(message, {
+					component: LogComponents.devicePublish,
+					protocol,
+					...context
+				});
+			},
 			error: (message: string, ...args: any[]) => {
 				this.agentLogger.errorSync(message, args[0] instanceof Error ? args[0] : undefined, {
 					component: LogComponents.devicePublish,
 					protocol,
 					...(args[0] instanceof Error ? args[1] : args[0])
+				});
+			},
+			errorSync: (message: string, error?: Error, context?: Record<string, any>) => {
+				this.agentLogger.errorSync(message, error, {
+					component: LogComponents.devicePublish,
+					protocol,
+					...context
 				});
 			}
 		};

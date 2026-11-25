@@ -186,6 +186,11 @@ export interface Logger {
   info(message: string, ...args: any[]): void;
   warn(message: string, ...args: any[]): void;
   error(message: string, ...args: any[]): void;
+  // Sync versions (for AgentLogger compatibility)
+  debugSync?(message: string, context?: Record<string, any>): void;
+  infoSync?(message: string, context?: Record<string, any>): void;
+  warnSync?(message: string, context?: Record<string, any>): void;
+  errorSync?(message: string, error?: Error, context?: Record<string, any>): void;
 }
 
 /**
