@@ -234,6 +234,19 @@ export abstract class BaseMqttClient extends EventEmitter implements MqttConnect
 				: this.buildPublishTopic(topic);
 		const qos = options?.qos ?? 1;
 
+		// Log outgoing payload size
+		const payloadBytes = Buffer.isBuffer(payload) ? payload.length : Buffer.byteLength(payload, 'utf8');
+		this.logger?.debugSync('MQTT base client publishing', {
+			component: LogComponents.agent,
+			provider: this.providerName,
+			targetTopic,
+			payloadBytes,
+			payloadKB: (payloadBytes / 1024).toFixed(2),
+			payloadMB: (payloadBytes / 1048576).toFixed(4),
+			qos,
+			isBuffer: Buffer.isBuffer(payload),
+		});
+
 		let lastError: Error | null = null;
 		for (let attempt = 0; attempt < this.maxPublishRetries; attempt++) {
 			try {
@@ -258,7 +271,21 @@ export abstract class BaseMqttClient extends EventEmitter implements MqttConnect
 				lastError = asError;
 
 				const isLast = attempt === this.maxPublishRetries - 1;
-				if (!this.isTransientPublishError(asError) || isLast) {
+				const isTransient = this.isTransientPublishError(asError);
+
+				this.logger?.warnSync('MQTT publish attempt failed', {
+					component: LogComponents.agent,
+					provider: this.providerName,
+					targetTopic,
+					attempt: attempt + 1,
+					maxRetries: this.maxPublishRetries,
+					error: asError.message,
+					isTransient,
+					willRetry: !isLast && isTransient,
+					payloadBytes,
+				});
+
+				if (!isTransient || isLast) {
 					throw asError;
 				}
 

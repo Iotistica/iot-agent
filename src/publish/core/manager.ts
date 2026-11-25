@@ -13,6 +13,8 @@ import { MessageBatcher } from './batch.js';
 import { SocketConnection } from './socket.js';
 import { PublishStats } from './stats.js';
 import { HeartbeatManager } from './heartbeat.js';
+import { PayloadChunker } from './payload-chunker.js';
+import { QuarantineStore } from './quarantine-store.js';
 import { createHash } from 'crypto';
 import { isProLicensed } from '../../licensing/runtime.js';
 import { SchemaDriftDetector } from '../../analytics/schema-drift/index.js';
@@ -183,6 +185,7 @@ export class PublishManager extends EventEmitter {
 	private readonly stats: PublishStats;
 	private readonly feed: AnomalyFeed;
 	private readonly enricher: AnomalyEnricher;
+	private readonly quarantineStore: QuarantineStore;
 	// Schema drift is a Pro feature — loaded asynchronously post-construction
 	// (see initSchemaDrift()) since the dynamic import can't complete inside a
 	// synchronous constructor. Undefined until it resolves, and stays undefined
@@ -292,6 +295,7 @@ export class PublishManager extends EventEmitter {
 		this.stats = new PublishStats();
 		this.feed = new AnomalyFeed(() => this.anomalyService, deviceUuid, protocol, logger, () => this.maintenanceEnergyService);
 		this.enricher = new AnomalyEnricher(() => this.anomalyService, deviceUuid, protocol, logger);
+		this.quarantineStore = new QuarantineStore(10000, this.logger as any);
 		this.initSchemaDrift().catch((error) => {
 			this.logger?.warn('Schema drift init failed', error, { source: this.endpointName });
 		});
@@ -1365,6 +1369,23 @@ export class PublishManager extends EventEmitter {
 		return this.payloadFormat;
 	}
 
+	private getMaxPayloadSizeBytes(publisher: PublisherRecord): number {
+		// Check if maxPayloadSizeBytes is in config_json
+		if (publisher.config_json && typeof publisher.config_json === 'object') {
+			const configValue = (publisher.config_json as Record<string, unknown>).maxPayloadSizeBytes;
+			if (typeof configValue === 'number' && configValue > 0) {
+				return configValue;
+			}
+		}
+		
+		// Default to 1 MB for MQTT, unlimited (Number.MAX_SAFE_INTEGER) for others
+		if (publisher.type === 'mqtt') {
+			return 1024 * 1024; // 1 MB
+		}
+		
+		return Number.MAX_SAFE_INTEGER;
+	}
+
 	private async getCompressedPayloadForFormat(
 		payloadFormat: PayloadFormat,
 		cacheKey: string,
@@ -1375,36 +1396,139 @@ export class PublishManager extends EventEmitter {
 		overrideOpts?: CompressorOptions,
 		filterBadQuality = false,
 		datasetConfig?: MlDatasetRecord,
-	): Promise<{ payload: string | Buffer; info?: CompressionInfo }> {
+		maxPacketSizeBytes?: number,
+		maxPointsPerMessage?: number,
+		destinationId?: number,
+		destinationType?: string,
+	): Promise<Array<{ payload: string | Buffer; info?: CompressionInfo }>> {
+		// Check cache for unmodified case (backward compatibility)
 		const cachedPayload = compressedPayloadCache.get(cacheKey);
 		if (cachedPayload !== undefined) {
-			// Same cacheKey -> identical compression inputs -> the cached info is
-			// still accurate, not stale, for whichever binding hits this branch.
-			return { payload: cachedPayload, info: compressionInfoCache.get(cacheKey) };
+			// Return single-item array for consistency
+			return [{ payload: cachedPayload, info: compressionInfoCache.get(cacheKey) }];
 		}
 
-		const { data, baselineSize, jsonString, jsonBytes } = this.buildPayload(endpointName, messages, payloadFormat, filterBadQuality, datasetConfig);
+		const { data, msgId, baselineSize, jsonString, jsonBytes } = this.buildPayload(endpointName, messages, payloadFormat, filterBadQuality, datasetConfig);
 		
-		// Optimization: bypass compress() if overrideOpts indicates no compression (all false/undefined)
-		if (overrideOpts && !Object.values(overrideOpts).some(v => v)) {
-			// No compression: use cached JSON directly
-			const info: CompressionInfo = {
-				method: 'json',
-				originalSize: baselineSize,
-				compressedSize: jsonBytes,
-				ratio: 0,
-				compressionMs: 0,
-				isBaseline: false,
-			};
-			compressedPayloadCache.set(cacheKey, jsonString);
-			compressionInfoCache.set(cacheKey, info);
-			return { payload: jsonString, info };
+		// Extract readings for chunking logic
+		const readings: ProtocolMessage[] = messages;
+		
+		// Use PayloadChunker to split at reading level BEFORE serialization
+		const chunker = new PayloadChunker({
+			maxReadingsPerChunk: maxPointsPerMessage ?? 1000,
+			maxPacketSizeBytes: maxPacketSizeBytes ?? Number.MAX_SAFE_INTEGER,
+			providerName: destinationType ?? 'unknown',
+			destinationId: destinationId ?? 0,
+		});
+		
+		const chunkResult = chunker.chunk(readings, payloadFormat === 'tags' ? 'ecp' : payloadFormat);
+		
+		// Log quarantined readings
+		if (chunkResult.quarantined.length > 0) {
+			for (const q of chunkResult.quarantined) {
+				const quarantineId = this.quarantineStore.add(
+					q.reading,
+					q.estimatedBytes,
+					maxPacketSizeBytes ?? Number.MAX_SAFE_INTEGER,
+					destinationId ?? 0,
+					payloadFormat,
+				);
+				this.logger?.warn(`Reading quarantined - oversized`, {
+					component: LogComponents.agent,
+					destinationId,
+					destinationType,
+					format: payloadFormat,
+					readingSize: q.estimatedBytes,
+					maxPayloadBytes: maxPacketSizeBytes,
+					quarantineId,
+				});
+			}
 		}
 		
-		const { payload, info } = await this.compressor.compress(data, baselineSize, this.stats.data.messagesPublished, overrideOpts, { jsonString, jsonBytes });
-		compressedPayloadCache.set(cacheKey, payload);
-		compressionInfoCache.set(cacheKey, info);
-		return { payload, info };
+		// If all readings were quarantined, return empty array (no valid payloads to send)
+		if (chunkResult.chunks.length === 0) {
+			return [];
+		}
+		
+		// Serialize and compress each chunk independently
+		const payloads: Array<{ payload: string | Buffer; info?: CompressionInfo }> = [];
+		
+		for (const readingChunk of chunkResult.chunks) {
+			// Rebuild payload structure for this chunk
+			let chunkData: Record<string, unknown>;
+			
+			if (payloadFormat === 'custom') {
+				const timestampIso = new Date().toISOString();
+				chunkData = {
+					timestamp: timestampIso,
+					protocol: this.protocol,
+					messages: readingChunk.readings,
+					msgId,
+				};
+				const context = data.context;
+				if (context) chunkData.context = context;
+			} else if (payloadFormat === 'ml') {
+				// For ML format, readings are already features
+				chunkData = {
+					timestamp: data.timestamp,
+					node: data.node,
+					group: data.group,
+					schema: data.schema,
+					features: readingChunk.readings,
+				};
+				const context = data.context;
+				if (context) chunkData.context = context;
+				const dataset = data.dataset;
+				if (dataset) chunkData.dataset = dataset;
+			} else {
+				// For 'tags' and 'ecp' formats
+				chunkData = {
+					timestamp: data.timestamp,
+					node: data.node,
+					group: data.group,
+					tags: readingChunk.readings,
+				};
+				const context = data.context;
+				if (context) chunkData.context = context;
+			}
+			
+			const chunkJsonString = JSON.stringify(chunkData);
+			const chunkJsonBytes = Buffer.byteLength(chunkJsonString, 'utf8');
+			
+			// Optimization: bypass compress() if overrideOpts indicates no compression
+			if (overrideOpts && !Object.values(overrideOpts).some(v => v)) {
+				// No compression: use JSON directly
+				const info: CompressionInfo = {
+					method: 'json',
+					originalSize: chunkJsonBytes,
+					compressedSize: chunkJsonBytes,
+					ratio: 0,
+					compressionMs: 0,
+					isBaseline: false,
+				};
+				payloads.push({ payload: chunkJsonString, info });
+			} else {
+				// Apply compression to this chunk
+				const { payload, info } = await this.compressor.compress(
+					chunkData,
+					chunkJsonBytes,
+					this.stats.data.messagesPublished,
+					overrideOpts,
+					{ jsonString: chunkJsonString, jsonBytes: chunkJsonBytes },
+				);
+				payloads.push({ payload, info });
+			}
+		}
+		
+		// Cache the first payload for backward compatibility
+		if (payloads.length > 0) {
+			compressedPayloadCache.set(cacheKey, payloads[0].payload);
+			if (payloads[0].info) {
+				compressionInfoCache.set(cacheKey, payloads[0].info);
+			}
+		}
+		
+		return payloads;
 	}
 
 	private normalizeExternalGroupName(endpointName: string): string {
@@ -2216,10 +2340,13 @@ export class PublishManager extends EventEmitter {
 			// mirroring SocketServer.routeAndSendToSocket()'s "filteredPoints.length === 0 →
 			// return" precedent, instead of publishing an empty/near-empty batch.
 			const allThrottledOut = minIntervalMs > 0 && effectiveMessages.length === 0 && bindingMessages.length > 0;
-			let payload: string | Buffer | null = null;
-			let compressionInfo: CompressionInfo | undefined;
+			let payloads: Array<{ payload: string | Buffer; info?: CompressionInfo }> = [];
 			if (!allThrottledOut && binding.publisher.type !== 'noop') {
-				const compressed = await this.getCompressedPayloadForFormat(
+				const maxPayloadBytes = this.getMaxPayloadSizeBytes(binding.publisher);
+				const maxPts = typeof route?.maxPointsPerMessage === 'number' && route.maxPointsPerMessage > 0
+					? route.maxPointsPerMessage : undefined;
+				
+				payloads = await this.getCompressedPayloadForFormat(
 					payloadFormat,
 					cacheKey,
 					endpointName,
@@ -2229,9 +2356,11 @@ export class PublishManager extends EventEmitter {
 					overrideOpts,
 					filterBadQuality,
 					binding.datasetConfig,
+					maxPayloadBytes,
+					maxPts,
+					binding.publisher.id,
+					binding.publisher.type,
 				);
-				payload = compressed.payload;
-				compressionInfo = compressed.info;
 			}
 
 			this.logger?.debug('Routing batch', {
@@ -2246,6 +2375,7 @@ export class PublishManager extends EventEmitter {
 				payloadFormat,
 				compression: subscriptionCompression ?? 'global',
 				...(minIntervalMs > 0 && { publishIntervalMs: minIntervalMs, throttledOut: allThrottledOut }),
+				...(payloads.length > 1 && { chunks: payloads.length }),
 			});
 
 			if (binding.publisher.id !== undefined) {
@@ -2297,22 +2427,27 @@ export class PublishManager extends EventEmitter {
 				}
 			}
 
-			if (payload !== null) {
-				if (compressionInfo) {
-					activityMonitor.recordCompression(destinationTopic, compressionInfo);
-				}
+			// Create PublishBatchItems from all chunks
+			if (payloads.length > 0) {
 				const items = batchesByPlugin.get(binding.plugin) || [];
 				const maxPts = typeof route?.maxPointsPerMessage === 'number' && route.maxPointsPerMessage > 0
 					? route.maxPointsPerMessage : undefined;
-				items.push({
-					topic: sourceTopic,
-					payload,
-					options: {
-						qos: 1,
-						destinationTopic,
-						...(maxPts && { maxPointsPerMessage: maxPts }),
-					},
-				});
+				
+				// Add one item per chunk
+				for (const { payload, info } of payloads) {
+					if (info) {
+						activityMonitor.recordCompression(destinationTopic, info);
+					}
+					items.push({
+						topic: sourceTopic,
+						payload,
+						options: {
+							qos: 1,
+							destinationTopic,
+							...(maxPts && { maxPointsPerMessage: maxPts }),
+						},
+					});
+				}
 				batchesByPlugin.set(binding.plugin, items);
 			}
 		}
