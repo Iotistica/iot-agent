@@ -263,8 +263,24 @@ export class MqttPublishPlugin extends BasePublishPlugin {
 			return;
 		}
 
+		const failedChunks: PublishBatchItem[] = [];
 		for (const chunk of chunkedBatch) {
-			await this.client.publish(chunk.topic, chunk.payload, chunk.options);
+			// Recheck connection before each chunk (can drop between publishes)
+			if (!this.isConnected()) {
+				failedChunks.push(chunk);
+				continue;
+			}
+			try {
+				await this.client!.publish(chunk.topic, chunk.payload, chunk.options);
+			} catch (error) {
+				// Connection lost or publish failed, buffer this chunk
+				failedChunks.push(chunk);
+			}
+		}
+
+		// Buffer any failed chunks if offline mode is enabled
+		if (failedChunks.length > 0 && this.destBufferSync) {
+			await this.bufferBatch(failedChunks);
 		}
 	}
 
