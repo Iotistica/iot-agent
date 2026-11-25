@@ -6,6 +6,7 @@ import type { IPublishClient as ICorePublishClient, PublishBatchItem, Logger } f
 import { BaseMqttClient } from '../core/base-client.js';
 import { MessageBufferSync } from '../core/buffer.js';
 import type { IPublishClient as IBufferPublishClient } from '../core/buffer.js';
+import { PayloadChunkCalculator } from '../core/chunk-calculator.js';
 
 interface ExternalMqttConfig {
 	provider: 'mqtt';
@@ -220,6 +221,7 @@ const DEFAULT_MAX_READINGS_PER_MESSAGE = 100;
 export class MqttPublishPlugin extends BasePublishPlugin {
 	private destBufferSync?: MessageBufferSync;
 	private readonly maxReadingsPerMessage: number;
+	private readonly chunkCalculator: PayloadChunkCalculator;
 
 	constructor(
 		client: ICorePublishClient,
@@ -227,9 +229,25 @@ export class MqttPublishPlugin extends BasePublishPlugin {
 		private readonly destinationId?: number,
 		private readonly agentLogger?: AgentLogger,
 		maxReadingsPerMessage?: number,
+		private readonly maxPayloadSizeBytes?: number,
+		private readonly compressionMethod: string = 'json',
 	) {
 		super(client, logger);
-		this.maxReadingsPerMessage = maxReadingsPerMessage ?? DEFAULT_MAX_READINGS_PER_MESSAGE;
+		this.chunkCalculator = new PayloadChunkCalculator();
+		
+		// If maxPayloadSize is provided, calculate optimal chunk size
+		if (maxReadingsPerMessage !== undefined && maxReadingsPerMessage > 0) {
+			this.maxReadingsPerMessage = maxReadingsPerMessage;
+		} else if (maxPayloadSizeBytes && maxPayloadSizeBytes > 0) {
+			// Use calculator to determine optimal chunk size from max payload size
+			this.maxReadingsPerMessage = this.chunkCalculator.calculateOptimalChunkSize(
+				maxPayloadSizeBytes,
+				this.compressionMethod,
+				150, // Default avg reading size
+			);
+		} else {
+			this.maxReadingsPerMessage = DEFAULT_MAX_READINGS_PER_MESSAGE;
+		}
 	}
 
 	override async start(): Promise<void> {
@@ -374,6 +392,9 @@ export class MqttPublishPlugin extends BasePublishPlugin {
 			totalReadings: readings.length,
 			chunks: chunks.length,
 			readingsPerChunk: limit,
+			calculatedFrom: this.maxPayloadSizeBytes ? 'max-payload-size' : 'config-or-default',
+			maxPayloadSizeBytes: this.maxPayloadSizeBytes,
+			compressionMethod: this.compressionMethod,
 		});
 
 		return chunks;
@@ -423,10 +444,29 @@ export class MqttPublishPlugin extends BasePublishPlugin {
 		if (!resolved) {
 			throw new Error('mqtt publisher requires config_json with a brokerUrl');
 		}
+
+		// Extract configuration values
 		const maxReadings = typeof config?.maxReadingsPerMessage === 'number' && config.maxReadingsPerMessage > 0
 			? config.maxReadingsPerMessage
 			: undefined;
-		return new MqttPublishPlugin(new ExternalMqttClient(resolved, agentLogger, destinationName), logger, destinationId, agentLogger, maxReadings);
+
+		const maxPayloadSize = typeof config?.maxPayloadSize === 'number' && config.maxPayloadSize > 0
+			? config.maxPayloadSize
+			: PayloadChunkCalculator.getDefaultMaxPayloadSize('mqtt');
+
+		const compressionMethod = typeof config?.compressionMethod === 'string' && config.compressionMethod.trim().length > 0
+			? config.compressionMethod
+			: 'json';
+
+		return new MqttPublishPlugin(
+			new ExternalMqttClient(resolved, agentLogger, destinationName),
+			logger,
+			destinationId,
+			agentLogger,
+			maxReadings,
+			maxPayloadSize,
+			compressionMethod,
+		);
 	}
 }
 
