@@ -287,7 +287,6 @@ export class MqttPublishPlugin extends BasePublishPlugin {
 			});
 		} catch (error) {
 			const errorMsg = error instanceof Error ? error.message : String(error);
-			const errorStack = error instanceof Error ? error.stack : undefined;
 			const elapsedMs = Date.now() - startTime;
 
 			this.agentLogger?.errorSync(
@@ -297,7 +296,6 @@ export class MqttPublishPlugin extends BasePublishPlugin {
 					component: LogComponents.agent,
 					destinationId: this.destinationId,
 					error: errorMsg,
-					errorStack,
 					elapsedMs,
 				},
 			);
@@ -343,7 +341,6 @@ export class MqttPublishPlugin extends BasePublishPlugin {
 			});
 		} catch (error) {
 			const errorMsg = error instanceof Error ? error.message : String(error);
-			const errorStack = error instanceof Error ? error.stack : undefined;
 			const elapsedMs = Date.now() - startTime;
 
 			this.agentLogger?.errorSync(
@@ -353,7 +350,6 @@ export class MqttPublishPlugin extends BasePublishPlugin {
 					component: LogComponents.agent,
 					destinationId: this.destinationId,
 					error: errorMsg,
-					errorStack,
 					elapsedMs,
 				},
 			);
@@ -480,7 +476,6 @@ export class MqttPublishPlugin extends BasePublishPlugin {
 				successCount++;
 			} catch (error) {
 				const errorMessage = error instanceof Error ? error.message : String(error);
-				const errorStack = error instanceof Error ? error.stack : undefined;
 
 				this.agentLogger?.debugSync('MQTT publish failed for item', {
 					component: LogComponents.agent,
@@ -491,7 +486,6 @@ export class MqttPublishPlugin extends BasePublishPlugin {
 					destinationId: this.destinationId,
 					topic: item.topic,
 					error: errorMessage,
-					errorStack,
 					willBuffer: !!this.destBufferSync,
 					action: 'publish_error',
 					timestamp: new Date().toISOString(),
@@ -622,7 +616,6 @@ export class MqttPublishPlugin extends BasePublishPlugin {
 				bufferedCount++;
 			} catch (error) {
 				const errorMsg = error instanceof Error ? error.message : String(error);
-				const errorStack = error instanceof Error ? error.stack : undefined;
 
 				this.agentLogger?.debugSync('Failed to buffer item', {
 					component: LogComponents.agent,
@@ -631,7 +624,6 @@ export class MqttPublishPlugin extends BasePublishPlugin {
 					destinationId: this.destinationId,
 					topic: item.topic,
 					error: errorMsg,
-					errorStack,
 					action: 'buffer_error',
 				});
 
@@ -725,7 +717,6 @@ export class MqttPublishPlugin extends BasePublishPlugin {
 			});
 		} catch (error) {
 			const errorMsg = error instanceof Error ? error.message : String(error);
-			const errorStack = error instanceof Error ? error.stack : undefined;
 			const totalMs = Date.now() - initStart;
 
 			this.agentLogger?.errorSync(
@@ -735,7 +726,6 @@ export class MqttPublishPlugin extends BasePublishPlugin {
 					component: LogComponents.agent,
 					destinationId: this.destinationId,
 					error: errorMsg,
-					errorStack,
 					totalInitMs: totalMs,
 				},
 			);

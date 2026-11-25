@@ -168,21 +168,19 @@ export class AgentLogger {
 			...(context && { context }),
 		};
 
-		// Send to all backends (LocalLogBackend, CloudLogBackend, etc.)
-		// Fire and forget - don't block on logging
-		const promises = this.backends.map(backend => 
-			backend.log(logMessage).catch(err => {
-				// If logging fails, still output to console
-				console.error('[AgentLogger] Failed to log to backend:', err);
-			})
-		);
-
 		// Also output to console for development/Docker logs
 		this.consoleLog(level, message, context);
 
-		// Don't await - let logging happen in background
-		Promise.all(promises).catch(() => {
-			// Silently ignore - already logged to console above
+		// CRITICAL FIX: Avoid holding references to logMessage in Promise.all
+		// Use setImmediate to decouple context and prevent memory accumulation
+		// Each backend is independently fire-and-forget
+		setImmediate(() => {
+			this.backends.forEach(backend => {
+				backend.log(logMessage).catch(err => {
+					// If logging fails, still output to console
+					console.error('[AgentLogger] Failed to log to backend:', err);
+				});
+			});
 		});
 	}
 
