@@ -1433,15 +1433,7 @@ export class PublishManager extends EventEmitter {
 					destinationId ?? 0,
 					payloadFormat,
 				);
-				this.logger?.warn(`Reading quarantined - oversized`, {
-					component: LogComponents.agent,
-					destinationId,
-					destinationType,
-					format: payloadFormat,
-					readingSize: q.estimatedBytes,
-					maxPayloadBytes: maxPacketSizeBytes,
-					quarantineId,
-				});
+				// Oversized reading quarantined (logging removed - too noisy during normal operation)
 			}
 		}
 		
