@@ -406,21 +406,31 @@ export class MqttPublishPlugin extends BasePublishPlugin {
 		let failureCount = 0;
 
 		// Phase 6-R3: Concurrent MQTT publishing (4 at a time, not sequential)
+		// CRITICAL: Limit concurrency to avoid event loop starvation with large batches (100k+)
 		const MQTT_PUBLISH_CONCURRENCY = 4;
-		const pending: Promise<void>[] = [];
+		const pending = new Set<Promise<void>>();
+		const batchStartMs = Date.now();
+		let eventLoopYieldCount = 0;
 
-		for (let i = 0; i < batch.length; i++) {
-			const item = batch[i];
-			const itemId = `${batchId}-${i}`;
+		for (const item of batch) {
+			// If we have enough concurrent publishes pending, wait for one to complete
+			if (pending.size >= MQTT_PUBLISH_CONCURRENCY) {
+				const raceStart = Date.now();
+				await Promise.race(pending);
+				const raceMs = Date.now() - raceStart;
+				
+				// Every ~50 items, yield control back to event loop for health checks
+				eventLoopYieldCount++;
+				if (eventLoopYieldCount % 50 === 0) {
+					await new Promise(resolve => setImmediate(resolve));
+				}
+			}
 
 			// Recheck connection before each item (can drop between publishes)
 			if (!this.isConnected()) {
 				this.agentLogger?.debugSync('Destination offline during batch item processing', {
 					component: LogComponents.agent,
 					batchId,
-					itemId,
-					itemIndex: i,
-					totalItems: batch.length,
 					destinationId: this.destinationId,
 					topic: item.topic,
 					action: 'connection_lost_during_loop',
@@ -428,22 +438,6 @@ export class MqttPublishPlugin extends BasePublishPlugin {
 				failedChunks.push(item);
 				failureCount++;
 				continue;
-			}
-
-			// If we have enough concurrent publishes pending, wait for one to complete
-			if (pending.length >= MQTT_PUBLISH_CONCURRENCY) {
-				await Promise.race(pending);
-				// Remove the first resolved promise
-				for (let j = 0; j < pending.length; j++) {
-					if (pending[j].constructor.name !== 'Promise' || (pending[j] as any).resolved) {
-						pending.splice(j, 1);
-						break;
-					}
-				}
-				// Fallback: splice first element if race resolved
-				if (pending.length >= MQTT_PUBLISH_CONCURRENCY) {
-					pending.shift();
-				}
 			}
 
 			try {
@@ -455,19 +449,24 @@ export class MqttPublishPlugin extends BasePublishPlugin {
 				// Per-item logging removed - too verbose in loops
 				// Batch-level summary logs provide sufficient visibility
 
-				const publishStart = Date.now();
 				// Don't await here - add to concurrent queue
-				const publishPromise = this.client!.publish(item.topic, item.payload, item.options)
+				const task = Promise.resolve()
+					.then(() =>
+						this.client!.publish(item.topic, item.payload, item.options)
+					)
 					.then(() => {
 						successCount++;
 					})
-					.catch((error) => {
+					.catch(() => {
 						// Connection lost or publish failed, buffer this item if enabled
 						failedChunks.push(item);
 						failureCount++;
+					})
+					.finally(() => {
+						pending.delete(task);
 					});
 
-				pending.push(publishPromise);
+				pending.add(task);
 			} catch (error) {
 				// Synchronous errors during publish setup
 				failedChunks.push(item);
@@ -476,8 +475,19 @@ export class MqttPublishPlugin extends BasePublishPlugin {
 		}
 
 		// Wait for all pending publishes to complete
-		if (pending.length > 0) {
-			await Promise.all(pending);
+		await Promise.all(pending);
+
+		const batchDurationMs = Date.now() - batchStartMs;
+		if (batchDurationMs > 2000 && batch.length > 1000) {
+			this.agentLogger?.warnSync('Large batch processing took excessive time', {
+				component: LogComponents.agent,
+				batchId,
+				batchSize: batch.length,
+				durationMs: batchDurationMs,
+				eventLoopYields: eventLoopYieldCount,
+				avgTimePerItem: (batchDurationMs / batch.length).toFixed(2),
+				warning: 'Consider reducing MAX_BATCH_MESSAGES if web admin is unresponsive',
+			});
 		}
 
 		// Buffer any failed items if offline mode is enabled
