@@ -251,44 +251,196 @@ export class MqttPublishPlugin extends BasePublishPlugin {
 	}
 
 	override async start(): Promise<void> {
-		if (this.destinationId !== undefined && this.client instanceof ExternalMqttClient) {
-			await this.enableDestinationBuffering();
+		const startTime = Date.now();
+		this.agentLogger?.debugSync('MqttPublishPlugin.start() - entry', {
+			component: LogComponents.agent,
+			destinationId: this.destinationId,
+			timestamp: new Date().toISOString(),
+		});
+
+		try {
+			if (this.destinationId !== undefined && this.client instanceof ExternalMqttClient) {
+				this.agentLogger?.debugSync('Enabling buffering for external MQTT client', {
+					component: LogComponents.agent,
+					destinationId: this.destinationId,
+					clientType: 'ExternalMqttClient',
+				});
+				await this.enableDestinationBuffering();
+			} else {
+				this.agentLogger?.debugSync('Buffering not enabled - conditions not met', {
+					component: LogComponents.agent,
+					destinationId: this.destinationId,
+					hasDestinationId: this.destinationId !== undefined,
+					isExternalMqtt: this.client instanceof ExternalMqttClient,
+					clientType: this.client?.constructor.name,
+				});
+			}
+
+			await super.start();
+
+			const elapsedMs = Date.now() - startTime;
+			this.agentLogger?.debugSync('MqttPublishPlugin.start() - exit success', {
+				component: LogComponents.agent,
+				destinationId: this.destinationId,
+				totalMs: elapsedMs,
+				timestamp: new Date().toISOString(),
+			});
+		} catch (error) {
+			const errorMsg = error instanceof Error ? error.message : String(error);
+			const errorStack = error instanceof Error ? error.stack : undefined;
+			const elapsedMs = Date.now() - startTime;
+
+			this.agentLogger?.errorSync(
+				'MqttPublishPlugin.start() failed',
+				error instanceof Error ? error : new Error(String(error)),
+				{
+					component: LogComponents.agent,
+					destinationId: this.destinationId,
+					error: errorMsg,
+					errorStack,
+					elapsedMs,
+				},
+			);
+
+			throw error;
 		}
-		await super.start();
 	}
 
 	override async stop(): Promise<void> {
-		this.destBufferSync?.stop();
-		this.destBufferSync = undefined;
-		await super.stop();
+		const startTime = Date.now();
+		this.agentLogger?.debugSync('MqttPublishPlugin.stop() - entry', {
+			component: LogComponents.agent,
+			destinationId: this.destinationId,
+			hasBuffer: !!this.destBufferSync,
+			timestamp: new Date().toISOString(),
+		});
+
+		try {
+			if (this.destBufferSync) {
+				const bufferStopStart = Date.now();
+				this.agentLogger?.debugSync('Stopping destination buffer', {
+					component: LogComponents.agent,
+					destinationId: this.destinationId,
+				});
+				this.destBufferSync.stop();
+				const bufferStopMs = Date.now() - bufferStopStart;
+				this.agentLogger?.debugSync('Destination buffer stopped', {
+					component: LogComponents.agent,
+					destinationId: this.destinationId,
+					bufferStopMs,
+				});
+			}
+
+			this.destBufferSync = undefined;
+			await super.stop();
+
+			const elapsedMs = Date.now() - startTime;
+			this.agentLogger?.debugSync('MqttPublishPlugin.stop() - exit success', {
+				component: LogComponents.agent,
+				destinationId: this.destinationId,
+				totalMs: elapsedMs,
+				timestamp: new Date().toISOString(),
+			});
+		} catch (error) {
+			const errorMsg = error instanceof Error ? error.message : String(error);
+			const errorStack = error instanceof Error ? error.stack : undefined;
+			const elapsedMs = Date.now() - startTime;
+
+			this.agentLogger?.errorSync(
+				'MqttPublishPlugin.stop() failed',
+				error instanceof Error ? error : new Error(String(error)),
+				{
+					component: LogComponents.agent,
+					destinationId: this.destinationId,
+					error: errorMsg,
+					errorStack,
+					elapsedMs,
+				},
+			);
+
+			throw error;
+		}
 	}
 
 	override async publishBatch(batch: PublishBatchItem[]): Promise<void> {
 		// Payloads are already pre-chunked by Manager (Phase 2 architecture refactoring).
 		// This method simply publishes them directly.
 
+		const startTime = Date.now();
+		const batchId = Math.random().toString(36).substring(7);
+
+		this.agentLogger?.debugSync('MQTT publishBatch() entry', {
+			component: LogComponents.agent,
+			destinationId: this.destinationId,
+			batchId,
+			batchSize: batch.length,
+			isConnected: this.isConnected(),
+			hasBuffer: !!this.destBufferSync,
+			bufferEnabled: !!this.destBufferSync,
+			timestamp: new Date().toISOString(),
+		});
+
 		if (this.destBufferSync && !this.isConnected()) {
-			this.agentLogger?.debugSync('Destination offline, buffering batch', {
+			this.agentLogger?.debugSync('Destination offline at batch entry, buffering entire batch', {
 				component: LogComponents.agent,
-				messages: batch.length,
+				batchId,
 				destinationId: this.destinationId,
+				batchSize: batch.length,
+				action: 'buffer_offline',
 			});
-			await this.bufferBatch(batch);
+			try {
+				await this.bufferBatch(batch);
+				const elapsedMs = Date.now() - startTime;
+				this.agentLogger?.debugSync('MQTT publishBatch() exit - buffered offline', {
+					component: LogComponents.agent,
+					batchId,
+					destinationId: this.destinationId,
+					batchSize: batch.length,
+					itemsBuffered: batch.length,
+					elapsedMs,
+				});
+			} catch (bufferError) {
+				const errorMsg = bufferError instanceof Error ? bufferError.message : String(bufferError);
+				this.agentLogger?.errorSync(
+					'Failed to buffer batch during offline condition',
+					bufferError instanceof Error ? bufferError : new Error(String(bufferError)),
+					{
+						component: LogComponents.agent,
+						batchId,
+						destinationId: this.destinationId,
+						batchSize: batch.length,
+						error: errorMsg,
+					},
+				);
+			}
 			return;
 		}
 
 		const failedChunks: PublishBatchItem[] = [];
-		for (const item of batch) {
+		let successCount = 0;
+		let failureCount = 0;
+
+		for (let i = 0; i < batch.length; i++) {
+			const item = batch[i];
+			const itemId = `${batchId}-${i}`;
+
 			// Recheck connection before each item (can drop between publishes)
 			if (!this.isConnected()) {
-				this.agentLogger?.debugSync('Destination offline during batch item publish', {
+				this.agentLogger?.debugSync('Destination offline during batch item processing', {
 					component: LogComponents.agent,
+					batchId,
+					itemId,
+					itemIndex: i,
+					totalItems: batch.length,
 					destinationId: this.destinationId,
 					topic: item.topic,
+					action: 'connection_lost_during_loop',
 				});
 				failedChunks.push(item);
+				failureCount++;
 				continue;
 			}
+
 			try {
 				// Log outgoing payload size
 				const payloadBytes = Buffer.isBuffer(item.payload)
@@ -297,81 +449,299 @@ export class MqttPublishPlugin extends BasePublishPlugin {
 
 				this.agentLogger?.debugSync('MQTT publishing item', {
 					component: LogComponents.agent,
+					batchId,
+					itemId,
+					itemIndex: i,
+					totalItems: batch.length,
 					destinationId: this.destinationId,
 					topic: item.topic,
 					payloadBytes,
 					payloadKB: (payloadBytes / 1024).toFixed(2),
 					payloadMB: (payloadBytes / 1048576).toFixed(4),
 					isBuffer: Buffer.isBuffer(item.payload),
+					qos: item.options?.qos ?? 1,
+					timestamp: new Date().toISOString(),
 				});
 
+				const publishStart = Date.now();
 				await this.client!.publish(item.topic, item.payload, item.options);
+				const publishMs = Date.now() - publishStart;
+
+				this.agentLogger?.debugSync('MQTT publish succeeded', {
+					component: LogComponents.agent,
+					batchId,
+					itemId,
+					destinationId: this.destinationId,
+					topic: item.topic,
+					publishMs,
+					payloadBytes,
+				});
+
+				successCount++;
 			} catch (error) {
 				const errorMessage = error instanceof Error ? error.message : String(error);
+				const errorStack = error instanceof Error ? error.stack : undefined;
 
 				this.agentLogger?.debugSync('MQTT publish failed for item', {
 					component: LogComponents.agent,
+					batchId,
+					itemId,
+					itemIndex: i,
+					totalItems: batch.length,
 					destinationId: this.destinationId,
 					topic: item.topic,
 					error: errorMessage,
+					errorStack,
 					willBuffer: !!this.destBufferSync,
+					action: 'publish_error',
+					timestamp: new Date().toISOString(),
 				});
 
 				// Connection lost or publish failed, buffer this item if enabled
 				failedChunks.push(item);
+				failureCount++;
 			}
 		}
 
 		// Buffer any failed items if offline mode is enabled
 		if (failedChunks.length > 0) {
+			this.agentLogger?.debugSync('Handling failed items after batch publish', {
+				component: LogComponents.agent,
+				batchId,
+				destinationId: this.destinationId,
+				failedCount: failedChunks.length,
+				successCount,
+				totalItems: batch.length,
+				bufferEnabled: !!this.destBufferSync,
+			});
+
 			if (this.destBufferSync) {
-				await this.bufferBatch(failedChunks);
+				try {
+					await this.bufferBatch(failedChunks);
+					this.agentLogger?.debugSync('Successfully buffered failed items', {
+						component: LogComponents.agent,
+						batchId,
+						destinationId: this.destinationId,
+						itemsBuffered: failedChunks.length,
+					});
+				} catch (bufferError) {
+					const errorMsg = bufferError instanceof Error ? bufferError.message : String(bufferError);
+					this.agentLogger?.errorSync(
+						'Failed to buffer items after publish failure',
+						bufferError instanceof Error ? bufferError : new Error(String(bufferError)),
+						{
+							component: LogComponents.agent,
+							batchId,
+							destinationId: this.destinationId,
+							attemptedBufferCount: failedChunks.length,
+							error: errorMsg,
+						},
+					);
+				}
 			} else {
 				this.agentLogger?.errorSync(
 					'MQTT batch items failed and buffering disabled — data loss risk',
 					new Error('Buffering disabled and publish failed'),
 					{
 						component: LogComponents.agent,
+						batchId,
 						destinationId: this.destinationId,
 						failedItemCount: failedChunks.length,
+						successCount,
+						totalItems: batch.length,
 						recommendation: 'Enable buffering for this destination or verify MQTT broker connectivity',
 					},
 				);
 			}
 		}
+
+		const elapsedMs = Date.now() - startTime;
+		this.agentLogger?.debugSync('MQTT publishBatch() exit', {
+			component: LogComponents.agent,
+			batchId,
+			destinationId: this.destinationId,
+			batchSize: batch.length,
+			successCount,
+			failureCount,
+			bufferedCount: failedChunks.length,
+			totalTimeMs: elapsedMs,
+			averageTimePerItemMs: batch.length > 0 ? (elapsedMs / batch.length).toFixed(2) : 0,
+			timestamp: new Date().toISOString(),
+		});
 	}
 
 	private async bufferBatch(batch: PublishBatchItem[]): Promise<void> {
-		for (const item of batch) {
-			const destTopic = typeof item.options?.destinationTopic === 'string' && item.options.destinationTopic.trim().length > 0
-				? item.options.destinationTopic.trim()
-				: item.topic;
-			const payload = Buffer.isBuffer(item.payload) ? item.payload : Buffer.from(String(item.payload));
-			await this.destBufferSync!.handlePublish(destTopic, payload, { qos: item.options?.qos ?? 1 });
+		const bufferId = Math.random().toString(36).substring(7);
+		const startTime = Date.now();
+
+		this.agentLogger?.debugSync('bufferBatch() entry', {
+			component: LogComponents.agent,
+			bufferId,
+			destinationId: this.destinationId,
+			batchSize: batch.length,
+			timestamp: new Date().toISOString(),
+		});
+
+		let bufferedCount = 0;
+		let bufferErrors = 0;
+
+		for (let i = 0; i < batch.length; i++) {
+			const item = batch[i];
+			try {
+				const destTopic = typeof item.options?.destinationTopic === 'string' && item.options.destinationTopic.trim().length > 0
+					? item.options.destinationTopic.trim()
+					: item.topic;
+				const payload = Buffer.isBuffer(item.payload) ? item.payload : Buffer.from(String(item.payload));
+				const payloadBytes = payload.length;
+
+				this.agentLogger?.debugSync('Buffering item', {
+					component: LogComponents.agent,
+					bufferId,
+					itemIndex: i,
+					totalItems: batch.length,
+					destinationId: this.destinationId,
+					topic: item.topic,
+					destTopic,
+					payloadBytes,
+					qos: item.options?.qos ?? 1,
+				});
+
+				const handleStart = Date.now();
+				await this.destBufferSync!.handlePublish(destTopic, payload, { qos: item.options?.qos ?? 1 });
+				const handleMs = Date.now() - handleStart;
+
+				this.agentLogger?.debugSync('Item buffered successfully', {
+					component: LogComponents.agent,
+					bufferId,
+					itemIndex: i,
+					destinationId: this.destinationId,
+					bufferHandleMs: handleMs,
+					payloadBytes,
+				});
+
+				bufferedCount++;
+			} catch (error) {
+				const errorMsg = error instanceof Error ? error.message : String(error);
+				const errorStack = error instanceof Error ? error.stack : undefined;
+
+				this.agentLogger?.debugSync('Failed to buffer item', {
+					component: LogComponents.agent,
+					bufferId,
+					itemIndex: i,
+					destinationId: this.destinationId,
+					topic: item.topic,
+					error: errorMsg,
+					errorStack,
+					action: 'buffer_error',
+				});
+
+				bufferErrors++;
+			}
+		}
+
+		const elapsedMs = Date.now() - startTime;
+		this.agentLogger?.debugSync('bufferBatch() exit', {
+			component: LogComponents.agent,
+			bufferId,
+			destinationId: this.destinationId,
+			batchSize: batch.length,
+			bufferedCount,
+			bufferErrors,
+			totalTimeMs: elapsedMs,
+			averageTimePerItemMs: batch.length > 0 ? (elapsedMs / batch.length).toFixed(2) : 0,
+			timestamp: new Date().toISOString(),
+		});
+
+		if (bufferErrors > 0) {
+			throw new Error(`Failed to buffer ${bufferErrors}/${batch.length} items`);
 		}
 	}
 
 	private async enableDestinationBuffering(): Promise<void> {
-		if (this.destBufferSync) return;
-		this.agentLogger?.infoSync('Enabling destination message buffering', {
+		if (this.destBufferSync) {
+			this.agentLogger?.debugSync('Destination buffering already enabled', {
+				component: LogComponents.agent,
+				destinationId: this.destinationId,
+			});
+			return;
+		}
+
+		const initStart = Date.now();
+		this.agentLogger?.debugSync('enableDestinationBuffering() - starting initialization', {
 			component: LogComponents.agent,
 			destinationId: this.destinationId,
+			timestamp: new Date().toISOString(),
 		});
-		const proxy = new ExternalMqttFlushProxy(this.client as ExternalMqttClient);
-		this.destBufferSync = new MessageBufferSync(proxy, this.agentLogger, {
-			scopeEndpointName: `ext-dest-${this.destinationId}`,
-			flushBatchSize: 100,
-			flushIntervalMs: 30000,
-			maxRetries: 3,
-			cleanupIntervalMs: 3600000,
-			maxBufferRecords: 5000,
-			dropPolicy: 'oldest',
-			flushTriggerThreshold: 500,
-			maxFlushPerCycle: 500,
-			bufferEvenWhenOnline: false,
-			enabled: true,
-		});
-		await this.destBufferSync.start();
+
+		try {
+			this.agentLogger?.infoSync('Enabling destination message buffering', {
+				component: LogComponents.agent,
+				destinationId: this.destinationId,
+			});
+			const proxy = new ExternalMqttFlushProxy(this.client as ExternalMqttClient);
+
+			this.agentLogger?.debugSync('Created ExternalMqttFlushProxy', {
+				component: LogComponents.agent,
+				destinationId: this.destinationId,
+				proxyType: 'ExternalMqttFlushProxy',
+			});
+
+			this.destBufferSync = new MessageBufferSync(proxy, this.agentLogger, {
+				scopeEndpointName: `ext-dest-${this.destinationId}`,
+				flushBatchSize: 100,
+				flushIntervalMs: 30000,
+				maxRetries: 3,
+				cleanupIntervalMs: 3600000,
+				maxBufferRecords: 5000,
+				dropPolicy: 'oldest',
+				flushTriggerThreshold: 500,
+				maxFlushPerCycle: 500,
+				bufferEvenWhenOnline: false,
+				enabled: true,
+			});
+
+			this.agentLogger?.debugSync('Created MessageBufferSync instance', {
+				component: LogComponents.agent,
+				destinationId: this.destinationId,
+				bufferConfig: {
+					scopeEndpointName: `ext-dest-${this.destinationId}`,
+					maxBufferRecords: 5000,
+					flushBatchSize: 100,
+					flushIntervalMs: 30000,
+				},
+			});
+
+			const startMs = Date.now();
+			await this.destBufferSync.start();
+			const startupMs = Date.now() - startMs;
+
+			const totalMs = Date.now() - initStart;
+			this.agentLogger?.debugSync('enableDestinationBuffering() - initialization complete', {
+				component: LogComponents.agent,
+				destinationId: this.destinationId,
+				bufferStartupMs: startupMs,
+				totalInitMs: totalMs,
+				timestamp: new Date().toISOString(),
+			});
+		} catch (error) {
+			const errorMsg = error instanceof Error ? error.message : String(error);
+			const errorStack = error instanceof Error ? error.stack : undefined;
+			const totalMs = Date.now() - initStart;
+
+			this.agentLogger?.errorSync(
+				'Failed to enable destination buffering',
+				error instanceof Error ? error : new Error(String(error)),
+				{
+					component: LogComponents.agent,
+					destinationId: this.destinationId,
+					error: errorMsg,
+					errorStack,
+					totalInitMs: totalMs,
+				},
+			);
+
+			throw error;
+		}
 	}
 
 	public static fromConfig(
