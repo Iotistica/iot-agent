@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 
 const props = defineProps<{
   type: string
@@ -15,6 +15,8 @@ const cfg = computed({
   set: (val) => emit('update:modelValue', val),
 })
 
+const maxPayloadSizeUnit = ref<'KB' | 'MB'>('MB')
+
 function set(key: string, value: unknown) {
   emit('update:modelValue', { ...props.modelValue, [key]: value })
 }
@@ -26,6 +28,37 @@ function setIn(outer: string, key: string, value: unknown) {
 
 function auth(key: string): unknown {
   return (props.modelValue.auth as Record<string, unknown>)?.[key]
+}
+
+/**
+ * Get max payload size value in current unit (KB or MB)
+ */
+function getMaxPayloadSizeValue(): number {
+  const bytes = (cfg.value.maxPayloadSize as number) ?? (1024 * 1024)
+  if (maxPayloadSizeUnit.value === 'MB') {
+    return Math.round((bytes / (1024 * 1024)) * 100) / 100
+  }
+  return Math.round((bytes / 1024) * 100) / 100
+}
+
+/**
+ * Set max payload size from input value and unit
+ */
+function setMaxPayloadSize(value: number | null, unit: 'KB' | 'MB'): void {
+  if (value === null || value <= 0) return
+  const bytes = unit === 'MB' 
+    ? Math.ceil(value * 1024 * 1024)
+    : Math.ceil(value * 1024)
+  set('maxPayloadSize', bytes)
+}
+
+/**
+ * Handle unit change and convert the displayed value
+ */
+function handleUnitChange(newUnit: 'KB' | 'MB'): void {
+  const currentValue = getMaxPayloadSizeValue()
+  maxPayloadSizeUnit.value = newUnit
+  setMaxPayloadSize(currentValue, maxPayloadSizeUnit.value)
 }
 </script>
 
@@ -49,6 +82,30 @@ function auth(key: string): unknown {
     </a-form-item>
     <a-form-item label="Topic prefix" :name="['config_json', 'topicPrefix']">
       <a-input :value="(cfg.topicPrefix as string) ?? ''" placeholder="e.g. edge/device01" @update:value="set('topicPrefix', $event)" />
+    </a-form-item>
+    <a-form-item label="Max Payload Size" :name="['config_json', 'maxPayloadSize']">
+      <div style="display: flex; gap: 8px">
+        <a-input-number
+          :value="getMaxPayloadSizeValue()"
+          :min="1"
+          :max="1000"
+          :step="0.1"
+          style="flex: 1"
+          placeholder="1-1000"
+          @update:value="(val) => setMaxPayloadSize(val, maxPayloadSizeUnit)"
+        />
+        <a-select
+          :value="maxPayloadSizeUnit"
+          style="width: 80px"
+          @update:value="handleUnitChange"
+        >
+          <a-select-option value="KB">KB</a-select-option>
+          <a-select-option value="MB">MB</a-select-option>
+        </a-select>
+      </div>
+      <div style="color: var(--text-muted); font-size: 12px; margin-top: 6px">
+        <strong>Defaults:</strong> Azure 256 KB, AWS 128 KB, Mosquitto 1 MB. Leave blank for 1 MB.
+      </div>
     </a-form-item>
   </template>
 
