@@ -769,6 +769,10 @@ export class PublishManager extends EventEmitter {
 			queueMB: (this.queueBytesAtPause / (1024 * 1024)).toFixed(2),
 		});
 		
+		// Phase 6-R2 Enhancement: Immediate queue health check when pausing
+		// This catches buffer spikes before the 1-second interval monitor can
+		this.checkQueueHealth();
+		
 		try {
 
 			const name = this.config.name || 'unknown';

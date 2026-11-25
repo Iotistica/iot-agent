@@ -365,17 +365,6 @@ export class MqttPublishPlugin extends BasePublishPlugin {
 		const startTime = Date.now();
 		const batchId = Math.random().toString(36).substring(7);
 
-		this.agentLogger?.debugSync('MQTT publishBatch() entry', {
-			component: LogComponents.agent,
-			destinationId: this.destinationId,
-			batchId,
-			batchSize: batch.length,
-			isConnected: this.isConnected(),
-			hasBuffer: !!this.destBufferSync,
-			bufferEnabled: !!this.destBufferSync,
-			timestamp: new Date().toISOString(),
-		});
-
 		if (this.destBufferSync && !this.isConnected()) {
 			this.agentLogger?.debugSync('Destination offline at batch entry, buffering entire batch', {
 				component: LogComponents.agent,
@@ -416,6 +405,10 @@ export class MqttPublishPlugin extends BasePublishPlugin {
 		let successCount = 0;
 		let failureCount = 0;
 
+		// Phase 6-R3: Concurrent MQTT publishing (4 at a time, not sequential)
+		const MQTT_PUBLISH_CONCURRENCY = 4;
+		const pending: Promise<void>[] = [];
+
 		for (let i = 0; i < batch.length; i++) {
 			const item = batch[i];
 			const itemId = `${batchId}-${i}`;
@@ -437,6 +430,22 @@ export class MqttPublishPlugin extends BasePublishPlugin {
 				continue;
 			}
 
+			// If we have enough concurrent publishes pending, wait for one to complete
+			if (pending.length >= MQTT_PUBLISH_CONCURRENCY) {
+				await Promise.race(pending);
+				// Remove the first resolved promise
+				for (let j = 0; j < pending.length; j++) {
+					if (pending[j].constructor.name !== 'Promise' || (pending[j] as any).resolved) {
+						pending.splice(j, 1);
+						break;
+					}
+				}
+				// Fallback: splice first element if race resolved
+				if (pending.length >= MQTT_PUBLISH_CONCURRENCY) {
+					pending.shift();
+				}
+			}
+
 			try {
 				// Log outgoing payload size
 				const payloadBytes = Buffer.isBuffer(item.payload)
@@ -447,15 +456,28 @@ export class MqttPublishPlugin extends BasePublishPlugin {
 				// Batch-level summary logs provide sufficient visibility
 
 				const publishStart = Date.now();
-				await this.client!.publish(item.topic, item.payload, item.options);
-				const publishMs = Date.now() - publishStart;
+				// Don't await here - add to concurrent queue
+				const publishPromise = this.client!.publish(item.topic, item.payload, item.options)
+					.then(() => {
+						successCount++;
+					})
+					.catch((error) => {
+						// Connection lost or publish failed, buffer this item if enabled
+						failedChunks.push(item);
+						failureCount++;
+					});
 
-				successCount++;
+				pending.push(publishPromise);
 			} catch (error) {
-				// Connection lost or publish failed, buffer this item if enabled
+				// Synchronous errors during publish setup
 				failedChunks.push(item);
 				failureCount++;
 			}
+		}
+
+		// Wait for all pending publishes to complete
+		if (pending.length > 0) {
+			await Promise.all(pending);
 		}
 
 		// Buffer any failed items if offline mode is enabled
@@ -468,6 +490,7 @@ export class MqttPublishPlugin extends BasePublishPlugin {
 				successCount,
 				totalItems: batch.length,
 				bufferEnabled: !!this.destBufferSync,
+				concurrency: MQTT_PUBLISH_CONCURRENCY,
 			});
 
 			if (this.destBufferSync) {
