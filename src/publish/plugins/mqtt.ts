@@ -411,19 +411,42 @@ export class MqttPublishPlugin extends BasePublishPlugin {
 		const pending = new Set<Promise<void>>();
 		const batchStartMs = Date.now();
 		let eventLoopYieldCount = 0;
+		let maxPendingSize = 0;
+		let raceWaitCount = 0;
+
+		this.agentLogger?.debugSync('[R3] Batch processing started', {
+			component: LogComponents.agent,
+			batchId,
+			batchSize: batch.length,
+			concurrencyLimit: MQTT_PUBLISH_CONCURRENCY,
+		});
 
 		for (const item of batch) {
 			// If we have enough concurrent publishes pending, wait for one to complete
 			if (pending.size >= MQTT_PUBLISH_CONCURRENCY) {
+				raceWaitCount++;
 				const raceStart = Date.now();
-				await Promise.race(pending);
+				await Promise.race(Array.from(pending));
 				const raceMs = Date.now() - raceStart;
+				
+				this.agentLogger?.debugSync('[R3] Race completed', {
+					component: LogComponents.agent,
+					batchId,
+					raceMs,
+					raceCount: raceWaitCount,
+					pendingSizeAfterRace: pending.size,
+				});
 				
 				// Every ~50 items, yield control back to event loop for health checks
 				eventLoopYieldCount++;
 				if (eventLoopYieldCount % 50 === 0) {
 					await new Promise(resolve => setImmediate(resolve));
 				}
+			}
+
+			// Track max concurrency observed
+			if (pending.size > maxPendingSize) {
+				maxPendingSize = pending.size;
 			}
 
 			// Recheck connection before each item (can drop between publishes)
@@ -475,9 +498,27 @@ export class MqttPublishPlugin extends BasePublishPlugin {
 		}
 
 		// Wait for all pending publishes to complete
+		const finalWaitStart = Date.now();
 		await Promise.all(pending);
+		const finalWaitMs = Date.now() - finalWaitStart;
 
 		const batchDurationMs = Date.now() - batchStartMs;
+		
+		// Always log R3 metrics for diagnosis
+		this.agentLogger?.debugSync('[R3] Batch processing completed', {
+			component: LogComponents.agent,
+			batchId,
+			batchSize: batch.length,
+			totalDurationMs: batchDurationMs,
+			finalWaitMs,
+			raceWaitCount,
+			maxConcurrency: maxPendingSize,
+			eventLoopYields: eventLoopYieldCount,
+			successCount,
+			failureCount,
+			avgMsPerItem: (batchDurationMs / batch.length).toFixed(2),
+		});
+
 		if (batchDurationMs > 2000 && batch.length > 1000) {
 			this.agentLogger?.warnSync('Large batch processing took excessive time', {
 				component: LogComponents.agent,
@@ -485,6 +526,7 @@ export class MqttPublishPlugin extends BasePublishPlugin {
 				batchSize: batch.length,
 				durationMs: batchDurationMs,
 				eventLoopYields: eventLoopYieldCount,
+				maxConcurrency: maxPendingSize,
 				avgTimePerItem: (batchDurationMs / batch.length).toFixed(2),
 				warning: 'Consider reducing MAX_BATCH_MESSAGES if web admin is unresponsive',
 			});
