@@ -264,279 +264,81 @@ export class MqttPublishPlugin extends BasePublishPlugin {
 	}
 
 	override async publishBatch(batch: PublishBatchItem[]): Promise<void> {
-		// Chunk all payloads first, regardless of connection state
-		const chunkedBatch: PublishBatchItem[] = [];
-		for (const item of batch) {
-			const chunks = this.chunkPayload(item);
-			chunkedBatch.push(...chunks);
-		}
+		// Payloads are already pre-chunked by Manager (Phase 2 architecture refactoring).
+		// This method simply publishes them directly.
 
 		if (this.destBufferSync && !this.isConnected()) {
 			this.agentLogger?.debugSync('Destination offline, buffering batch', {
 				component: LogComponents.agent,
-				messages: chunkedBatch.length,
+				messages: batch.length,
 				destinationId: this.destinationId,
 			});
-			await this.bufferBatch(chunkedBatch);
+			await this.bufferBatch(batch);
 			return;
 		}
 
 		const failedChunks: PublishBatchItem[] = [];
-		for (const chunk of chunkedBatch) {
-			// Recheck connection before each chunk (can drop between publishes)
+		for (const item of batch) {
+			// Recheck connection before each item (can drop between publishes)
 			if (!this.isConnected()) {
-				this.agentLogger?.debugSync('Destination offline during chunk publish', {
+				this.agentLogger?.debugSync('Destination offline during batch item publish', {
 					component: LogComponents.agent,
 					destinationId: this.destinationId,
-					topic: chunk.topic,
+					topic: item.topic,
 				});
-				failedChunks.push(chunk);
+				failedChunks.push(item);
 				continue;
 			}
 			try {
 				// Log outgoing payload size
-				const payloadBytes = Buffer.isBuffer(chunk.payload)
-					? chunk.payload.length
-					: Buffer.byteLength(chunk.payload, 'utf8');
+				const payloadBytes = Buffer.isBuffer(item.payload)
+					? item.payload.length
+					: Buffer.byteLength(item.payload, 'utf8');
 
-				this.agentLogger?.debugSync('MQTT outgoing payload', {
+				this.agentLogger?.debugSync('MQTT publishing item', {
 					component: LogComponents.agent,
 					destinationId: this.destinationId,
-					topic: chunk.topic,
+					topic: item.topic,
 					payloadBytes,
 					payloadKB: (payloadBytes / 1024).toFixed(2),
 					payloadMB: (payloadBytes / 1048576).toFixed(4),
-					isBuffer: Buffer.isBuffer(chunk.payload),
-					maxReadingsPerMessage: this.maxReadingsPerMessage,
-					maxPayloadSizeBytes: this.maxPayloadSizeBytes,
-					compressionMethod: this.compressionMethod,
+					isBuffer: Buffer.isBuffer(item.payload),
 				});
 
-				await this.client!.publish(chunk.topic, chunk.payload, chunk.options);
+				await this.client!.publish(item.topic, item.payload, item.options);
 			} catch (error) {
-				// Log the actual error before buffering
 				const errorMessage = error instanceof Error ? error.message : String(error);
-				const errorStack = error instanceof Error ? error.stack : undefined;
 
-				this.agentLogger?.warnSync('MQTT publish failed for chunk', {
+				this.agentLogger?.debugSync('MQTT publish failed for item', {
 					component: LogComponents.agent,
 					destinationId: this.destinationId,
-					topic: chunk.topic,
+					topic: item.topic,
 					error: errorMessage,
-					stack: errorStack,
-					willBuffer: this.destBufferSync,
+					willBuffer: !!this.destBufferSync,
 				});
 
-				// Connection lost or publish failed, buffer this chunk if enabled
-				failedChunks.push(chunk);
+				// Connection lost or publish failed, buffer this item if enabled
+				failedChunks.push(item);
 			}
 		}
 
-		// Buffer any failed chunks if offline mode is enabled
+		// Buffer any failed items if offline mode is enabled
 		if (failedChunks.length > 0) {
 			if (this.destBufferSync) {
 				await this.bufferBatch(failedChunks);
 			} else {
-				// Critical: buffering disabled and chunks failed — data loss situation
-				const totalReadings = failedChunks.reduce((sum, c) => {
-					const payload = typeof c.payload === 'string' ? c.payload : c.payload.toString();
-					try {
-						const parsed = JSON.parse(payload);
-						const readingsKey = Array.isArray(parsed.tags) ? 'tags'
-							: Array.isArray(parsed.features) ? 'features'
-								: Array.isArray(parsed.messages) ? 'messages'
-									: null;
-						return sum + (readingsKey ? (parsed[readingsKey] as unknown[]).length : 0);
-					} catch {
-						return sum;
-					}
-				}, 0);
-
 				this.agentLogger?.errorSync(
-					'MQTT chunks failed and buffering disabled — data loss risk',
+					'MQTT batch items failed and buffering disabled — data loss risk',
 					new Error('Buffering disabled and publish failed'),
 					{
 						component: LogComponents.agent,
 						destinationId: this.destinationId,
-						failedChunkCount: failedChunks.length,
-						totalReadings,
+						failedItemCount: failedChunks.length,
 						recommendation: 'Enable buffering for this destination or verify MQTT broker connectivity',
 					},
 				);
 			}
 		}
-	}
-
-	private chunkPayload(item: PublishBatchItem): PublishBatchItem[] {
-		let payload = item.payload;
-
-		// Convert Buffer to string if needed (happens when msgpack compression is applied by default)
-		if (Buffer.isBuffer(payload)) {
-			try {
-				payload = payload.toString('utf-8');
-				this.logger?.debug('Converted Buffer payload to string for chunking', {
-					destinationId: this.destinationId,
-					bufferSize: item.payload.length,
-				});
-			} catch (e) {
-				this.logger?.debug('Skipping chunking: failed to convert Buffer to string', {
-					destinationId: this.destinationId,
-					error: e instanceof Error ? e.message : String(e),
-				});
-				return [item];
-			}
-		}
-
-		if (typeof payload !== 'string') {
-			this.logger?.debug('Skipping chunking: payload is not string', {
-				destinationId: this.destinationId,
-				payloadType: typeof payload,
-				isBuffer: Buffer.isBuffer(payload),
-			});
-			return [item];
-		}
-
-		const subscriptionLimit = typeof item.options?.maxPointsPerMessage === 'number' && item.options.maxPointsPerMessage > 0
-			? item.options.maxPointsPerMessage
-			: Infinity;
-		const limit = Math.min(this.maxReadingsPerMessage, subscriptionLimit);
-		if (!Number.isFinite(limit) || limit <= 0) {
-			this.logger?.debug('Skipping chunking: invalid limit', {
-				destinationId: this.destinationId,
-				subscriptionLimit,
-				maxReadingsPerMessage: this.maxReadingsPerMessage,
-				limit,
-			});
-			return [item];
-		}
-
-		let parsed: Record<string, unknown>;
-		try { parsed = JSON.parse(payload); }
-		catch (e) {
-			this.logger?.debug('Skipping chunking: JSON parse failed', {
-				destinationId: this.destinationId,
-				error: e instanceof Error ? e.message : String(e),
-				payloadLength: payload.length,
-			});
-			return [item];
-		}
-
-		const readingsKey = Array.isArray(parsed.tags) ? 'tags'
-			: Array.isArray(parsed.features) ? 'features'
-				: Array.isArray(parsed.messages) ? 'messages'
-					: null;
-		if (!readingsKey) {
-			this.logger?.debug('Skipping chunking: no readings key found', {
-				destinationId: this.destinationId,
-				keys: Object.keys(parsed),
-				hasTags: Array.isArray(parsed.tags),
-				hasFeatures: Array.isArray(parsed.features),
-				hasMessages: Array.isArray(parsed.messages),
-			});
-			return [item];
-		}
-
-		const readings = parsed[readingsKey] as unknown[];
-		if (readings.length <= limit) {
-			this.logger?.debug('Skipping chunking: readings below limit', {
-				destinationId: this.destinationId,
-				readingsCount: readings.length,
-				limit,
-			});
-			return [item];
-		}
-
-		// Use adaptive chunking to validate actual payload sizes
-		return this.adaptiveChunk(parsed, readingsKey, readings, item, limit);
-	}
-
-	/**
-	 * Adaptively chunk payload by validating actual serialized byte sizes.
-	 * Reduces chunk size if serialized payload exceeds maxPayloadSizeBytes.
-	 *
-	 * @param parsed Parsed payload object
-	 * @param readingsKey Key containing readings array ('tags', 'features', 'messages')
-	 * @param readings Array of reading objects
-	 * @param item Original PublishBatchItem (for preserving metadata)
-	 * @param initialChunkSize Initial chunk size from calculator
-	 * @returns Array of PublishBatchItems, each with validated payload size
-	 */
-	private adaptiveChunk(
-		parsed: Record<string, unknown>,
-		readingsKey: string,
-		readings: unknown[],
-		item: PublishBatchItem,
-		initialChunkSize: number,
-	): PublishBatchItem[] {
-		const chunks: PublishBatchItem[] = [];
-		const maxBytes = this.maxPayloadSizeBytes || 1024 * 1024; // Fallback to 1 MB
-		const safetyMargin = 0.9; // Allow up to 90% of max size
-
-		let currentChunkSize = initialChunkSize;
-		let totalChunksCreated = 0;
-		const startTime = Date.now();
-
-		for (let i = 0; i < readings.length; i += currentChunkSize) {
-			let slice = readings.slice(i, i + currentChunkSize);
-			let chunkPayload = JSON.stringify({ ...parsed, [readingsKey]: slice });
-			let chunkBytes = Buffer.byteLength(chunkPayload, 'utf8');
-
-			// Adaptive reduction: if chunk exceeds safe size, reduce and retry
-			let reductionAttempts = 0;
-			const maxReductionAttempts = 20; // Prevent infinite loops
-			while (chunkBytes > maxBytes * safetyMargin && reductionAttempts < maxReductionAttempts) {
-				currentChunkSize = Math.max(1, Math.floor(currentChunkSize * 0.8)); // Reduce by 20%
-				slice = readings.slice(i, i + currentChunkSize);
-				chunkPayload = JSON.stringify({ ...parsed, [readingsKey]: slice });
-				chunkBytes = Buffer.byteLength(chunkPayload, 'utf8');
-				reductionAttempts++;
-			}
-
-			// Edge case: single reading doesn't fit
-			if (chunkBytes > maxBytes * safetyMargin) {
-				this.logger?.warn('Chunk exceeds max payload size even with single reading', {
-					destinationId: this.destinationId,
-					singleReadingBytes: chunkBytes,
-					maxPayloadBytes: maxBytes,
-					exceedsBy: (chunkBytes / maxBytes).toFixed(2),
-				});
-				// Fall through and include anyway (better to try than silently drop)
-			}
-
-			chunks.push({ ...item, payload: chunkPayload });
-			totalChunksCreated++;
-
-			// Log if chunk size had to be reduced significantly
-			if (currentChunkSize < initialChunkSize * 0.9) {
-				this.logger?.debug('Chunk size reduced due to actual payload size', {
-					destinationId: this.destinationId,
-					initialChunkSize,
-					adaptedChunkSize: currentChunkSize,
-					actualBytesInChunk: chunkBytes,
-					maxPayloadBytes: maxBytes,
-					reductionAttempts,
-					readingsInChunk: slice.length,
-				});
-			}
-		}
-
-		const durationMs = Date.now() - startTime;
-		this.logger?.info('Adaptively chunked payload for MQTT publish', {
-			destinationId: this.destinationId,
-			totalReadings: readings.length,
-			chunks: chunks.length,
-			initialChunkSize,
-			finalChunkSize: currentChunkSize,
-			calculatedFrom: this.maxPayloadSizeBytes ? 'max-payload-size' : 'config-or-default',
-			maxPayloadSizeBytes: this.maxPayloadSizeBytes,
-			compressionMethod: this.compressionMethod,
-			validationMs: durationMs,
-			avgBytesPerChunk: chunks.length > 0
-				? Math.round(chunks.reduce((sum, c) => sum + Buffer.byteLength(String(c.payload), 'utf8'), 0) / chunks.length)
-				: 0,
-		});
-
-		return chunks;
 	}
 
 	private async bufferBatch(batch: PublishBatchItem[]): Promise<void> {

@@ -247,6 +247,24 @@ export abstract class BaseMqttClient extends EventEmitter implements MqttConnect
 			isBuffer: Buffer.isBuffer(payload),
 		});
 
+		// Final defensive check: validate packet size (most MQTT brokers limit to 256 MB, but
+		// many cloud providers limit to 128 MB or less; we use 100 MB as a safe upper bound).
+		const maxPacketSize = 100 * 1024 * 1024; // 100 MB
+		if (payloadBytes > maxPacketSize) {
+			const error = new Error(
+				`${this.providerName}: payload size ${(payloadBytes / 1048576).toFixed(2)} MB exceeds maximum allowed ${(maxPacketSize / 1048576).toFixed(0)} MB`,
+			);
+			this.logger?.errorSync('MQTT packet size validation failed', error, {
+				component: LogComponents.agent,
+				provider: this.providerName,
+				targetTopic,
+				payloadBytes,
+				maxPacketSize,
+				exceedsBy: (payloadBytes - maxPacketSize),
+			});
+			throw error;
+		}
+
 		let lastError: Error | null = null;
 		for (let attempt = 0; attempt < this.maxPublishRetries; attempt++) {
 			try {
