@@ -525,28 +525,28 @@ function reportGCMetrics(): void {
 		.map(([type, count]) => `${type}=${count}`)
 		.join(', ');
 
-	logger?.debugSync('GC metrics report', {
-		component: LogComponents.metrics,
-		// GC events
-		totalGCsInWindow: gcMetrics.totalGCs,
-		gcFrequencyPerMin: gcFrequencyPerMin.toFixed(2),
-		totalPauseMsInWindow: gcMetrics.totalPauseMs.toFixed(1),
-		avgPauseMs: avgPauseMs.toFixed(2),
-		maxPauseMs: gcMetrics.maxPauseMs.toFixed(2),
-		// GC type breakdown (when available)
-		minorGCs: gcMetrics.minorGCs,
-		majorGCs: gcMetrics.majorGCs,
-		incrementalGCs: gcMetrics.incrementalGCs,
-		weakCallbackGCs: gcMetrics.weakCallbackGCs,
-		gcTypeBreakdown: gcTypeBreakdown || 'none',
-		// Event-loop delay
-		eventLoopDelayMeanMs: mean.toFixed(2),
-		eventLoopDelayP95Ms: p95.toFixed(2),
-		eventLoopDelayP99Ms: p99.toFixed(2),
-		eventLoopDelayMaxMs: max.toFixed(2),
-		// Window info
-		windowDurationSec: windowDurationSec.toFixed(1)
-	});
+	// logger?.debugSync('GC metrics report', {
+	// 	component: LogComponents.metrics,
+	// 	// GC events
+	// 	totalGCsInWindow: gcMetrics.totalGCs,
+	// 	gcFrequencyPerMin: gcFrequencyPerMin.toFixed(2),
+	// 	totalPauseMsInWindow: gcMetrics.totalPauseMs.toFixed(1),
+	// 	avgPauseMs: avgPauseMs.toFixed(2),
+	// 	maxPauseMs: gcMetrics.maxPauseMs.toFixed(2),
+	// 	// GC type breakdown (when available)
+	// 	minorGCs: gcMetrics.minorGCs,
+	// 	majorGCs: gcMetrics.majorGCs,
+	// 	incrementalGCs: gcMetrics.incrementalGCs,
+	// 	weakCallbackGCs: gcMetrics.weakCallbackGCs,
+	// 	gcTypeBreakdown: gcTypeBreakdown || 'none',
+	// 	// Event-loop delay
+	// 	eventLoopDelayMeanMs: mean.toFixed(2),
+	// 	eventLoopDelayP95Ms: p95.toFixed(2),
+	// 	eventLoopDelayP99Ms: p99.toFixed(2),
+	// 	eventLoopDelayMaxMs: max.toFixed(2),
+	// 	// Window info
+	// 	windowDurationSec: windowDurationSec.toFixed(1)
+	// });
 
 	// Update event loop health circuit breaker
 	const wasHealthy = _eventLoopHealthy;

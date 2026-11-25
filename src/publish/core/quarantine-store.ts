@@ -102,17 +102,6 @@ export class QuarantineStore {
 
 		this.store.set(id, record);
 
-		this.logger?.warnSync('Reading quarantined - exceeds max packet size', {
-			component: LogComponents.agent,
-			quarantineId: id,
-			destinationId,
-			format,
-			estimatedBytes,
-			maxPacketSizeBytes,
-			exceedsBy: record.exceedsBy,
-			storageUsage: `${this.store.size}/${this.maxStorageCount}`,
-		});
-
 		return id;
 	}
 

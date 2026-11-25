@@ -232,7 +232,18 @@ export class PublishManager extends EventEmitter {
 	private destinationHealthTimer: NodeJS.Timeout | null = null;
 	private disconnectedSince = new Map<IPublishPlugin, number>();
 
+	// Phase 6-R1: Metrics baseline for queue health and backpressure analysis
+	private metricsReportingInterval: NodeJS.Timeout | null = null;
+	private socketPausedAt = 0;
+	private socketPauseDurationMs = 0;
+	private socketPauseCount = 0;
+	private publishCycleStartMs = 0;
+	private messageCountAtPause = 0;
+	private queueBytesAtPause = 0;
+
 	private readonly onConnected = (): void => {
+		this.batcher.resetReadBuffer(); // NEW
+
 		if (this.needStop) return;
 		this.stats.recordConnected();
 		if (this.config.bufferTimeMs > 0) this.startBufferTimer();
@@ -252,10 +263,15 @@ export class PublishManager extends EventEmitter {
 	};
 
 	private readonly onDisconnected = (): void => {
+		this.batcher.resetReadBuffer(); // NEW
+
 		if (this.needStop) return;
 		if (this.batcher.messageCount > 0) {
 			this.publishBatch().catch((err) => {
-				this.logger?.error('Failed to publish batch on disconnect', err);
+				this.logger?.error(
+					'Failed to publish batch on disconnect',
+					err
+				);
 			});
 		}
 		this.emit('disconnected');
@@ -320,6 +336,9 @@ export class PublishManager extends EventEmitter {
 				this.logger?.warn('Schema declaration failed', err, { source: this.endpointName });
 			}
 		});
+
+		// Phase 6-R1: Start metrics reporting for queue health analysis
+		this.startMetricsReporting();
 	}
 
 	private async initSchemaDrift(): Promise<void> {
@@ -517,6 +536,7 @@ export class PublishManager extends EventEmitter {
 		this.heartbeat?.stop();
 		this.clearBufferTimer();
 		this.stopDestinationHealthMonitor();
+		this.stopMetricsReporting();
 		this.detachConnectionHandlers();
 		this.connection.disconnect();
 
@@ -718,7 +738,21 @@ export class PublishManager extends EventEmitter {
 
 		this.publishing = true;
 		this.publishingStartedAt = Date.now();
+		this.publishCycleStartMs = Date.now();
+		this.messageCountAtPause = this.batcher.messageCount;
+		this.queueBytesAtPause = this.batcher.totalBytes;
+		
 		this.connection.pause();
+		this.socketPausedAt = Date.now();
+		this.socketPauseCount++;
+		this.logger?.debug('[Metrics] Socket paused for publish cycle', {
+			component: LogComponents.devicePublish,
+			endpoint: this.config.name || 'unknown',
+			messageCount: this.messageCountAtPause,
+			queueBytes: this.queueBytesAtPause,
+			queueMB: (this.queueBytesAtPause / (1024 * 1024)).toFixed(2),
+		});
+		
 		try {
 
 			const name = this.config.name || 'unknown';
@@ -787,9 +821,24 @@ export class PublishManager extends EventEmitter {
 			await this.publishOnline(topic, data, msgId, baselineSize, messageCount, batchBytes, enriched, name, jsonString, jsonBytes);
 		} finally {
 			const durationMs = Date.now() - this.publishingStartedAt;
+			this.socketPauseDurationMs = Date.now() - this.socketPausedAt;
+			
 			if (durationMs > 5_000) {
 				this.logger?.warn(`Publish cycle took ${durationMs}ms`, { source: this.config.name || 'unknown' });
 			}
+			
+			// Log socket resume metrics
+			this.logger?.debug('[Metrics] Socket resumed after publish cycle', {
+				component: LogComponents.devicePublish,
+				endpoint: this.config.name || 'unknown',
+				pauseDurationMs: this.socketPauseDurationMs,
+				publishCycleDurationMs: durationMs,
+				messageCountProcessed: this.messageCountAtPause,
+				queueBytesProcessed: this.queueBytesAtPause,
+				queueMB: (this.queueBytesAtPause / (1024 * 1024)).toFixed(2),
+				totalPauses: this.socketPauseCount,
+			});
+			
 			this.publishing = false;
 			this.publishingStartedAt = 0;
 			this.connection.resume();
@@ -1959,6 +2008,61 @@ export class PublishManager extends EventEmitter {
 			this.destinationHealthTimer = null;
 		}
 		this.disconnectedSince.clear();
+	}
+
+	// Phase 6-R1: Metrics collection for queue health and backpressure analysis
+	private startMetricsReporting(): void {
+		if (this.needStop) return;
+		this.stopMetricsReporting();
+		this.metricsReportingInterval = setInterval(() => {
+			this.reportQueueMetrics();
+		}, 10_000); // Report every 10 seconds
+	}
+
+	private stopMetricsReporting(): void {
+		if (this.metricsReportingInterval) {
+			clearInterval(this.metricsReportingInterval);
+			this.metricsReportingInterval = null;
+		}
+	}
+
+	private reportQueueMetrics(): void {
+		if (this.needStop || !this.logger) return;
+
+		const queueMessages = this.batcher.messageCount;
+		const queueBytes = this.batcher.totalBytes;
+		const queueMB = (queueBytes / (1024 * 1024)).toFixed(2);
+		const receivedCount = this.batcher.totalReceived;
+		const publishedCount = this.stats.data.messagesPublished;
+		const pendingCount = receivedCount - publishedCount;
+		
+		// Calculate average pause duration if we've had pauses
+		const avgPauseDurationMs = this.socketPauseCount > 0 
+			? Math.round(this.socketPauseDurationMs / this.socketPauseCount)
+			: 0;
+
+		// Calculate throughput (messages per second)
+		const ipcThroughputMsgSec = pendingCount > 0 ? Math.round(pendingCount * 1000 / (Date.now() - this.publishingStartedAt || 1)) : 0;
+
+		this.logger?.info('[Metrics] Queue health report', {
+			component: LogComponents.devicePublish,
+			endpoint: this.config.name || 'unknown',
+			queueMessages,
+			queueBytes,
+			queueMB: parseFloat(queueMB),
+			totalReceived: receivedCount,
+			totalPublished: publishedCount,
+			pendingMessages: pendingCount,
+			socketPauseCount: this.socketPauseCount,
+			avgPauseDurationMs,
+			ipcThroughputMsgSec,
+			heapUsedMB: (this.getHeapUsedMB()).toFixed(1),
+		});
+	}
+
+	private getHeapUsedMB(): number {
+		const heapStats = getHeapStatistics();
+		return heapStats.total_heap_size / (1024 * 1024);
 	}
 
 	private async checkDestinationHealth(): Promise<void> {

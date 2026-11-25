@@ -236,17 +236,7 @@ export abstract class BaseMqttClient extends EventEmitter implements MqttConnect
 
 		// Log outgoing payload size
 		const payloadBytes = Buffer.isBuffer(payload) ? payload.length : Buffer.byteLength(payload, 'utf8');
-		this.logger?.debugSync('MQTT base client publishing', {
-			component: LogComponents.agent,
-			provider: this.providerName,
-			targetTopic,
-			payloadBytes,
-			payloadKB: (payloadBytes / 1024).toFixed(2),
-			payloadMB: (payloadBytes / 1048576).toFixed(4),
-			qos,
-			isBuffer: Buffer.isBuffer(payload),
-		});
-
+		
 		// Final defensive check: validate packet size (most MQTT brokers limit to 256 MB, but
 		// many cloud providers limit to 128 MB or less; we use 100 MB as a safe upper bound).
 		const maxPacketSize = 100 * 1024 * 1024; // 100 MB

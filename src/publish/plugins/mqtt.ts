@@ -443,54 +443,15 @@ export class MqttPublishPlugin extends BasePublishPlugin {
 					? item.payload.length
 					: Buffer.byteLength(item.payload, 'utf8');
 
-				this.agentLogger?.debugSync('MQTT publishing item', {
-					component: LogComponents.agent,
-					batchId,
-					itemId,
-					itemIndex: i,
-					totalItems: batch.length,
-					destinationId: this.destinationId,
-					topic: item.topic,
-					payloadBytes,
-					payloadKB: (payloadBytes / 1024).toFixed(2),
-					payloadMB: (payloadBytes / 1048576).toFixed(4),
-					isBuffer: Buffer.isBuffer(item.payload),
-					qos: item.options?.qos ?? 1,
-					timestamp: new Date().toISOString(),
-				});
+				// Per-item logging removed - too verbose in loops
+				// Batch-level summary logs provide sufficient visibility
 
 				const publishStart = Date.now();
 				await this.client!.publish(item.topic, item.payload, item.options);
 				const publishMs = Date.now() - publishStart;
 
-				this.agentLogger?.debugSync('MQTT publish succeeded', {
-					component: LogComponents.agent,
-					batchId,
-					itemId,
-					destinationId: this.destinationId,
-					topic: item.topic,
-					publishMs,
-					payloadBytes,
-				});
-
 				successCount++;
 			} catch (error) {
-				const errorMessage = error instanceof Error ? error.message : String(error);
-
-				this.agentLogger?.debugSync('MQTT publish failed for item', {
-					component: LogComponents.agent,
-					batchId,
-					itemId,
-					itemIndex: i,
-					totalItems: batch.length,
-					destinationId: this.destinationId,
-					topic: item.topic,
-					error: errorMessage,
-					willBuffer: !!this.destBufferSync,
-					action: 'publish_error',
-					timestamp: new Date().toISOString(),
-				});
-
 				// Connection lost or publish failed, buffer this item if enabled
 				failedChunks.push(item);
 				failureCount++;
@@ -549,19 +510,6 @@ export class MqttPublishPlugin extends BasePublishPlugin {
 			}
 		}
 
-		const elapsedMs = Date.now() - startTime;
-		this.agentLogger?.debugSync('MQTT publishBatch() exit', {
-			component: LogComponents.agent,
-			batchId,
-			destinationId: this.destinationId,
-			batchSize: batch.length,
-			successCount,
-			failureCount,
-			bufferedCount: failedChunks.length,
-			totalTimeMs: elapsedMs,
-			averageTimePerItemMs: batch.length > 0 ? (elapsedMs / batch.length).toFixed(2) : 0,
-			timestamp: new Date().toISOString(),
-		});
 	}
 
 	private async bufferBatch(batch: PublishBatchItem[]): Promise<void> {

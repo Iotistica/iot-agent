@@ -194,12 +194,36 @@ export class MessageBatcher extends EventEmitter {
 		}
 
 		let parsed: any;
+
 		try {
 			parsed = JSON.parse(raw);
 		} catch (err) {
+			const error = err instanceof Error
+				? err.message
+				: String(err);
+
+			const match = error.match(/position\s+(\d+)/i);
+			const position = match ? Number(match[1]) : -1;
+
+			const context = position >= 0
+				? raw.slice(
+					Math.max(0, position - 100),
+					Math.min(raw.length, position + 100)
+				)
+				: '';
+
+			const errorChar = position >= 0
+				? raw.charCodeAt(position)
+				: -1;
+
 			this.logger?.warn(
-				`JSON parse failed for '${deviceName}': ${err instanceof Error ? err.message : String(err)}`,
+				`JSON parse failed for '${deviceName}': ${error}` +
+				` | frameBytes=${byteLen}` +
+				` | errorPosition=${position}` +
+				` | errorChar=${errorChar}` +
+				` | context=${JSON.stringify(context)}`
 			);
+
 			return;
 		}
 
