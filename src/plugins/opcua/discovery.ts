@@ -565,7 +565,6 @@ export class OPCUADiscovery extends BaseDiscovery {
 		const signal = options?.signal;
 		let lastProgressReport = 0;
 		const BATCH_SIZE = 2000;
-		const CACHE_BATCH_SIZE = 10000;
 
 		// Determine discovery targets.
 		// When a rule provides explicit discoveryUrls, those are the targets — not a fallback.
@@ -879,36 +878,86 @@ export class OPCUADiscovery extends BaseDiscovery {
 									}
 								}
 
-								// Reads the OPC-UA standard EngineeringUnits property (Part 8) — a
-								// child Property node (browseName "EngineeringUnits") of an
-								// AnalogItemType Variable, holding an EUInformation struct whose
-								// displayName.text is the actual unit string (e.g. "°C"). Only
-								// analog-style variables expose this at all, so a miss is the
-								// common case, not an error — best-effort like the DeviceUUID
-								// pre-scan above, silently returning undefined on any failure.
-								const readEngineeringUnits = async (variableNodeId: string): Promise<string | undefined> => {
-									try {
-										const propBrowse = await session.browse(variableNodeId);
-										const euRef = (propBrowse.references || []).find(
-											(r: any) => r.browseName?.name === 'EngineeringUnits'
-										);
-										if (!euRef) return undefined;
-
-										const euValue = await session.read({
-											nodeId: euRef.nodeId.toString(),
-											attributeId: AttributeIds.Value,
-										});
-										const euInfo = euValue.value?.value as { displayName?: { text?: string } } | string | undefined;
-										if (typeof euInfo === 'string') {
-											const trimmed = euInfo.trim();
-											return trimmed || undefined;
-										}
-										const text = euInfo?.displayName?.text;
-										return typeof text === 'string' && text.trim() ? text.trim() : undefined;
-									} catch (_) {
-										return undefined;
-									}
-								};
+                                // Bound requests by operation count, not node count. Split only
+                                // explicit size-limit failures; never retry a dead channel blindly.
+                                const readBounded = async (items: any[]): Promise<any[]> => {
+                                    if (!items.length) return [];
+                                    if (signal?.aborted) throw new Error('Discovery aborted');
+                                    try {
+                                        const result = await session.read(items);
+                                        if (!Array.isArray(result) || result.length !== items.length) throw new Error('Incomplete Read response');
+                                        return result;
+                                    } catch (error) {
+                                        if (items.length > 1 && /BadTooManyOperations|BadRequestTooLarge|BadResponseTooLarge/.test(String(error))) {
+                                            const mid = Math.floor(items.length / 2);
+                                            return [...await readBounded(items.slice(0, mid)), ...await readBounded(items.slice(mid))];
+                                        }
+                                        throw error;
+                                    }
+                                };
+                                const attrs = [AttributeIds.NodeClass, AttributeIds.AccessLevel, AttributeIds.UserAccessLevel, AttributeIds.Description];
+                                const pending = refs.filter(ref => {
+                                    const name = ref.browseName?.name || '';
+                                    const id = ref.nodeId.toString();
+                                    return !(depth === 0 && ['Server', 'ServerInfo', 'Types', 'Views', 'Aliases'].includes(name))
+                                        && name !== 'DeviceUUID' && !identifierNodeIds.has(id) && !_cachedIndex?.[id];
+                                });
+                                const attributes = new Map<string, any[]>();
+                                const units = new Map<string, string>();
+                                // Conservative defaults; servers may revise or reject these sizes.
+                                for (let offset = 0; offset < pending.length; offset += 100) {
+                                    if (signal?.aborted || _channelDead) break;
+                                    const group = pending.slice(offset, offset + 100);
+                                    const ids = group.map(ref => ref.nodeId.toString());
+                                    const values = await readBounded(ids.flatMap(id => attrs.map(attributeId => ({nodeId: id, attributeId}))));
+                                    ids.forEach((id, i) => attributes.set(id, values.slice(i * 4, i * 4 + 4)));
+                                    const variables = ids.filter(id => {
+                                        const value = attributes.get(id)?.[0];
+                                        return value?.statusCode?.isGood() && value.value?.value === 2;
+                                    });
+                                    // Browse property references in batches, draining continuation points.
+                                    const properties: Array<{owner: string; nodeId: string}> = [];
+                                    const browseUnits = async (owners: string[]): Promise<void> => {
+                                        if (!owners.length || signal?.aborted) return;
+                                        let results;
+                                        try {
+                                            results = await session.browse(owners.map(nodeId => ({nodeId, browseDirection: 0, referenceTypeId: 'ns=0;i=46', includeSubtypes: true, nodeClassMask: 0, resultMask: 63})));
+                                        } catch (error) {
+                                            if (owners.length > 1 && /BadTooManyOperations|BadRequestTooLarge|BadResponseTooLarge/.test(String(error))) {
+                                                const mid = Math.floor(owners.length / 2);
+                                                await browseUnits(owners.slice(0, mid)); await browseUnits(owners.slice(mid)); return;
+                                            }
+                                            throw error;
+                                        }
+                                        if (results.length !== owners.length) throw new Error('Incomplete Browse response');
+                                        for (let i = 0; i < results.length; i++) {
+                                            let result = results[i];
+                                            try {
+                                                while (result.statusCode.isGood()) {
+                                                    const property = result.references?.find(ref => ref.browseName?.name === 'EngineeringUnits');
+                                                    if (property) { properties.push({owner: owners[i], nodeId: property.nodeId.toString()}); break; }
+                                                    if (!result.continuationPoint?.length || signal?.aborted) break;
+                                                    result = await session.browseNext(result.continuationPoint, false);
+                                                }
+                                            } finally {
+                                                if (result.continuationPoint?.length) await session.browseNext(result.continuationPoint, true).catch(() => {});
+                                            }
+                                        }
+                                    };
+                                    try {
+                                        await browseUnits(variables);
+                                        const euValues = await readBounded(properties.map(p => ({nodeId: p.nodeId, attributeId: AttributeIds.Value})));
+                                        properties.forEach((p, i) => {
+                                            if (!euValues[i]?.statusCode?.isGood()) return;
+                                            const value = euValues[i]?.value?.value;
+                                            const text = typeof value === 'string' ? value : value?.displayName?.text;
+                                            if (typeof text === 'string' && text.trim()) units.set(p.owner, text.trim());
+                                        });
+                                    } catch (error) {
+                                        // Units remain best-effort, as in the original implementation.
+                                        this.logger?.debugSync('Batched EngineeringUnits lookup failed', {component: LogComponents.discovery, error: String(error)});
+                                    }
+                                }
 
 								for (const ref of refs) {
 									if (signal?.aborted || _channelDead) break;
@@ -983,12 +1032,8 @@ export class OPCUADiscovery extends BaseDiscovery {
 									// (see DiscoveryStore.save()), so if it doesn't report writable itself,
 									// any previously-known writable flag silently disappears on every rescan.
 									try {
-										const [nodeClass, accessLevelResult, userAccessLevelResult, descriptionResult] = await session.read([
-											{ nodeId: childNodeId, attributeId: AttributeIds.NodeClass },
-											{ nodeId: childNodeId, attributeId: AttributeIds.AccessLevel },
-											{ nodeId: childNodeId, attributeId: AttributeIds.UserAccessLevel },
-											{ nodeId: childNodeId, attributeId: AttributeIds.Description },
-										]);
+										const [nodeClass, accessLevelResult, userAccessLevelResult, descriptionResult] = attributes.get(childNodeId) ?? [];
+                                        if (!nodeClass) throw new Error('Missing batched NodeClass result');
 
 										if (!nodeClass.statusCode.isGood()) throw new Error(`NodeClass read failed: ${nodeClass.statusCode.name}`);
 										const actualNodeClass = nodeClass.value.value;
@@ -1012,7 +1057,7 @@ export class OPCUADiscovery extends BaseDiscovery {
 											// OPC-UA servers/simulators stash the unit string there instead of
 											// implementing the full EngineeringUnits/EUInformation structure.
 											const descriptionText = (descriptionResult?.value?.value as { text?: string } | undefined)?.text;
-											const unit = (await readEngineeringUnits(childNodeId))
+											const unit = units.get(childNodeId)
 												?? (typeof descriptionText === 'string' && looksLikeEngineeringUnit(descriptionText, nodeName) ? descriptionText.trim() : undefined);
 
 											dataPoints.push({
@@ -1057,29 +1102,6 @@ export class OPCUADiscovery extends BaseDiscovery {
 														metadata: { endpointUrl: url, applicationUri: precomputedApplicationUri, discoveryMode, batchSave: true },
 													});
 												} catch { /* non-fatal: batch save failure must not block discovery */ }
-											}
-
-											if (dataPoints.length > 0 && dataPoints.length % CACHE_BATCH_SIZE === 0) {
-												try {
-													const partialNodeIndex: Record<string, DiscoveryCacheEntry> = {};
-													for (const dp of dataPoints) {
-														partialNodeIndex[dp.nodeId] = {
-															name: dp.name,
-															browseName: dp.browseName ?? dp.name,
-															writable: dp.writable ?? false,
-															...(dp.unit && { unit: dp.unit }),
-															...(dp.device_uuid && { device_uuid: dp.device_uuid }),
-															...(dp.device_name && { device_name: dp.device_name }),
-															...(dp.parentNodeId && { parentNodeId: dp.parentNodeId }),
-														};
-													}
-													await setDiscoveryCache(url, {
-														structuralHash: computeStructuralHash(Object.keys(partialNodeIndex)),
-														nodeIndex: partialNodeIndex,
-														...(Object.keys(folderIndex).length > 0 && { folderIndex }),
-														updatedAt: new Date().toISOString(),
-													});
-												} catch { /* non-fatal */ }
 											}
 
 											this.logger?.debugSync(`Discovered variable: ${currentPath.join('/')}`, {
@@ -1186,30 +1208,6 @@ export class OPCUADiscovery extends BaseDiscovery {
 
 					} // end if (discoveryMode !== 'cached')
 
-					// Update discovery cache after a full or delta browse
-					if (discoveryMode !== 'cached' && dataPoints.length > 0) {
-						try {
-							const nodeIndex: Record<string, DiscoveryCacheEntry> = {};
-							for (const dp of dataPoints) {
-								nodeIndex[dp.nodeId] = {
-									name: dp.name,
-									browseName: dp.browseName ?? dp.name,
-									writable: dp.writable ?? false,
-									...(dp.unit && { unit: dp.unit }),
-									...(dp.device_uuid && { device_uuid: dp.device_uuid }),
-									...(dp.device_name && { device_name: dp.device_name }),
-									...(dp.parentNodeId && { parentNodeId: dp.parentNodeId }),
-								};
-							}
-							const hash = computeStructuralHash(Object.keys(nodeIndex));
-							await setDiscoveryCache(url, {
-								structuralHash: hash,
-								nodeIndex,
-								...(Object.keys(folderIndex).length > 0 && { folderIndex }),
-								updatedAt: new Date().toISOString(),
-							});
-						} catch { /* non-fatal: cache write failure doesn't block discovery */ }
-					}
 				} catch (browseError) {
 					if (endpoint.connection?.deviceIdentification) throw browseError;
 					status.complete = false;
@@ -1229,6 +1227,31 @@ export class OPCUADiscovery extends BaseDiscovery {
 					// inconsistent about keeping them accurate).
 					subscriptionsSupported = await this.probeSubscriptionSupport(session);
 					await session.close();
+				}
+
+				// Persist only a completed endpoint browse; never overwrite the last cache with partial results.
+				if (discoveryMode !== 'cached' && dataPointsComplete && !signal?.aborted && endpoints.length > 0) {
+					try {
+						const nodeIndex: Record<string, DiscoveryCacheEntry> = {};
+						for (const dp of dataPoints) {
+							nodeIndex[dp.nodeId] = {
+								name: dp.name,
+								browseName: dp.browseName ?? dp.name,
+								writable: dp.writable ?? false,
+								...(dp.unit && { unit: dp.unit }),
+								...(dp.device_uuid && { device_uuid: dp.device_uuid }),
+								...(dp.device_name && { device_name: dp.device_name }),
+								...(dp.parentNodeId && { parentNodeId: dp.parentNodeId }),
+							};
+						}
+						const hash = computeStructuralHash(Object.keys(nodeIndex));
+						await setDiscoveryCache(url, {
+							structuralHash: hash,
+							nodeIndex,
+							...(Object.keys(folderIndex).length > 0 && { folderIndex }),
+							updatedAt: new Date().toISOString(),
+						});
+					} catch { /* non-fatal: cache write failure doesn't block discovery */ }
 				}
 
 				this.logger?.debugSync(`OPC UA recursive tree browsing complete: discovered ${dataPoints.length} nodes`, {
