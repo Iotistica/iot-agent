@@ -43,6 +43,12 @@ const MAX_BATCH_BYTES = (() => {
 	return Math.min(10 * 1024 * 1024, Math.floor(heapLimit * 0.05));
 })();
 
+// Phase 6-R2: Queue monitoring and hard limits for backpressure
+const QUEUE_HARD_LIMIT_BYTES = 100 * 1024 * 1024;      // 100 MB absolute maximum
+const QUEUE_PAUSE_THRESHOLD_BYTES = 50 * 1024 * 1024;  // 50 MB warning threshold
+const QUEUE_RESUME_THRESHOLD_BYTES = 10 * 1024 * 1024; // 10 MB resume threshold
+const QUEUE_CHECK_INTERVAL_MS = 1000;                   // Check every 1 second
+
 // A single publish batch (one MessageBatcher flush) only carries whichever
 // readings happened to arrive before the flush fired — for a multi-device
 // pipe (e.g. one BACnet endpoint fanning in dozens of devices) that's a
@@ -241,6 +247,12 @@ export class PublishManager extends EventEmitter {
 	private messageCountAtPause = 0;
 	private queueBytesAtPause = 0;
 
+	// Phase 6-R2: Queue monitoring and hard limits enforcement
+	private queueHealthCheckInterval: NodeJS.Timeout | null = null;
+	private queueHealthWarningLogged = false;
+	private queueHealthCriticalLogged = false;
+	private lastQueueCheckMs = Date.now();
+
 	private readonly onConnected = (): void => {
 		this.batcher.resetReadBuffer(); // NEW
 
@@ -339,6 +351,9 @@ export class PublishManager extends EventEmitter {
 
 		// Phase 6-R1: Start metrics reporting for queue health analysis
 		this.startMetricsReporting();
+
+		// Phase 6-R2: Start queue health monitoring for hard limits
+		this.startQueueHealthMonitoring();
 	}
 
 	private async initSchemaDrift(): Promise<void> {
@@ -537,6 +552,7 @@ export class PublishManager extends EventEmitter {
 		this.clearBufferTimer();
 		this.stopDestinationHealthMonitor();
 		this.stopMetricsReporting();
+		this.stopQueueHealthMonitoring();
 		this.detachConnectionHandlers();
 		this.connection.disconnect();
 
@@ -2826,5 +2842,81 @@ export class PublishManager extends EventEmitter {
 
 			return this.projectReadingForSchemaDrift(message);
 		});
+	}
+
+	// Phase 6-R2: Queue monitoring and hard limits enforcement
+	private startQueueHealthMonitoring(): void {
+		this.queueHealthCheckInterval = setInterval(() => this.checkQueueHealth(), QUEUE_CHECK_INTERVAL_MS);
+	}
+
+	private stopQueueHealthMonitoring(): void {
+		if (this.queueHealthCheckInterval !== null) {
+			clearInterval(this.queueHealthCheckInterval);
+			this.queueHealthCheckInterval = null;
+		}
+		this.queueHealthWarningLogged = false;
+		this.queueHealthCriticalLogged = false;
+	}
+
+	private checkQueueHealth(): void {
+		if (this.needStop || this.publishing) {
+			return;
+		}
+
+		const queueBytes = this.batcher.totalBytes;
+		const queueMessages = this.batcher.messageCount;
+		const queueMB = (queueBytes / (1024 * 1024)).toFixed(2);
+		const endpoint = this.config.name || 'unknown';
+
+		// Check if queue exceeds hard limit — force flush
+		if (queueBytes >= QUEUE_HARD_LIMIT_BYTES) {
+			this.logger?.error('[Queue] CRITICAL: Queue at hard limit, forcing flush', {
+				component: LogComponents.devicePublish,
+				endpoint,
+				queueBytes,
+				queueMB: parseFloat(queueMB),
+				queueMessages,
+				hardLimitBytes: QUEUE_HARD_LIMIT_BYTES,
+				hardLimitMB: (QUEUE_HARD_LIMIT_BYTES / (1024 * 1024)).toFixed(2),
+			});
+			this.queueHealthCriticalLogged = true;
+			this.queueHealthWarningLogged = false;
+
+			// Force publish immediately
+			void this.publishBatch();
+			return;
+		}
+
+		// Check if queue exceeds warning threshold
+		if (queueBytes >= QUEUE_PAUSE_THRESHOLD_BYTES && !this.queueHealthWarningLogged) {
+			this.logger?.warn('[Queue] WARNING: Queue approaching pause threshold', {
+				component: LogComponents.devicePublish,
+				endpoint,
+				queueBytes,
+				queueMB: parseFloat(queueMB),
+				queueMessages,
+				pauseThresholdBytes: QUEUE_PAUSE_THRESHOLD_BYTES,
+				pauseThresholdMB: (QUEUE_PAUSE_THRESHOLD_BYTES / (1024 * 1024)).toFixed(2),
+				hardLimitBytes: QUEUE_HARD_LIMIT_BYTES,
+			});
+			this.queueHealthWarningLogged = true;
+			this.queueHealthCriticalLogged = false;
+			return;
+		}
+
+		// Check if queue has recovered below resume threshold
+		if (queueBytes < QUEUE_RESUME_THRESHOLD_BYTES && (this.queueHealthWarningLogged || this.queueHealthCriticalLogged)) {
+			this.logger?.info('[Queue] Queue recovered below resume threshold', {
+				component: LogComponents.devicePublish,
+				endpoint,
+				queueBytes,
+				queueMB: parseFloat(queueMB),
+				queueMessages,
+				resumeThresholdBytes: QUEUE_RESUME_THRESHOLD_BYTES,
+				resumeThresholdMB: (QUEUE_RESUME_THRESHOLD_BYTES / (1024 * 1024)).toFixed(2),
+			});
+			this.queueHealthWarningLogged = false;
+			this.queueHealthCriticalLogged = false;
+		}
 	}
 }
