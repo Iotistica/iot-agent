@@ -1,0 +1,16 @@
+{
+  "name": "@iot-agent/publish",
+  "version": "0.1.0",
+  "private": true,
+  "main": "publish.node",
+  "napi": {
+    "name": "publish"
+  },
+  "scripts": {
+    "build": "napi build --release",
+    "build-debug": "napi build"
+  },
+  "devDependencies": {
+    "@napi-rs/cli": "^2.18.0"
+  }
+}

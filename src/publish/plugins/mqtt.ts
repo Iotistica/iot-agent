@@ -428,15 +428,7 @@ export class MqttPublishPlugin extends BasePublishPlugin {
 				const raceStart = Date.now();
 				await Promise.race(Array.from(pending));
 				const raceMs = Date.now() - raceStart;
-				
-				this.agentLogger?.debugSync('[R3] Race completed', {
-					component: LogComponents.agent,
-					batchId,
-					raceMs,
-					raceCount: raceWaitCount,
-					pendingSizeAfterRace: pending.size,
-				});
-				
+			
 				// Every ~50 items, yield control back to event loop for health checks
 				eventLoopYieldCount++;
 				if (eventLoopYieldCount % 50 === 0) {

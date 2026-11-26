@@ -54,3 +54,66 @@ Rules:
 - Read .graphify/GRAPH_REPORT.md only for broad architecture review or when query/path/explain do not surface enough context.
 - After modifying code, run `graphify update .` to keep the graph current (AST-only, no API cost).
 - A committed .graphify/graph.json is rewritten whole on every build, so a large diff to it in a pull request is expected. Do not flag it as churn or suggest skipping the graph rebuild or its hooks.
+
+
+# Codebase Intelligence and Token Optimization
+
+## Retrieval priority
+
+Always use the following retrieval order:
+
+1. Existing conversation context.
+2. Persistent project memory.
+3. Graphify knowledge graph.
+4. Direct reads of known source files.
+5. Targeted Grep or Glob.
+6. Broad repository exploration as a last resort.
+
+## Graphify integration
+
+- Use Graphify as the primary source for codebase
+  structure and relationships.
+- Consult Graphify before performing broad searches.
+- Retrieve only the relevant graph nodes and edges.
+- Never load the entire graph unnecessarily.
+- Use graph relationships to locate implementations,
+  callers, dependencies and related components.
+- Verify graph findings against current source code.
+- Refresh affected graph information after changes
+  using supported Graphify mechanisms.
+
+## Persistent memory
+
+Remember information not adequately captured by
+the code graph:
+
+- Architectural decisions.
+- Business logic and domain knowledge.
+- Non-obvious implementation details.
+- Previously investigated issues.
+- Successful debugging approaches.
+- Configuration requirements.
+- User preferences and coding conventions.
+- Unfinished tasks and implementation progress.
+
+## Token conservation
+
+- Do not rediscover previously documented information.
+- Do not repeat identical searches without reason.
+- Avoid reading entire files when specific sections
+  are sufficient.
+- Reuse previously discovered file paths and symbols.
+- Avoid redundant tool calls.
+- Keep tool output concise.
+- Do not duplicate Graphify data in memory files.
+- Treat current source code as the source of truth.
+
+## End-of-task maintenance
+
+After each significant task:
+
+- Update relevant persistent memory.
+- Record important discoveries.
+- Remove outdated knowledge.
+- Check whether Graphify requires refreshing.
+- Preserve unresolved issues and next steps.

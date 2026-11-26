@@ -100,3 +100,8 @@ protocol-adapters/dist
 *.bak
 *.orig
 *.rej
+
+# Native module build artifacts
+**/node_modules/
+**/target/
+**/*.node

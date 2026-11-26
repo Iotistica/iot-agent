@@ -71,10 +71,10 @@ RUN npx tsc --project tsconfig.build.json && \
     npm prune --omit=dev
 
 
-# ---- Native IPC (Rust) build stage ----
+# ---- Native modules (Rust) build stage ----
 FROM node:24-alpine AS rust-builder
 
-RUN apk add --no-cache curl gcc musl-dev openssl-dev openssl-libs-static perl make
+RUN apk add --no-cache curl gcc musl-dev openssl-dev openssl-libs-static perl make binutils
 
 # Install Rust via rustup (minimal profile, stable)
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | \
@@ -82,28 +82,43 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | \
 ENV PATH="/root/.cargo/bin:${PATH}"
 
 # -- Build ipc addon --
-WORKDIR /app/ipc
+WORKDIR /app/modules/ipc
 
-COPY ipc/Cargo.toml ipc/build.rs ./
-COPY ipc/src ./src
-COPY ipc/package.json ./
+COPY modules/ipc/Cargo.toml modules/ipc/Cargo.lock modules/ipc/build.rs ./
+COPY modules/ipc/src ./src
+COPY modules/ipc/package*.json ./
 RUN --mount=type=cache,target=/root/.cargo/registry \
-    --mount=type=cache,target=/app/ipc/target \
-    npm install && \
-    npx napi build --release && \
-    strip ipc.node 2>/dev/null || true
+    --mount=type=cache,target=/app/modules/ipc/target \
+    npm ci && \
+    npm run build && \
+    test -s ipc.node && strip --strip-unneeded ipc.node && \
+    node -e "require('./ipc.node')"
 
-# -- Build opcua-subscriber addon --
-WORKDIR /app/opcua-subscriber
+# -- Build opcua addon --
+WORKDIR /app/modules/opcua
 
-COPY opcua-subscriber/Cargo.toml opcua-subscriber/build.rs ./
-COPY opcua-subscriber/src ./src
-COPY opcua-subscriber/package.json ./
+COPY modules/opcua/Cargo.toml modules/opcua/Cargo.lock modules/opcua/build.rs ./
+COPY modules/opcua/src ./src
+COPY modules/opcua/package*.json ./
 RUN --mount=type=cache,target=/root/.cargo/registry \
-    --mount=type=cache,target=/app/opcua-subscriber/target \
-    npm install && \
-    npx napi build --release && \
-    strip opcua-subscriber.node 2>/dev/null || true
+    --mount=type=cache,target=/app/modules/opcua/target \
+    OPENSSL_STATIC=1 npm ci && \
+    OPENSSL_STATIC=1 npm run build && \
+    test -s opcua.node && strip --strip-unneeded opcua.node && \
+    node -e "require('./opcua.node')"
+
+# -- Build publish addon --
+WORKDIR /app/modules/publish
+
+COPY modules/publish/Cargo.toml modules/publish/Cargo.lock modules/publish/build.rs ./
+COPY modules/publish/src ./src
+COPY modules/publish/package*.json ./
+RUN --mount=type=cache,target=/root/.cargo/registry \
+    --mount=type=cache,target=/app/modules/publish/target \
+    npm ci && \
+    npm run build && \
+    test -s publish.node && strip --strip-unneeded publish.node && \
+    node -e "require('./publish.node')"
 
 # ---- Admin panel build stage ----
 FROM node:24-alpine AS admin-builder
@@ -179,10 +194,13 @@ COPY --from=builder --chown=agentuser:agentgroup /app/dist ./dist
 COPY --from=admin-builder --chown=agentuser:agentgroup /app/dist ./admin/dist
 
 # Copy IPC addon (Rust)
-COPY --from=rust-builder --chown=agentuser:agentgroup /app/ipc/ipc.node ./ipc/ipc.node
+COPY --from=rust-builder --chown=agentuser:agentgroup /app/modules/ipc/ipc.node ./modules/ipc/ipc.node
 
 # Copy OPC UA subscriber addon (Rust) — optional, activated by OPCUA_ENGINE=rust
-COPY --from=rust-builder --chown=agentuser:agentgroup /app/opcua-subscriber/opcua-subscriber.node ./opcua-subscriber/opcua-subscriber.node
+COPY --from=rust-builder --chown=agentuser:agentgroup /app/modules/opcua/opcua.node ./modules/opcua/opcua.node
+
+# Copy publish formatter addon (Rust), with Node.js fallback for local development
+COPY --from=rust-builder --chown=agentuser:agentgroup /app/modules/publish/publish.node ./modules/publish/publish.node
 
 # Copy update scripts and entrypoint
 COPY bin/*.sh /app/bin/

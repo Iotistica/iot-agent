@@ -28,9 +28,7 @@ function loadNativeBinding(): NativeIpcBinding {
 	if (nativeBinding) return nativeBinding;
 
 	const candidates = [
-		path.join(__dirname, "..", "ipc", "ipc.node"),
-		path.join(__dirname, "..", "..", "ipc", "ipc.node"),
-		path.join(__dirname, "..", "ipc.node"),
+		path.join(__dirname, "..", "..", "modules", "ipc", "ipc.node"),
 	];
 
 	for (const candidate of candidates) {

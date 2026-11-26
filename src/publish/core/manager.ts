@@ -15,6 +15,8 @@ import { PublishStats } from './stats.js';
 import { HeartbeatManager } from './heartbeat.js';
 import { PayloadChunker } from './payload-chunker.js';
 import { QuarantineStore } from './quarantine-store.js';
+import { PublishFormatter } from '../../core/rust-publish-formatter.js';
+import type { BatchConfig } from '../../core/rust-publish-formatter.js';
 import { createHash } from 'crypto';
 import { isProLicensed } from '../../licensing/runtime.js';
 import { SchemaDriftDetector } from '../../analytics/schema-drift/index.js';
@@ -46,6 +48,11 @@ const MAX_BATCH_BYTES = (() => {
 // Phase 6-R2: Queue monitoring and hard limits for backpressure
 const QUEUE_HARD_LIMIT_BYTES = 100 * 1024 * 1024;      // 100 MB absolute maximum
 const QUEUE_PAUSE_THRESHOLD_BYTES = 50 * 1024 * 1024;  // 50 MB warning threshold
+
+// Max IPC messages per publish cycle — prevents the snowball effect where
+// unbounded take() drains ALL accumulated messages, causing each cycle to
+// take longer and accumulate even more for the next one.
+const MAX_MESSAGES_PER_CYCLE = 20;
 const QUEUE_RESUME_THRESHOLD_BYTES = 10 * 1024 * 1024; // 10 MB resume threshold
 const QUEUE_CHECK_INTERVAL_MS = 1000;                   // Check every 1 second
 
@@ -758,21 +765,21 @@ export class PublishManager extends EventEmitter {
 		this.messageCountAtPause = this.batcher.messageCount;
 		this.queueBytesAtPause = this.batcher.totalBytes;
 		
-		this.connection.pause();
 		this.socketPausedAt = Date.now();
 		this.socketPauseCount++;
-		this.logger?.debug('[Metrics] Socket paused for publish cycle', {
-			component: LogComponents.devicePublish,
-			endpoint: this.config.name || 'unknown',
-			messageCount: this.messageCountAtPause,
-			queueBytes: this.queueBytesAtPause,
-			queueMB: (this.queueBytesAtPause / (1024 * 1024)).toFixed(2),
-		});
-		
-		// Phase 6-R2 Enhancement: Immediate queue health check when pausing
-		// This catches buffer spikes before the 1-second interval monitor can
-		this.checkQueueHealth();
-		
+
+		// Pause only for the atomic batcher drain, not the entire publish cycle.
+		// Keeping the socket paused during MQTT publishes starves the IPC consumer
+		// and causes buffer-full disconnections at the IPC server.
+		this.connection.pause();
+		let batch: ReturnType<typeof this.batcher.take>;
+		try {
+			batch = this.batcher.takeUpTo(MAX_MESSAGES_PER_CYCLE);
+		} finally {
+			this.connection.resume();
+		}
+		const socketPauseMs = Date.now() - this.socketPausedAt;
+
 		try {
 
 			const name = this.config.name || 'unknown';
@@ -782,10 +789,22 @@ export class PublishManager extends EventEmitter {
 			} catch {
 				topic = `local/${this.deviceUuid}/${this.config.mqttTopic || 'data'}`;
 			}
-			const batch = this.batcher.take();
+			const remainingAfterTake = this.batcher.messageCount;
+			this.logger?.debug('[Metrics] Socket paused for batcher drain', {
+				component: LogComponents.devicePublish,
+				endpoint: name,
+				pauseMs: socketPauseMs,
+				messageCount: batch.messageCount,
+				remainingInBatcher: remainingAfterTake,
+				cappedAt: MAX_MESSAGES_PER_CYCLE,
+				queueBytes: batch.totalBytes,
+				queueMB: (batch.totalBytes / (1024 * 1024)).toFixed(2),
+			});
 			const messageCount = batch.messageCount;
 			const batchBytes = batch.totalBytes;
 			let messages = batch.messages as ProtocolMessage[];
+			const phaseStart = performance.now();
+			let phaseMs: Record<string, number> = {};
 
 			if (this.liveDataInterceptor) {
 				try {
@@ -797,15 +816,19 @@ export class PublishManager extends EventEmitter {
 					this.logger?.warn('Live data interceptor failed', err, { source: name });
 				}
 			}
+			phaseMs.interceptorMs = performance.now() - phaseStart;
 
 			// Feed the Dashboard's rolling "Good Quality %" tile — once per individual
 			// reading in this batch, before any per-destination fan-out or per-metric
 			// dedup happen further down in collectRouteEntries(). See ActivityMonitor.
 			// recordQualitySample()'s doc comment for why this can't reuse record().
+			const qualityStart = performance.now();
 			for (const reading of this.collectTagRecords(messages)) {
 				activityMonitor.recordQualitySample(typeof reading?.quality === 'string' ? reading.quality : undefined);
 			}
+			phaseMs.qualitySampleMs = performance.now() - qualityStart;
 
+			const driftStart = performance.now();
 			if (this.schemaDriftDetector) {
 				const driftMessages =this.projectMessagesForSchemaDrift(messages);
 
@@ -825,11 +848,16 @@ export class PublishManager extends EventEmitter {
 					this.driftWindowStartedAt = nowMs;
 				}
 			}
+			phaseMs.driftMs = performance.now() - driftStart;
 
+			const anomalyStart = performance.now();
 			const enriched = this.processAnomaly(messages, name);
+			phaseMs.anomalyMs = performance.now() - anomalyStart;
 			if (this.needStop) return;
 
+			const buildStart = performance.now();
 			const { data, baselineSize, msgId, jsonString, jsonBytes } = this.buildPayload(name, enriched, this.payloadFormat);
+			phaseMs.buildPayloadMs = performance.now() - buildStart;
 			if (this.needStop) return;
 
 			const hasExternalBindings = this.bindings.some((b) => b.publisher.type !== 'iotistica');
@@ -838,30 +866,42 @@ export class PublishManager extends EventEmitter {
 				return;
 			}
 
+			const onlineStart = performance.now();
 			await this.publishOnline(topic, data, msgId, baselineSize, messageCount, batchBytes, enriched, name, jsonString, jsonBytes);
+			phaseMs.publishOnlineMs = performance.now() - onlineStart;
+
+			this.logger?.debug('[Metrics] Publish cycle phase breakdown', {
+				component: LogComponents.devicePublish,
+				endpoint: name,
+				messageCount,
+				stringifyDeferred: jsonString === '',
+				globalPayloadFormat: this.payloadFormat,
+				...Object.fromEntries(Object.entries(phaseMs).map(([k, v]) => [k, +v.toFixed(1)])),
+				totalMs: +(performance.now() - phaseStart).toFixed(1),
+			});
 		} finally {
 			const durationMs = Date.now() - this.publishingStartedAt;
-			this.socketPauseDurationMs = Date.now() - this.socketPausedAt;
-			
+
 			if (durationMs > 5_000) {
 				this.logger?.warn(`Publish cycle took ${durationMs}ms`, { source: this.config.name || 'unknown' });
 			}
-			
-			// Log socket resume metrics
-			this.logger?.debug('[Metrics] Socket resumed after publish cycle', {
+
+			this.logger?.debug('[Metrics] Publish cycle completed', {
 				component: LogComponents.devicePublish,
 				endpoint: this.config.name || 'unknown',
-				pauseDurationMs: this.socketPauseDurationMs,
 				publishCycleDurationMs: durationMs,
 				messageCountProcessed: this.messageCountAtPause,
 				queueBytesProcessed: this.queueBytesAtPause,
 				queueMB: (this.queueBytesAtPause / (1024 * 1024)).toFixed(2),
 				totalPauses: this.socketPauseCount,
 			});
-			
+
 			this.publishing = false;
 			this.publishingStartedAt = 0;
-			this.connection.resume();
+
+			if (this.batcher.messageCount > 0 && !this.needStop) {
+				setImmediate(() => this.publishBatch());
+			}
 		}
 	}
 
@@ -922,9 +962,9 @@ export class PublishManager extends EventEmitter {
 				msgId,
 			};
 			if (context) data.context = context;
-			const jsonString = JSON.stringify(data);
-			const jsonBytes = Buffer.byteLength(jsonString, 'utf8');
-			return { data, msgId, baselineSize: jsonBytes, jsonString, jsonBytes };
+			// Defer stringify — per-subscription routing serializes via Rust batch.
+			// Lazy-computed in publishOnline only when actually needed (error/retry path).
+			return { data, msgId, baselineSize: 0, jsonString: '', jsonBytes: 0 };
 		}
 
 		if (payloadFormat === 'ml') {
@@ -964,31 +1004,16 @@ export class PublishManager extends EventEmitter {
 			return { data, msgId, baselineSize: jsonBytes, jsonString, jsonBytes };
 		}
 
-		const externalGroupName = this.normalizeExternalGroupName(endpointName);
-		const tagRecords = this.collectTagRecords(messages);
-		const externalNodeName = this.resolveExternalNodeName(externalGroupName, messages, tagRecords);
-		const timestampMs = Date.now();
-		const allTags = tagRecords
-			.map((message, index) => this.mapTagPayload(message, index, payloadFormat, filterBadQuality))
-			.filter((tag): tag is TagPayload => tag !== null);
-		// ECP is a snapshot format (single batch timestamp, one entry per tag).
-		// Deduplicate by name keeping the last (most recent) value so a multi-poll
-		// batch doesn't repeat the same metric N times.
-		const tags = payloadFormat === 'ecp'
-			? [...new Map(allTags.map((t) => [t.name, t])).values()]
-			: allTags;
-
+		// Defer the expensive collectTagRecords + mapTagPayload + JSON.stringify.
+		// Per-subscription routing serializes via Rust batch independently.
+		// The data object is built lazily only on the error/retry path.
 		const data: Record<string, unknown> = {
-			timestamp: timestampMs,
-			node: externalNodeName,
-			group: externalGroupName,
-			tags,
+			timestamp: Date.now(),
+			protocol: this.protocol,
+			messages,
 		};
 		if (context) data.context = context;
-
-		const jsonString = JSON.stringify(data);
-		const jsonBytes = Buffer.byteLength(jsonString, 'utf8');
-		return { data, msgId, baselineSize: jsonBytes, jsonString, jsonBytes };
+		return { data, msgId, baselineSize: 0, jsonString: '', jsonBytes: 0 };
 	}
 
 	private buildAccumulatedMlPayload(
@@ -1477,11 +1502,131 @@ export class PublishManager extends EventEmitter {
 			return [{ payload: cachedPayload, info: compressionInfoCache.get(cacheKey) }];
 		}
 
-		const { data, msgId, baselineSize, jsonString, jsonBytes } = this.buildPayload(endpointName, messages, payloadFormat, filterBadQuality, datasetConfig);
-		
-		// Extract readings for chunking logic
-		const readings: ProtocolMessage[] = messages;
-		
+		// Compute payload metadata once for the full batch (enrichment applied per-chunk below)
+		const metaStart = performance.now();
+		const msgId = this.mqttConnection.getMessageIdGenerator?.()?.generate()
+			?? `${this.deviceUuid}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+		const context = this.buildContextBlock();
+		const externalGroupName = this.normalizeExternalGroupName(endpointName);
+		const allTagRecords = this.collectTagRecords(messages);
+		const externalNodeName = this.resolveExternalNodeName(externalGroupName, messages, allTagRecords);
+		const metaMs = performance.now() - metaStart;
+		const timestampMs = Date.now();
+
+		// ── Rust fast-path: flatten + chunk + enrich + serialize in one off-thread call ──
+		const canUseRust = !overrideOpts?.useMsgpack && !overrideOpts?.useKeyCompaction;
+		if (canUseRust) {
+			const useCompression = overrideOpts?.useDeflate ?? false;
+			const batchConfig: BatchConfig = {
+				payloadFormat,
+				maxReadingsPerChunk: maxPointsPerMessage ?? 1000,
+				maxPacketSizeBytes: maxPacketSizeBytes,
+				filterBadQuality,
+				compress: useCompression,
+				compressionLevel: 3,
+				externalNodeName,
+				externalGroupName,
+				timestampMs,
+				timestampIso: payloadFormat === 'custom' ? new Date(timestampMs).toISOString() : undefined,
+				protocol: payloadFormat === 'custom' ? this.protocol : undefined,
+				msgId: payloadFormat === 'custom' ? msgId : undefined,
+				mlSchema: datasetConfig ? 'iotistica.ml.v2' : 'iotistica.ml.v1',
+				context: context ?? undefined,
+				dataset: datasetConfig ? {
+					id: String(datasetConfig.id),
+					name: datasetConfig.name,
+					windowSecs: datasetConfig.window_secs,
+					missingValues: datasetConfig.missing_values,
+					normalization: datasetConfig.normalization,
+					excludeBadQuality: !!datasetConfig.exclude_bad_quality,
+					removeOutliers: !!datasetConfig.remove_outliers,
+					outlierMethod: datasetConfig.outlier_method,
+					outputFormat: datasetConfig.output_format,
+				} : undefined,
+			};
+
+			const stringifyStart = performance.now();
+			const jsonStr = JSON.stringify(messages);
+			const jsonBuf = Buffer.from(jsonStr, 'utf8');
+			const stringifyMs = performance.now() - stringifyStart;
+
+			const rustBatchStart = performance.now();
+			const batchResult = await PublishFormatter.processBatchFromJson(jsonBuf, batchConfig);
+			const rustWallMs = performance.now() - rustBatchStart;
+
+			if (batchResult) {
+				this.logger?.info('[Publish:Rust] batch completed', {
+					component: LogComponents.agent,
+					endpointName,
+					path: 'rust-json',
+					chunkCount: batchResult.chunks.length,
+					totalReadings: batchResult.totalReadingsInput,
+					chunked: batchResult.successfullyChunked,
+					quarantined: batchResult.quarantinedCount,
+					metaMs: metaMs.toFixed(2),
+					stringifyMs: stringifyMs.toFixed(2),
+					jsonBytes: jsonBuf.length,
+					wallMs: rustWallMs.toFixed(2),
+					flattenMs: batchResult.timing.flattenMs.toFixed(2),
+					chunkMs: batchResult.timing.chunkMs.toFixed(2),
+					enrichMs: batchResult.timing.enrichMs.toFixed(2),
+					serializeMs: batchResult.timing.serializeMs.toFixed(2),
+					compressMs: batchResult.timing.compressMs.toFixed(2),
+					totalOffThreadMs: batchResult.timing.totalMs.toFixed(2),
+					mainThreadMs: (rustWallMs - batchResult.timing.totalMs).toFixed(2),
+					compressed: useCompression,
+					payloadFormat,
+					totalPayloadBytes: batchResult.chunks.reduce((s, c) => s + (c.compressedBytes || c.jsonBytes), 0),
+				});
+
+				if (batchResult.quarantinedCount > 0) {
+					this.logger?.warn('[Publish:Rust] readings quarantined', {
+						component: LogComponents.devicePublish,
+						endpointName,
+						quarantinedCount: batchResult.quarantinedCount,
+						totalReadings: batchResult.totalReadingsInput,
+					});
+				}
+
+				const payloads: Array<{ payload: string | Buffer; info?: CompressionInfo }> = [];
+				for (const chunk of batchResult.chunks) {
+					const payload = chunk.compressed ?? chunk.jsonString!;
+					const info: CompressionInfo = {
+						method: chunk.compressed ? 'json+deflate' : 'json',
+						originalSize: chunk.jsonBytes,
+						compressedSize: chunk.compressedBytes,
+						ratio: chunk.compressed
+							? ((chunk.jsonBytes - chunk.compressedBytes) / chunk.jsonBytes) * 100
+							: 0,
+						compressionMs: 0,
+						isBaseline: false,
+					};
+					payloads.push({ payload, info });
+				}
+
+				if (payloads.length === 1) {
+					compressedPayloadCache.set(cacheKey, payloads[0].payload);
+					if (payloads[0].info) compressionInfoCache.set(cacheKey, payloads[0].info);
+				}
+				return payloads;
+			}
+		}
+
+		// ── JS fallback (when native module unavailable or msgpack/dictionary needed) ──
+		this.logger?.info('[Publish:JS] using JS fallback path', {
+			component: LogComponents.agent,
+			endpointName,
+			path: 'js-fallback',
+			reason: !canUseRust ? 'msgpack/dictionary compression' : 'native module unavailable',
+			readingCount: messages.length,
+			payloadFormat,
+		});
+
+		const jsFallbackStart = performance.now();
+		// Flatten wrapper messages (which contain nested .readings[] arrays) into
+		// individual readings so the chunker estimates per-reading sizes, not per-wrapper.
+		const readings: ProtocolMessage[] = this.collectTagRecords(messages);
+
 		// Use PayloadChunker to split at reading level BEFORE serialization
 		const chunker = new PayloadChunker({
 			maxReadingsPerChunk: maxPointsPerMessage ?? 1000,
@@ -1489,73 +1634,116 @@ export class PublishManager extends EventEmitter {
 			providerName: destinationType ?? 'unknown',
 			destinationId: destinationId ?? 0,
 		});
-		
+
 		const chunkResult = chunker.chunk(readings, payloadFormat === 'tags' ? 'ecp' : payloadFormat);
-		
+
+		this.logger?.debug('[Publish] Chunker result', {
+			component: LogComponents.devicePublish,
+			endpointName,
+			payloadFormat,
+			inputMessages: messages.length,
+			flattenedReadings: readings.length,
+			chunks: chunkResult.chunks.length,
+			quarantined: chunkResult.quarantined.length,
+			failed: chunkResult.failed.length,
+			maxPacketSizeBytes: maxPacketSizeBytes ?? 'unlimited',
+			maxReadingsPerChunk: maxPointsPerMessage ?? 1000,
+		});
+
 		// Log quarantined readings
 		if (chunkResult.quarantined.length > 0) {
+			this.logger?.warn('[Publish] Readings quarantined — estimated size exceeds max packet', {
+				component: LogComponents.devicePublish,
+				endpointName,
+				quarantinedCount: chunkResult.quarantined.length,
+				totalReadings: readings.length,
+				maxSafeBytes: Math.floor((maxPacketSizeBytes ?? 1024 * 1024) * 0.9),
+				sampleSizes: chunkResult.quarantined.slice(0, 3).map(q => q.estimatedBytes),
+			});
 			for (const q of chunkResult.quarantined) {
-				const quarantineId = this.quarantineStore.add(
+				this.quarantineStore.add(
 					q.reading,
 					q.estimatedBytes,
 					maxPacketSizeBytes ?? Number.MAX_SAFE_INTEGER,
 					destinationId ?? 0,
 					payloadFormat,
 				);
-				// Oversized reading quarantined (logging removed - too noisy during normal operation)
 			}
 		}
-		
+
 		// If all readings were quarantined, return empty array (no valid payloads to send)
 		if (chunkResult.chunks.length === 0) {
+			this.logger?.warn('[Publish] All readings quarantined — no payloads to send', {
+				component: LogComponents.devicePublish,
+				endpointName,
+				payloadFormat,
+				totalReadings: readings.length,
+				quarantined: chunkResult.quarantined.length,
+			});
 			return [];
 		}
-		
+
 		// Serialize and compress each chunk independently
+		const serializeStart = performance.now();
 		const payloads: Array<{ payload: string | Buffer; info?: CompressionInfo }> = [];
-		
+
 		for (const readingChunk of chunkResult.chunks) {
-			// Rebuild payload structure for this chunk
-			let chunkData: Record<string, unknown>;
-			
-			if (payloadFormat === 'custom') {
-				const timestampIso = new Date().toISOString();
-				chunkData = {
-					timestamp: timestampIso,
-					protocol: this.protocol,
-					messages: readingChunk.readings,
-					msgId,
+			// Build enriched payload per chunk — enrichment runs here, not in a discarded whole-batch pass
+			let chunkPayload: Record<string, unknown>;
+
+			if (payloadFormat === 'tags' || payloadFormat === 'ecp') {
+				const chunkTagRecords = this.collectTagRecords(readingChunk.readings as ProtocolMessage[]);
+				const allTags = chunkTagRecords
+					.map((message, index) => this.mapTagPayload(message, index, payloadFormat, filterBadQuality))
+					.filter((tag): tag is TagPayload => tag !== null);
+				const tags = payloadFormat === 'ecp'
+					? [...new Map(allTags.map((t) => [t.name, t])).values()]
+					: allTags;
+				chunkPayload = { timestamp: timestampMs, node: externalNodeName, group: externalGroupName, tags };
+			} else if (payloadFormat === 'custom') {
+				chunkPayload = {
+					timestamp: new Date().toISOString(), protocol: this.protocol,
+					messages: readingChunk.readings, msgId,
 				};
-				const context = data.context;
-				if (context) chunkData.context = context;
-			} else if (payloadFormat === 'ml') {
-				// For ML format, readings are already features
-				chunkData = {
-					timestamp: data.timestamp,
-					node: data.node,
-					group: data.group,
-					schema: data.schema,
-					features: readingChunk.readings,
-				};
-				const context = data.context;
-				if (context) chunkData.context = context;
-				const dataset = data.dataset;
-				if (dataset) chunkData.dataset = dataset;
 			} else {
-				// For 'tags' and 'ecp' formats
-				chunkData = {
-					timestamp: data.timestamp,
-					node: data.node,
-					group: data.group,
-					tags: readingChunk.readings,
+				const features = (readingChunk.readings as ProtocolMessage[])
+					.map((message, index) => this.mapMlFeaturePayload(message, index));
+				chunkPayload = {
+					timestamp: timestampMs, node: externalNodeName, group: externalGroupName,
+					schema: datasetConfig ? 'iotistica.ml.v2' : 'iotistica.ml.v1', features,
 				};
-				const context = data.context;
-				if (context) chunkData.context = context;
+				if (datasetConfig) {
+					chunkPayload.dataset = {
+						id: datasetConfig.id, name: datasetConfig.name,
+						windowSecs: datasetConfig.window_secs, missingValues: datasetConfig.missing_values,
+						normalization: datasetConfig.normalization,
+						excludeBadQuality: !!datasetConfig.exclude_bad_quality,
+						removeOutliers: !!datasetConfig.remove_outliers,
+						outlierMethod: datasetConfig.outlier_method,
+						outputFormat: datasetConfig.output_format,
+					};
+				}
 			}
-			
-			const chunkJsonString = JSON.stringify(chunkData);
-			const chunkJsonBytes = Buffer.byteLength(chunkJsonString, 'utf8');
-			
+			if (context) chunkPayload.context = context;
+
+			// Serialize via Rust (or Node.js fallback)
+			const serialized = await PublishFormatter.serializePayload(chunkPayload);
+			const chunkJsonString = serialized.jsonString;
+			const chunkJsonBytes = serialized.jsonBytes;
+
+			if (readingChunk.chunkIndex === 0) {
+				this.logger?.debug('[Publish] First chunk serialized', {
+					component: LogComponents.devicePublish,
+					endpointName,
+					payloadFormat,
+					chunkIndex: readingChunk.chunkIndex,
+					readingsInChunk: readingChunk.readings.length,
+					jsonBytes: chunkJsonBytes,
+					serializeMs: serialized.serializeMs.toFixed(2),
+					totalChunks: chunkResult.chunks.length,
+				});
+			}
+
 			// Optimization: bypass compress() if overrideOpts indicates no compression
 			if (overrideOpts && !Object.values(overrideOpts).some(v => v)) {
 				// No compression: use JSON directly
@@ -1571,7 +1759,7 @@ export class PublishManager extends EventEmitter {
 			} else {
 				// Apply compression to this chunk
 				const { payload, info } = await this.compressor.compress(
-					chunkData,
+					{ dummy: true }, // We already have JSON string, so pass dummy object
 					chunkJsonBytes,
 					this.stats.data.messagesPublished,
 					overrideOpts,
@@ -1580,15 +1768,30 @@ export class PublishManager extends EventEmitter {
 				payloads.push({ payload, info });
 			}
 		}
-		
-		// Cache the first payload for backward compatibility
-		if (payloads.length > 0) {
+
+		const serializeDurationMs = performance.now() - serializeStart;
+		const jsTotalMs = performance.now() - jsFallbackStart;
+
+		this.logger?.info('[Publish:JS] batch completed', {
+			component: LogComponents.agent,
+			endpointName,
+			path: 'js-fallback',
+			chunkCount: chunkResult.chunks.length,
+			totalReadings: readings.length,
+			serializeMs: serializeDurationMs.toFixed(2),
+			totalMs: jsTotalMs.toFixed(2),
+			payloadFormat,
+			totalPayloadBytes: payloads.reduce((sum, p) => sum + (typeof p.payload === 'string' ? Buffer.byteLength(p.payload) : p.payload.length), 0),
+		});
+
+		// The legacy cache holds one payload; never cache a partial multi-chunk batch.
+		if (payloads.length === 1) {
 			compressedPayloadCache.set(cacheKey, payloads[0].payload);
 			if (payloads[0].info) {
 				compressionInfoCache.set(cacheKey, payloads[0].info);
 			}
 		}
-		
+
 		return payloads;
 	}
 
@@ -1796,7 +1999,15 @@ export class PublishManager extends EventEmitter {
 		const needsDurableBuffer = this.bindings.some(b => b.publisher.type !== 'noop');
 
 		try {
-			if (needsDurableBuffer) {
+			const onlinePhaseStart = performance.now();
+			// When buildPayload deferred its stringify (jsonString === ''),
+			// per-subscription routing handles serialization via Rust batch.
+			// Skip the durable buffer (it would store the wrong payload format
+			// anyway — global format vs per-subscription format) and the global
+			// compression cache (the key never matches per-subscription lookups).
+			const stringifyDeferred = jsonString === '';
+
+			if (needsDurableBuffer && !stringifyDeferred) {
 				const claimed = await this.persistClaimedBatch(topic, data, msgId, jsonString, jsonBytes);
 				bufferedRecordId = claimed.id;
 				if (this.needStop) {
@@ -1807,46 +2018,65 @@ export class PublishManager extends EventEmitter {
 			} else if (this.needStop) {
 				return;
 			}
-
-			// Check if any subscription requires compression (not "none"/null)
-			const needsGlobalCompress = this.bindings.some(b =>
-				this.resolveDestinationTopic(b, topic) !== null &&
-				this.matchesSubscription(b.subscription) &&
-				b.subscription.compression !== null
-			);
+			const persistMs = performance.now() - onlinePhaseStart;
 
 			const compressedPayloadCache = new Map<string, string | Buffer>();
 			const compressionInfoCache = new Map<string, CompressionInfo>();
 
-			// Optimization: bypass compress() if all subscriptions have compression="none"
-			// Still route and publish to all destinations
-			if (!needsGlobalCompress) {
-				// Use cached JSON directly without compression (avoid unnecessary Buffer copy)
-				const info: CompressionInfo = {
-					method: 'json',
-					originalSize: baselineSize,
-					compressedSize: jsonBytes,
-					ratio: 0,
-					compressionMs: 0,
-					isBaseline: false,
-				};
-				compressedPayloadCache.set(`${this.payloadFormat}::global::fq=false`, jsonString);
-				compressionInfoCache.set(`${this.payloadFormat}::global::fq=false`, info);
-			} else {
-				// Compression needed: call compress() normally
-				const { payload, info } = await this.compressor.compress(data, baselineSize, this.stats.data.messagesPublished, undefined, { jsonString, jsonBytes });
-				if (this.needStop) {
-					if (bufferedRecordId !== undefined) {
-						const MessageBufferModel = await this.getMessageBufferModel();
-						MessageBufferModel.markRetryFailed(bufferedRecordId, 'Publish interrupted during shutdown');
-					}
-					return;
-				}
-				compressedPayloadCache.set(`${this.payloadFormat}::global::fq=false`, payload);
-				compressionInfoCache.set(`${this.payloadFormat}::global::fq=false`, info);
-			}
+			const compressStart = performance.now();
+			if (!stringifyDeferred) {
+				// Check if any subscription requires compression (not "none"/null)
+				const needsGlobalCompress = this.bindings.some(b =>
+					this.resolveDestinationTopic(b, topic) !== null &&
+					this.matchesSubscription(b.subscription) &&
+					b.subscription.compression !== null
+				);
 
+				// Optimization: bypass compress() if all subscriptions have compression="none"
+				// Still route and publish to all destinations
+				if (!needsGlobalCompress) {
+					// Use cached JSON directly without compression (avoid unnecessary Buffer copy)
+					const info: CompressionInfo = {
+						method: 'json',
+						originalSize: baselineSize,
+						compressedSize: jsonBytes,
+						ratio: 0,
+						compressionMs: 0,
+						isBaseline: false,
+					};
+					compressedPayloadCache.set(`${this.payloadFormat}::global::fq=false`, jsonString);
+					compressionInfoCache.set(`${this.payloadFormat}::global::fq=false`, info);
+				} else {
+					// Compression needed: call compress() normally
+					const { payload, info } = await this.compressor.compress(data, baselineSize, this.stats.data.messagesPublished, undefined, { jsonString, jsonBytes });
+					if (this.needStop) {
+						if (bufferedRecordId !== undefined) {
+							const MessageBufferModel = await this.getMessageBufferModel();
+							MessageBufferModel.markRetryFailed(bufferedRecordId, 'Publish interrupted during shutdown');
+						}
+						return;
+					}
+					compressedPayloadCache.set(`${this.payloadFormat}::global::fq=false`, payload);
+					compressionInfoCache.set(`${this.payloadFormat}::global::fq=false`, info);
+				}
+			}
+			const compressCacheMs = performance.now() - compressStart;
+
+			const routeStart = performance.now();
 			const routed = await this.routePublishBatch(topic, compressedPayloadCache, compressionInfoCache, endpointName, enriched);
+			const routeMs = performance.now() - routeStart;
+			this.logger?.debug('[Metrics] publishOnline phase breakdown', {
+				component: LogComponents.devicePublish,
+				endpoint: endpointName,
+				routed,
+				messageCount,
+				stringifyDeferred,
+				persistMs: +persistMs.toFixed(1),
+				compressCacheMs: +compressCacheMs.toFixed(1),
+				routeMs: +routeMs.toFixed(1),
+				totalOnlineMs: +(performance.now() - onlinePhaseStart).toFixed(1),
+				cacheKeys: [...compressedPayloadCache.keys()],
+			});
 			publishConfirmed = true;
 
 			if (bufferedRecordId !== undefined) {
@@ -1909,6 +2139,11 @@ export class PublishManager extends EventEmitter {
 				return;
 			}
 
+			// Lazy-compute jsonString for the error/retry path if it was deferred
+			if (jsonString === '' && data) {
+				jsonString = JSON.stringify(data);
+				jsonBytes = Buffer.byteLength(jsonString, 'utf8');
+			}
 			await this.publishOffline(topic, data, msgId, messageCount, jsonString, jsonBytes);
 			this.logger?.warn('Buffered failed publish to durable storage', { source: endpointName });
 		} catch (bufferError) {
@@ -2280,6 +2515,13 @@ export class PublishManager extends EventEmitter {
 		const routeStats = { resolvedDestinations: 0 };
 		const entries = await this.collectRouteEntries(sourceTopic, compressedPayloadCache, compressionInfoCache, endpointName, messages, routeStats);
 		if (entries.length === 0) {
+			this.logger?.warn('[Publish] routePublishBatch: no route entries', {
+				component: LogComponents.devicePublish,
+				endpointName,
+				bindings: this.bindings.length,
+				resolvedDestinations: routeStats.resolvedDestinations,
+				cacheKeys: [...compressedPayloadCache.keys()],
+			});
 			// Bindings that resolved a destination but had nothing to send (source filters,
 			// dataset windowing, throttling) are not a failure.
 			if (routeStats.resolvedDestinations > 0) {
@@ -2324,11 +2566,30 @@ export class PublishManager extends EventEmitter {
 			const payloadFormat = this.resolvePayloadFormatForBinding(binding);
 			const route = binding.subscription.route_json as PublishSubscriptionRoute | null;
 			const routedMessages = this.filterMessagesForSourceRoute(messages, route, endpointName);
+
+			this.logger?.debug('[Publish] Binding routing', {
+				component: LogComponents.devicePublish,
+				destination: binding.publisher.name,
+				destinationType: binding.publisher.type,
+				payloadFormat,
+				subscriptionId: binding.subscription.id ?? null,
+				hasDatasetPointKeys: !!binding.datasetPointKeys,
+				datasetPointKeysSize: binding.datasetPointKeys?.size ?? 0,
+				mlDatasetId: binding.subscription.ml_dataset_id ?? null,
+				routedMessages: routedMessages.length,
+				inputMessages: messages.length,
+				sourceFilterMode: route?.sourceFilterMode ?? 'none',
+			});
+
 			if (routedMessages.length === 0 && (
 				route?.sourceFilterMode === 'specific' ||
 				(route?.includeDevices?.length ?? 0) > 0 ||
 				(route?.excludeDevices?.length ?? 0) > 0
 			)) {
+				this.logger?.debug('[Publish] Binding skipped: source filter dropped all messages', {
+					component: LogComponents.devicePublish,
+					destination: binding.publisher.name,
+				});
 				continue;
 			}
 			const qualities = Array.isArray(route?.qualities) ? route.qualities : [];
@@ -2489,10 +2750,24 @@ export class PublishManager extends EventEmitter {
 				topic: destinationTopic,
 				messages: bindingMessages.length,
 				payloadFormat,
+				cacheKey,
+				payloadCount: payloads.length,
 				compression: subscriptionCompression ?? 'global',
 				...(minIntervalMs > 0 && { publishIntervalMs: minIntervalMs, throttledOut: allThrottledOut }),
 				...(payloads.length > 1 && { chunks: payloads.length }),
 			});
+
+			if (payloads.length === 0 && !allThrottledOut && binding.publisher.type !== 'noop') {
+				this.logger?.warn('[Publish] Empty payloads from getCompressedPayloadForFormat', {
+					component: LogComponents.devicePublish,
+					endpointName,
+					destination: binding.publisher.name,
+					payloadFormat,
+					cacheKey,
+					maxPayloadBytes: this.getMaxPayloadSizeBytes(binding.publisher),
+					effectiveMessages: effectiveMessages.length,
+				});
+			}
 
 			if (binding.publisher.id !== undefined) {
 				// Deliberately unaffected by the throttle above — Recent Activity reflects
@@ -2736,6 +3011,21 @@ export class PublishManager extends EventEmitter {
 		const hasSourceFilter = includedSources.size > 0 || excludedSources.size > 0;
 		const hasMetricFilter = includedMetrics.size > 0 || excludedMetrics.size > 0;
 		if (!hasSourceFilter && !hasMetricFilter) return messages;
+
+		if (hasSourceFilter && messages.length > 0) {
+			const sample = messages[0];
+			const sampleReading = Array.isArray(sample.readings) ? sample.readings[0] : sample;
+			const sampleSourceName = this.readExternalNodeCandidate(sampleReading ?? sample);
+			this.logger?.debug('[Publish] Source filter comparison', {
+				component: LogComponents.devicePublish,
+				endpointName,
+				includedSources: [...includedSources],
+				sampleDeviceName: sampleSourceName,
+				sampleSourceEndpointName: typeof (sampleReading ?? sample).sourceEndpointName === 'string' ? (sampleReading ?? sample).sourceEndpointName : null,
+				sourceFilterMode: route?.sourceFilterMode ?? 'none',
+				messageCount: messages.length,
+			});
+		}
 
 		const matchesSource = (record: ProtocolMessage, fallback?: string): boolean => {
 			if (!hasSourceFilter) return true;

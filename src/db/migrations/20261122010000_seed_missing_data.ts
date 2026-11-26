@@ -66,6 +66,16 @@ function up(db: DatabaseSync): void {
 	db.exec('INSERT OR IGNORE INTO backup_schedule (id) VALUES (1)');
 
 	// ── marketplace_categories ──────────────────────────────────────────
+	// Create table if missing (for databases that don't have it yet)
+	db.exec(`
+		CREATE TABLE IF NOT EXISTS marketplace_categories (
+			id         TEXT PRIMARY KEY,
+			name       TEXT UNIQUE NOT NULL,
+			color      TEXT,
+			sort_order INTEGER NOT NULL DEFAULT 0
+		)
+	`);
+
 	const hasCat = db.prepare('SELECT 1 FROM marketplace_categories LIMIT 1');
 	if (!hasCat.get()) {
 		const insertCat = db.prepare(
@@ -84,6 +94,18 @@ function up(db: DatabaseSync): void {
 		];
 		categories.forEach((cat, i) => insertCat.run(randomUUID(), cat.name, cat.color, i));
 	}
+
+	// ── app_marketplace_templates ──────────────────────────────────────────
+	// Create table if missing (for databases that don't have it yet)
+	db.exec(`
+		CREATE TABLE IF NOT EXISTS app_marketplace_templates (
+			id            TEXT PRIMARY KEY,
+			template_json TEXT NOT NULL,
+			sort_order    INTEGER NOT NULL,
+			created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+			updated_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+		)
+	`);
 }
 
 export const migration: NativeSqliteMigration = {

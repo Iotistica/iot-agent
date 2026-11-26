@@ -95,6 +95,15 @@ export class MessageBatcher extends EventEmitter {
 		return snapshot;
 	}
 
+	takeUpTo(limit: number): { messages: any[]; totalBytes: number; messageCount: number } {
+		if (this._messages.length <= limit) return this.take();
+		const taken = this._messages.splice(0, limit);
+		const ratio = taken.length / (taken.length + this._messages.length);
+		const takenBytes = Math.round(this._totalBytes * ratio);
+		this._totalBytes -= takenBytes;
+		return { messages: taken, totalBytes: takenBytes, messageCount: taken.length };
+	}
+
 	reset(): void {
 		this._messages.length = 0;
 		this._totalBytes = 0;

@@ -85,9 +85,7 @@ function loadNativeBinding(): NativeSubscriberBinding {
 	if (nativeBinding) return nativeBinding;
 
 	const candidates = [
-		path.join(__dirname, "..", "opcua-subscriber", "opcua-subscriber.node"),
-		path.join(__dirname, "..", "..", "opcua-subscriber", "opcua-subscriber.node"),
-		path.join(__dirname, "..", "opcua-subscriber.node"),
+		path.join(__dirname, "..", "..", "modules", "opcua", "opcua.node"),
 	];
 
 	for (const candidate of candidates) {
@@ -101,7 +99,7 @@ function loadNativeBinding(): NativeSubscriberBinding {
 	}
 
 	throw new Error(
-		`Failed to load opcua-subscriber addon. Searched:\n  ${candidates.join("\n  ")}`,
+		`Failed to load opcua addon. Searched:\n  ${candidates.join("\n  ")}`,
 	);
 }
 

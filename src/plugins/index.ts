@@ -1173,6 +1173,8 @@ export class AdapterManager extends EventEmitter {
 			return;
 		}
 
+		const socket = await this.createSocketServer("opcua");
+
 		for (const device of dbDevices) {
 			const connection = this.normalizeOpcuaConnection(device.name, device.connection) as Record<string, any>;
 			const dataPoints = (device.data_points || []) as Array<Record<string, any>>;
@@ -1181,8 +1183,6 @@ export class AdapterManager extends EventEmitter {
 				this.logger.info(`[opcua-rust] ${device.name}: no data points, skipping`);
 				continue;
 			}
-
-			const socket = await this.createSocketServer("opcua");
 
 			const subscriber = new RustOpcuaSubscriber(
 				{
