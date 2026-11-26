@@ -3150,7 +3150,7 @@ router.post('/v1/protocol-outputs', requireRole('operator'), async (req: Request
 			res.status(409).json({ error: `Protocol output already exists: ${body.protocol}` });
 			return;
 		}
-		const isWindows = process.platform === 'win32';
+		const _isWindows = process.platform === 'win32';
 		const output = await EndpointOutputModel.setOutput({
 			protocol: body.protocol,
 			socket_path: String(body.socket_path),

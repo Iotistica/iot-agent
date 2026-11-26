@@ -18,7 +18,7 @@
 
 import { memoryUsage } from 'process';
 import { getHeapStatistics } from 'v8';
-import { monitorEventLoopDelay, type IntervalHistogram, performance } from 'perf_hooks';
+import { monitorEventLoopDelay, type IntervalHistogram } from 'perf_hooks';
 import { PerformanceObserver } from 'perf_hooks';
 import type { AgentLogger } from '../logging/agent-logger';
 import { LogComponents } from '../logging/types';
@@ -412,7 +412,7 @@ export function startGCMonitoring(): void {
 		if (histogramCreated && eventLoopHistogram) {
 			try {
 				eventLoopHistogram.disable();
-			} catch (e) {
+			} catch (_e) {
 				// Ignore cleanup errors
 			}
 			eventLoopHistogram = undefined;
@@ -421,7 +421,7 @@ export function startGCMonitoring(): void {
 		if (observerCreated && performanceObserver) {
 			try {
 				performanceObserver.disconnect();
-			} catch (e) {
+			} catch (_e) {
 				// Ignore cleanup errors
 			}
 			performanceObserver = undefined;
@@ -511,17 +511,15 @@ function reportGCMetrics(): void {
 	const windowDurationSec = (now - gcMetrics.windowStartTimestamp) / 1000;
 
 	// Calculate event-loop delay percentiles
-	const mean = eventLoopHistogram.mean / 1e6; // Convert nanoseconds to milliseconds
-	const p95 = eventLoopHistogram.percentile(95) / 1e6;
+	const _mean = eventLoopHistogram.mean / 1e6;
+	const _p95 = eventLoopHistogram.percentile(95) / 1e6;
 	const p99 = eventLoopHistogram.percentile(99) / 1e6;
-	const max = eventLoopHistogram.max / 1e6;
+	const _max = eventLoopHistogram.max / 1e6;
 
-	// Calculate GC frequency
-	const gcFrequencyPerMin = gcMetrics.totalGCs > 0 ? (gcMetrics.totalGCs / (windowDurationSec / 60)) : 0;
-	const avgPauseMs = gcMetrics.totalGCs > 0 ? (gcMetrics.totalPauseMs / gcMetrics.totalGCs) : 0;
+	const _gcFrequencyPerMin = gcMetrics.totalGCs > 0 ? (gcMetrics.totalGCs / (windowDurationSec / 60)) : 0;
+	const _avgPauseMs = gcMetrics.totalGCs > 0 ? (gcMetrics.totalPauseMs / gcMetrics.totalGCs) : 0;
 
-	// Build GC type breakdown string
-	const gcTypeBreakdown = Array.from(gcMetrics.gcTypes.entries())
+	const _gcTypeBreakdown = Array.from(gcMetrics.gcTypes.entries())
 		.map(([type, count]) => `${type}=${count}`)
 		.join(', ');
 

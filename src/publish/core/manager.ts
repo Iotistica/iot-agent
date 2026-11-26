@@ -804,7 +804,7 @@ export class PublishManager extends EventEmitter {
 			const batchBytes = batch.totalBytes;
 			let messages = batch.messages as ProtocolMessage[];
 			const phaseStart = performance.now();
-			let phaseMs: Record<string, number> = {};
+			const phaseMs: Record<string, number> = {};
 
 			if (this.liveDataInterceptor) {
 				try {
@@ -942,7 +942,7 @@ export class PublishManager extends EventEmitter {
 		return Object.keys(block).length > 1 ? block : undefined;
 	}
 
-	private buildPayload(endpointName: string, messages: ProtocolMessage[], payloadFormat: PayloadFormat, filterBadQuality = false, datasetConfig?: MlDatasetRecord): {
+	private buildPayload(endpointName: string, messages: ProtocolMessage[], payloadFormat: PayloadFormat, _filterBadQuality = false, datasetConfig?: MlDatasetRecord): {
     data: PublishPayload;
     msgId: string;
     baselineSize: number;
@@ -1466,7 +1466,7 @@ export class PublishManager extends EventEmitter {
 	private getMaxPayloadSizeBytes(publisher: PublisherRecord): number {
 		// Check if maxPayloadSizeBytes is in config_json
 		if (publisher.config_json && typeof publisher.config_json === 'object') {
-			const configValue = (publisher.config_json as Record<string, unknown>).maxPayloadSizeBytes;
+			const configValue = (publisher.config_json).maxPayloadSizeBytes;
 			if (typeof configValue === 'number' && configValue > 0) {
 				return configValue;
 			}

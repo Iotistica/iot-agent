@@ -252,7 +252,7 @@ export class MqttPublishPlugin extends BasePublishPlugin {
 
 	override async start(): Promise<void> {
 		const startTime = Date.now();
-		this.agentLogger?.debugSync('MqttPublishPlugin.start() - entry', {
+		this.agentLogger?.debugSync('MqttPublishPlugin.start()', {
 			component: LogComponents.agent,
 			destinationId: this.destinationId,
 			timestamp: new Date().toISOString(),
@@ -278,13 +278,6 @@ export class MqttPublishPlugin extends BasePublishPlugin {
 
 			await super.start();
 
-			const elapsedMs = Date.now() - startTime;
-			this.agentLogger?.debugSync('MqttPublishPlugin.start() - exit success', {
-				component: LogComponents.agent,
-				destinationId: this.destinationId,
-				totalMs: elapsedMs,
-				timestamp: new Date().toISOString(),
-			});
 		} catch (error) {
 			const errorMsg = error instanceof Error ? error.message : String(error);
 			const elapsedMs = Date.now() - startTime;
@@ -427,7 +420,7 @@ export class MqttPublishPlugin extends BasePublishPlugin {
 				raceWaitCount++;
 				const raceStart = Date.now();
 				await Promise.race(Array.from(pending));
-				const raceMs = Date.now() - raceStart;
+				const _raceMs = Date.now() - raceStart;
 			
 				// Every ~50 items, yield control back to event loop for health checks
 				eventLoopYieldCount++;
@@ -457,17 +450,14 @@ export class MqttPublishPlugin extends BasePublishPlugin {
 
 			try {
 				// Log outgoing payload size
-				const payloadBytes = Buffer.isBuffer(item.payload)
+				const _payloadBytes = Buffer.isBuffer(item.payload)
 					? item.payload.length
 					: Buffer.byteLength(item.payload, 'utf8');
-
-				// Per-item logging removed - too verbose in loops
-				// Batch-level summary logs provide sufficient visibility
 
 				// Don't await here - add to concurrent queue
 				const task = Promise.resolve()
 					.then(() =>
-						this.client!.publish(item.topic, item.payload, item.options)
+						this.client.publish(item.topic, item.payload, item.options)
 					)
 					.then(() => {
 						successCount++;
@@ -482,7 +472,7 @@ export class MqttPublishPlugin extends BasePublishPlugin {
 					});
 
 				pending.add(task);
-			} catch (error) {
+			} catch (_error) {
 				// Synchronous errors during publish setup
 				failedChunks.push(item);
 				failureCount++;

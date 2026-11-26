@@ -27,7 +27,7 @@ import {
 	stopMemoryMonitoring,
 	startMemoryLeakSimulation,
 	stopMemoryLeakSimulation,
-	stopGCMonitoring
+	stopGCMonitoring as _stopGCMonitoring
 } from "./system/memory.js";
 import { type DiscoveryService } from "./discovery/service.js";
 import { type FeatureInitializer } from "./init/features.js";

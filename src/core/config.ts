@@ -1064,9 +1064,8 @@ export class ConfigManager extends EventEmitter {
 					}
 
 					// CRITICAL: Verify what was actually saved to DB
-					let verifyInsert: any = null;
 					try {
-						verifyInsert = await EndpointModel.getByUuid(normalizedDevice.uuid);
+						const _verifyInsert = await EndpointModel.getByUuid(normalizedDevice.uuid);
 					} catch (verifyError) {
 						this.logger?.warnSync("Failed to verify inserted endpoint", {
 							component: LogComponents.configManager,

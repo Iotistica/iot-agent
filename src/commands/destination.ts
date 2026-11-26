@@ -22,7 +22,7 @@ export class CommandDestination {
 	private static cachedConfigJson: string | null = null;
 
 	/** Returns a connected client for the currently-flagged command destination, or null if none is configured/enabled/valid. */
-	static async resolve(logger: AgentLogger, deviceUuid: string): Promise<ExternalMqttClient | null> {
+	static async resolve(logger: AgentLogger, _deviceUuid: string): Promise<ExternalMqttClient | null> {
 		const destination = PublishDestinationsModel.getCommandDestination();
 		if (!destination) {
 			await this.reset();

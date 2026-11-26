@@ -880,7 +880,7 @@ function stripDataPoints(state: any): any {
 		config: {
 			...state.config,
 			endpoints: state.config.endpoints.map((ep: any) => {
-				const { dataPoints, data_points, ...rest } = ep;
+				const { dataPoints: _dataPoints, data_points: _data_points, ...rest } = ep;
 				return rest;
 			}),
 		},

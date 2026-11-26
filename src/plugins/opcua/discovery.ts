@@ -878,86 +878,86 @@ export class OPCUADiscovery extends BaseDiscovery {
 									}
 								}
 
-                                // Bound requests by operation count, not node count. Split only
-                                // explicit size-limit failures; never retry a dead channel blindly.
-                                const readBounded = async (items: any[]): Promise<any[]> => {
-                                    if (!items.length) return [];
-                                    if (signal?.aborted) throw new Error('Discovery aborted');
-                                    try {
-                                        const result = await session.read(items);
-                                        if (!Array.isArray(result) || result.length !== items.length) throw new Error('Incomplete Read response');
-                                        return result;
-                                    } catch (error) {
-                                        if (items.length > 1 && /BadTooManyOperations|BadRequestTooLarge|BadResponseTooLarge/.test(String(error))) {
-                                            const mid = Math.floor(items.length / 2);
-                                            return [...await readBounded(items.slice(0, mid)), ...await readBounded(items.slice(mid))];
-                                        }
-                                        throw error;
-                                    }
-                                };
-                                const attrs = [AttributeIds.NodeClass, AttributeIds.AccessLevel, AttributeIds.UserAccessLevel, AttributeIds.Description];
-                                const pending = refs.filter(ref => {
-                                    const name = ref.browseName?.name || '';
-                                    const id = ref.nodeId.toString();
-                                    return !(depth === 0 && ['Server', 'ServerInfo', 'Types', 'Views', 'Aliases'].includes(name))
+								// Bound requests by operation count, not node count. Split only
+								// explicit size-limit failures; never retry a dead channel blindly.
+								const readBounded = async (items: any[]): Promise<any[]> => {
+									if (!items.length) return [];
+									if (signal?.aborted) throw new Error('Discovery aborted');
+									try {
+										const result = await session.read(items);
+										if (!Array.isArray(result) || result.length !== items.length) throw new Error('Incomplete Read response');
+										return result;
+									} catch (error) {
+										if (items.length > 1 && /BadTooManyOperations|BadRequestTooLarge|BadResponseTooLarge/.test(String(error))) {
+											const mid = Math.floor(items.length / 2);
+											return [...await readBounded(items.slice(0, mid)), ...await readBounded(items.slice(mid))];
+										}
+										throw error;
+									}
+								};
+								const attrs = [AttributeIds.NodeClass, AttributeIds.AccessLevel, AttributeIds.UserAccessLevel, AttributeIds.Description];
+								const pending = refs.filter(ref => {
+									const name = ref.browseName?.name || '';
+									const id = ref.nodeId.toString();
+									return !(depth === 0 && ['Server', 'ServerInfo', 'Types', 'Views', 'Aliases'].includes(name))
                                         && name !== 'DeviceUUID' && !identifierNodeIds.has(id) && !_cachedIndex?.[id];
-                                });
-                                const attributes = new Map<string, any[]>();
-                                const units = new Map<string, string>();
-                                // Conservative defaults; servers may revise or reject these sizes.
-                                for (let offset = 0; offset < pending.length; offset += 100) {
-                                    if (signal?.aborted || _channelDead) break;
-                                    const group = pending.slice(offset, offset + 100);
-                                    const ids = group.map(ref => ref.nodeId.toString());
-                                    const values = await readBounded(ids.flatMap(id => attrs.map(attributeId => ({nodeId: id, attributeId}))));
-                                    ids.forEach((id, i) => attributes.set(id, values.slice(i * 4, i * 4 + 4)));
-                                    const variables = ids.filter(id => {
-                                        const value = attributes.get(id)?.[0];
-                                        return value?.statusCode?.isGood() && value.value?.value === 2;
-                                    });
-                                    // Browse property references in batches, draining continuation points.
-                                    const properties: Array<{owner: string; nodeId: string}> = [];
-                                    const browseUnits = async (owners: string[]): Promise<void> => {
-                                        if (!owners.length || signal?.aborted) return;
-                                        let results;
-                                        try {
-                                            results = await session.browse(owners.map(nodeId => ({nodeId, browseDirection: 0, referenceTypeId: 'ns=0;i=46', includeSubtypes: true, nodeClassMask: 0, resultMask: 63})));
-                                        } catch (error) {
-                                            if (owners.length > 1 && /BadTooManyOperations|BadRequestTooLarge|BadResponseTooLarge/.test(String(error))) {
-                                                const mid = Math.floor(owners.length / 2);
-                                                await browseUnits(owners.slice(0, mid)); await browseUnits(owners.slice(mid)); return;
-                                            }
-                                            throw error;
-                                        }
-                                        if (results.length !== owners.length) throw new Error('Incomplete Browse response');
-                                        for (let i = 0; i < results.length; i++) {
-                                            let result = results[i];
-                                            try {
-                                                while (result.statusCode.isGood()) {
-                                                    const property = result.references?.find(ref => ref.browseName?.name === 'EngineeringUnits');
-                                                    if (property) { properties.push({owner: owners[i], nodeId: property.nodeId.toString()}); break; }
-                                                    if (!result.continuationPoint?.length || signal?.aborted) break;
-                                                    result = await session.browseNext(result.continuationPoint, false);
-                                                }
-                                            } finally {
-                                                if (result.continuationPoint?.length) await session.browseNext(result.continuationPoint, true).catch(() => {});
-                                            }
-                                        }
-                                    };
-                                    try {
-                                        await browseUnits(variables);
-                                        const euValues = await readBounded(properties.map(p => ({nodeId: p.nodeId, attributeId: AttributeIds.Value})));
-                                        properties.forEach((p, i) => {
-                                            if (!euValues[i]?.statusCode?.isGood()) return;
-                                            const value = euValues[i]?.value?.value;
-                                            const text = typeof value === 'string' ? value : value?.displayName?.text;
-                                            if (typeof text === 'string' && text.trim()) units.set(p.owner, text.trim());
-                                        });
-                                    } catch (error) {
-                                        // Units remain best-effort, as in the original implementation.
-                                        this.logger?.debugSync('Batched EngineeringUnits lookup failed', {component: LogComponents.discovery, error: String(error)});
-                                    }
-                                }
+								});
+								const attributes = new Map<string, any[]>();
+								const units = new Map<string, string>();
+								// Conservative defaults; servers may revise or reject these sizes.
+								for (let offset = 0; offset < pending.length; offset += 100) {
+									if (signal?.aborted || _channelDead) break;
+									const group = pending.slice(offset, offset + 100);
+									const ids = group.map(ref => ref.nodeId.toString());
+									const values = await readBounded(ids.flatMap(id => attrs.map(attributeId => ({nodeId: id, attributeId}))));
+									ids.forEach((id, i) => attributes.set(id, values.slice(i * 4, i * 4 + 4)));
+									const variables = ids.filter(id => {
+										const value = attributes.get(id)?.[0];
+										return value?.statusCode?.isGood() && value.value?.value === 2;
+									});
+									// Browse property references in batches, draining continuation points.
+									const properties: Array<{owner: string; nodeId: string}> = [];
+									const browseUnits = async (owners: string[]): Promise<void> => {
+										if (!owners.length || signal?.aborted) return;
+										let results;
+										try {
+											results = await session.browse(owners.map(nodeId => ({nodeId, browseDirection: 0, referenceTypeId: 'ns=0;i=46', includeSubtypes: true, nodeClassMask: 0, resultMask: 63})));
+										} catch (error) {
+											if (owners.length > 1 && /BadTooManyOperations|BadRequestTooLarge|BadResponseTooLarge/.test(String(error))) {
+												const mid = Math.floor(owners.length / 2);
+												await browseUnits(owners.slice(0, mid)); await browseUnits(owners.slice(mid)); return;
+											}
+											throw error;
+										}
+										if (results.length !== owners.length) throw new Error('Incomplete Browse response');
+										for (let i = 0; i < results.length; i++) {
+											let result = results[i];
+											try {
+												while (result.statusCode.isGood()) {
+													const property = result.references?.find(ref => ref.browseName?.name === 'EngineeringUnits');
+													if (property) { properties.push({owner: owners[i], nodeId: property.nodeId.toString()}); break; }
+													if (!result.continuationPoint?.length || signal?.aborted) break;
+													result = await session.browseNext(result.continuationPoint, false);
+												}
+											} finally {
+												if (result.continuationPoint?.length) await session.browseNext(result.continuationPoint, true).catch(() => {});
+											}
+										}
+									};
+									try {
+										await browseUnits(variables);
+										const euValues = await readBounded(properties.map(p => ({nodeId: p.nodeId, attributeId: AttributeIds.Value})));
+										properties.forEach((p, i) => {
+											if (!euValues[i]?.statusCode?.isGood()) return;
+											const value = euValues[i]?.value?.value;
+											const text = typeof value === 'string' ? value : value?.displayName?.text;
+											if (typeof text === 'string' && text.trim()) units.set(p.owner, text.trim());
+										});
+									} catch (error) {
+										// Units remain best-effort, as in the original implementation.
+										this.logger?.debugSync('Batched EngineeringUnits lookup failed', {component: LogComponents.discovery, error: String(error)});
+									}
+								}
 
 								for (const ref of refs) {
 									if (signal?.aborted || _channelDead) break;
@@ -1033,7 +1033,7 @@ export class OPCUADiscovery extends BaseDiscovery {
 									// any previously-known writable flag silently disappears on every rescan.
 									try {
 										const [nodeClass, accessLevelResult, userAccessLevelResult, descriptionResult] = attributes.get(childNodeId) ?? [];
-                                        if (!nodeClass) throw new Error('Missing batched NodeClass result');
+										if (!nodeClass) throw new Error('Missing batched NodeClass result');
 
 										if (!nodeClass.statusCode.isGood()) throw new Error(`NodeClass read failed: ${nodeClass.statusCode.name}`);
 										const actualNodeClass = nodeClass.value.value;

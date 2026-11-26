@@ -164,7 +164,7 @@ eventsRouter.get('/v1/alerts/:alertId', (req: Request, res: Response, next: Next
 
 // ── Backward-compatible aliases for the anomaly frontend ─────────────────────
 
-eventsRouter.get('/v1/anomaly-events', (req: Request, res: Response, next: NextFunction) => {
+eventsRouter.get('/v1/anomaly-events', (req: Request, res: Response, _next: NextFunction) => {
 	req.query.source = ANOMALY_SOURCES.join(',');
 	const result = AgentEventModel.list({
 		source:      ANOMALY_SOURCES,

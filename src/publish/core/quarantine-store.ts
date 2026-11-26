@@ -176,7 +176,7 @@ export class QuarantineStore {
 		recordsByDestination: Map<number | undefined, number>;
 		oldestRecord?: Date;
 		newestRecord?: Date;
-	} {
+		} {
 		const recordsByDestination = new Map<number | undefined, number>();
 		let oldestRecord: Date | undefined;
 		let newestRecord: Date | undefined;
